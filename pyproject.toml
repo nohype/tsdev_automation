@@ -1,0 +1,19 @@
+[project]
+name = "tsdev-automation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Julian W.", email = "31277958+nohype@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "capstone>=5.0.9",
+]
+
+[project.scripts]
+tsdev-automation = "tsdev_automation:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
