@@ -1,0 +1,204 @@
+// tsdev_lib.h
+//
+// Shared wrapper module for orlib20.dll — the "engine" for the tsdev_automation
+// CLI. Encapsulates the confirmed orlib20 operation set (init, name lookup,
+// entry creation, source save, compile/verify, warehouse close) behind a clean,
+// RAII C++ API.
+//
+// All findings are CONFIRMED and documented in
+// tmp/re_artifacts/orlib_param_orders.md. The reference probe is
+// src/elevated_test20.cpp.
+//
+// This module is 32-bit only (orlib20.dll is a 32-bit PE).
+
+#ifndef TSDEV_LIB_H
+#define TSDEV_LIB_H
+
+#include <string>
+#include <windows.h>
+
+namespace tsdev {
+
+// Confirmed warehouse types (see orlib_param_orders.md §1).
+// UNRESOLVED types (ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp)
+// are intentionally NOT represented here.
+enum class ComponentType : int {
+    Strategy  = 0,
+    Indicator = 2,
+    Function  = 4
+};
+
+// Generic operation result. For compile/verify, prefer verifyModule()'s
+// returned error string as the authoritative success indicator.
+struct Result {
+    bool        success = false;
+    std::string message;
+    int         progId  = 0;  // valid when success is true (where applicable)
+};
+
+// RAII wrapper for an orlib20 session.
+//
+// Constructor:  loads orlib20.dll, pre-loads support DLLs, applies the
+//               FUN_10011230 persistence patch, resolves exports, calls
+//               OrlibInit(NULL, 1), creates a hidden EDIT control.
+//               Throws std::runtime_error on fatal failure.
+// Destructor:   calls OrlibExit(), destroys the EDIT control.
+//
+// Not copyable, not movable (owns DLL handles and live window objects).
+class TsDevLib {
+public:
+    TsDevLib();
+    ~TsDevLib();
+
+    TsDevLib(const TsDevLib&)            = delete;
+    TsDevLib& operator=(const TsDevLib&) = delete;
+    TsDevLib(TsDevLib&&)                 = delete;
+    TsDevLib& operator=(TsDevLib&&)      = delete;
+
+    // Look up an existing component by name.
+    // Returns ProgId (>0) if found, 0 if not found.
+    int findExistPos(const std::string& name, ComponentType type);
+
+    // Create a new entry in the warehouse.
+    // Returns ProgId on success, 0 on failure (inspect errCode for detail).
+    int createEntry(ComponentType type, const std::string& name, int& errCode);
+
+    // Save source text into an entry (does NOT persist to disk).
+    // Sets the source into the hidden EDIT control and calls SaveModule_New.
+    // Returns true on success.
+    bool saveSource(ComponentType type, int progId, const std::string& source);
+
+    // Compile and verify an entry. Persists the .ell file on success.
+    // Creates a CELCompiler object, sets its fields, calls
+    // StartCompilingProcess + VerifyModule_New + EndCompilingProcess, then
+    // destroys the compiler object.
+    // Returns the compilation error string (empty string == success).
+    // Uses the internal hidden EDIT control (m_editorHwnd) — the same
+    // control saveSource uses — for both VerifyModule_New and the
+    // CELCompiler +0x18 field.
+    std::string verifyModule(ComponentType type, int progId);
+
+    // Close/flush the warehouse for the current thread. Safe to call once at
+    // the end of a batch of operations; the destructor does NOT call this.
+    // NOTE: When called with NULL (0), the warehouse may not actually be
+    // closed due to an internal path-mismatch in orlib20. This is acceptable
+    // for the delete flow — the deletion is persisted via OrlibExit (in the
+    // destructor) and the in-memory BST is updated via DeleteFromTree.
+    void closeWarehouse();
+
+    // Delete an existing component. Returns true if deleted, false if not
+    // found. The flow (confirmed via Frida trace of live TSDev.exe):
+    //   FindExistPos(name, whType) →
+    //   FUN_101a8360 (delete orchestrator: __fastcall ECX=whType, EDX=progId)
+    //     — loads program, marks deleted, runs CELProgramWriter cleanup,
+    //       sends command 0x4E (cache reset) and command 0x17 (save/commit) →
+    //   InitGlobalLookup → DeleteFromTree(globalLookup, whType, progId, 3) →
+    //   closeWarehouse (best-effort flush) →
+    //   OrlibExit (in destructor, persists the deletion) →
+    //   delete .ell/.xml files via Windows API.
+    bool deleteEntry(ComponentType type, const std::string& name);
+
+    // Modify an existing component's EasyLanguage source and recompile/re-verify.
+    // Flow (reuses the existing INSERT primitives directly — no new orlib20
+    // calls, no new RVAs):
+    //   findExistPos(name, type) → lookup existing ProgId
+    //     - if not found (progId <= 0): return Result{success=false,
+    //       message="component not found"}
+    //   saveSource(type, progId, newSource) → replace source in the existing
+    //     entry (the ProgId does NOT change — no createEntry)
+    //   verifyModule(type, progId) → recompile + reverify + persist .ell
+    //     - if verifyModule returns a non-empty error string (compilation
+    //       failed): return Result{success=false, message=<error>,
+    //       progId=progId} — fail loudly with the error
+    //     - if verifyModule returns an empty string (success): return
+    //       Result{success=true, message="", progId=progId}
+    // The .ell file is updated on disk via verifyModule's existing
+    // persistence path (the FUN_10011230 patch is applied in the constructor).
+    Result modifyEntry(ComponentType type, const std::string& name,
+                       const std::string& newSource);
+
+    // Check whether the .ell file for a given entry exists on disk.
+    bool ellFileExists(ComponentType type, int progId);
+
+    // Return the full path of the .ell file for a given entry.
+    std::string getEllPath(ComponentType type, int progId);
+
+    // Return the full path of the .xml (debug symbols) file for a given entry.
+    std::string getXmlPath(ComponentType type, int progId);
+
+private:
+    HMODULE    m_orlib      = nullptr;
+    DWORD_PTR  m_orlibBase  = 0;
+    HWND       m_editorHwnd   = nullptr;  // hidden EDIT control for source text
+    HWND       m_editorParent = nullptr;  // STATIC parent of the EDIT control
+
+    // --- Resolved orlib20 exports (all __stdcall, decorated) ---
+    typedef BOOL (__stdcall *OrlibInit_t)(const char* workDirPath, int contextId);
+    typedef BOOL (__stdcall *OrlibExit_t)(void);
+    typedef int  (__stdcall *FindExistPos_t)(const char* name, int warehouseType);
+    typedef int  (__stdcall *CreateEntryEX_t)(int whType, int secondary,
+                                              const char* name, int param4,
+                                              char param5, int* errCode);
+    typedef int  (__stdcall *SaveModule_New_t)(int warehouseType, int progId,
+                                               void* arg3, HWND editorHwnd,
+                                               void* arg5);
+    typedef int  (__stdcall *VerifyModule_New_t)(HWND hwnd, int warehouseType,
+                                                 int progId, int flag,
+                                                 void* compilerObj);
+    typedef void (__stdcall *GetCompilingErrors_t)(char* buffer);
+    typedef void (__stdcall *CloseWarehouse_t)(int param);
+
+    OrlibInit_t          m_pOrlibInit       = nullptr;
+    OrlibExit_t          m_pOrlibExit       = nullptr;
+    FindExistPos_t       m_pFindExistPos    = nullptr;
+    CreateEntryEX_t      m_pCreateEntry     = nullptr;
+    SaveModule_New_t     m_pSaveModuleNew   = nullptr;
+    VerifyModule_New_t   m_pVerifyModule    = nullptr;
+    GetCompilingErrors_t m_pGetErrors       = nullptr;
+    CloseWarehouse_t     m_pCloseWarehouse  = nullptr;
+
+    // --- Resolved internal functions (by RVA from orlib20 base) ---
+    // StartCompilingProcess: __cdecl, no args, base + 0x165de0
+    typedef void (__cdecl *StartCompilingProcess_t)(void);
+    // EndCompilingProcess: __fastcall, 1 arg, base + 0x165ed0
+    typedef void (__fastcall *EndCompilingProcess_t)(int param);
+    // CELCompiler constructor: __fastcall (ecx=this), base + 0x165a00
+    typedef void* (__fastcall *CELCompilerCtor_t)(void* thisPtr);
+    // CELCompiler destructor: __fastcall (ecx=this), base + 0x165ac0
+    typedef void (__fastcall *CELCompilerDtor_t)(void* thisPtr);
+    // InitGlobalLookup: __cdecl, no args, base + 0x1a9460
+    // Returns pointer to the global lookup object (used as `this` for
+    // DeleteFromTree). Confirmed via Frida trace.
+    typedef void* (__cdecl *InitGlobalLookup_t)(void);
+    // DeleteFromTree: __thiscall (ecx=globalLookup, stack: whType, progId,
+    // flag), base + 0x1e4030. Internally calls RemoveMetaDataModules when
+    // flag != 0. MSVC C++ has no direct __thiscall function-pointer type, so
+    // this is stored as void* and invoked via inline asm in a POD-only helper.
+    // (See callDeleteFromTree in the .cpp.)
+    // GetWarehouse (FUN_101a9650): __cdecl, 1 arg (path, 0=default),
+    // base + 0x1a9650. Returns pointer to the per-thread warehouse object.
+    // Used by FindExistPos and _GetMasterRecByName internally.
+    typedef void* (__cdecl *GetWarehouse_t)(int pathParam);
+
+    StartCompilingProcess_t m_pStartCompiling = nullptr;
+    EndCompilingProcess_t   m_pEndCompiling   = nullptr;
+    CELCompilerCtor_t       m_pCELCompilerCtor = nullptr;
+    CELCompilerDtor_t       m_pCELCompilerDtor = nullptr;
+    InitGlobalLookup_t      m_pInitGlobalLookup = nullptr;
+    void*                   m_pDeleteFromTree   = nullptr;
+    GetWarehouse_t          m_pGetWarehouse     = nullptr;
+
+    // --- Helpers ---
+    HWND createHiddenEditControl();
+    void setSourceText(HWND hwnd, const std::string& source);
+    bool applyPersistencePatch();
+    bool applyThreadCheckPatches();
+
+    // Resolve a decorated export or throw.
+    template <typename FnPtr>
+    FnPtr resolveOrThrow(const char* decoratedName);
+};
+
+} // namespace tsdev
+
+#endif // TSDEV_LIB_H

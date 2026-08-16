@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary
 
-We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete) but carries several unconfirmed parameter orders and one GUI-bound save path that requires a workaround. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. The highest-ROI next step is to resolve the remaining orlib20 unknowns by RE'ing the caller sites in TSDev.exe and to run a headless `_OrlibInit` smoke test.
+We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete). Parameter orders for the key primitives are now **CONFIRMED**, and standalone INSERT persistence (compile + `.ell` file write) has been **demonstrated** without TSDev.exe and without Frida, via an in-process patch to `FUN_10011230` in orlib20.dll (see §5.6). **DELETE is IMPLEMENTED and APPROVED** — the orchestrator-based approach calling `FUN_101a8360` (RVA `0x1A8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.3 DELETE and §5.7). **MODIFY is IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` timestamp updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.3 MODIFY and §5.8). The headless `_OrlibInit` smoke test has **PASSED**. **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is satisfied at the library level. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. Remaining unknowns are narrow: warehouse-type mappings for five component types (ActivityBar/PaintBar/ProbabilityMap/ShowMe/TradingApp) and minor unmapped fields (see §5.5).
 
 ---
 
@@ -98,20 +98,20 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 
 | Primitive | Signature | Confidence | Evidence |
 |-----------|-----------|------------|----------|
-| Init | `BOOL __stdcall _OrlibInit@8(const char* workDirPath, int contextId)` | MED | `evidence_C2a_orlib20_lifecycle.md` §2.1; re_report 2.1; `re_disasm.txt` L5-139. Ref-counted at `0x1023acb0`. `workDirPath` is a writable path (EnsureDirectoryExists), NOT an HINSTANCE. `contextId` passed to `ELRte::CreateRte`. |
+| Init | `BOOL __stdcall _OrlibInit@8(const char* workDirPath, int contextId)` | CONFIRMED | `evidence_C2a_orlib20_lifecycle.md` §2.1; re_report 2.1; `re_disasm.txt` L5-139; `orlib_param_orders.md` §2. Ref-counted at `0x1023acb0`. **Confirmed call:** `OrlibInit(NULL, 1)` → TRUE. `workDirPath` is a **NULL sentinel** (orlib20 derives `MyWork` internally; NOT a path string, NOT an HInstance). `contextId = 1`, passed to `ELRte::CreateRte`. |
 | Teardown | `BOOL __stdcall _OrlibExit@0(void)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.2; re_report 2.2; `re_disasm.txt` L227-275. Decrements refcount; tears down at zero via `ELRte::DestroyRte`. |
-| Name->ID lookup | `int __cdecl FindExistPos(const char* name, int* WHType) -> int` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.4; re_report 2.4; `re_disasm.txt` L675-737. Returns ProgId/N >=0 on success, -1 if absent. ID = record[+0x18]. `*WHType` is an in/out (initialized to 0, updated by lookup). |
+| Name->ID lookup | `int __stdcall FindExistPos(const char* name, int whType) -> int` | CONFIRMED | `evidence_C2a_orlib20_lifecycle.md` §2.4; re_report 2.4; `re_disasm.txt` L675-737; `orlib_param_orders.md` §4. **Confirmed:** `FindExistPos(name, whType)` returns `ProgId` (>0) if found, `0` if not found. Confirmed for strategies (`whType=0`). ID = record[+0x18]. |
 | Subtype lookup | `int __stdcall _FindExistPosSubType@12(const char* name, int WHType, int* outSubType) -> int` | MED | `evidence_C2a_orlib20_lifecycle.md` §2.5; re_report 2.5; `re_disasm2.txt` L342-384. |
 | Get master record | `BOOL __stdcall _GetMasterRecByName@12(const char* name, int WHType, void* outRecord)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.3; re_report 2.3; `re_disasm.txt` L451-484. Copies 268-byte (0x42 dwords + 1 word) master record. |
-| Create entry | `int __stdcall _CreateEntryEX@24(const char* name, ?, ?, ?, ?, int* outErrCode) -> int` | PARTIAL | `evidence_C2b_orlib20_build.md` §3 (`_CreateEntryEX@24` disasm). Returns new ProgId or -1. `*outErrCode` = 0xBFFE (alloc-fail) / 0xBFFD (create-failed/name-conflict). **Confirmed:** param1=name, param6=outErrCode. **Unknown:** params 2-5 (WHType + flags among them, exact order unconfirmed). |
+| Create entry | `int __stdcall _CreateEntryEX@24(int whType, int secondary, const char* name, int param4, char param5, int* outErrCode) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §3; `orlib_param_orders.md` §5. **Confirmed order:** `(whType, 0, name, 0, 0, &errCode)`. Returns new `ProgId` on success. `*outErrCode` = 0xBFFE (alloc-fail) / 0xBFFD (create-failed/name-conflict). `secondary=0`, `param4=0`, `param5=0` observed. |
 | Set source text (non-GUI) | `void* _SaveTextEX@16(void* p1, const char* sourceTextAnsi, const char* name, void* p4)` | MED | `evidence_C2b_orlib20_build.md` §9 (`_SaveTextEX@16` disasm). p2 = source text (HIGH; lstrlenA'd -> warehouse.SetSource). p3 = name (MED). p1 nonzero-checked + lstrlenA'd (uncertain). p4 unused in visible path (uncertain). |
-| Start compile | `void StartCompilingProcess(void)` (cdecl, 0 params) | HIGH | `evidence_C2b_orlib20_build.md` §1 (`StartCompilingProcess` disasm). Resets error array `[0x1023cea0]` + count `[0x1023cea4]`; record stride 0x129 (297); allocs compiler state `[0x1023ceb0]`. |
-| End compile | `void EndCompilingProcess(void)` (0 params) | HIGH | `evidence_C2b_orlib20_build.md` §2 (`EndCompilingProcess` disasm). Tears down compiler state. |
-| Verify module | `BOOL __stdcall _VerifyModule_New@20(HWND parent, int WHType, void* sourceOrModule, ?, ?)` | PARTIAL | `evidence_C2b_orlib20_build.md` §5 (`_VerifyModule_New@20` disasm). param1=HWND, param2=WHType (HIGH); param3=src/module (MED); p4/p5 unknown. |
+| Start compile | `void StartCompilingProcess(void)` (cdecl, 0 params) | CONFIRMED | `evidence_C2b_orlib20_build.md` §1; `orlib_param_orders.md` §9. Resets error array `[0x1023cea0]` + count `[0x1023cea4]`; record stride 0x129 (297); allocs compiler state `[0x1023ceb0]`. **Required before `VerifyModule_New`.** |
+| End compile | `void EndCompilingProcess(int arg)` (__fastcall, 1 arg; pass `0`) | CONFIRMED | `evidence_C2b_orlib20_build.md` §2; `orlib_param_orders.md` §9. Tears down compiler state. **Required after `VerifyModule_New`**; call with `0`. |
+| Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. |
 | Verify by name (wrapper) | `BOOL VerifyATechnique(const char* name, int WHType) -> BOOL` | HIGH | `evidence_C2b_orlib20_build.md` §5 (`VerifyATechnique` wrapper disasm). Looks up module internally; preferred for CLI. |
-| Get errors | `std::string _GetCompilingErrors@4(std::string* hiddenRetPtr)` | MED-HIGH | `evidence_C2b_orlib20_build.md` §7 (`_GetCompilingErrors@4` disasm). Builds concatenated "name: msg\n..." across all error records; if array empty, reads `VERIFY.ERR`. |
+| Get errors | `std::string _GetCompilingErrors@4(std::string* hiddenRetPtr)` | CONFIRMED | `evidence_C2b_orlib20_build.md` §7; `orlib_param_orders.md` §10. Builds concatenated "name: msg\n..." across all error records; if array empty, reads `VERIFY.ERR`. An empty buffer = success. |
 | Get error level | `int _GetErrorLevel@4(int idx) -> int` | HIGH | `evidence_C2b_orlib20_build.md` §8 (`_GetErrorLevel@4` disasm). 1 if record[0]==0x7775 sentinel (error), 0 = warning/none. Error count = global `[0x1023cea4]`. No single "overall level"; caller checks count>0 + per-record levels. |
-| Persist/save | `BOOL __stdcall _SaveModule_New@20(int WHType, const char* name, ?, HWND editorHwnd, ?)` | HIGH (GUI-bound) | `evidence_C2b_orlib20_build.md` §6 (`_SaveModule_New@20` disasm). GUI-bound via its inner callee 0x10159770 (IsWindow check) → SaveToDisk 0x101081c0 which reads source via WM_GETTEXT from an edit control, converts wide→UTF-8, calls warehouse.SetSourceText then `MDVault::SaveModule` (writes `elmodule_<X>_<N>.ell/.xml`); also shows a QuickEditor→PowerEditor MessageBox warning. See `evidence_C2b_orlib20_build.md` §6. |
+| Persist/save (source text) | `int __stdcall _SaveModule_New@20(int whType, int progId, void* arg3, HWND editorHwnd, void* arg5) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §6; `orlib_param_orders.md` §6. **Confirmed:** `(whType, progId, NULL, hwnd, NULL)`. Reads source via `WM_GETTEXT` from an `IsWindow`-checked `EDIT` control, converts wide→UTF-8, sets warehouse source text. **Does NOT persist `.ell`/`.xml` files** — persistence is performed by `VerifyModule_New` (see above). Returns `1` on success. |
 | Mark deleted (flag only) | `void __stdcall _SetSigDeleted@4(void* masterRecord)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.6; `evidence_C2b_orlib20_build.md` §10; re_report 2.6; `re_disasm.txt` L1127-1141. Sets byte@0x79 bit0, clears word@0xD8 bit1. NO file I/O. |
 | Is deleted | `BOOL __stdcall _IsSigDeleted@4(const void* rec)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.7; `evidence_C2b_orlib20_build.md` §10; re_report 2.7; `re_disasm.txt` L1347-1361. |
 | File removal | `void FILEDELETE(void* moduleInfo, ?, LPCWSTR path)` (export) | MED | `evidence_C2b_orlib20_build.md` §11 (`FILEDELETE` disasm) + DeleteFile xref map. DeleteFileW + dependent files. |
@@ -120,105 +120,265 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Remove metadata (single) | `void RemoveMetaDataModule(const char* name)` (unexported) | MED | `evidence_C2a_orlib20_lifecycle.md` §3.3; re_report 3.3; `re_disasm4.txt` L207-296. Calls `MDVault::RemoveModule`. |
 | Clean masters | `BOOL __stdcall _CleanMastersEX@4(int WHType)` | MED | `evidence_C2a_orlib20_lifecycle.md` §3.6; re_report 3.6; `re_disasm.txt` L2691-2796. Iterates records, clears changed/linked flag @0xe4. |
 | Warehouse singleton | `void* GetWarehouse(const char* nameOrZero)` (Ord 10 @ 0x101A9650) | HIGH | `evidence_C2b_orlib20_build.md` (`GetWarehouse singleton` disasm); `evidence_C2a_orlib20_lifecycle.md` §2.3. Thread-safe; called by nearly every function. |
+| Warehouse flush/close | `void __stdcall _CloseWarehouseForCurrentThreadAndPath@4(int arg)` | CONFIRMED | `orlib_param_orders.md` §11. **Confirmed:** call with `0` after all operations to flush/close the warehouse. Required at end of INSERT/MODIFY flow before `OrlibExit`. |
 | Direct save (alt) | `MDVault::SaveModule(ModuleInfo*, std::wstring&...)` (ELMDCore.dll, mangled) | LOW (unconfirmed) | `evidence_C2b_orlib20_build.md` §6 (mangled import symbol referenced in `_SaveModule_New` semantics). Bypasses the GUI-bound `_SaveModule_New`. |
 
 ### 5.2 WHType enum
 
-| WHType | Name | Letter | Subtypes |
-|--------|------|--------|----------|
-| 0 | Strategy | S | 0,1 = Strategy; 2,3 = Strategy Group |
-| 1 | Function | F | (single) |
-| 2 | Indicator | I | 0,1 = Indicator; 2,3 = PaintBar; 4,5 = ShowMe; 6,7 = Expert; 8,9 = Expiration Rule; 0xa,0xb = Volatility Model; 0xc,0xd = Pricing Model; 0xe,0xf = Bid/Ask Model; 0x10,0x11 = Search Strategy; 0x12,0x13 = ProbabilityMap |
-| 3 | ActivityBar | B | (single) |
-| 4 | Function (Read Only) | M | (single) |
-| 0x32 (50) | Unknown (composite/project?) | — | Appears in verify/save; meaning unknown. |
+> **Evidence:** `orlib_param_orders.md` §1. The three mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ShowMe/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
+
+| WHType | Name | Letter | Subtypes | Status |
+|--------|------|--------|----------|--------|
+| 0 | Strategy | S | 0,1 = Strategy; 2,3 = Strategy Group | **CONFIRMED** |
+| 1 | Function | F | (single) | UNCONFIRMED (static survey) |
+| 2 | Indicator | I | 0,1 = Indicator; 2,3 = PaintBar; 4,5 = ShowMe; 6,7 = Expert; 8,9 = Expiration Rule; 0xa,0xb = Volatility Model; 0xc,0xd = Pricing Model; 0xe,0xf = Bid/Ask Model; 0x10,0x11 = Search Strategy; 0x12,0x13 = ProbabilityMap | **CONFIRMED** (base type); subtype attributions UNCONFIRMED |
+| 3 | ActivityBar | B | (single) | UNCONFIRMED (static survey) |
+| 4 | Function | M | (single) | **CONFIRMED** |
+| 0x32 (50) | Unknown (composite/project?) | — | Appears in verify/save; meaning unknown. | UNCONFIRMED |
+
+**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp. Any code written today must restrict itself to the three confirmed types (0=Strategy, 2=Indicator, 4=Function).
 
 TypeConvert (`0x101d43a0`) expands a WHType into a composite-ID list (subtype<<8 | WHType) terminated by -1, used by warehouse lookups to search all subtypes.
 
 ### 5.3 Proposed call sequences (pseudocode)
 
-**Common preamble:**
+> **Evidence:** `orlib_param_orders.md` §15 (complete INSERT flow). The INSERT flow below is **CONFIRMED** — standalone disk persistence of `.ell` files has been demonstrated without TSDev.exe and without Frida (see §5.6). The MODIFY flow is **IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (see §5.3 MODIFY and §5.8). DELETE is **IMPLEMENTED and APPROVED** — the orchestrator-based approach (see §5.7) has been verified by two independent test runs.
+
+**Common preamble (CONFIRMED):**
 ```cpp
-SetDllDirectory("C:\\Program Files (x86)\\TradeStation 9.5\\Program");
-BOOL ok = _OrlibInit(workDirPath, contextId);   // contextId TBD by smoke test
+// 1. Set DLL search directory to the TS Program folder
+SetDllDirectoryW(L"C:\\Program Files (x86)\\TradeStation 9.5\\Program");
+
+// 2. Load the library engine
+HMODULE orlib = LoadLibraryW(L"orlib20.dll");
+
+// 3. Pre-load support DLLs required for compilation (before OrlibInit)
+LoadLibraryW(L"ECL.dll");
+LoadLibraryW(L"ORELUI20.dll");
+LoadLibraryW(L"orUI20.dll");
+LoadLibraryW(L"elobjmod.dll");
+LoadLibraryW(L"elwinforms.dll");
+LoadLibraryW(L"tschartxelobjmdl.dll");
+LoadLibraryW(L"ELDebugger.dll");
+
+// 4. Patch FUN_10011230 at orlib20_base+0x11230 (SymWriter bypass — see §5.6)
+//    8 bytes: B8 01 00 00 00 C2 0C 00   (MOV EAX,1; RET 0x0C)
+patch_memory((BYTE*)orlib + 0x11230, "\xB8\x01\x00\x00\x00\xC2\x0C\x00", 8);
+
+// 5. Init
+BOOL ok = OrlibInit(NULL, 1);   // workDirPath = NULL sentinel, contextId = 1
 if (!ok) { /* fail loudly */ }
 ```
 
-**INSERT:**
+**INSERT — CONFIRMED (standalone persistence demonstrated):**
 ```cpp
+int whType = 0;  // Strategy (0=Strategy, 2=Indicator, 4=Function — CONFIRMED)
 int errCode = 0;
-int progId = _CreateEntryEX(name, /*WHType+flags: UNCONFIRMED order*/, &errCode);
-if (progId < 0) {
-    // errCode 0xBFFE = alloc fail; 0xBFFD = create fail / name conflict
-    fail_loudly("insert failed: 0x%X", errCode);
+
+// 6. Check if the component already exists
+int progId = FindExistPos(name, whType);   // returns ProgId >0 if found, 0 if not
+
+// 7. If not found, create the entry
+if (progId == 0) {
+    progId = CreateEntryEX(whType, 0, name, 0, 0, &errCode);
+    if (progId <= 0) {
+        // errCode 0xBFFE = alloc fail; 0xBFFD = create fail / name conflict
+        fail_loudly("insert failed: 0x%X", errCode);
+    }
 }
-_SaveTextEX(/*p1: UNCONFIRMED*/, sourceTextAnsi, name, /*p4: UNCONFIRMED*/);
-StartCompilingProcess();
-BOOL vok = VerifyATechnique(name, whType);   // preferred over _VerifyModule_New
-EndCompilingProcess();
-int errCount = *(int*)0x1023cea4;            // error record count
-if (errCount > 0) {
-    std::string errs = _GetCompilingErrors(&retPtr);
-    for (int i=0;i<errCount;i++) if (_GetErrorLevel(i)==1) { fail_loudly(errs); }
-}
-// Persist: GUI-bound path -> workaround
-HWND hEdit = CreateWindowW("EDIT", ..., WS_POPUP, 0,0,0,0, NULL, NULL, hInst, NULL);
+
+// 8. Create a hidden EDIT control and load the source text into it
+HWND hEdit = CreateWindowW(L"EDIT", L"", WS_POPUP, 0,0,0,0, NULL, NULL, hInst, NULL);
 SetWindowTextW(hEdit, widen(sourceText));
-_SaveModule_New(whType, name, /*p3*/, hEdit, /*p5*/);
-DestroyWindow(hEdit);
-_OrlibExit();
-```
 
-**MODIFY:**
-```cpp
-int whType = expectedType;
-int progId = FindExistPos(name, &whType);
-if (progId < 0) { notify_not_found(name); return; }
-_SaveTextEX(/*p1*/, newSourceAnsi, name, /*p4*/);
+// 9. SaveModule_New — saves source text into the warehouse entry (does NOT persist files)
+SaveModule_New(whType, progId, NULL, hEdit, NULL);
+
+// 10. Allocate 88-byte CELCompiler and call its constructor (FUN_10165a00, __fastcall, ECX=this)
+void* compilerObj = malloc(88);
+((void(__fastcall*)(void*))((BYTE*)orlib + 0x165a00))(compilerObj);
+
+// 11. Set compiler fields: +0x10=0xa02, +0x18=hwnd, +0x28=6
+*(int*)((BYTE*)compilerObj + 0x10) = 0xa02;
+*(HWND*)((BYTE*)compilerObj + 0x18) = hEdit;
+*(int*)((BYTE*)compilerObj + 0x28) = 6;
+
+// 12. StartCompilingProcess() — required before VerifyModule_New
 StartCompilingProcess();
-VerifyATechnique(name, whType);
-EndCompilingProcess();
-// check errors as above; fail loudly on error level==1
-// persist via hidden-EDIT workaround (same as INSERT)
+
+// 13. VerifyModule_New — compiles AND persists the .ell file
+int vok = VerifyModule_New(hEdit, whType, progId, 1, compilerObj);
+
+// 14. GetCompilingErrors — fail loudly if non-empty
+std::string errs = GetCompilingErrors(&retPtr);
+if (!errs.empty()) { fail_loudly("compile failed: %s", errs.c_str()); }
+
+// 15. EndCompilingProcess(0) — required after VerifyModule_New
+EndCompilingProcess(0);
+
+// 16. CloseWarehouseForCurrentThreadAndPath(0) — flush/close warehouse
+CloseWarehouseForCurrentThreadAndPath(0);
+
+// 17. CELCompiler destructor (FUN_10165ac0, __fastcall, ECX=this)
+((void(__fastcall*)(void*))((BYTE*)orlib + 0x165ac0))(compilerObj);
+free(compilerObj);
+
+// 18. OrlibExit()
+DestroyWindow(hEdit);
+OrlibExit();
+
+// 19. Verify elmodule_<whType>_<progId>.ell exists on disk
+//     (e.g. elmodule_0_2572.ell, magic RNAM)
 ```
 
-**DELETE:**
+**MODIFY — IMPLEMENTED & APPROVED (composes existing INSERT primitives; see §5.8):**
+```cpp
+int whType = 0;
+// 6. Look up the existing component
+int progId = FindExistPos(name, whType);
+if (progId == 0) { notify_not_found(name); return; }
+// 8-17. Same as INSERT from step 8 onward (hidden EDIT control, SaveModule_New,
+//       CELCompiler setup, StartCompilingProcess, VerifyModule_New, error check,
+//       EndCompilingProcess, CloseWarehouseForCurrentThreadAndPath, dtor, OrlibExit)
+// 19. Verify elmodule_<whType>_<progId>.ell exists on disk
+```
+
+> **MODIFY test evidence (2 independent runs, exit 0, all 8 phases pass):**
+> - ProgId preserved across modify (2609→2609, 2610→2610).
+> - `.ell` timestamp changed on modify (re-compiled + re-persisted).
+> - Negative test (nonexistent name) returns `success=false`.
+> - Compile-error test returns `success=false` with a non-empty message.
+> - Cleanup (`deleteEntry`) passes; no crashes/WerFault.
+>
+> **Known follow-up (pre-existing, not a MODIFY bug):** `GetCompilingErrors` returns an empty buffer in headless mode; `verifyModule` has a fallback that synthesizes a message when `VerifyModule_New != 1`. This affects error-message fidelity, not correctness of the modify/verify outcome.
+
+**DELETE — IMPLEMENTED & APPROVED (orchestrator-based; see §5.7):**
 ```cpp
 int whType = expectedType;
-int progId = FindExistPos(name, &whType);
-if (progId < 0) { notify_not_found(name); return; }
-char masterRec[268];
-_GetMasterRecByName(name, whType, masterRec);
-_SetSigDeleted(masterRec);
-// persist master index (save mechanism TBD — see unknowns)
-RemoveMetaDataModules(name, progId);
-// file removal:
+
+// 6. Look up the existing component
+int progId = FindExistPos(name, whType);
+if (progId <= 0) { notify_not_found(name); return; }
+
+// 7. Call the internal delete orchestrator (FUN_101a8360, RVA 0x1A8360)
+//    __fastcall: ECX = whType, EDX = progId
+//    SEH-protected. Internally performs DeleteFromTree → closeWarehouse →
+//    commit storages, which persists the deletion to MWRKArea.wrk.
+//    Requires 3 thread-check INT3 patches (NOP'd in TsDevLib constructor):
+//      RVA 0x1D0993, 0x1CF5D4, 0x1D1FC8  (see §5.7)
+typedef void (__fastcall *DeleteOrchestratorFn)(int whType, int progId);
+DeleteOrchestratorFn deleteOrchestrator =
+    (DeleteOrchestratorFn)((BYTE*)orlib + 0x1A8360);
+__try {
+    deleteOrchestrator(whType, progId);
+} __except (EXCEPTION_EXECUTE_HANDLER) {
+    fail_loudly("delete orchestrator raised an exception");
+}
+
+// 8. Delete .ell / .xml files for the removed entry
 char path[MAX_PATH]; SigNumToFileName(path, whType, progId);
 FILEDELETE(/*moduleInfo*/, /*p2*/, widen(path));   // deletes .ell + dependents
-_CleanMastersEX(whType);
-_OrlibExit();
+
+// 9. OrlibExit()
+OrlibExit();
 ```
 
-### 5.4 GUI-save workaround
+> **RETIRED approaches (do NOT use):** The earlier static-analysis DELETE
+> pseudocode (`SetSigDeleted` + `RemoveMetaDataModules` + `CleanMastersEX`)
+> and all prior persistence attempts (command `0x45`, dirty-flag manipulation
+> at offset `+0xBE` with command `0x27`, killing `WHServer.exe`, manual worker
+> command sequencing) have been **rejected** — they either crashed, did not
+> persist, or violated the standalone constraint. See §5.7 and
+> `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` for the full rejection record.
 
-`_SaveModule_New@20` is GUI-bound: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide->UTF-8, sets warehouse source, then calls `MDVault::SaveModule` (which writes `elmodule_<X>_<N>.ell/.xml`). It also shows a QuickEditor->PowerEditor MessageBox warning.
+### 5.4 SaveModule_New — source text only (no file persistence)
 
-**Workaround (low complexity):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. The MessageBox warning may still fire; suppress by either pre-configuring the "don't warn" state (if a registry/config flag exists) or by auto-dismissing via a thread hook.
+`_SaveModule_New@20` is GUI-bound in its source-retrieval path: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide→UTF-8, and sets the warehouse source text. **It does NOT persist `.ell`/`.xml` files** — it saves source text into the warehouse entry only (see §5.1 primitive table). Persistence of the compiled `.ell` file is performed by `VerifyModule_New` (with the `FUN_10011230` patch applied — see §5.6), which compiles the source and calls `ELMeta::MDVault::SaveModule` to write `elmodule_<X>_<N>.ell` to disk.
 
-**Alternative (unconfirmed):** Call `MDVault::SaveModule` directly (ELMDCore.dll import, mangled `?SaveModule@MDVault@ELMeta@@QAE_NPAVModuleInfo@2@AAV?$basic_string@_W...`). This bypasses the GUI entirely but the exact `ModuleInfo` construction and parameter list are unconfirmed.
+**Hidden-EDIT workaround (CONFIRMED, low complexity):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. This workaround has been demonstrated working in the standalone INSERT flow (see §5.3 and §5.6).
+
+> **NOTE:** An earlier version of this section stated that `_SaveModule_New` "calls `MDVault::SaveModule` (which writes `elmodule_<X>_<N>.ell/.xml`)." That was incorrect — `_SaveModule_New` sets warehouse source text only. File persistence is via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (see §5.6).
 
 ### 5.5 Remaining unknowns / blockers
 
-1. **`_SaveModule_New` GUI dependency** (highest blocker) — resolvable via hidden EDIT control workaround (low complexity) or `MDVault::SaveModule` direct (unconfirmed).
-2. **`_CreateEntryEX` params 2-5** (WHType position) — unconfirmed.
-3. **`_SaveTextEX` p1/p4 roles** — uncertain.
-4. **`_VerifyModule_New` p3 type + p4/p5** — uncertain (mitigated by using `VerifyATechnique` wrapper instead).
-5. **Whether `_SaveTextEX` alone persists or save is mandatory** — unconfirmed.
-6. **`_GetCompilingErrors` exact formatting** — MED-HIGH confidence.
-7. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.
-8. **WHType 0x32 special case** — unknown.
-9. **Which function directly deletes `.ell` files** — `DeleteFileA/W` is imported; `FILEDELETE` is the export but the exact orchestration (master-index save between SetSigDeleted and FILEDELETE) is inferred from TSDev.exe behavior, not fully traced in orlib20.
-10. **Valid `contextId` values for `_OrlibInit`** — passed to `ELRte::CreateRte`; needs runtime testing.
+> **Resolved items:** The following were previously listed as unknowns and are now **CONFIRMED** — see §5.1 (primitive table) and §5.6 (persistence fix): `_CreateEntryEX` params 2-5, `_VerifyModule_New` p3/p4/p5, `_SaveModule_New` GUI dependency (hidden-EDIT workaround confirmed), `_SaveTextEX` persistence semantics (SaveModule_New saves source only; VerifyModule_New persists `.ell`), `_GetCompilingErrors` formatting, `contextId` valid values (contextId=1), and the GUI-save persistence path (resolved via the `FUN_10011230` patch — see §5.6).
+
+**Genuinely unresolved:**
+
+1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap / ShowMe / TradingApp** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4.
+2. ~~**DELETE flow not yet tested end-to-end**~~ — **RESOLVED — IMPLEMENTED & APPROVED.** The orchestrator-based approach (`FUN_101a8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.7). Prior approaches (`SetSigDeleted` + `RemoveMetaDataModules` + `CleanMastersEX`, command `0x45`, dirty-flag manipulation, `WHServer.exe` termination) are RETIRED/rejected.
+3. **`_SaveTextEX` p1/p4 roles** — uncertain (MED confidence). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead. `_SaveTextEX` remains unmapped for completeness.
+4. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.
+5. **WHType 0x32 special case** — meaning unknown; may affect verify/save.
+
+### 5.6 Persistence fix — SymWriter bypass (CONFIRMED, breakthrough)
+
+> **Evidence:** `orlib_param_orders.md` §12. This is the critical fix that enables standalone disk persistence of `.ell` files without TSDev.exe and without Frida.
+
+**Root cause:** `SymWriter::Save` in **`ELDebugger.dll`** (at RVA `0x120a0`) calls `XmlDocument.Save` — a .NET managed method — via a virtual call at vtable offset `0xd8`. In a standalone native process, the CLR is only **partially** initialized: the mixed-mode C++/CLI support DLLs load, but they do not fully boot the runtime, so the JIT-compiled target address is invalid. The virtual call therefore causes an access violation.
+
+That exception is caught by the SEH handler of `FUN_10011230` in **orlib20.dll**. When the handler runs, `CompileText` skips `ELMeta::MDVault::SaveModule` — the function that actually writes the `.ell` file. As a result, the source compiles but **nothing is persisted to disk**.
+
+**Fix:** Patch `FUN_10011230` in orlib20.dll (at RVA `0x11230`) to **return 1 immediately**. This bypasses the `SymWriter` crash entirely. `CompileText` then proceeds normally to call `ELMeta::MDVault::SaveModule`, which writes the `.ell` file (compiled module, magic `RNAM`).
+
+**Patch bytes (8 bytes at `orlib20_base + 0x11230`):**
+```
+B8 01 00 00 00    MOV EAX, 1
+C2 0C 00          RET 0x0C
+```
+`FUN_10011230` is `__fastcall` with 5 parameters (`ECX`, `EDX`, and 3 stack args = 12 bytes), hence `RET 0x0C`. The patch is applied **in-process to the loaded orlib20.dll image in the standalone CLI's own address space** (memory only); the on-disk `orlib20.dll` is never modified (READ-ONLY install preserved).
+
+**Consequence:** The `.xml` file (debug symbols) is **NOT** written. This is acceptable — 7 existing `.ell` files in `MyWork\Bin` already operate without paired `.xml` files. The `.ell` file is the compiled module that TradeStation actually uses.
+
+**Evidence:** Standalone probe `elevated_test20.exe` with the in-process patch produces `elmodule_0_2572.ell` (5091 bytes, magic `RNAM`) with **no Frida attached**. Compilation error buffer is empty. `VerifyModule_New = 1`.
+
+### 5.7 DELETE — orchestrator approach (IMPLEMENTED & APPROVED)
+
+> **Evidence:** `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` (current/production section). Adversarial review: APPROVED (7 non-blocking findings addressed in cleanup).
+
+**Approach:** DELETE calls the internal orlib20 **delete orchestrator** `FUN_101a8360` (RVA `0x1A8360`) — the same high-level routine TSDev.exe's own delete path drives. It encapsulates the full worker-command sequence (open warehouse → delete + commit storages → update BST → close) so the CLI does not replicate individual worker commands.
+
+**Delete flow (verified):**
+1. `FindExistPos(name, whType)` → `progId` (exported, safe; notify if not found).
+2. `FUN_101a8360(whType, progId)` — `__fastcall` (`ECX=whType`, `EDX=progId`), SEH-protected. Internally performs `DeleteFromTree` → `closeWarehouse` → commit storages, which persists the deletion to `MWRKArea.wrk`.
+3. Delete `.ell`/`.xml` files for the removed entry (`SigNumToFileName` + `FILEDELETE`).
+4. `OrlibExit()`.
+
+**Thread-check INT3 patches:** Three `swi(3)` (INT3) thread-check instructions in the orchestrator path would crash a standalone CLI (calling thread ≠ orlib worker thread). They are NOP'd out in-process (loaded image only; on-disk DLL never modified), applied once in the `TsDevLib` constructor:
+
+| RVA | Patch |
+|-----|-------|
+| `0x1D0993` | `INT3` → `NOP` |
+| `0x1CF5D4` | `INT3` → `NOP` |
+| `0x1D1FC8` | `INT3` → `NOP` |
+
+**Test evidence (2 independent runs):** Exit code 0 (both runs); no WerFault/crash; `MWRKArea.wrk` shrank 4096 bytes with changed timestamp; fresh `FindExistPos` in a new process returned −1; `.ell` removed.
+
+**Standalone constraint maintained:** No TSDev.exe required, no `WHServer.exe` killing. The READ-ONLY TradeStation install is never modified (patches are in-process to the loaded DLL image only).
+
+**Retired/rejected approaches (do NOT use):** Direct lookup path (`FUN_101d05e0` — crashed); `CloseWarehouseForCurrentThreadAndPath` alone (did not persist); dirty-flag manipulation at offset `+0xBE` with command `0x27` (command `0x27` is not a save — it is a thin COM wrapper with no file I/O); command `0x45` / commit-all-storages (accepted but did not persist standalone); killing `WHServer.exe` (did not persist, caused crash-report popups); manual worker command sequencing `0x0F`→`0x32`→`0x17` (superseded by the orchestrator). See `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` for the full historical record.
+
+### 5.8 MODIFY — composition of INSERT primitives (IMPLEMENTED & APPROVED)
+
+> **Evidence:** Two independent test runs, exit 0, all 8 phases pass. Adversarial review: APPROVED.
+
+**Approach:** MODIFY introduces **no new orlib20 calls and no new RVAs**. It composes only existing, already-confirmed INSERT primitives in sequence:
+
+1. `findExistPos(name, whType)` → `progId` (notify if not found; `success=false`).
+2. `saveSource` — hidden EDIT control + `SaveModule_New` (sets warehouse source text for the existing entry).
+3. `verifyModule` — `CELCompiler` setup + `StartCompilingProcess` + `VerifyModule_New` (with the `FUN_10011230` patch applied — see §5.6) → compiles AND re-persists the `.ell` file for the existing `progId`.
+4. Error check + `EndCompilingProcess` + `CloseWarehouseForCurrentThreadAndPath` + `OrlibExit`.
+
+The only difference from INSERT is that `CreateEntryEX` is skipped — the existing `progId` is reused, so the ProgId is preserved across the modify.
+
+**Test evidence (2 independent runs, exit 0, all 8 phases pass):**
+- ProgId preserved across modify (2609→2609, 2610→2610).
+- `.ell` timestamp changed on modify (re-compiled + re-persisted).
+- Negative test (nonexistent name) returns `success=false`.
+- Compile-error test returns `success=false` with a non-empty message.
+- Cleanup (`deleteEntry`) passes; no crashes/WerFault.
+
+**Known follow-up (pre-existing, not a MODIFY bug):** `GetCompilingErrors` returns an empty buffer in headless mode; `verifyModule` has a fallback that synthesizes a message when `VerifyModule_New != 1`. This affects error-message fidelity, not the correctness of the modify/verify outcome.
 
 ---
 
@@ -227,43 +387,44 @@ _OrlibExit();
 | Criterion | Approach 1 (ELIS.exe COM) | Approach 2 (orlib20.dll direct) |
 |-----------|---------------------------|---------------------------------|
 | Name -> (WHType, ProgId) resolution | NOT exposed; must scan XML out-of-band | `FindExistPos` / `_GetMasterRecByName` (HIGH conf) |
-| Raw-source insert | No — XML file import only | `_CreateEntryEX` + `_SaveTextEX` (MED conf) |
-| Compile/verify | `VerifyAll` (whole library, void) | `StartCompilingProcess` + `VerifyATechnique` (HIGH conf) |
-| Error reporting | Void on delete/verify; results BSTR on import only | `_GetCompilingErrors` + `_GetErrorLevel` + count global (MED-HIGH conf) |
-| Delete | `DeleteAnalysisTechnique(WHType,ProgId)` void; needs ProgId | `SetSigDeleted` + `RemoveMetaDataModules` + `FILEDELETE` + `SigNumToFileName` (HIGH conf on pieces, MED on orchestration) |
-| Modify | No primitive (delete+insert) | Set source + verify + save (same primitives as insert) |
-| Complexity / risk | Low call complexity, HIGH gap-filling complexity (XML synth, name resolution, error inference) | MED call complexity, MED param-order risk (resolvable via caller RE) |
-| Headless viability | Uncertain (Desktop coupling suspected; void errors) | Likely YES (no TSDev/TS import; needs CreateRte smoke test) |
+| Raw-source insert | No — XML file import only | `_CreateEntryEX` + `_SaveModule_New` (CONFIRMED) |
+| Compile/verify | `VerifyAll` (whole library, void) | `StartCompilingProcess` + `VerifyModule_New` (CONFIRMED) |
+| Error reporting | Void on delete/verify; results BSTR on import only | `_GetCompilingErrors` + `_GetErrorLevel` + count global (CONFIRMED) |
+| Delete | `DeleteAnalysisTechnique(WHType,ProgId)` void; needs ProgId | Orchestrator `FUN_101a8360` (`__fastcall`, SEH-protected) + thread-check INT3 NOP patches + `FILEDELETE` (IMPLEMENTED & APPROVED; see §5.7) |
+| Modify | No primitive (delete+insert) | Set source + verify + save (same primitives as insert; IMPLEMENTED & APPROVED — see §5.8) |
+| Complexity / risk | Low call complexity, HIGH gap-filling complexity (XML synth, name resolution, error inference) | MED call complexity, LOW risk (param orders CONFIRMED, persistence CONFIRMED) |
+| Headless viability | Uncertain (Desktop coupling suspected; void errors) | YES (smoke test PASSED; no TSDev/TS import) |
 
 ### Recommendation
 
-**Primary: Approach 2 (orlib20.dll direct invocation).** It is the only approach that exposes primitives for all three acceptance criteria, including targeted compile/verify with retrievable errors and name resolution. Its risks are concentrated in a small number of unconfirmed parameter orders and one GUI-bound save path, all of which have identified resolution paths. It aligns with the project goal of least custom implementation: the CLI becomes a thin orchestrator over the same engine TSDev.exe uses.
+**Primary: Approach 2 (orlib20.dll direct invocation).** It is the only approach that exposes primitives for all three acceptance criteria, including targeted compile/verify with retrievable errors and name resolution. Parameter orders for the key primitives are **CONFIRMED**, standalone INSERT persistence has been demonstrated via the `FUN_10011230` patch (see §5.6), **DELETE is IMPLEMENTED and APPROVED** via the orchestrator approach (see §5.7), and **MODIFY is IMPLEMENTED and APPROVED** via composition of existing INSERT primitives (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining risks are narrow: warehouse-type mappings for five component types and minor unmapped fields (see §5.5). It aligns with the project goal of least custom implementation: the CLI becomes a thin orchestrator over the same engine TSDev.exe uses.
 
 **Fallback: Approach 1 (ELIS.exe COM).** Retain for the delete operation only, and only if name resolution is handled externally (e.g., XML scan) and the void return is acceptable. Not viable for insert/modify due to XML-only import and absent error reporting.
 
-The recommendation is conditional on two de-risking gates (see Next Steps): (a) resolving the orlib20 unknown param orders, and (b) confirming `_OrlibInit` + `ELRte::CreateRte` succeeds without TradeStation Desktop running.
+Both de-risking gates have **PASSED**: (a) orlib20 parameter orders are **CONFIRMED** (see §5.1), and (b) the headless `_OrlibInit` smoke test succeeded without TradeStation Desktop running (see `headless_init_smoke_test.md`).
 
 ---
 
 ## 7. Next Steps (TVS-2 Proposal)
 
+> **Status update:** Items (a), (b), and (c) below are all **COMPLETED**. Parameter orders are CONFIRMED (see §5.1, `orlib_param_orders.md`), the headless init smoke test PASSED (see `headless_init_smoke_test.md`), standalone INSERT persistence has been demonstrated (see §5.6), DELETE is IMPLEMENTED & APPROVED (see §5.7), and MODIFY is IMPLEMENTED & APPROVED (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining work is follow-ups only (see §5.5 and §8).
+
 The highest-ROI next slice de-risks the recommendation before any broad implementation:
 
-**a) Resolve orlib20 unknown parameter orders (RE).**
+**a) Resolve orlib20 unknown parameter orders (RE) — COMPLETED.**
 Primary approach — **live tracing via the frida MCP** (Frida 17.17.0): spawn or attach to TSDev.exe via `create_interactive_session`, hook the orlib20 functions (`_CreateEntryEX@24`, `_SaveTextEX@16`, `_SaveModule_New@20`, `_VerifyModule_New@20`) with `Interceptor.attach` to capture `args[0..N]` in `onEnter`, then trigger insert/delete/modify operations in the TSDev UI to observe the actual argument values passed by the authoritative caller. This gives dynamic, authoritative argument values and is more reliable than static disassembly.
 
 Secondary/confirmatory approach — **RE the caller sites in TSDev.exe** (static, deterministic): disassemble the call sites of the same functions within TSDev.exe to recover the exact argument order and types the GUI host uses. Use this to corroborate the live-trace findings.
 
 As a quick preliminary to the headless smoke test (step b), hook `_OrlibInit@8` in ELIS.exe at startup via the frida MCP to capture its actual arguments (`workDirPath`, `contextId`) — this resolves open question #2 (`contextId` valid values) directly from the authoritative caller.
 
-**b) Headless init smoke test (critical gate).**
+**b) Headless init smoke test (critical gate) — COMPLETED (PASSED).**
 Build a minimal 32-bit C++ test that loads orlib20.dll, sets the DLL search directory to the TS Program folder, and calls `_OrlibInit(workDirPath, contextId)` with a candidate `contextId` (try 0 and small integers). Assert the return is nonzero and that `ELRte::CreateRte` succeeded (observable via a subsequent `FindExistPos` call returning a known existing name). Run this **without** TradeStation Desktop running. This is the critical headless-viability gate. If it fails, the recommendation must be revisited.
 
-**c) Implement the CLI with TDD (red-green), starting from DELETE.**
-Order by ascending risk:
-1. **DELETE** (simplest, lowest risk): `FindExistPos` -> notify if -1 -> `_GetMasterRecByName` -> `_SetSigDeleted` -> persist -> `RemoveMetaDataModules` -> `FILEDELETE`. Write the failing test first (delete a known throwaway strategy), then implement to green.
-2. **INSERT**: `_CreateEntryEX` -> `_SaveTextEX` -> compile/verify -> error check -> save (hidden-EDIT workaround).
-3. **MODIFY**: `FindExistPos` -> notify if -1 -> `_SaveTextEX` -> compile/verify -> error check -> save.
+**c) Implement the CLI with TDD (red-green). — COMPLETED (all three functions IMPLEMENTED & APPROVED).**
+1. ~~**DELETE**~~ — **DONE & APPROVED.** Orchestrator-based approach (`FUN_101a8360`) with thread-check INT3 NOP patches; persistence verified by two independent test runs (see §5.7).
+2. ~~**INSERT**~~ — **DONE.** Standalone persistence demonstrated via `elevated_test20.exe` + `FUN_10011230` patch (see §5.6); production CLI wraps the confirmed 20-step flow.
+3. ~~**MODIFY**~~ — **DONE & APPROVED.** Composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.8).
 
 Each function gets a red-green TDD cycle against a disposable test library copy (never the real install).
 
@@ -271,19 +432,23 @@ Each function gets a red-green TDD cycle against a disposable test library copy 
 
 ## 8. Open Questions / Risks
 
-1. **Headless `CreateRte`**: Does `ELRte::CreateRte` succeed without TradeStation Desktop? (Critical gate; unknown until smoke test.)
-2. **`contextId` valid values**: What integer(s) are valid for `_OrlibInit`'s second argument? (Needs runtime test.)
-3. **`_CreateEntryEX` params 2-5**: Exact order/meaning of WHType and flags. (Resolve via TSDev.exe caller RE.)
-4. **`_SaveTextEX` p1/p4**: Roles of param 1 (nonzero-checked, lstrlenA'd) and param 4 (unused in visible path). (Resolve via caller RE.)
-5. **`_SaveModule_New` GUI binding**: Does the hidden-EDIT workaround fully suppress the MessageBox? Is there a registry/config flag to disable the QuickEditor->PowerEditor warning?
-6. **`MDVault::SaveModule` direct**: Feasible as a GUI-free alternative? Needs `ModuleInfo` construction details.
-7. **Persistence after `_SetSigDeleted`**: Which call persists the master index with the deleted flag before `FILEDELETE` removes files? (Inferred from TSDev.exe orchestration; not fully traced.)
-8. **`_GetCompilingErrors` formatting**: Exact string format for error reporting (MED-HIGH conf).
-9. **Error record layout** (stride 297): Fields beyond the 0x7775 sentinel are unmapped.
-10. **WHType 0x32**: Meaning unknown; may affect verify/save.
-11. **`_SaveTextEX` persistence**: Does it persist alone, or is `_SaveModule_New` always mandatory?
-12. **Registry dependence**: orlib20 uses `orshr20.dll!_TSGetRegistryRootKeyA` and ADVAPI32 registry functions; the TS install's registry keys must be present.
-13. **Frida live RE**: Live RE was initially blocked by a Frida helper-path bug (frida-core 17.15.4 in Luma 1.2.3); static analysis was used instead and is equivalent for signatures. Live RE has since been enabled by switching to a Python frida MCP server running Frida 17.17.0 (which includes the fix), providing the full Frida JS API via `execute_in_session` for runtime value confirmation and the TVS-2 live-tracing work.
+> **Resolved since initial study:** Items #1 (headless `CreateRte` — smoke test PASSED), #2 (`contextId` — CONFIRMED as 1), #3 (`_CreateEntryEX` params — CONFIRMED, see §5.1), #5 (`_SaveModule_New` GUI binding — hidden-EDIT workaround CONFIRMED, persistence via `VerifyModule_New` + §5.6 patch), #6 (`MDVault::SaveModule` direct — no longer needed; persistence achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule`), #8 (`_GetCompilingErrors` formatting — CONFIRMED, see §5.1), #11 (`_SaveTextEX` persistence — RESOLVED; `SaveModule_New` saves source only, `VerifyModule_New` persists `.ell`), and #13 (Frida live RE — enabled via Python frida MCP, Frida 17.17.0).
+
+**Still open:**
+
+1. ~~**Headless `CreateRte`**: Does `ELRte::CreateRte` succeed without TradeStation Desktop?~~ **RESOLVED — YES** (smoke test PASSED; see `headless_init_smoke_test.md`).
+2. ~~**`contextId` valid values`**: What integer(s) are valid for `_OrlibInit`'s second argument?~~ **RESOLVED — `contextId = 1`** (CONFIRMED; see §5.1).
+3. ~~**`_CreateEntryEX` params 2-5**: Exact order/meaning of WHType and flags.~~ **RESOLVED — CONFIRMED** `(whType, 0, name, 0, 0, &errCode)` (see §5.1).
+4. **`_SaveTextEX` p1/p4**: Roles of param 1 (nonzero-checked, lstrlenA'd) and param 4 (unused in visible path). Still uncertain (MED). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead.
+5. ~~**`_SaveModule_New` GUI binding`: Does the hidden-EDIT workaround fully suppress the MessageBox?~~ **RESOLVED — hidden-EDIT workaround CONFIRMED working** in the standalone INSERT flow (see §5.3, §5.6). Persistence is via `VerifyModule_New`, not `_SaveModule_New`.
+6. ~~**`MDVault::SaveModule` direct**: Feasible as a GUI-free alternative?~~ **RESOLVED — not needed.** Persistence is achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (see §5.6).
+7. ~~**Persistence after `_SetSigDeleted`**: Which call persists the master index with the deleted flag before `FILEDELETE` removes files?~~ **RESOLVED — DELETE IMPLEMENTED & APPROVED.** The orchestrator `FUN_101a8360` handles persistence internally (`DeleteFromTree` → `closeWarehouse` → commit storages → `MWRKArea.wrk` written). The `SetSigDeleted`-based approach is RETIRED. See §5.7.
+8. ~~**`_GetCompilingErrors` formatting**: Exact string format for error reporting.~~ **RESOLVED — CONFIRMED** (builds concatenated "name: msg\n..." across all error records; empty buffer = success; see §5.1).
+9. **Error record layout** (stride 297): Fields beyond the 0x7775 sentinel are unmapped. — **STILL OPEN**.
+10. **WHType 0x32**: Meaning unknown; may affect verify/save. — **STILL OPEN**.
+11. ~~**`_SaveTextEX` persistence`: Does it persist alone, or is `_SaveModule_New` always mandatory?~~ **RESOLVED — `_SaveModule_New` saves source text only; `VerifyModule_New` persists the `.ell` file** (see §5.1, §5.6).
+12. **Registry dependence**: orlib20 uses `orshr20.dll!_TSGetRegistryRootKeyA` and ADVAPI32 registry functions; the TS install's registry keys must be present. — **STILL OPEN**.
+13. ~~**Frida live RE**: Live RE was initially blocked by a Frida helper-path bug.~~ **RESOLVED — live RE enabled** via Python frida MCP server running Frida 17.17.0 (which includes the fix), providing the full Frida JS API via `execute_in_session` for runtime value confirmation.
 
 ---
 

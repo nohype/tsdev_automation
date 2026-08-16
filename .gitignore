@@ -1,0 +1,12 @@
+# Build output (CMake / MSVC)
+build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+/build*/
+*.log
+/ghidra_project/
+/tmp/
+
