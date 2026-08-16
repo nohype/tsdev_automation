@@ -131,6 +131,7 @@ private:
     DWORD_PTR  m_orlibBase  = 0;
     HWND       m_editorHwnd   = nullptr;  // hidden EDIT control for source text
     HWND       m_editorParent = nullptr;  // STATIC parent of the EDIT control
+    std::string m_lastSource;             // source saved by saveSource (for error line/col computation)
 
     // --- Resolved orlib20 exports (all __stdcall, decorated) ---
     typedef BOOL (__stdcall *OrlibInit_t)(const char* workDirPath, int contextId);
@@ -145,7 +146,6 @@ private:
     typedef int  (__stdcall *VerifyModule_New_t)(HWND hwnd, int warehouseType,
                                                  int progId, int flag,
                                                  void* compilerObj);
-    typedef void (__stdcall *GetCompilingErrors_t)(char* buffer);
     typedef void (__stdcall *CloseWarehouse_t)(int param);
 
     OrlibInit_t          m_pOrlibInit       = nullptr;
@@ -154,7 +154,6 @@ private:
     CreateEntryEX_t      m_pCreateEntry     = nullptr;
     SaveModule_New_t     m_pSaveModuleNew   = nullptr;
     VerifyModule_New_t   m_pVerifyModule    = nullptr;
-    GetCompilingErrors_t m_pGetErrors       = nullptr;
     CloseWarehouse_t     m_pCloseWarehouse  = nullptr;
 
     // --- Resolved internal functions (by RVA from orlib20 base) ---

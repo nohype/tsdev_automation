@@ -34,6 +34,17 @@ If you are *not a subagent:* You are the Product Manager (PM).
 - You only perform management tasks in your role as PM
 - You are leading the team, so you are ultimately responsible for the *correctness* and *production quality* of all results
 
+### Subagent profile selection (HARD RULE)
+- Use the **`subagent_explore`** profile ONLY for trivial lookups (e.g. "read file X and quote section Y verbatim"). It has very limited capabilities and tool access (read-only: grep, glob, read, web_search).
+- For **research, analysis, any task that needs MCP tools (e.g. Ghidra), or any non-trivial work**, use the **`subagent_general`** profile. This is a HARD RULE.
+- When an `explore` subagent fails (e.g. due to lacking tool access) or produces unsatisfactory output/results, retry the same task with the `general` subagent profile.
+
+### Working memory (HARD RULE)
+- The PM maintains a markdown working-memory document at `docs/PM_WORKING_MEMORY.md`.
+- Keep it updated with: reminders to stay in the PM role, hard rules, current TVS in flight, key findings, decisions, and anything worth remembering across context compactions.
+- Update it as new information emerges or old information is deprecated/superceded/updated.
+- Regularly re-read it to refresh memory and remind yourself of priorities and hard rules (context is limited and will be compacted, causing loss of information and relationships between pieces of information — outsource working memory to stay effective).
+
 ## Work orchestration
 - Every complex or multi-step task is decompose into *small, atomic subtasks*
    - For complex tasks, a specialized subagent does the decomposition
@@ -96,16 +107,38 @@ Update this list to reflect the current state and the next best steps as the pro
 - Independently verified: insert→modify→delete cycle, error cases (nonexistent, invalid source), arg parsing, and all three test suites (test_insert, test_delete_diag, test_modify) — all exit 0. Adversarial review: APPROVED (no scope creep, library untouched).
 - **The primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is now fully satisfied** — not just at the library level, but via the CLI itself.
 
-### NEXT WORKSTREAMS (in priority order) — NOT started
+### DONE — TVS-A.2: GetCompilingErrors ABI + error array population path (APPROVED, then CORRECTED)
+- **Original ABI conclusion was WRONG:** TVS-A.2 concluded `_GetCompilingErrors@4` returns `std::string` by value via hidden return pointer. This was corrected during TVS-A.4: the function actually takes a `std::vector<ErrorOutputRecord>*` (3 pointers, 12 bytes). Evidence: `FUN_1015fd20` calls `std::_Xlength_error("vector<T> too long")`; `FUN_10160570` initializes each 177-byte (0xB1) element with 7 std::strings + 2 ints + 1 flag. The singular `GetCompilingError` (not plural) DOES use std::string hidden return ptr — TVS-A.2 confused the two. See correction notice in `tmp/re_artifacts/A2_geterrors_static_abi.md`.
+- **Error-record layout, population path, and VERIFY.ERR semantics remain CORRECT** (only the ABI conclusion was wrong). See `tmp/re_artifacts/A2_geterrors_static_abi.md` for details.
+- **Error-record layout (stride 0x129 = 297 bytes):** 0x00 short=level (0x7775=error), 0x02 int=moduleID, 0x12 short=string-table resource ID, 0x29 char[]=error text, 0x128 byte=flag. Line number computed by `CELBasicCompiler::GetLineNumber` (not stored).
+- **Population:** `FUN_10156850` (RVA 0x156850) appends records — 28 callers across compile pipeline. `StartCompilingProcess` (RVA 0x165DE0) resets.
+
+### DONE — TVS-A.4: Real compiler error text via direct global array access (APPROVED)
+- **Root cause fixed:** The empty/garbage error buffer was caused by calling `_GetCompilingErrors@4` with the wrong ABI (char[] then std::string*, but the function expects std::vector*). Since matching std::vector across DLL boundaries is impractical (different CRT allocators), the fix **bypasses GetCompilingErrors entirely** and reads the global error array directly from orlib20.dll's data section.
+- **Implementation:** `readErrorsFromArray(HMODULE orlibBase, const std::string* source)` reads `DAT_1023cea0` (array pointer, RVA 0x23cea0) and `DAT_1023cea4` (count, RVA 0x23cea4), iterates 297-byte records, extracts null-terminated text at offset 0x29, falls back to `LoadStringA` with resource ID at offset 0x12 and HINSTANCE at RVA 0x23aab8 if text is empty. Count bounded to 1000 for safety.
+- **GetCompilingErrors fully removed:** typedef, member variable, export resolution, and call site all removed from `tsdev_lib.h` and `tsdev_lib.cpp`. `callVerifyAndErrors` replaced with `callVerify` (SEH-protected VerifyModule_New only). Error array read between VerifyModule_New and EndCompilingProcess.
+- **TDD red-green:** RED confirmed (exit 117, garbage "11" with no alpha chars). GREEN confirmed (exit 0, real error text: `"unknown identifier\nSemicolon (;) expected here."`). Regression: test_insert, test_delete_diag, test_delete all exit 0.
+- **Adversarial review: APPROVED.** Minor observations: SEH protection on array reads deferred to future robustness TVS; unused `#include <vector>` is pre-existing.
+- **TVS-A.3 answered implicitly:** The error array IS populated headlessly (real error text appeared after the fix).
+
+### DONE — TVS-A.6: Source location (line/column) in error messages (APPROVED)
+- **Feature:** Compiler error messages now include `"Line X, Col Y: "` prefix pointing the user to the exact source location. Example: `"Line 2, Col 1: unknown identifier\nLine 2, Col 27: Semicolon (;) expected here."`.
+- **How it works:** Error record offset 0x0A (int) contains a character offset into the source code. `readErrorsFromArray` counts newlines in the source up to that offset to compute line number; column = offset - start of current line + 1. No orlib20 function calls needed — pure caller-side computation.
+- **Implementation:** `m_lastSource` member added to TsDevLib, stored in `saveSource()`. `readErrorsFromArray` takes optional `const std::string* source` parameter. Line/col computed only when source is available and charOffset > 0. Low complexity: ~15 lines of newline-counting code, no new RVAs/exports, no orlib20 calls.
+- **TDD red-green:** RED (exit 118, no "Line" in message). GREEN (exit 0, "Line 2, Col 1: unknown identifier"). Regression: all 3 tests pass.
+- **Adversarial review: APPROVED.** Minor observations: charOffset=0 produces no location prefix (reasonable for unknown positions); m_lastSource is a full copy (simplest correct approach).
+- **Workstream A is now COMPLETE.** All 6 TVSs resolved: A.2 (corrected), A.4 (error text), A.6 (source location). A.1/A.3/A.5 no longer needed.
+
+### NEXT WORKSTREAMS (in priority order)
 Hand-off documents exist in `docs/` for future workstreams. Each lists its own TVSs and is ready for a new team to pick up.
-1. **(a) Compilation errors** — `docs/HANDOFF_A_COMPILATION_ERRORS.md`: Get actual compilation error messages (`GetCompilingErrors` returns empty buffer headlessly; strong lead: ABI may be wrong). 6 TVSs.
-2. **(b) Robustness & architecture** — `docs/HANDOFF_B_ROBUSTNESS.md`: Robustness + architecture for future TS/TSDev updates (12 hardcoded RVAs; signature-based resolver + version detection + regression suite). 7 TVSs.
-3. **(c) TradingApp component type** — `docs/HANDOFF_C_TRADINGAPP.md`: TradingApp component type support (whType unknown; all primitives are type-agnostic once the code is found). 7 TVSs.
-4. **(d) Python DLL (64-bit)** — `docs/HANDOFF_D_PYTHON_DLL.md`: DLL library for 64-bit Python via msl-loadlib (32-bit DLL + Server32/Client64 bridge). 7 TVSs.
+1. **(a) Compilation errors** — `docs/HANDOFF_A_COMPILATION_ERRORS.md`: **COMPLETE.** Real compiler error text with source location now works. TVS-A.2 (corrected), TVS-A.4, TVS-A.6 all done and approved.
+2. **(b) Robustness & architecture** — `docs/HANDOFF_B_ROBUSTNESS.md`: Robustness + architecture for future TS/TSDev updates (12+ hardcoded RVAs; signature-based resolver + version detection + regression suite). 7 TVSs. NOT started.
+3. **(c) TradingApp component type** — `docs/HANDOFF_C_TRADINGAPP.md`: TradingApp component type support (whType unknown; all primitives are type-agnostic once the code is found). 7 TVSs. NOT started.
+4. **(d) Python DLL (64-bit)** — `docs/HANDOFF_D_PYTHON_DLL.md`: DLL library for 64-bit Python via msl-loadlib (32-bit DLL + Server32/Client64 bridge). 7 TVSs. NOT started.
 
 ### REMAINING FOLLOW-UPS (smaller items — note overlap with workstreams above)
 - **FindExistPos export name:** Confirm/normalize the decorated export name used by the CLI (currently resolved by RVA; the decorated `_FindExistPos@8` form should be validated against the export table for robustness). *Also relevant to workstream (b).*
-- **Empty `GetCompilingErrors` buffer in headless mode:** `GetCompilingErrors` returns an empty buffer headlessly; `verifyModule` synthesizes a fallback message when `VerifyModule_New != 1`. Pre-existing; affects error-message fidelity, not correctness; applies to INSERT/MODIFY. *Fully covered by workstream (a) — do not duplicate.*
+- **Compiler error text — DONE (TVS-A.4):** Real compiler error text now available via direct global array access. The CLI already prints `res.message` to stderr on compile failures (exit code 8), so real error text should already flow to the user. Verify in a follow-up that the CLI output is correct (TVS-A.6).
 - **Unresolved warehouse-type mappings:** Warehouse-type codes for 5 component types (ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp) are NOT confirmed. Code today must restrict itself to WHType 0/2/4 (Strategy, Indicator, Function). See `docs/FEASIBILITY.md` §5.2 and §5.5. *TradingApp is covered by workstream (c); the other 4 types are not yet scoped in a hand-off.*
 
 ### Standing notes

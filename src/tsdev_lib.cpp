@@ -108,12 +108,9 @@ typedef void  (__fastcall *CELCompilerDtorFn)(void* thisPtr);
 typedef void  (__cdecl    *StartCompilingFn)(void);
 typedef void  (__fastcall *EndCompilingFn)(int param);
 typedef int   (__stdcall  *VerifyModuleFn)(HWND, int, int, int, void*);
-typedef void (__stdcall *GetErrorsFn)(char* buffer);
 
 struct VerifySehResult {
-    int   verifyResult; // -1 if VerifyModule_New raised
-    char  errorBuf[4096]; // buffer filled by GetCompilingErrors
-    bool  errorsCalled;   // false if GetCompilingErrors raised
+    int   verifyResult;    // -1 if VerifyModule_New raised
 };
 
 bool callCtor(CELCompilerCtorFn fn, void* mem) {
@@ -134,25 +131,79 @@ bool callStartCompiling(StartCompilingFn fn) {
     }
 }
 
-// Runs VerifyModule_New + GetCompilingErrors under SEH. EndCompilingProcess
-// and the destructor are called by the caller (also SEH-guarded) so that an
-// exception in one step does not skip cleanup of the others.
-bool callVerifyAndErrors(VerifyModuleFn verifyFn, GetErrorsFn errorsFn,
-                         HWND hwnd, int whType, int progId,
-                         void* compilerMem, VerifySehResult* out) {
+// --- Direct error array access (TVS-A.4) -----------------------------------
+// _GetCompilingErrors@4 uses a std::vector ABI that is impractical to match
+// across DLL boundaries. Instead, we read the global error array directly.
+// These RVAs are relative to orlib20.dll's base address (== HMODULE).
+static constexpr uintptr_t kErrArrayPtrRva  = 0x23cea0;  // DAT_1023cea0: error record array pointer
+static constexpr uintptr_t kErrCountRva     = 0x23cea4;  // DAT_1023cea4: error record count
+static constexpr uintptr_t kErrHinstRva     = 0x23aab8;  // DAT_1023aab8: HINSTANCE for string table
+static constexpr size_t    kErrRecordStride = 0x129;     // 297 bytes per error record
+static constexpr size_t    kErrTextOffset   = 0x29;      // null-terminated error text
+static constexpr size_t    kErrResIdOffset  = 0x12;      // short: string-table resource ID
+static constexpr size_t    kErrCharOffset   = 0x0A;      // int: character offset of error start in source
+
+// Reads error text directly from orlib20.dll's global error array.
+// Must be called AFTER VerifyModule_New returns and BEFORE EndCompilingProcess.
+std::string readErrorsFromArray(HMODULE orlibBase, const std::string* source) {
+    uintptr_t base = reinterpret_cast<uintptr_t>(orlibBase);
+
+    // Read error count
+    uint32_t count = *reinterpret_cast<uint32_t*>(base + kErrCountRva);
+    if (count == 0 || count > 1000) return "";  // sanity bound
+
+    // Read error array pointer
+    uint8_t* array = *reinterpret_cast<uint8_t**>(base + kErrArrayPtrRva);
+    if (array == nullptr) return "";
+
+    std::string result;
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t* record = array + static_cast<size_t>(i) * kErrRecordStride;
+        const char* text = reinterpret_cast<const char*>(record + kErrTextOffset);
+        // Compute line/column from character offset (if source available)
+        int charOffset = *reinterpret_cast<int*>(record + kErrCharOffset);
+        std::string location;
+        if (source != nullptr && charOffset > 0 &&
+            static_cast<size_t>(charOffset) <= source->length()) {
+            int line = 1;
+            int lineStart = 0;
+            for (int j = 0; j < charOffset && j < static_cast<int>(source->length()); j++) {
+                if ((*source)[j] == '\n') {
+                    line++;
+                    lineStart = j + 1;
+                }
+            }
+            int col = charOffset - lineStart + 1;
+            location = "Line " + std::to_string(line) + ", Col " + std::to_string(col) + ": ";
+        }
+        if (text[0] != '\0') {
+            if (!result.empty()) result += "\n";
+            result += location + text;
+        } else {
+            // Fallback: load from string table via LoadStringA
+            short resId = *reinterpret_cast<short*>(record + kErrResIdOffset);
+            if (resId != 0) {
+                HINSTANCE hInst = *reinterpret_cast<HINSTANCE*>(base + kErrHinstRva);
+                char buf[1024];
+                int len = LoadStringA(hInst, resId, buf, sizeof(buf));
+                if (len > 0) {
+                    if (!result.empty()) result += "\n";
+                    result += location + buf;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+bool callVerify(VerifyModuleFn verifyFn,
+                HWND hwnd, int whType, int progId,
+                void* compilerMem, VerifySehResult* out) {
     out->verifyResult = -1;
-    out->errorBuf[0] = '\0';
-    out->errorsCalled = false;
     __try {
         out->verifyResult = verifyFn(hwnd, whType, progId, 1, compilerMem);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
-    }
-    __try {
-        errorsFn(out->errorBuf);
-        out->errorsCalled = true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        out->errorBuf[0] = '\0';
     }
     return true;
 }
@@ -312,7 +363,6 @@ TsDevLib::TsDevLib() {
     m_pCreateEntry    = resolveOrThrow<CreateEntryEX_t>("_CreateEntryEX@24");
     m_pSaveModuleNew  = resolveOrThrow<SaveModule_New_t>("_SaveModule_New@20");
     m_pVerifyModule   = resolveOrThrow<VerifyModule_New_t>("_VerifyModule_New@20");
-    m_pGetErrors      = resolveOrThrow<GetCompilingErrors_t>("_GetCompilingErrors@4");
     m_pCloseWarehouse = resolveOrThrow<CloseWarehouse_t>(
         "_CloseWarehouseForCurrentThreadAndPath@4");
 
@@ -390,6 +440,7 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
 
 bool TsDevLib::saveSource(ComponentType type, int progId,
                           const std::string& source) {
+    m_lastSource = source;
     setSourceText(m_editorHwnd, source);
     int result = 0;
     __try {
@@ -434,12 +485,11 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
         return "tsdev: StartCompilingProcess raised an exception";
     }
 
-    // VerifyModule_New(hwnd, whType, progId, flag=1, compilerObj) +
-    // GetCompilingErrors, both SEH-guarded.
+    // VerifyModule_New, SEH-guarded. Error text is read directly from the
+    // global error array after this call (see readErrorsFromArray).
     VerifySehResult seh;
-    if (!callVerifyAndErrors(
+    if (!callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
-            reinterpret_cast<GetErrorsFn>(m_pGetErrors),
             m_editorHwnd, static_cast<int>(type), progId, compilerMem, &seh)) {
         callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
         callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
@@ -448,14 +498,16 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
         return "tsdev: VerifyModule_New raised an exception";
     }
 
-    // Build the error string (empty buffer == success).
-    if (seh.errorBuf[0] != '\0') {
-        errors = seh.errorBuf;
-    } else if (seh.verifyResult != 1) {
-        // No explicit error text but VerifyModule_New did not report success.
-        errors = "tsdev: VerifyModule_New returned "
-                 + std::to_string(seh.verifyResult)
-                 + " with no error text";
+    // Build the error string from the global error array (direct access).
+    if (seh.verifyResult != 1) {
+        // Compile failure — read error records directly from orlib20.dll globals.
+        errors = readErrorsFromArray(m_orlib, &m_lastSource);
+        if (errors.empty()) {
+            // No error text in the array (or array empty). Fall back to synthesized message.
+            errors = "tsdev: VerifyModule_New returned "
+                     + std::to_string(seh.verifyResult)
+                     + " with no error text";
+        }
     }
 
     // EndCompilingProcess (fastcall, 1 arg = 0).

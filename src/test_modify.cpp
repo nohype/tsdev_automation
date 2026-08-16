@@ -378,6 +378,36 @@ DWORD WINAPI runTest(LPVOID param) {
         delete lib;
         return 0;
     }
+    // TVS-A.4: The error message must contain REAL compiler diagnostics with
+    // readable text — not the synthesized fallback AND not garbage bytes from
+    // a misinterpreted std::string object (ABI bug). Real compiler error text
+    // contains alphabetic characters (e.g. "Expected", "error", "syntax").
+    if (errRes.message.find("VerifyModule_New returned") != std::string::npos) {
+        ec = fail("modifyEntry returned synthesized fallback instead of real compiler errors", 116);
+        delete lib;
+        return 0;
+    }
+    bool hasAlpha = false;
+    for (char c : errRes.message) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            hasAlpha = true;
+            break;
+        }
+    }
+    if (!hasAlpha) {
+        ec = fail("modifyEntry error message has no alphabetic characters (garbage/empty, not real compiler text)", 117);
+        delete lib;
+        return 0;
+    }
+    if (errRes.message.find("Line") == std::string::npos) {
+        ec = fail("modifyEntry error message lacks source location (expected 'Line N' prefix)", 118);
+        delete lib;
+        return 0;
+    }
+    std::fprintf(stdout,
+                 "    PASS: error message includes source location info\n");
+    std::fprintf(stdout,
+                 "    PASS: error message is real compiler text (not synthesized fallback, not garbage)\n");
     std::fprintf(stdout,
                  "    PASS: modifyEntry(invalid) returned failure with error\n");
 
