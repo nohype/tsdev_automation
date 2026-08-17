@@ -6,6 +6,14 @@
 
 ---
 
+> **WORKSTREAM E NOTICE (2026-08-17):** Workstream E (`docs/ARCHITECTURE_REDESIGN.md`) is a new foundational workstream that should be executed BEFORE B.6/B.7. It fixes the build dependency on `tmp/re_artifacts/b1_signatures.h`, migrates signature data to version-controlled JSON with build-time codegen, adds `sigtool` for signature verification, archives 26 experimental probes, and eliminates RVA duplication.
+>
+> **Impact on B.7:** Items (c) structural constants externalization and (d) file-naming pattern are SUPERSEDED by E's JSON version manifest. B.7's remaining scope is (a) TS install path discovery + `--ts-path` CLI override and (b) derive MyWork\Bin paths from install root. — **B.7 (items a+b) COMPLETE & APPROVED (2026-08-18).**
+>
+> **Impact on B.6:** E's `sigtool verify` command complements the regression suite. B.6 should include `sigtool verify` as part of the regression suite.
+
+---
+
 ## 1. Priority Statement
 
 The tsdev_automation CLI currently works correctly against the installed TradeStation 9.5 `orlib20.dll`, but it is **fragile against version updates**. Every internal function is resolved by a hardcoded RVA offset, every binary patch expects exact byte patterns, and there is no version detection or signature-based function discovery. If TradeStation ships a new `orlib20.dll` — even a minor rebuild — the RVAs will shift, the patch targets will move, and the CLI will either crash (calling into the wrong code) or silently fail (patching the wrong bytes). This workstream makes the CLI **degrade gracefully or adapt**: functions are found by stable byte-pattern signatures (or export names where available), version mismatches are detected and reported clearly, patches are validated before application, and a regression suite catches breakage automatically.
@@ -199,25 +207,65 @@ An architecture where:
 - **Adversarial review:** Yes — an independent reviewer verifies the scanner is correct (no off-by-one in .text bounds, wildcard logic is sound), the tests actually exercise failure paths, and the version detection is not trivially spoofable.
 - **Effort:** L
 
-### TVS-B.5 — Integrate OrlibResolver into TsDevLib and add patch-site validation
+### TVS-B.4.5 — Resolve `resolveErrorHinstRva` hardcoded fallback (instruction-offset extraction) — DONE & APPROVED
 
+- **Status:** **DONE & APPROVED**
+- **Goal:** Replace the hardcoded `0x23AAB8` fallback in `resolveErrorHinstRva()` with real instruction-offset extraction, matching the pattern of `resolveErrorArrayPtrRva()` and `resolveErrorCountRva()`. This completes the robustness of all 3 data-global RVA resolvers.
+- **Type:** IMPLEMENTATION
+- **Rationale:** B.4 left `resolveErrorHinstRva` as a hardcoded fallback because the Ghidra evidence did not identify which resolved function references `DAT_1023aab8`. This TVS closes that gap so B.5 integrates a fully-robust resolver (no hardcoded RVAs remain).
+- **Summary of work completed:**
+  - Replaced the hardcoded `0x23AAB8` fallback in `resolveErrorHinstRva()` with instruction-offset extraction from the `_CreateEntryEX@24` export at offset `0x6C` (opcode `8B 0D`, `MOV ECX,[imm32]`).
+  - All 3 data-global RVA resolvers now use instruction-offset extraction — no hardcoded RVAs remain in the resolver.
+  - Ghidra evidence: `tmp/re_artifacts/b4_5_hinst_xref.md`.
+  - Files changed: `src/orlib_resolver.cpp` (method body + strategy comments), `src/orlib_resolver.h` (Doxygen comment only).
+  - Verification: `test_orlib_resolver.exe` exit 0, `sig_scan.exe` exit 0.
+  - Adversarial review: first DISAPPROVED (1 MAJOR stale comment + 1 MINOR), fix applied, re-review APPROVED.
+- **Scope:**
+  - **Done:** (a) Ghidra MCP analysis to find which resolved function references `DAT_1023aab8` (the string-table HINSTANCE at RVA 0x23AAB8) and at what instruction offset within that function. Note: `DAT_1023aab8` has 193 xrefs across many functions; the task is to find a reference from one of the 8 resolved internal functions (StartCompilingProcess, EndCompilingProcess, CELCompilerCtor, CELCompilerDtor, InitGlobalLookup, DeleteFromTree, GetWarehouse, DeleteOrchestrator) or one of the 7 resolved exports. If none of the resolved functions reference it, the scope expands to resolving a NEW referencing function by signature — flag that to the PM. (b) Update `resolveErrorHinstRva()` in `src/orlib_resolver.cpp` to use instruction-offset extraction (opcode verification + imm32 extraction + subtract image base), matching the pattern of `resolveErrorArrayPtrRva()` and `resolveErrorCountRva()`. (c) Remove the TODO/hardcoded-fallback comment. (d) Re-verify: `test_orlib_resolver.exe` still passes (expected RVA 0x23AAB8 unchanged), `sig_scan.exe` regression, adversarial review.
+  - **NOT done:** No `tsdev_lib.cpp` changes (that's B.5). No `test_orlib_resolver.cpp` changes (expected RVA 0x23AAB8 stays the same). No new CLI features.
+- **Acceptance criteria:**
+  1. `resolveErrorHinstRva()` uses instruction-offset extraction (no hardcoded RVA). ✅
+  2. Returns `0x23AAB8` for the baseline DLL (test passes unchanged). ✅
+  3. No TODO/hardcoded-fallback comments remain. ✅
+  4. `test_orlib_resolver.exe` exit 0, `sig_scan.exe` exit 0. ✅
+  5. Adversarial review APPROVED. ✅
+- **Dependencies:** TVS-B.4 (DONE & APPROVED). Ghidra MCP (PM performs calls directly).
+- **Adversarial review:** Yes — an independent reviewer verifies the instruction-offset extraction is correct (opcode verification + imm32 + base subtraction), the Ghidra evidence is sound, no hardcoded RVA remains, and all tests pass with identical behavior. **Result: APPROVED** (after one DISAPPROVE→fix→re-approve loop).
+- **Effort:** S
+- **Scheduling:** BEFORE B.5 (so B.5 integrates a fully-robust resolver with no hardcoded RVAs remaining). — **COMPLETE; next TVS is B.5.**
+
+### TVS-B.5 — Integrate OrlibResolver into TsDevLib and add patch-site validation — DONE & APPROVED
+
+- **Status:** **DONE & APPROVED**
 - **Goal:** Replace all hardcoded RVA constants in `tsdev_lib.cpp` with `OrlibResolver` calls. Add pre-patch byte validation to `applyPersistencePatch()`. Add SEH wrappers to the remaining unprotected call sites.
 - **Type:** IMPLEMENTATION
+- **Summary of work completed:**
+  - Replaced all 15 hardcoded RVA constants in `src/tsdev_lib.cpp` with `OrlibResolver` calls (8 internal functions via signature scan, 7 exports via GetProcAddress, 3 data-global RVAs via instruction-offset extraction, 4 patch sites via signature scan).
+  - Added 3 SEH wrappers (`callOrlibInit`, `callOrlibExit`, `callFindExistPos`) — POD-only helper functions using `__try`/`__except` (avoids MSVC C2712). Protects OrlibInit (constructor), OrlibExit (destructor), and FindExistPos (findExistPos + deleteEntry).
+  - Added patch restoration on destruction (new — not in original spec): destructor restores all 4 patch sites to original bytes AFTER OrlibExit but BEFORE resolver destruction. Fixes a regression where a second TsDevLib instance in the same process failed.
+  - Fixed a crash: `validatePersistencePatchBytes()` rewritten to use a cached RVA (`m_persistencePatchRva`) instead of re-scanning for original bytes (already patched by construction time). The re-scan caused an `OrlibResolverError` to escape to WerFault.
+  - Changed `applyPersistencePatch()` and `applyThreadCheckPatches()` from `bool` to `void` (private methods). `OrlibResolverError` propagates on failure. Removed 4 duplicate anonymous-namespace typedefs (collide with `orlib_resolver.h`).
+  - TDD red-green: `test_no_hardcoded_rvas` (exit 1→0). Full regression: all 7 tests pass (exit 0).
+  - Adversarial review: first DISAPPROVED (1 MAJOR: unprotected FindExistPos in deleteEntry — AC3 violation), fix applied (routed through SEH wrapper), re-review APPROVED. 3 MINOR findings (non-blocking).
+  - Files changed: `src/tsdev_lib.h`, `src/tsdev_lib.cpp`, `src/test_no_hardcoded_rvas.cpp` (new), `CMakeLists.txt`.
+  - Known limitation: if `applyThreadCheckPatches()` throws midway, already-applied patches won't be restored (very low likelihood). Tracked as a follow-up for a future robustness TVS — see `docs/PM_WORKING_MEMORY.md` OBSERVATIONS section.
 - **Scope:**
   - **Done:** (a) Modify `TsDevLib` constructor to construct an `OrlibResolver` first, use it to resolve all 8 internal functions and validate all 4 patch sites before proceeding. (b) Remove the hardcoded RVA constants (`kRvaStartCompiling` through `kRvaDeleteOrchestrator`, `kRvaPersistencePatch`, `kRvaThreadCheck1–3`) from `tsdev_lib.cpp`. (c) Add byte-validation to `applyPersistencePatch()` — read the 8 bytes at the patch site, compare against the expected original function prologue (from TVS-B.1 catalog), abort with a clear message if they don't match. (d) Add SEH wrappers around `OrlibInit` (in constructor) and `OrlibExit` (in destructor) and `FindExistPos`. (e) Add a version check at constructor start: if `detectVersion()` returns `unknown`, print a clear warning to stderr but proceed (do not abort — the signatures may still match). If signature resolution fails, throw with a clear message. (f) Run existing `test_insert`, `test_delete`, `test_modify` and confirm they still pass.
   - **NOT done:** No new CLI features. No new orlib20 functions. No change to the public `TsDevLib` API. No change to test logic — only the resolution mechanism changes under the hood.
 - **Acceptance criteria:**
-  1. `tsdev_lib.cpp` contains zero hardcoded RVA constants (grep for `0x1` in the anonymous namespace returns nothing related to RVAs).
-  2. `applyPersistencePatch()` reads and validates original bytes before writing; on mismatch, throws `std::runtime_error` with expected vs. actual bytes.
-  3. `OrlibInit`, `OrlibExit`, and `FindExistPos` are SEH-protected.
-  4. Constructor prints a version-detection warning to stderr if the DLL is unknown.
-  5. `test_insert`, `test_delete`, `test_modify` all pass with exit code 0 (behavior unchanged).
-  6. A deliberate bad signature (temporarily corrupt one signature in the manifest) causes the constructor to throw a clear error instead of crashing.
-- **Dependencies:** TVS-B.4 (resolver implementation).
-- **Adversarial review:** Yes — an independent reviewer verifies no hardcoded RVAs remain, patch validation is correct, SEH wrappers are sound, and all existing tests pass with identical behavior.
+  1. `tsdev_lib.cpp` contains zero hardcoded RVA constants (grep for `0x1` in the anonymous namespace returns nothing related to RVAs). ✅
+  2. `applyPersistencePatch()` reads and validates original bytes before writing; on mismatch, throws `std::runtime_error` with expected vs. actual bytes. ✅
+  3. `OrlibInit`, `OrlibExit`, and `FindExistPos` are SEH-protected. ✅
+  4. Constructor prints a version-detection warning to stderr if the DLL is unknown. ✅
+  5. `test_insert`, `test_delete`, `test_modify` all pass with exit code 0 (behavior unchanged). ✅
+  6. A deliberate bad signature (temporarily corrupt one signature in the manifest) causes the constructor to throw a clear error instead of crashing. ✅
+- **Dependencies:** TVS-B.4 (resolver implementation). — **DONE & APPROVED**
+- **Adversarial review:** Yes — an independent reviewer verifies no hardcoded RVAs remain, patch validation is correct, SEH wrappers are sound, and all existing tests pass with identical behavior. **Result: APPROVED** (after one DISAPPROVE→fix→re-approve loop).
 - **Effort:** M
 
 ### TVS-B.6 — Build the automated regression test suite
+
+> **Workstream E integration:** After Workstream E is complete, the B.6 regression suite should include `sigtool verify` (signature uniqueness verification) as an additional test gate. See `docs/ARCHITECTURE_REDESIGN.md` §5.1 for sigtool's command interface.
 
 - **Goal:** Create a single automated test target that runs all validation checks and integration tests in sequence, with pass/fail reporting, suitable for running against a new orlib20.dll.
 - **Type:** IMPLEMENTATION
@@ -235,21 +283,38 @@ An architecture where:
 - **Adversarial review:** Yes — an independent reviewer verifies the suite is complete, the runner correctly captures failures, and the documentation is accurate.
 - **Effort:** S
 
-### TVS-B.7 — Path discovery and structural-constant externalization
+### TVS-B.7 — Path discovery and structural-constant externalization — DONE & APPROVED
 
+**STATUS: COMPLETE & APPROVED (2026-08-18)**
+
+> **PARTIAL SUPERSESSION by Workstream E:** Items (c) and (d) below are superseded by Workstream E's JSON version manifest (`signatures/version_manifest.json` → codegen → generated header). Structural constants and file-naming patterns will be externalized as part of TVS-E.1/E.3. B.7's remaining scope is items (a) and (b) only.
+
+- **Status:** **DONE & APPROVED**
 - **Goal:** Replace hardcoded TS install paths and structural constants (CELCompiler size, field offsets, file-naming patterns) with discovered or configurable values, reducing another class of version fragility.
 - **Type:** IMPLEMENTATION
+- **Summary of work completed (RESULT):**
+  - **Items (a) and (b) DONE:** TS install path discovery (registry + `--ts-path` CLI override + conventional default from env var) and `MyWork\Bin` / `MWRKArea.wrk` derived from the discovered install root.
+  - **Items (c) and (d) SUPERSEDED by Workstream E** (as noted above) — structural constants and file-naming patterns will be externalized via E's JSON version manifest.
+  - **Path discovery chain:** registry (`SOFTWARE\TradeStation Technologies\TradeStation\Installing\RootDirectory`, REG_SZ, opened with `KEY_WOW64_32KEY` — no `WOW6432Node` in the path, avoiding double-redirection) → fallback registry key (`Versions\9.05.00\RootDirectory`) → conventional default (`GetEnvironmentVariableW(L"ProgramFiles(x86)")` + `L"\\TradeStation 9.5"` — NOT a hardcoded absolute path).
+  - **TsDevLib constructor:** `explicit TsDevLib(const wchar_t* tsPathOverride = nullptr)` — backward compatible (defaults to `nullptr` → full discovery chain).
+  - **New getters:** `getMyWorkBinPath()`, `getWrkPath()` — derived from the install root.
+  - **CLI:** `--ts-path <dir>` global flag (space and `=` forms accepted; empty-value rejected with a clear error).
+  - **Removed 4 hardcoded paths:** 3 from `src/tsdev_lib.cpp` (TS Program dir, MyWork\Bin, MWRKArea.wrk) + 1 from `tests/test_delete_diag.cpp`.
+  - **AC1 relaxed (PM decision):** no hardcoded absolute path `C:\Program Files (x86)\TradeStation 9.5` remains; the literal "TradeStation 9.5" appears only as a path component of the conventional default (built from the `ProgramFiles(x86)` env var), not as a hardcoded full path.
+  - **New test:** `tests/test_path_discovery.cpp` (5 cases: registry discovery, override respected, fallback chain, env-var default, empty-value rejection).
+  - **Verification:** TDD red-green confirmed; 11/11 regression pass; adversarial review APPROVED (0 CRITICAL/MAJOR); E2E CLI 11/11 PASS.
+  - **Files changed:** `src/tsdev_lib.h`, `src/tsdev_lib.cpp`, `src/tsdev_cli.cpp`, `tests/test_delete_diag.cpp`, `tests/test_path_discovery.cpp` (NEW), `CMakeLists.txt`.
 - **Scope:**
   - **Done:** (a) Replace the hardcoded TS Program directory path with discovery logic: check the registry (e.g., `HKLM\SOFTWARE\WOW6432Node\TradeStation\...` install path key) or scan common paths, with a `--ts-path` CLI override. (b) Derive `MyWork\Bin` and `MWRKArea.wrk` paths from the discovered install root rather than hardcoding "9.5". (c) Move CELCompiler structural constants (size `0x58`, field offsets `+0x10`/`+0x18`/`+0x28`, magic values `0xa02` and `6`) into the `OrlibResolver`'s version manifest so they can be overridden per-version. (d) Make the `.ell`/`.xml` file-naming pattern configurable (or at least documented as a version-dependent assumption in the manifest). (e) Run existing tests to confirm no behavioral change.
   - **NOT done:** No registry-key reverse engineering beyond a quick lookup. No support for non-9.5 TS versions (the discovery just makes the path non-hardcoded; actual multi-version support requires the signatures to match, which is TVS-B.1's concern). No CLI argument parsing framework (just a simple `--ts-path` override).
 - **Acceptance criteria:**
-  1. No hardcoded "TradeStation 9.5" path string exists in `tsdev_lib.cpp` (grep returns nothing).
-  2. The TS install path is discovered from registry or overridable via CLI argument.
-  3. CELCompiler structural constants are read from the version manifest (with current values as defaults).
-  4. All existing tests pass with exit code 0.
-  5. A `--ts-path` override to a different directory is respected (verified by pointing to the same dir and confirming tests pass).
-- **Dependencies:** TVS-B.5 (OrlibResolver integrated, version manifest exists).
-- **Adversarial review:** Yes — an independent reviewer verifies no hardcoded paths remain, the discovery logic is sound, and structural constants are properly externalized.
+  1. No hardcoded "TradeStation 9.5" path string exists in `tsdev_lib.cpp` (grep returns nothing). ✅ (relaxed per PM decision — see RESULT)
+  2. The TS install path is discovered from registry or overridable via CLI argument. ✅
+  3. CELCompiler structural constants are read from the version manifest (with current values as defaults). — SUPERSEDED by Workstream E (items c/d).
+  4. All existing tests pass with exit code 0. ✅
+  5. A `--ts-path` override to a different directory is respected (verified by pointing to the same dir and confirming tests pass). ✅
+- **Dependencies:** TVS-B.5 (OrlibResolver integrated, version manifest exists). — **DONE & APPROVED**
+- **Adversarial review:** Yes — an independent reviewer verifies no hardcoded paths remain, the discovery logic is sound, and structural constants are properly externalized. **Result: APPROVED** (0 CRITICAL/MAJOR).
 - **Effort:** M
 
 ---
@@ -267,22 +332,32 @@ TVS-B.1 (RESEARCH — signature catalog)
     │               │
     │               └──► TVS-B.4 (IMPL — signature scanner + version detector)
     │                       │
-    │                       └──► TVS-B.5 (IMPL — integrate into TsDevLib)
+    │                       └──► TVS-B.4.5 (IMPL — fix resolveErrorHinstRva hardcoded fallback) ✅ DONE & APPROVED
     │                               │
-    │                               ├──► TVS-B.6 (IMPL — regression suite)
-    │                               │
-    │                               └──► TVS-B.7 (IMPL — path/constant externalization)
+    │                               └──► TVS-B.5 (IMPL — integrate into TsDevLib) ✅ DONE & APPROVED
+    │                                       │
+    │                                       ├──► TVS-B.6 (IMPL — regression suite) ← AFTER WORKSTREAM E
+    │                                       │
+    │                                       └──► TVS-B.7 (IMPL — path/constant externalization) ✅ DONE & APPROVED (items a+b; c/d superseded by E)
     │
     └── (TVS-B.2 also depends on B.1 for signatures to compare across versions)
+
+Workstream E (ARCHITECTURE_REDESIGN — JSON manifest + sigtool + codegen)
+    │
+    ├──► TVS-B.6 (prerequisite — B.6 regression suite should include `sigtool verify`)
+    │
+    └──► TVS-B.7 (prerequisite — E supersedes B.7 items (c) and (d) via JSON version manifest) ✅ DONE & APPROVED (items a+b)
 ```
 
 **Key ordering constraints:**
 - TVS-B.1 MUST complete before TVS-B.2 (needs signatures to compare) and before TVS-B.3 (needs signatures to design the resolver interface).
 - TVS-B.2 MUST complete before TVS-B.3 (version-detection method informs the resolver design).
 - TVS-B.3 MUST complete before TVS-B.4 (interface design precedes implementation).
-- TVS-B.4 MUST complete before TVS-B.5 (resolver must work before integrating).
-- TVS-B.5 MUST complete before TVS-B.6 (regression suite tests the integrated system) and TVS-B.7 (path externalization touches the integrated code).
-- TVS-B.6 and TVS-B.7 are independent of each other and can be done in parallel after TVS-B.5.
+- TVS-B.4 MUST complete before TVS-B.4.5 (resolver implementation must exist before fixing its last hardcoded fallback).
+- TVS-B.4.5 MUST complete before TVS-B.5 (B.5 integrates a fully-robust resolver with no hardcoded RVAs remaining). — **B.4.5 DONE & APPROVED; B.5 is now unblocked (next TVS).**
+- TVS-B.5 MUST complete before TVS-B.6 (regression suite tests the integrated system) and TVS-B.7 (path externalization touches the integrated code). — **B.5 DONE & APPROVED; B.7 DONE & APPROVED (items a+b). B.6 is unblocked from B's chain but should wait for Workstream E.**
+- TVS-B.6 and TVS-B.7 are independent of each other and can be done in parallel after TVS-B.5. — **B.5 complete; B.7 DONE & APPROVED (items a+b). Only B.6 remains (after Workstream E).**
+- Workstream E should be executed before B.6 and B.7. E provides the `sigtool` infrastructure that B.6's regression suite should include, and E externalizes the structural constants that B.7 item (c) was intended to address.
 
 ---
 
@@ -294,9 +369,9 @@ TVS-B.1 (RESEARCH — signature catalog)
 | R2 | orlib20.dll is packed/encrypted at rest | Low | Critical — signature scanning of the on-disk file fails | Mitigation: scan the LOADED image (after the OS loader unpacks it), not the on-disk file. The current approach already loads via `LoadLibraryW`. |
 | R3 | Future orlib20 versions change calling conventions | Low | High — wrong ABI, crash or silent corruption | The version manifest records calling conventions per version. If a new version is detected, the CLI warns and the signature scan includes prologue bytes that encode the calling convention (e.g., `push ebp; mov ebp,esp` vs. `sub esp,N`). |
 | R4 | Signatures match but function semantics changed | Medium | High — function found but behaves differently, silent data corruption | The regression suite (TVS-B.6) catches behavioral changes. The version manifest marks unknown versions as "untested." No silent fallback to untested behavior. |
-| R5 | CELCompiler object layout changes across versions | Medium | Medium — field offsets wrong, compile fails or corrupts | TVS-B.7 externalizes structural constants into the version manifest. The signature for the CELCompiler constructor includes the `mov [ecx+N], value` instructions that reveal field offsets. |
+| R5 | CELCompiler object layout changes across versions | Medium | Medium — field offsets wrong, compile fails or corrupts | ~~TVS-B.7 externalizes structural constants into the version manifest.~~ **RESOLVED (partially):** B.7 items (c)/(d) superseded by Workstream E's JSON version manifest. The signature for the CELCompiler constructor includes the `mov [ecx+N], value` instructions that reveal field offsets. |
 | R6 | Only one orlib20.dll version is available for analysis | High | Medium — signature stability across versions is unverified | TVS-B.2 explicitly documents this limitation. The design is conservative: unknown versions get a warning, not a silent proceed. The signature catalog uses minimal-length signatures (fewer assumptions about surrounding code). |
-| R7 | TS install path changes in future versions (e.g., "TradeStation 10") | Medium | Low — CLI can't find the DLL | TVS-B.7 adds registry-based discovery and CLI override. |
+| R7 | TS install path changes in future versions (e.g., "TradeStation 10") | Medium | Low — CLI can't find the DLL | **RESOLVED by TVS-B.7 (DONE & APPROVED):** registry-based discovery (`SOFTWARE\TradeStation Technologies\TradeStation\Installing\RootDirectory` with `KEY_WOW64_32KEY`) + `--ts-path` CLI override + conventional default from `ProgramFiles(x86)` env var. |
 | R8 | Export names change (decoration changes, renames) | Low | Medium — `GetProcAddress` fails, clear error | Export resolution already throws on failure. The version manifest can record alternate export names per version. |
 | R9 | `applyPersistencePatch` original bytes change | Medium | Medium — patch validation fails, CLI aborts (not a crash) | This is the desired behavior — fail loudly. The version manifest records the expected original bytes per version. |
 | R10 | SEH wrappers mask real bugs by swallowing exceptions | Low | Medium — silent failure instead of crash | SEH wrappers log to stderr before returning. The regression suite checks for unexpected SEH catches. |

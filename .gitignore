@@ -9,4 +9,5 @@ __pycache__/
 *.log
 /ghidra_project/
 /tmp/
+*.obj
 

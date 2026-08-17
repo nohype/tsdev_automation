@@ -15,18 +15,36 @@
 #define TSDEV_LIB_H
 
 #include <string>
+#include <memory>
 #include <windows.h>
 
 namespace tsdev {
 
-// Confirmed warehouse types (see orlib_param_orders.md §1).
-// UNRESOLVED types (ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp)
-// are intentionally NOT represented here.
+class OrlibResolver;  // forward declaration (defined in orlib_resolver.h)
+
+// Confirmed warehouse types (see orlib_param_orders.md §1 and
+// tradingapp_whtype.md). The enum value is the EXPANDED whType
+// (= (subType << 8) | category). For types with sub-type 0
+// (Strategy, Indicator, Function), expanded whType == category.
+// For TradingApp, expanded whType (5122) != category (2).
 enum class ComponentType : int {
-    Strategy  = 0,
-    Indicator = 2,
-    Function  = 4
+    Strategy    = 0,
+    Indicator   = 2,
+    Function    = 4,
+    TradingApp  = 5122   // 0x1402 = (subType 0x14 << 8) | category 2
 };
+
+// Decompose an expanded whType (the enum value) into its category and
+// sub-type components. The orlib20 API functions take the CATEGORY whType
+// (low 8 bits), while the .ell filename uses the full expanded whType.
+// For Strategy/Indicator/Function (sub-type 0), category == expanded whType.
+// For TradingApp (sub-type 0x14), category (2) != expanded whType (5122).
+inline int getCategory(ComponentType type) {
+    return static_cast<int>(type) & 0xFF;
+}
+inline int getSubType(ComponentType type) {
+    return static_cast<int>(type) >> 8;
+}
 
 // Generic operation result. For compile/verify, prefer verifyModule()'s
 // returned error string as the authoritative success indicator.
@@ -47,7 +65,7 @@ struct Result {
 // Not copyable, not movable (owns DLL handles and live window objects).
 class TsDevLib {
 public:
-    TsDevLib();
+    explicit TsDevLib(const wchar_t* tsPathOverride = nullptr);
     ~TsDevLib();
 
     TsDevLib(const TsDevLib&)            = delete;
@@ -126,12 +144,56 @@ public:
     // Return the full path of the .xml (debug symbols) file for a given entry.
     std::string getXmlPath(ComponentType type, int progId);
 
+    // Return the discovered MyWork\Bin path (narrow, for .ell/.xml file paths).
+    const char* getMyWorkBinPath() const;
+
+    // Return the discovered MWRKArea.wrk path (narrow, for debug logging / tests).
+    const char* getWrkPath() const;
+
+    // Validate that bytes at the persistence patch RVA match the expected
+    // pattern (with mask). Returns true if match, false + stderr on mismatch.
+    // Read-only — does not patch. Used by applyPersistencePatch() and tests.
+    bool validatePersistencePatchBytes(const unsigned char* expected,
+                                       const unsigned char* mask, size_t len);
+
 private:
-    HMODULE    m_orlib      = nullptr;
-    DWORD_PTR  m_orlibBase  = 0;
+    // --- OrlibResolver (TVS-B.5) ---
+    std::unique_ptr<OrlibResolver> m_resolver;  // owns the DLL load + all resolution
+    void*      m_pDeleteOrchestrator = nullptr;  // Target 8, resolved by signature scan
+    uintptr_t  m_errArrayPtrRva      = 0;        // data global, resolved by instruction extraction
+    uintptr_t  m_errCountRva         = 0;        // data global, resolved by instruction extraction
+    uintptr_t  m_errHinstRva         = 0;        // data global, resolved by instruction extraction
+    uintptr_t  m_persistencePatchRva = 0;        // persistence patch site RVA, cached BEFORE
+                                                 // the patch is applied (the signature scan
+                                                 // for original bytes fails post-patch)
+    unsigned char m_persistenceOriginalBytes[8] = {};  // ACTUAL 8 original bytes at the
+                                                       // persistence patch site (including the
+                                                       // ASLR-sensitive positions 6-7 that
+                                                       // kPersistenceOriginalBytes wildcards
+                                                       // out), saved BEFORE patching so the
+                                                       // destructor can restore them.
+    uintptr_t  m_threadCheckRvas[3] = {};        // RVAs of the 3 thread-check patch sites,
+                                                 // cached BEFORE patching for restoration.
+    unsigned char m_threadCheckOriginalBytes[3] = {};  // original byte (0xCC) at each
+                                                       // thread-check site, saved BEFORE
+                                                       // patching for restoration.
+    bool       m_patchesApplied = false;         // true once all 4 patches are applied;
+                                                 // gates restoration in the destructor so a
+                                                 // partially-constructed instance is safe.
+    bool       m_orlibInitialized = false;       // true once OrlibInit succeeds; gates
+                                                 // OrlibExit in the destructor so a
+                                                 // partially-constructed instance does not
+                                                 // call OrlibExit without a prior init.
+
     HWND       m_editorHwnd   = nullptr;  // hidden EDIT control for source text
     HWND       m_editorParent = nullptr;  // STATIC parent of the EDIT control
     std::string m_lastSource;             // source saved by saveSource (for error line/col computation)
+
+    // --- TS install path (TVS-B.7) ---
+    std::wstring m_tsRoot;       // normalized install root, e.g. C:\...\TradeStation 9.5
+    std::wstring m_tsProgramDir; // <root>\Program (wide, for SetDllDirectoryW)
+    std::string  m_myWorkBin;    // <root>\MyWork\Bin (narrow, for .ell/.xml paths)
+    std::string  m_wrkPath;      // <root>\MyWork\MWRKArea.wrk (narrow, for debug logging)
 
     // --- Resolved orlib20 exports (all __stdcall, decorated) ---
     typedef BOOL (__stdcall *OrlibInit_t)(const char* workDirPath, int contextId);
@@ -157,25 +219,27 @@ private:
     CloseWarehouse_t     m_pCloseWarehouse  = nullptr;
 
     // --- Resolved internal functions (by RVA from orlib20 base) ---
-    // StartCompilingProcess: __cdecl, no args, base + 0x165de0
+    // RVAs are resolved at runtime via signature scan; see
+    // signatures/v9.50.01.3344.json for the per-target RVAs.
+    // StartCompilingProcess: __cdecl, no args
     typedef void (__cdecl *StartCompilingProcess_t)(void);
-    // EndCompilingProcess: __fastcall, 1 arg, base + 0x165ed0
+    // EndCompilingProcess: __fastcall, 1 arg
     typedef void (__fastcall *EndCompilingProcess_t)(int param);
-    // CELCompiler constructor: __fastcall (ecx=this), base + 0x165a00
+    // CELCompiler constructor: __fastcall (ecx=this)
     typedef void* (__fastcall *CELCompilerCtor_t)(void* thisPtr);
-    // CELCompiler destructor: __fastcall (ecx=this), base + 0x165ac0
+    // CELCompiler destructor: __fastcall (ecx=this)
     typedef void (__fastcall *CELCompilerDtor_t)(void* thisPtr);
-    // InitGlobalLookup: __cdecl, no args, base + 0x1a9460
+    // InitGlobalLookup: __cdecl, no args
     // Returns pointer to the global lookup object (used as `this` for
     // DeleteFromTree). Confirmed via Frida trace.
     typedef void* (__cdecl *InitGlobalLookup_t)(void);
     // DeleteFromTree: __thiscall (ecx=globalLookup, stack: whType, progId,
-    // flag), base + 0x1e4030. Internally calls RemoveMetaDataModules when
+    // flag). Internally calls RemoveMetaDataModules when
     // flag != 0. MSVC C++ has no direct __thiscall function-pointer type, so
     // this is stored as void* and invoked via inline asm in a POD-only helper.
     // (See callDeleteFromTree in the .cpp.)
-    // GetWarehouse (FUN_101a9650): __cdecl, 1 arg (path, 0=default),
-    // base + 0x1a9650. Returns pointer to the per-thread warehouse object.
+    // GetWarehouse: __cdecl, 1 arg (path, 0=default).
+    // Returns pointer to the per-thread warehouse object.
     // Used by FindExistPos and _GetMasterRecByName internally.
     typedef void* (__cdecl *GetWarehouse_t)(int pathParam);
 
@@ -190,12 +254,9 @@ private:
     // --- Helpers ---
     HWND createHiddenEditControl();
     void setSourceText(HWND hwnd, const std::string& source);
-    bool applyPersistencePatch();
-    bool applyThreadCheckPatches();
-
-    // Resolve a decorated export or throw.
-    template <typename FnPtr>
-    FnPtr resolveOrThrow(const char* decoratedName);
+    void applyPersistencePatch();
+    void applyThreadCheckPatches();
+    std::string readErrorsFromArray(const std::string* source);
 };
 
 } // namespace tsdev

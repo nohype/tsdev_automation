@@ -125,18 +125,21 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 
 ### 5.2 WHType enum
 
-> **Evidence:** `orlib_param_orders.md` §1. The three mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ShowMe/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
+> **Evidence:** `orlib_param_orders.md` §1. The four mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap, ShowMe) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ShowMe/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
 
 | WHType | Name | Letter | Subtypes | Status |
 |--------|------|--------|----------|--------|
 | 0 | Strategy | S | 0,1 = Strategy; 2,3 = Strategy Group | **CONFIRMED** |
 | 1 | Function | F | (single) | UNCONFIRMED (static survey) |
-| 2 | Indicator | I | 0,1 = Indicator; 2,3 = PaintBar; 4,5 = ShowMe; 6,7 = Expert; 8,9 = Expiration Rule; 0xa,0xb = Volatility Model; 0xc,0xd = Pricing Model; 0xe,0xf = Bid/Ask Model; 0x10,0x11 = Search Strategy; 0x12,0x13 = ProbabilityMap | **CONFIRMED** (base type); subtype attributions UNCONFIRMED |
+| 2 | Indicator | I | 0,1 = Indicator; 2,3 = PaintBar; 4,5 = ShowMe; 6,7 = Expert; 8,9 = Expiration Rule; 0xa,0xb = Volatility Model; 0xc,0xd = Pricing Model; 0xe,0xf = Bid/Ask Model; 0x10,0x11 = Search Strategy; 0x12,0x13 = ProbabilityMap; 0x14 = TradingApp | **CONFIRMED** (base type); subtype attributions UNCONFIRMED except TradingApp |
 | 3 | ActivityBar | B | (single) | UNCONFIRMED (static survey) |
 | 4 | Function | M | (single) | **CONFIRMED** |
+| 5122 (0x1402) | TradingApp | — | expanded whType = (subType 0x14 << 8) \| category 2 | **CONFIRMED** — see `tmp/re_artifacts/tradingapp_whtype.md` + `tmp/re_artifacts/c1_adversarial_review.md` |
 | 0x32 (50) | Unknown (composite/project?) | — | Appears in verify/save; meaning unknown. | UNCONFIRMED |
 
-**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp. Any code written today must restrict itself to the three confirmed types (0=Strategy, 2=Indicator, 4=Function).
+**TradingApp** uses an **expanded whType** of 5122 (0x1402), encoded as `(subType << 8) | category` = `(0x14 << 8) | 2`. The orlib20 API functions (`CreateEntryEX`, `FindExistPos`, `SaveModule_New`, `VerifyModule_New`, delete orchestrator) take **category=2** (the low 8 bits — same as Indicator), with the sub-type 0x14 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 5122 (`elmodule_5122_<progId>.ell`). For Strategy/Indicator/Function (sub-type 0), the expanded whType equals the category, so no decomposition is needed.
+
+**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap, ShowMe. Any code written today must restrict itself to the four confirmed types (0=Strategy, 2=Indicator, 4=Function, 5122=TradingApp).
 
 TypeConvert (`0x101d43a0`) expands a WHType into a composite-ID list (subtype<<8 | WHType) terminated by -1, used by warehouse lookups to search all subtypes.
 

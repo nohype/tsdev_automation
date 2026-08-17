@@ -45,9 +45,6 @@ const char* kTestSource =
     "{ zzz_cli_delete_test }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
 
-const char* kWrkPath =
-    "C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\MWRKArea.wrk";
-
 // ---------------------------------------------------------------------------
 // Process scanning
 // ---------------------------------------------------------------------------
@@ -176,6 +173,12 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
+    // Capture the MWRKArea.wrk path from the discovered install root into a
+    // local std::string. This must be done BEFORE `lib` is destroyed (Phase 5),
+    // since the path is needed again in Phase 6 (after the first TsDevLib
+    // instance is deleted and before the fresh one is constructed).
+    std::string wrkPath = lib->getWrkPath();
+
     // ================================================================
     // PHASE 2: Ensure test component exists (INSERT if needed)
     // ================================================================
@@ -241,7 +244,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // MWRKArea.wrk before
     WIN32_FILE_ATTRIBUTE_DATA wrkBefore;
-    bool wrkBeforeOk = getFileState(kWrkPath, &wrkBefore);
+    bool wrkBeforeOk = getFileState(wrkPath.c_str(), &wrkBefore);
     std::fprintf(stdout,
                  "    MWRKArea.wrk before: ok=%d size=%lu "
                  "mtime=0x%08X%08X\n",
@@ -285,7 +288,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout,
                  "\n--- Phase 6: Verify MWRKArea.wrk changed ---\n");
     WIN32_FILE_ATTRIBUTE_DATA wrkAfter;
-    bool wrkAfterOk = getFileState(kWrkPath, &wrkAfter);
+    bool wrkAfterOk = getFileState(wrkPath.c_str(), &wrkAfter);
     std::fprintf(stdout,
                  "    MWRKArea.wrk after: ok=%d size=%lu "
                  "mtime=0x%08X%08X\n",

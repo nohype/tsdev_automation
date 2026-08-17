@@ -8,6 +8,7 @@
 // end-to-end; this module encapsulates the same logic in a reusable API.
 
 #include "tsdev_lib.h"
+#include "orlib_resolver.h"
 
 #include <stdexcept>
 #include <cstring>
@@ -27,12 +28,6 @@ namespace tsdev {
 
 namespace {
 
-// TradeStation paths (READ-ONLY — never modified).
-const wchar_t* kTsProgramDir =
-    L"C:\\Program Files (x86)\\TradeStation 9.5\\Program";
-const char* kMyWorkBin =
-    "C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin";
-
 // Support DLLs that must be pre-loaded before OrlibInit (§13).
 const wchar_t* kSupportDlls[] = {
     L"ECL.dll",
@@ -47,42 +42,38 @@ const wchar_t* kSupportDlls[] = {
 // CELCompiler object size (§8).
 const size_t kCELCompilerSize = 0x58; // 88 bytes
 
-// Internal function RVAs (relative to orlib20.dll base).
-const DWORD_PTR kRvaStartCompiling    = 0x165de0;
-const DWORD_PTR kRvaEndCompiling      = 0x165ed0;
-const DWORD_PTR kRvaCELCompilerCtor   = 0x165a00;
-const DWORD_PTR kRvaCELCompilerDtor   = 0x165ac0;
-// DELETE flow internal functions (confirmed via Frida trace of TSDev.exe).
-const DWORD_PTR kRvaInitGlobalLookup  = 0x1a9460;
-const DWORD_PTR kRvaDeleteFromTree    = 0x1e4030;
-const DWORD_PTR kRvaGetWarehouse      = 0x1a9650;
-
 // Persistence patch (§12): bypass FUN_10011230 (SymWriter crash).
 //   MOV EAX, 1   (5 bytes)  B8 01 00 00 00
 //   RET 0x0C     (3 bytes)  C2 0C 00
-const DWORD_PTR kRvaPersistencePatch  = 0x11230;
+// Patch-site resolution is now handled by OrlibResolver::applyPatch
+// (TVS-B.5). These byte arrays are retained as patch CONTENT (not RVAs)
+// for use by validatePersistencePatchBytes() and tests.
 const unsigned char kPersistencePatchBytes[] = {
     0xB8, 0x01, 0x00, 0x00, 0x00,  // MOV EAX, 1
     0xC2, 0x0C, 0x00               // RET 0x0C
+};
+
+// Original 8 bytes at the persistence patch site (FUN_10011230 entry, pre-patch).
+// Bytes 6-7 are the low 2 bytes of the SEH handler address (image-base-
+// relative, subject to ASLR relocation) and are wildcarded in validation.
+const unsigned char kPersistenceOriginalBytes[] = {
+    0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68, 0xCD, 0xD3
+};
+const unsigned char kPersistenceOriginalMask[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00  // 1=check, 0=wildcard
 };
 
 // Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in three
 // dispatch helpers so they can be called from any thread, not just the
 // worker thread. Each patch is a single byte.
 //
-// FUN_101d0950 (command 0x0F — load program): INT3 at RVA +0x3E
-// FUN_101cf5b0 (general dispatch helper):    INT3 at RVA +0x24
-// FUN_101d1fa0 (command 0x17 — save/commit): INT3 at RVA +0x28
-const DWORD_PTR kRvaThreadCheck1 = 0x1d0993;  // FUN_101d0950
-const DWORD_PTR kRvaThreadCheck2 = 0x1cf5d4;  // FUN_101cf5b0
-const DWORD_PTR kRvaThreadCheck3 = 0x1d1fc8;  // FUN_101d1fa0
-
-// Delete orchestrator: FUN_101a8360 — __fastcall(ECX=whType, EDX=progId).
-// Loads the program via command 0x0F, marks it deleted, runs
-// CELProgramWriter cleanup, sends command 0x4E (cache reset) and
-// command 0x17 (save/commit). This is the function called by the
-// TSDev UI delete confirmation path (FUN_10159ae0).
-const DWORD_PTR kRvaDeleteOrchestrator = 0x1a8360;
+// Patch-site resolution is now handled by OrlibResolver::applyPatch
+// (TVS-B.5) using signature names:
+//   FUN_101d0950_thread_check_INT3 (command 0x0F — load program)
+//   FUN_101cf5b0_thread_check_INT3 (general dispatch helper)
+//   FUN_101d1fa0_thread_check_INT3 (command 0x17 — save/commit)
+// The patch metadata (offsets, original/replacement bytes) is encoded
+// in b1_signatures.h and loaded by the resolver's signature catalog.
 
 // Convert a UTF-8 / ANSI std::string to a std::wstring (ACP).
 std::wstring toWide(const std::string& s) {
@@ -95,6 +86,19 @@ std::wstring toWide(const std::string& s) {
     return out;
 }
 
+// Convert a std::wstring to a UTF-8 / ANSI std::string (ACP).
+std::string toNarrow(const std::wstring& s) {
+    if (s.empty()) return std::string();
+    int len = WideCharToMultiByte(CP_ACP, 0, s.c_str(),
+                                  static_cast<int>(s.size()),
+                                  nullptr, 0, nullptr, nullptr);
+    std::string out(len, '\0');
+    WideCharToMultiByte(CP_ACP, 0, s.c_str(),
+                        static_cast<int>(s.size()),
+                        &out[0], len, nullptr, nullptr);
+    return out;
+}
+
 // --- SEH-protected call wrappers ------------------------------------------
 // MSVC forbids __try in functions that own C++ objects with destructors
 // (C2712). These helpers contain only POD and raw pointers, so they can use
@@ -103,8 +107,10 @@ std::wstring toWide(const std::string& s) {
 // The typedefs mirror the private nested typedefs in TsDevLib; function
 // pointer types are structurally identical so the members convert implicitly.
 
-typedef void  (__fastcall *CELCompilerCtorFn)(void* thisPtr);
-typedef void  (__fastcall *CELCompilerDtorFn)(void* thisPtr);
+// CELCompilerCtorFn and CELCompilerDtorFn come from orlib_resolver.h
+// (namespace tsdev). They are structurally compatible with the TsDevLib
+// member typedefs (CELCompilerCtor_t / CELCompilerDtor_t) so the SEH
+// wrappers below convert implicitly.
 typedef void  (__cdecl    *StartCompilingFn)(void);
 typedef void  (__fastcall *EndCompilingFn)(int param);
 typedef int   (__stdcall  *VerifyModuleFn)(HWND, int, int, int, void*);
@@ -134,67 +140,14 @@ bool callStartCompiling(StartCompilingFn fn) {
 // --- Direct error array access (TVS-A.4) -----------------------------------
 // _GetCompilingErrors@4 uses a std::vector ABI that is impractical to match
 // across DLL boundaries. Instead, we read the global error array directly.
-// These RVAs are relative to orlib20.dll's base address (== HMODULE).
-static constexpr uintptr_t kErrArrayPtrRva  = 0x23cea0;  // DAT_1023cea0: error record array pointer
-static constexpr uintptr_t kErrCountRva     = 0x23cea4;  // DAT_1023cea4: error record count
-static constexpr uintptr_t kErrHinstRva     = 0x23aab8;  // DAT_1023aab8: HINSTANCE for string table
+// The 3 data-global RVAs (error array pointer, count, HINSTANCE) are now
+// resolved at construction time by OrlibResolver and stored as member
+// variables (m_errArrayPtrRva, m_errCountRva, m_errHinstRva).
+// The struct-layout constants below are NOT RVAs and are retained.
 static constexpr size_t    kErrRecordStride = 0x129;     // 297 bytes per error record
 static constexpr size_t    kErrTextOffset   = 0x29;      // null-terminated error text
 static constexpr size_t    kErrResIdOffset  = 0x12;      // short: string-table resource ID
 static constexpr size_t    kErrCharOffset   = 0x0A;      // int: character offset of error start in source
-
-// Reads error text directly from orlib20.dll's global error array.
-// Must be called AFTER VerifyModule_New returns and BEFORE EndCompilingProcess.
-std::string readErrorsFromArray(HMODULE orlibBase, const std::string* source) {
-    uintptr_t base = reinterpret_cast<uintptr_t>(orlibBase);
-
-    // Read error count
-    uint32_t count = *reinterpret_cast<uint32_t*>(base + kErrCountRva);
-    if (count == 0 || count > 1000) return "";  // sanity bound
-
-    // Read error array pointer
-    uint8_t* array = *reinterpret_cast<uint8_t**>(base + kErrArrayPtrRva);
-    if (array == nullptr) return "";
-
-    std::string result;
-    for (uint32_t i = 0; i < count; i++) {
-        uint8_t* record = array + static_cast<size_t>(i) * kErrRecordStride;
-        const char* text = reinterpret_cast<const char*>(record + kErrTextOffset);
-        // Compute line/column from character offset (if source available)
-        int charOffset = *reinterpret_cast<int*>(record + kErrCharOffset);
-        std::string location;
-        if (source != nullptr && charOffset > 0 &&
-            static_cast<size_t>(charOffset) <= source->length()) {
-            int line = 1;
-            int lineStart = 0;
-            for (int j = 0; j < charOffset && j < static_cast<int>(source->length()); j++) {
-                if ((*source)[j] == '\n') {
-                    line++;
-                    lineStart = j + 1;
-                }
-            }
-            int col = charOffset - lineStart + 1;
-            location = "Line " + std::to_string(line) + ", Col " + std::to_string(col) + ": ";
-        }
-        if (text[0] != '\0') {
-            if (!result.empty()) result += "\n";
-            result += location + text;
-        } else {
-            // Fallback: load from string table via LoadStringA
-            short resId = *reinterpret_cast<short*>(record + kErrResIdOffset);
-            if (resId != 0) {
-                HINSTANCE hInst = *reinterpret_cast<HINSTANCE*>(base + kErrHinstRva);
-                char buf[1024];
-                int len = LoadStringA(hInst, resId, buf, sizeof(buf));
-                if (len > 0) {
-                    if (!result.empty()) result += "\n";
-                    result += location + buf;
-                }
-            }
-        }
-    }
-    return result;
-}
 
 bool callVerify(VerifyModuleFn verifyFn,
                 HWND hwnd, int whType, int progId,
@@ -245,7 +198,7 @@ bool callDeleteFromTree(void* fnPtr, void* globalLookup,
 }
 
 // SEH-protected call to InitGlobalLookup (__cdecl, no args).
-typedef void* (__cdecl *InitGlobalLookupFn)(void);
+// InitGlobalLookupFn comes from orlib_resolver.h (namespace tsdev).
 bool callInitGlobalLookup(InitGlobalLookupFn fn, void** outPtr) {
     *outPtr = nullptr;
     __try {
@@ -257,7 +210,7 @@ bool callInitGlobalLookup(InitGlobalLookupFn fn, void** outPtr) {
 }
 
 // SEH-protected call to GetWarehouse (__cdecl, 1 arg).
-typedef void* (__cdecl *GetWarehouseFn)(int);
+// GetWarehouseFn comes from orlib_resolver.h (namespace tsdev).
 bool callGetWarehouse(GetWarehouseFn fn, int pathParam, void** out) {
     *out = nullptr;
     __try {
@@ -287,45 +240,237 @@ bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
 }
 #pragma warning(pop)
 
-} // namespace
+// --- SEH-protected wrappers for OrlibInit, OrlibExit, FindExistPos (TVS-B.5 AC3) ---
+// These three call sites were previously unprotected. Each wrapper is
+// POD-only (no C++ objects with destructors) so __try/__except is legal
+// under MSVC (no C2712). The typedefs (OrlibInitFn, OrlibExitFn,
+// FindExistPosFn) come from orlib_resolver.h and are structurally identical
+// to the TsDevLib member typedefs.
 
-// --- Template helper definition (kept in .cpp to avoid header clutter) ---
-// Resolves a decorated export from orlib20.dll, throwing on failure.
-template <typename FnPtr>
-FnPtr TsDevLib::resolveOrThrow(const char* decoratedName) {
-    FARPROC raw = GetProcAddress(m_orlib, decoratedName);
-    if (!raw) {
-        throw std::runtime_error(
-            std::string("tsdev: failed to resolve orlib20 export: ")
-            + decoratedName);
+// SEH-protected call to OrlibInit (__stdcall, 2 args).
+bool callOrlibInit(OrlibInitFn fn, const char* workDir, int contextId) {
+    __try {
+        return fn(workDir, contextId) != FALSE;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
     }
-    return reinterpret_cast<FnPtr>(raw);
 }
+
+// SEH-protected call to OrlibExit (__stdcall, no args).
+bool callOrlibExit(OrlibExitFn fn) {
+    __try {
+        return fn() != FALSE;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// SEH-protected call to FindExistPos (__stdcall, 2 args).
+struct FindExistPosSehResult {
+    int result;   // -1 if FindExistPos raised
+};
+bool callFindExistPos(FindExistPosFn fn, const char* name,
+                      int warehouseType, FindExistPosSehResult* out) {
+    out->result = -1;
+    __try {
+        out->result = fn(name, warehouseType);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// Restore `len` original bytes at an executable address. Used by the
+// TsDevLib destructor to undo the persistence + thread-check patches so a
+// subsequent TsDevLib instance in the same process can re-scan the (now
+// original) bytes successfully. POD-only (no C++ objects with destructors)
+// so __try would be legal, but no SEH guard is needed here — VirtualProtect
+// + memcpy are safe; on failure we simply skip the write.
+static void restoreBytes(void* addr, const unsigned char* bytes, size_t len) {
+    DWORD oldProtect = 0;
+    if (VirtualProtect(addr, len, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        std::memcpy(addr, bytes, len);
+        VirtualProtect(addr, len, oldProtect, &oldProtect);
+    }
+}
+
+// --- TS install path discovery (TVS-B.7) -----------------------------------
+// Resolves the TradeStation install root at runtime via (1) an explicit
+// override path, (2) the Windows registry, or (3) a conventional default
+// constructed from %ProgramFiles(x86)%. Replaces the old hardcoded
+// absolute TS install path constants.
+
+// Strip a single trailing backslash (if present) from a wide path.
+// Does NOT strip the backslash from a drive root like "C:\" (checks that the
+// char before the trailing '\' is not ':'). This prevents double-backslashes
+// in derived paths (the registry value has a trailing '\').
+std::wstring normalizeTrailingBackslash(std::wstring path) {
+    if (path.size() > 1 && path.back() == L'\\' &&
+        path[path.size() - 2] != L':') {
+        path.pop_back();
+    }
+    return path;
+}
+
+// Read a REG_SZ value from the registry. Returns the value as a std::wstring,
+// or an empty string on failure. Uses KEY_WOW64_32KEY to access the 32-bit
+// registry view (the subkey path must NOT include WOW6432Node — the flag
+// handles the redirection; including both causes double-redirection).
+std::wstring readRegistryRootDir(HKEY hive, const wchar_t* subkey,
+                                 const wchar_t* valueName) {
+    HKEY hKey = nullptr;
+    LONG rc = RegOpenKeyExW(hive, subkey, 0,
+                            KEY_READ | KEY_WOW64_32KEY, &hKey);
+    if (rc != ERROR_SUCCESS) {
+        return std::wstring();
+    }
+    wchar_t buf[MAX_PATH] = {0};
+    DWORD bufSize = sizeof(buf);
+    DWORD type = 0;
+    rc = RegQueryValueExW(hKey, valueName, nullptr, &type,
+                          reinterpret_cast<LPBYTE>(buf), &bufSize);
+    RegCloseKey(hKey);
+    if (rc != ERROR_SUCCESS || type != REG_SZ) {
+        return std::wstring();
+    }
+    // bufSize is in bytes; compute the string length (excluding null terminator).
+    DWORD charCount = bufSize / sizeof(wchar_t);
+    if (charCount > 0 && buf[charCount - 1] == L'\0') {
+        charCount--;  // exclude the null terminator
+    }
+    return std::wstring(buf, charCount);
+}
+
+// Construct the conventional default TS install root from the
+// %ProgramFiles(x86)% environment variable + "\TradeStation 9.5". If the
+// env var is not set (very unlikely on modern Windows), falls back to
+// "C:\Program Files (x86)" (a Windows convention, not a TS-specific
+// hardcoding — contains no "TradeStation 9.5" string).
+std::wstring getConventionalDefaultRoot() {
+    wchar_t pfBuf[MAX_PATH] = {0};
+    DWORD pfLen = GetEnvironmentVariableW(L"ProgramFiles(x86)", pfBuf, MAX_PATH);
+    std::wstring pfBase;
+    if (pfLen == 0 || pfLen >= MAX_PATH) {
+        pfBase = L"C:\\Program Files (x86)";
+    } else {
+        pfBase = std::wstring(pfBuf, pfLen);
+    }
+    // Strip a trailing backslash from the env var value if present.
+    if (pfBase.size() > 1 && pfBase.back() == L'\\' &&
+        pfBase[pfBase.size() - 2] != L':') {
+        pfBase.pop_back();
+    }
+    return pfBase + L"\\TradeStation 9.5";
+}
+
+// Validates that <root>\Program\orlib20.dll exists. Returns true if found.
+bool validateTsInstall(const std::wstring& root) {
+    std::wstring orlibPath = root + L"\\Program\\orlib20.dll";
+    DWORD attr = GetFileAttributesW(orlibPath.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES);
+}
+
+// Resolves the TS install root path. Priority: override → registry → default.
+// Prints to stderr which mechanism was used.
+std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
+    // (1) Explicit override
+    if (overridePath != nullptr && overridePath[0] != L'\0') {
+        std::wstring root = normalizeTrailingBackslash(std::wstring(overridePath));
+        std::fprintf(stderr,
+                     "tsdev: TS install path resolved via --ts-path override: %ls\n",
+                     root.c_str());
+        fflush(stderr);
+        return root;
+    }
+
+    // (2) Primary registry key: ...\TradeStation\Installing\RootDirectory
+    std::wstring root = readRegistryRootDir(
+        HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\TradeStation Technologies\\TradeStation\\Installing",
+        L"RootDirectory");
+    if (!root.empty()) {
+        root = normalizeTrailingBackslash(root);
+        std::fprintf(stderr,
+                     "tsdev: TS install path resolved via registry (Installing): %ls\n",
+                     root.c_str());
+        fflush(stderr);
+        return root;
+    }
+
+    // (3) Fallback registry key: ...\TradeStation\Versions\9.05.00\RootDirectory
+    root = readRegistryRootDir(
+        HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\TradeStation Technologies\\TradeStation\\Versions\\9.05.00",
+        L"RootDirectory");
+    if (!root.empty()) {
+        root = normalizeTrailingBackslash(root);
+        std::fprintf(stderr,
+                     "tsdev: TS install path resolved via registry (Versions\\9.05.00): %ls\n",
+                     root.c_str());
+        fflush(stderr);
+        return root;
+    }
+
+    // (4) Conventional default (last resort) — constructed from %ProgramFiles(x86)%
+    root = getConventionalDefaultRoot();
+    std::fprintf(stderr,
+                 "tsdev: TS install path resolved via conventional default: %ls\n",
+                 root.c_str());
+    fflush(stderr);
+    return root;
+}
+
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
 
-TsDevLib::TsDevLib() {
-    // 1. Point the loader at the TS Program directory so orlib20.dll and its
+TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
+    // 1. Resolve the TS install root (override → registry → conventional
+    //    default). This also prints to stderr which mechanism was used.
+    m_tsRoot = resolveTsInstallRoot(tsPathOverride);
+
+    // 2. Validate that <root>\Program\orlib20.dll exists. A bad --ts-path
+    //    override or a missing install is caught here with a clear error.
+    if (!validateTsInstall(m_tsRoot)) {
+        std::fprintf(stderr,
+                     "tsdev: ERROR — orlib20.dll not found at %ls\\Program\\orlib20.dll.\n"
+                     "tsdev: TS install path may be incorrect. Use --ts-path to specify the correct path.\n",
+                     m_tsRoot.c_str());
+        fflush(stderr);
+        throw std::runtime_error(
+            "tsdev: orlib20.dll not found at <root>\\Program\\orlib20.dll");
+    }
+
+    // 3. Derive member paths from the resolved root.
+    m_tsProgramDir = m_tsRoot + L"\\Program";
+    m_myWorkBin    = toNarrow(m_tsRoot + L"\\MyWork\\Bin");
+    m_wrkPath      = toNarrow(m_tsRoot + L"\\MyWork\\MWRKArea.wrk");
+
+    // 4. Point the loader at the TS Program directory so orlib20.dll and its
     //    dependencies resolve.
-    if (!SetDllDirectoryW(kTsProgramDir)) {
+    if (!SetDllDirectoryW(m_tsProgramDir.c_str())) {
         throw std::runtime_error(
             "tsdev: SetDllDirectoryW failed for TS Program dir");
     }
 
-    // 2. Load orlib20.dll.
-    m_orlib = LoadLibraryW(L"orlib20.dll");
-    if (!m_orlib) {
-        DWORD err = GetLastError();
-        char buf[128];
-        std::snprintf(buf, sizeof(buf),
-                      "tsdev: LoadLibraryW(orlib20.dll) failed: %lu", err);
-        throw std::runtime_error(buf);
-    }
-    m_orlibBase = reinterpret_cast<DWORD_PTR>(m_orlib);
+    // 5. Construct OrlibResolver — loads orlib20.dll via LoadLibraryW,
+    //    parses PE headers, builds signature catalog, detects version.
+    //    Throws OrlibResolverError on load/PE failure (propagates as
+    //    std::runtime_error — AC6).
+    m_resolver = std::make_unique<OrlibResolver>(L"orlib20.dll");
 
-    // 3. Pre-load support DLLs (§13). Failures are non-fatal — log via
+    // 6. Version check — warn but do NOT abort if unknown (AC4).
+    //    detectVersion() never throws; it is already cached in the resolver.
+    const VersionDescriptor& vd = m_resolver->version();
+    if (!vd.known || !vd.warningMessage.empty()) {
+        std::fprintf(stderr, "tsdev: WARNING — %s\n",
+                     vd.warningMessage.c_str());
+        fflush(stderr);
+    }
+
+    // 7. Pre-load support DLLs (§13). Failures are non-fatal — log via
     //    stderr and continue; OrlibInit will fail outright if a truly
     //    required dependency is missing.
     for (const wchar_t* dll : kSupportDlls) {
@@ -337,62 +482,50 @@ TsDevLib::TsDevLib() {
         }
     }
 
-    // 4. Apply the FUN_10011230 persistence patch (§12). Without this no
-    //    .ell file is persisted.
-    if (!applyPersistencePatch()) {
+    // 8. Resolve 7 exported functions via resolver (replaces the old
+    //    GetProcAddress-based template helper).
+    m_pOrlibInit      = m_resolver->resolveOrlibInit();
+    m_pOrlibExit      = m_resolver->resolveOrlibExit();
+    m_pFindExistPos   = m_resolver->resolveFindExistPos();
+    m_pCreateEntry    = m_resolver->resolveCreateEntryEX();
+    m_pSaveModuleNew  = m_resolver->resolveSaveModuleNew();
+    m_pVerifyModule   = m_resolver->resolveVerifyModuleNew();
+    m_pCloseWarehouse = m_resolver->resolveCloseWarehouse();
+
+    // 9. Resolve 8 internal functions via resolver (signature scan,
+    //    replaces old base-address + RVA arithmetic).
+    m_pStartCompiling     = m_resolver->resolveStartCompilingProcess();
+    m_pEndCompiling       = m_resolver->resolveEndCompilingProcess();
+    m_pCELCompilerCtor    = m_resolver->resolveCELCompilerCtor();
+    m_pCELCompilerDtor    = m_resolver->resolveCELCompilerDtor();
+    m_pInitGlobalLookup   = m_resolver->resolveInitGlobalLookup();
+    m_pDeleteFromTree     = m_resolver->resolveDeleteFromTree();
+    m_pGetWarehouse       = m_resolver->resolveGetWarehouse();
+    m_pDeleteOrchestrator = m_resolver->resolveDeleteOrchestrator();
+
+    // 10. Resolve 3 data-global RVAs via resolver (replaces hardcoded
+    //    error-array/count/HINSTANCE RVA constants).
+    m_errArrayPtrRva = m_resolver->resolveErrorArrayPtrRva();
+    m_errCountRva    = m_resolver->resolveErrorCountRva();
+    m_errHinstRva    = m_resolver->resolveErrorHinstRva();
+
+    // 11. Apply patches via existing private methods (which delegate to
+    //    m_resolver->applyPatch). OrlibResolverError propagates out of
+    //    the constructor on validation or VirtualProtect failure (AC6).
+    applyPersistencePatch();
+    applyThreadCheckPatches();
+
+    // 12. Initialize orlib20 (SEH-protected — AC3).
+    if (!callOrlibInit(m_pOrlibInit, NULL, 1)) {
         throw std::runtime_error(
-            "tsdev: failed to apply persistence patch (FUN_10011230)");
+            "tsdev: OrlibInit(NULL, 1) raised SEH exception or returned FALSE");
     }
+    m_orlibInitialized = true;
 
-    // 4b. Apply thread-check bypass patches. These NOP the INT3
-    //     instructions in FUN_101d0950, FUN_101cf5b0, and FUN_101d1fa0
-    //     so the delete orchestrator (FUN_101a8360) can call them from
-    //     our thread instead of the worker thread.
-    if (!applyThreadCheckPatches()) {
-        throw std::runtime_error(
-            "tsdev: failed to apply thread-check patches");
-    }
-
-    // 5. Resolve all exported functions.
-    m_pOrlibInit      = resolveOrThrow<OrlibInit_t>("_OrlibInit@8");
-    m_pOrlibExit      = resolveOrThrow<OrlibExit_t>("_OrlibExit@0");
-    // NOTE: orlib20.dll exports FindExistPos UNDECORATED (not _FindExistPos@8).
-    // Confirmed via dumpbin /exports. The reference probe (elevated_test20.cpp)
-    // also resolves the undecorated name.
-    m_pFindExistPos   = resolveOrThrow<FindExistPos_t>("FindExistPos");
-    m_pCreateEntry    = resolveOrThrow<CreateEntryEX_t>("_CreateEntryEX@24");
-    m_pSaveModuleNew  = resolveOrThrow<SaveModule_New_t>("_SaveModule_New@20");
-    m_pVerifyModule   = resolveOrThrow<VerifyModule_New_t>("_VerifyModule_New@20");
-    m_pCloseWarehouse = resolveOrThrow<CloseWarehouse_t>(
-        "_CloseWarehouseForCurrentThreadAndPath@4");
-
-    // 6. Resolve internal functions by RVA.
-    m_pStartCompiling = reinterpret_cast<StartCompilingProcess_t>(
-        m_orlibBase + kRvaStartCompiling);
-    m_pEndCompiling   = reinterpret_cast<EndCompilingProcess_t>(
-        m_orlibBase + kRvaEndCompiling);
-    m_pCELCompilerCtor = reinterpret_cast<CELCompilerCtor_t>(
-        m_orlibBase + kRvaCELCompilerCtor);
-    m_pCELCompilerDtor = reinterpret_cast<CELCompilerDtor_t>(
-        m_orlibBase + kRvaCELCompilerDtor);
-
-    // 6b. Resolve DELETE-flow internal functions by RVA.
-    m_pInitGlobalLookup = reinterpret_cast<InitGlobalLookup_t>(
-        m_orlibBase + kRvaInitGlobalLookup);
-    m_pDeleteFromTree = reinterpret_cast<void*>(
-        m_orlibBase + kRvaDeleteFromTree);
-    m_pGetWarehouse = reinterpret_cast<GetWarehouse_t>(
-        m_orlibBase + kRvaGetWarehouse);
-
-    // 7. Initialize orlib20.
-    if (!m_pOrlibInit(NULL, 1)) {
-        throw std::runtime_error("tsdev: OrlibInit(NULL, 1) returned FALSE");
-    }
-
-    // 8. Create the hidden EDIT control used to hold source text.
+    // 13. Create the hidden EDIT control used to hold source text.
     m_editorHwnd = createHiddenEditControl();
     if (!m_editorHwnd) {
-        m_pOrlibExit();
+        callOrlibExit(m_pOrlibExit);
         throw std::runtime_error("tsdev: failed to create hidden EDIT control");
     }
 }
@@ -408,11 +541,37 @@ TsDevLib::~TsDevLib() {
         DestroyWindow(m_editorParent);
         m_editorParent = nullptr;
     }
-    if (m_pOrlibExit) {
-        m_pOrlibExit();
+    // Only call OrlibExit if OrlibInit actually succeeded. If the constructor
+    // threw before OrlibInit (e.g. during patch application), calling
+    // OrlibExit without a prior init is unsafe.
+    if (m_orlibInitialized && m_pOrlibExit) {
+        callOrlibExit(m_pOrlibExit);
+    }
+    // Restore all 4 patch sites to their original bytes AFTER OrlibExit but
+    // BEFORE m_resolver (unique_ptr) is destroyed — the resolver still owns
+    // the loaded orlib20.dll and its base address, so baseAddress() is valid
+    // here. This returns the in-memory DLL to its original state so that a
+    // subsequent TsDevLib instance in the same process can re-scan the
+    // original-byte signatures (the persistence patch signature scans for
+    // 55 8B EC 6A FF 68...; the thread-check signatures scan for 0xCC).
+    // Without this restoration the second instance's scan finds the patched
+    // bytes (B8 01 00 00 00 C2 0C 00 / 0x90) and throws OrlibResolverError.
+    if (m_patchesApplied) {
+        uintptr_t base = m_resolver->baseAddress();
+        // Persistence patch: restore 8 original bytes.
+        restoreBytes(reinterpret_cast<void*>(base + m_persistencePatchRva),
+                     m_persistenceOriginalBytes, 8);
+        // Thread-check patches: restore 1 original byte (0xCC) each.
+        for (int i = 0; i < 3; i++) {
+            restoreBytes(reinterpret_cast<void*>(base + m_threadCheckRvas[i]),
+                         &m_threadCheckOriginalBytes[i], 1);
+        }
+        m_patchesApplied = false;
     }
     // DLLs are released automatically at process exit; do not FreeLibrary
     // orlib20.dll here because internal threads/state may still reference it.
+    // The resolver (m_resolver) owns the HMODULE and does not FreeLibrary
+    // it either (matching the existing behavior).
 }
 
 // ============================================================================
@@ -420,7 +579,13 @@ TsDevLib::~TsDevLib() {
 // ============================================================================
 
 int TsDevLib::findExistPos(const std::string& name, ComponentType type) {
-    return m_pFindExistPos(name.c_str(), static_cast<int>(type));
+    FindExistPosSehResult seh;
+    if (!callFindExistPos(m_pFindExistPos, name.c_str(),
+                          getCategory(type), &seh)) {
+        // SEH exception — treat as "not found"
+        return 0;
+    }
+    return seh.result;
 }
 
 int TsDevLib::createEntry(ComponentType type, const std::string& name,
@@ -428,8 +593,8 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
     errCode = 0;
     int progId = 0;
     __try {
-        progId = m_pCreateEntry(static_cast<int>(type), 0, name.c_str(),
-                                0, 0, &errCode);
+        progId = m_pCreateEntry(getCategory(type), getSubType(type),
+                                name.c_str(), 0, 0, &errCode);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         // CreateEntryEX can raise SEH on certain malformed states; treat as
         // a hard failure (ProgId 0).
@@ -444,7 +609,7 @@ bool TsDevLib::saveSource(ComponentType type, int progId,
     setSourceText(m_editorHwnd, source);
     int result = 0;
     __try {
-        result = m_pSaveModuleNew(static_cast<int>(type), progId,
+        result = m_pSaveModuleNew(getCategory(type), progId,
                                   NULL, m_editorHwnd, NULL);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -490,7 +655,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
     VerifySehResult seh;
     if (!callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
-            m_editorHwnd, static_cast<int>(type), progId, compilerMem, &seh)) {
+            m_editorHwnd, getCategory(type), progId, compilerMem, &seh)) {
         callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
         callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
                  compilerMem);
@@ -501,7 +666,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
     // Build the error string from the global error array (direct access).
     if (seh.verifyResult != 1) {
         // Compile failure — read error records directly from orlib20.dll globals.
-        errors = readErrorsFromArray(m_orlib, &m_lastSource);
+        errors = readErrorsFromArray(&m_lastSource);
         if (errors.empty()) {
             // No error text in the array (or array empty). Fall back to synthesized message.
             errors = "tsdev: VerifyModule_New returned "
@@ -538,22 +703,31 @@ bool TsDevLib::ellFileExists(ComponentType type, int progId) {
 std::string TsDevLib::getEllPath(ComponentType type, int progId) {
     char buf[512];
     std::snprintf(buf, sizeof(buf), "%s\\elmodule_%d_%d.ell",
-                  kMyWorkBin, static_cast<int>(type), progId);
+                  m_myWorkBin.c_str(), static_cast<int>(type), progId);
     return std::string(buf);
 }
 
 std::string TsDevLib::getXmlPath(ComponentType type, int progId) {
     char buf[512];
     std::snprintf(buf, sizeof(buf), "%s\\elmodule_%d_%d.xml",
-                  kMyWorkBin, static_cast<int>(type), progId);
+                  m_myWorkBin.c_str(), static_cast<int>(type), progId);
     return std::string(buf);
 }
 
+const char* TsDevLib::getMyWorkBinPath() const {
+    return m_myWorkBin.c_str();
+}
+
+const char* TsDevLib::getWrkPath() const {
+    return m_wrkPath.c_str();
+}
+
 bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
-    int whType = static_cast<int>(type);
+    int category = getCategory(type);
+    int expandedWhType = static_cast<int>(type);
 
     // ---- MWRKArea.wrk timestamp (before) ----
-    std::string wrkPath = "C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\MWRKArea.wrk";
+    std::string wrkPath = m_wrkPath;
     WIN32_FILE_ATTRIBUTE_DATA wrkBefore;
     BOOL wrkBeforeOk = GetFileAttributesExA(wrkPath.c_str(), GetFileExInfoStandard, &wrkBefore);
     TSDEV_DBG("tsdev: deleteEntry — MWRKArea.wrk BEFORE: ok=%d size=%lu mtime=%lu\n",
@@ -561,10 +735,12 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
               wrkBeforeOk ? wrkBefore.nFileSizeLow : 0,
               wrkBeforeOk ? wrkBefore.ftLastWriteTime.dwLowDateTime : 0);
 
-    // 1. FindExistPos to get progId (exported, works in our process)
-    int progId = m_pFindExistPos(name.c_str(), whType);
+    // 1. FindExistPos to get progId (exported, works in our process).
+    //    Routed through the SEH-protected findExistPos() wrapper (AC3):
+    //    direct m_pFindExistPos calls can raise SEH and must not be bypassed.
+    int progId = findExistPos(name, type);
     TSDEV_DBG("tsdev: deleteEntry — FindExistPos(\"%s\", %d) = %d\n",
-              name.c_str(), whType, progId);
+              name.c_str(), category, progId);
     if (progId <= 0) {
         return false;
     }
@@ -595,14 +771,13 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
     //    and FUN_101d1fa0 have been patched to NOPs (see constructor step 4b),
     //    so these functions can be called from our thread.
     // ------------------------------------------------------------------
-    void* deleteOrchestrator = reinterpret_cast<void*>(
-        m_orlibBase + kRvaDeleteOrchestrator);
+    void* deleteOrchestrator = m_pDeleteOrchestrator;
 
     TSDEV_DBG("tsdev: deleteEntry — calling FUN_101a8360"
               " (deleteOrchestrator=%p, whType=%d, progId=%d)\n",
-              deleteOrchestrator, whType, progId);
+              deleteOrchestrator, category, progId);
 
-    bool ok = callDeleteOrchestrator(deleteOrchestrator, whType, progId);
+    bool ok = callDeleteOrchestrator(deleteOrchestrator, category, progId);
 
     TSDEV_DBG("tsdev: deleteEntry — FUN_101a8360 returned %s\n",
               ok ? "true" : "false (SEH exception)");
@@ -645,9 +820,9 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
     } else {
         TSDEV_DBG("tsdev: deleteEntry — globalLookup=%p\n", globalLookup);
 
-        TSDEV_DBG("tsdev: deleteEntry — calling DeleteFromTree(%d, %d, 3)\n", whType, progId);
+        TSDEV_DBG("tsdev: deleteEntry — calling DeleteFromTree(%d, %d, 3)\n", category, progId);
         if (!callDeleteFromTree(m_pDeleteFromTree, globalLookup,
-                                whType, progId, 3)) {
+                                category, progId, 3)) {
             TSDEV_DBG("tsdev: deleteEntry — DeleteFromTree raised SEH exception\n");
         } else {
             TSDEV_DBG("tsdev: deleteEntry — DeleteFromTree done\n");
@@ -663,9 +838,9 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
     char ellPath[512];
     char xmlPath[512];
     std::snprintf(ellPath, sizeof(ellPath), "%s\\elmodule_%d_%d.ell",
-                  kMyWorkBin, whType, progId);
+                  m_myWorkBin.c_str(), expandedWhType, progId);
     std::snprintf(xmlPath, sizeof(xmlPath), "%s\\elmodule_%d_%d.xml",
-                  kMyWorkBin, whType, progId);
+                  m_myWorkBin.c_str(), expandedWhType, progId);
     TSDEV_DBG("tsdev: deleteEntry — deleting %s and %s\n", ellPath, xmlPath);
     DeleteFileA(ellPath);
     DeleteFileA(xmlPath);
@@ -684,7 +859,7 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     // 1. Look up the existing component by name + type.
     int progId = findExistPos(name, type);
     TSDEV_DBG("tsdev: modifyEntry — findExistPos(\"%s\", %d) = %d\n",
-              name.c_str(), static_cast<int>(type), progId);
+              name.c_str(), getCategory(type), progId);
     if (progId <= 0) {
         return Result{false, "component not found", 0};
     }
@@ -744,70 +919,148 @@ void TsDevLib::setSourceText(HWND hwnd, const std::string& source) {
     SetWindowTextW(hwnd, wide.c_str());
 }
 
-bool TsDevLib::applyPersistencePatch() {
-    void* patchAddr = reinterpret_cast<void*>(
-        m_orlibBase + kRvaPersistencePatch);
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(patchAddr, sizeof(kPersistencePatchBytes),
-                        PAGE_EXECUTE_READWRITE, &oldProtect)) {
+bool TsDevLib::validatePersistencePatchBytes(const unsigned char* expected,
+                                              const unsigned char* mask, size_t len) {
+    // Use the cached persistence patch RVA (resolved in applyPersistencePatch
+    // BEFORE the original bytes were overwritten). We must NOT re-scan the
+    // signature here: resolvePersistencePatch() searches for the ORIGINAL
+    // unpatched bytes, which have already been replaced by the patch — a
+    // post-patch scan finds 0 matches and throws OrlibResolverError.
+    if (m_persistencePatchRva == 0) {
+        std::fprintf(stderr, "tsdev: validatePersistencePatchBytes — "
+                     "ERROR: persistence patch RVA was not cached (constructor failed?)\n");
+        fflush(stderr);
         return false;
     }
-    std::memcpy(patchAddr, kPersistencePatchBytes,
-                sizeof(kPersistencePatchBytes));
-    DWORD dummy = 0;
-    VirtualProtect(patchAddr, sizeof(kPersistencePatchBytes),
-                   oldProtect, &dummy);
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_persistencePatchRva);
+    for (size_t i = 0; i < len; i++) {
+        if (mask[i] && p[i] != expected[i]) {
+            std::fprintf(stderr, "tsdev: validatePersistencePatchBytes — "
+                         "ERROR: byte at RVA 0x%llX offset %zu is 0x%02X, expected 0x%02X\n",
+                         (unsigned long long)m_persistencePatchRva, i,
+                         (unsigned)p[i], (unsigned)expected[i]);
+            fflush(stderr);
+            return false;
+        }
+    }
     return true;
 }
 
-bool TsDevLib::applyThreadCheckPatches() {
-    // Patch three INT3 (0xCC) instructions to NOP (0x90) so the
-    // dispatch helpers can be called from any thread.
-    const DWORD_PTR patchRvas[] = {
-        kRvaThreadCheck1,  // FUN_101d0950 (command 0x0F)
-        kRvaThreadCheck2,  // FUN_101cf5b0 (general dispatch)
-        kRvaThreadCheck3,  // FUN_101d1fa0 (command 0x17)
-    };
-    for (DWORD_PTR rva : patchRvas) {
-        void* addr = reinterpret_cast<void*>(m_orlibBase + rva);
-        DWORD oldProtect = 0;
-        if (!VirtualProtect(addr, 1, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            std::fprintf(stderr, "tsdev: applyThreadCheckPatches — "
-                         "VirtualProtect failed at RVA 0x%lX (err=%lu)\n",
-                         (unsigned long)rva, GetLastError());
-            fflush(stderr);
-            return false;
+void TsDevLib::applyPersistencePatch() {
+    // Cache the persistence patch RVA BEFORE applying the patch. The
+    // signature scan in resolvePersistencePatch() searches for the ORIGINAL
+    // unpatched bytes (55 8B EC 6A FF 68...); once applyPatch() overwrites
+    // them with B8 01 00 00 00 C2 0C 00, a later re-scan finds 0 matches and
+    // throws OrlibResolverError. validatePersistencePatchBytes() relies on
+    // this cached RVA to read the patched bytes without re-scanning.
+    PatchSiteDescriptor desc = m_resolver->resolvePersistencePatch();
+    m_persistencePatchRva = desc.patchRva;
+
+    // Save the ACTUAL 8 original bytes at the patch site BEFORE overwriting
+    // them. kPersistenceOriginalBytes wildcards out positions 6-7 (the low
+    // 2 bytes of the SEH handler address, which are ASLR-relocated), so it
+    // cannot be used to restore — we need the real on-disk bytes. The
+    // destructor writes these back so a second TsDevLib instance in the same
+    // process can re-scan the original-byte signature successfully.
+    const unsigned char* site = reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_persistencePatchRva);
+    std::memcpy(m_persistenceOriginalBytes, site, 8);
+
+    // Delegates to the resolver's applyPatch, which handles:
+    //   resolvePatchSite → validatePatchSite (throw on mismatch)
+    //   → idempotency check → VirtualProtect → memcpy → restore.
+    // OrlibResolverError propagates to the constructor (AC6 diagnostics).
+    m_resolver->applyPatch("FUN_10011230_persistence_patch");
+}
+
+void TsDevLib::applyThreadCheckPatches() {
+    // Delegates to the resolver's applyPatch for each thread-check site.
+    // The resolver handles: resolvePatchSite → validatePatchSite (throw
+    // on mismatch) → idempotency check → VirtualProtect → memcpy → restore.
+    // OrlibResolverError propagates to the constructor (AC6 diagnostics).
+    //
+    // For each site we FIRST resolve the patch-site descriptor (which scans
+    // the ORIGINAL 0xCC byte) to cache the RVA and save the original byte,
+    // THEN applyPatch overwrites it with 0x90. The destructor writes the
+    // saved original bytes back so a second TsDevLib instance can re-scan.
+    PatchSiteDescriptor tc1 = m_resolver->resolveThreadCheck1();
+    m_threadCheckRvas[0] = tc1.patchRva;
+    m_threadCheckOriginalBytes[0] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[0]);
+    m_resolver->applyPatch("FUN_101d0950_thread_check_INT3");
+
+    PatchSiteDescriptor tc2 = m_resolver->resolveThreadCheck2();
+    m_threadCheckRvas[1] = tc2.patchRva;
+    m_threadCheckOriginalBytes[1] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[1]);
+    m_resolver->applyPatch("FUN_101cf5b0_thread_check_INT3");
+
+    PatchSiteDescriptor tc3 = m_resolver->resolveThreadCheck3();
+    m_threadCheckRvas[2] = tc3.patchRva;
+    m_threadCheckOriginalBytes[2] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[2]);
+    m_resolver->applyPatch("FUN_101d1fa0_thread_check_INT3");
+
+    // All 4 patches (persistence + 3 thread-checks) are now applied. Gates
+    // restoration in the destructor.
+    m_patchesApplied = true;
+}
+
+// --- readErrorsFromArray (moved from anonymous namespace, TVS-B.5) --------
+// Reads error text directly from orlib20.dll's global error array.
+// Must be called AFTER VerifyModule_New returns and BEFORE EndCompilingProcess.
+// The 3 data-global RVAs are resolved at construction time by the resolver
+// and stored as member variables. The base address comes from the resolver.
+std::string TsDevLib::readErrorsFromArray(const std::string* source) {
+    uintptr_t base = m_resolver->baseAddress();
+
+    // Read error count
+    uint32_t count = *reinterpret_cast<uint32_t*>(base + m_errCountRva);
+    if (count == 0 || count > 1000) return "";  // sanity bound
+
+    // Read error array pointer
+    uint8_t* array = *reinterpret_cast<uint8_t**>(base + m_errArrayPtrRva);
+    if (array == nullptr) return "";
+
+    std::string result;
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t* record = array + static_cast<size_t>(i) * kErrRecordStride;
+        const char* text = reinterpret_cast<const char*>(record + kErrTextOffset);
+        // Compute line/column from character offset (if source available)
+        int charOffset = *reinterpret_cast<int*>(record + kErrCharOffset);
+        std::string location;
+        if (source != nullptr && charOffset > 0 &&
+            static_cast<size_t>(charOffset) <= source->length()) {
+            int line = 1;
+            int lineStart = 0;
+            for (int j = 0; j < charOffset && j < static_cast<int>(source->length()); j++) {
+                if ((*source)[j] == '\n') {
+                    line++;
+                    lineStart = j + 1;
+                }
+            }
+            int col = charOffset - lineStart + 1;
+            location = "Line " + std::to_string(line) + ", Col " + std::to_string(col) + ": ";
         }
-        // Verify the byte is either unpatched (0xCC) or already patched (0x90).
-        unsigned char* p = static_cast<unsigned char*>(addr);
-        if (*p == 0x90) {
-            // Already patched — idempotent, skip.
-            std::fprintf(stderr, "tsdev: applyThreadCheckPatches — "
-                         "RVA 0x%lX already patched (0x90), skipping\n",
-                         (unsigned long)rva);
-            fflush(stderr);
-            DWORD dummy = 0;
-            VirtualProtect(addr, 1, oldProtect, &dummy);
-            continue;
+        if (text[0] != '\0') {
+            if (!result.empty()) result += "\n";
+            result += location + text;
+        } else {
+            // Fallback: load from string table via LoadStringA
+            short resId = *reinterpret_cast<short*>(record + kErrResIdOffset);
+            if (resId != 0) {
+                HINSTANCE hInst = *reinterpret_cast<HINSTANCE*>(base + m_errHinstRva);
+                char buf[1024];
+                int len = LoadStringA(hInst, resId, buf, sizeof(buf));
+                if (len > 0) {
+                    if (!result.empty()) result += "\n";
+                    result += location + buf;
+                }
+            }
         }
-        if (*p != 0xCC) {
-            // Unexpected byte — abort patching to avoid corrupting code.
-            std::fprintf(stderr, "tsdev: applyThreadCheckPatches — "
-                         "ERROR: byte at RVA 0x%lX is 0x%02X, expected 0xCC or 0x90\n",
-                         (unsigned long)rva, (unsigned)*p);
-            fflush(stderr);
-            DWORD dummy = 0;
-            VirtualProtect(addr, 1, oldProtect, &dummy);
-            return false;
-        }
-        *p = 0x90;  // NOP
-        DWORD dummy = 0;
-        VirtualProtect(addr, 1, oldProtect, &dummy);
-        std::fprintf(stderr, "tsdev: applyThreadCheckPatches — patched RVA 0x%lX\n",
-                     (unsigned long)rva);
-        fflush(stderr);
     }
-    return true;
+    return result;
 }
 
 } // namespace tsdev

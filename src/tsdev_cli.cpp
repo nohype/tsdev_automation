@@ -7,7 +7,7 @@
 //   tsdev_cli modify  <type> <name> <source_file>
 //   tsdev_cli delete  <type> <name>
 //
-//   <type>        "strategy", "function", or "indicator" (case-insensitive)
+//   <type>        "strategy", "function", "indicator", or "tradingapp" (case-insensitive)
 //   <name>        component name
 //   <source_file> path to a file containing EasyLanguage source (insert/modify)
 //
@@ -37,6 +37,7 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <vector>
 
 using namespace tsdev;
 
@@ -59,6 +60,7 @@ bool parseType(const std::string& s, ComponentType& out) {
     if (iequals(s, "strategy")) { out = ComponentType::Strategy; return true; }
     if (iequals(s, "function")) { out = ComponentType::Function;  return true; }
     if (iequals(s, "indicator")) { out = ComponentType::Indicator; return true; }
+    if (iequals(s, "tradingapp")) { out = ComponentType::TradingApp; return true; }
     return false;
 }
 
@@ -75,13 +77,17 @@ bool readFile(const std::string& path, std::string& out) {
 void printUsage() {
     std::fprintf(stderr,
         "Usage:\n"
-        "  tsdev_cli insert  <type> <name> <source_file>\n"
-        "  tsdev_cli modify  <type> <name> <source_file>\n"
-        "  tsdev_cli delete  <type> <name>\n"
-        "  <type>        strategy | function | indicator (case-insensitive)\n"
+        "  tsdev_cli [--ts-path <directory>] insert  <type> <name> "
+        "<source_file>\n"
+        "  tsdev_cli [--ts-path <directory>] modify  <type> <name> "
+        "<source_file>\n"
+        "  tsdev_cli [--ts-path <directory>] delete  <type> <name>\n"
+        "  <type>        strategy | function | indicator | tradingapp (case-insensitive)\n"
         "  <name>        component name\n"
         "  <source_file> path to a file containing EasyLanguage source "
-        "(insert/modify)\n");
+        "(insert/modify)\n"
+        "  --ts-path <directory>  Override the TradeStation install directory "
+        "(default: auto-discovered from registry)\n");
 }
 
 // Parameters passed to the worker thread.
@@ -90,6 +96,7 @@ struct InsertParams {
     std::string    typeStr;
     std::string    name;
     std::string    source;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
     int            exitCode;
 };
 
@@ -102,7 +109,7 @@ DWORD WINAPI runInsert(LPVOID param) {
     // 2. Construct TsDevLib.
     TsDevLib* lib = nullptr;
     try {
-        lib = new TsDevLib();
+        lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "tsdev_cli: init failed: %s\n", e.what());
         p->exitCode = 4;
@@ -180,12 +187,13 @@ DWORD WINAPI runInsert(LPVOID param) {
 // --- The INSERT subcommand (parses args, validates, launches worker) ---
 int cmdInsert(const std::string& typeStr,
               const std::string& name,
-              const std::string& sourceFile) {
+              const std::string& sourceFile,
+              const wchar_t* tsPathOverride) {
     ComponentType type;
     if (!parseType(typeStr, type)) {
         std::fprintf(stderr,
             "tsdev_cli: unknown type \"%s\" "
-            "(expected strategy/function/indicator)\n",
+            "(expected strategy/function/indicator/tradingapp)\n",
             typeStr.c_str());
         return 2;
     }
@@ -215,6 +223,7 @@ int cmdInsert(const std::string& typeStr,
     params.typeStr = typeStr;
     params.name    = name;
     params.source  = source;
+    params.tsPathOverride = tsPathOverride;
     params.exitCode = 0;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
@@ -238,6 +247,7 @@ struct ModifyParams {
     std::string    typeStr;
     std::string    name;
     std::string    source;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
     int            exitCode;
 };
 
@@ -252,7 +262,7 @@ DWORD WINAPI runModify(LPVOID param) {
     // Construct TsDevLib.
     TsDevLib* lib = nullptr;
     try {
-        lib = new TsDevLib();
+        lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "tsdev_cli: init failed: %s\n", e.what());
         p->exitCode = 4;
@@ -296,12 +306,13 @@ DWORD WINAPI runModify(LPVOID param) {
 
 int cmdModify(const std::string& typeStr,
               const std::string& name,
-              const std::string& sourceFile) {
+              const std::string& sourceFile,
+              const wchar_t* tsPathOverride) {
     ComponentType type;
     if (!parseType(typeStr, type)) {
         std::fprintf(stderr,
             "tsdev_cli: unknown type \"%s\" "
-            "(expected strategy/function/indicator)\n",
+            "(expected strategy/function/indicator/tradingapp)\n",
             typeStr.c_str());
         return 2;
     }
@@ -331,6 +342,7 @@ int cmdModify(const std::string& typeStr,
     params.typeStr  = typeStr;
     params.name     = name;
     params.source   = source;
+    params.tsPathOverride = tsPathOverride;
     params.exitCode = 0;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
@@ -353,6 +365,7 @@ struct DeleteParams {
     ComponentType  type;
     std::string    typeStr;
     std::string    name;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
     int            exitCode;
 };
 
@@ -365,7 +378,7 @@ DWORD WINAPI runDelete(LPVOID param) {
     // Construct TsDevLib.
     TsDevLib* lib = nullptr;
     try {
-        lib = new TsDevLib();
+        lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "tsdev_cli: init failed: %s\n", e.what());
         p->exitCode = 4;
@@ -406,12 +419,13 @@ DWORD WINAPI runDelete(LPVOID param) {
     return 0;
 }
 
-int cmdDelete(const std::string& typeStr, const std::string& name) {
+int cmdDelete(const std::string& typeStr, const std::string& name,
+              const wchar_t* tsPathOverride) {
     ComponentType type;
     if (!parseType(typeStr, type)) {
         std::fprintf(stderr,
             "tsdev_cli: unknown type \"%s\" "
-            "(expected strategy/function/indicator)\n",
+            "(expected strategy/function/indicator/tradingapp)\n",
             typeStr.c_str());
         return 2;
     }
@@ -426,6 +440,7 @@ int cmdDelete(const std::string& typeStr, const std::string& name) {
     params.type     = type;
     params.typeStr  = typeStr;
     params.name     = name;
+    params.tsPathOverride = tsPathOverride;
     params.exitCode = 0;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
@@ -444,35 +459,105 @@ int cmdDelete(const std::string& typeStr, const std::string& name) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
+    // --- Global flag pre-scan: --ts-path ---
+    // Scan argv[1..argc-1] for the optional --ts-path flag (which may appear
+    // in either space-separated ("--ts-path <path>") or equals ("--ts-path=
+    // <path>") form) and remove it (and its value) from the argv array. The
+    // resulting reduced argv contains only the subcommand and its positional
+    // args, so the existing exact-argc subcommand dispatch below works
+    // unchanged. If --ts-path is not given, the reduced argv equals the
+    // original argv and the path override is nullptr (auto-discover).
+    //
+    // If --ts-path appears multiple times, the LAST occurrence wins.
+    const char* tsPathOverride = nullptr;
+    std::string tsPathStr;  // holds the value for the equals form
+
+    std::vector<char*> reducedArgv;
+    reducedArgv.push_back(argv[0]);  // program name
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--ts-path") {
+            // Space-separated form: value is the next arg.
+            if (i + 1 >= argc) {
+                std::fprintf(stderr,
+                    "Error: --ts-path requires a directory path\n");
+                return 1;
+            }
+            if (argv[i + 1][0] == '\0') {
+                std::fprintf(stderr,
+                    "Error: --ts-path requires a non-empty directory path\n");
+                return 1;
+            }
+            tsPathOverride = argv[i + 1];
+            i++;  // skip the value
+        } else if (arg.rfind("--ts-path=", 0) == 0) {
+            // Equals form: value is everything after the '='.
+            tsPathStr = arg.substr(std::strlen("--ts-path="));
+            if (tsPathStr.empty()) {
+                std::fprintf(stderr,
+                    "Error: --ts-path requires a non-empty directory path\n");
+                return 1;
+            }
+            tsPathOverride = tsPathStr.c_str();
+        } else {
+            reducedArgv.push_back(argv[i]);
+        }
+    }
+
+    int reducedArgc = static_cast<int>(reducedArgv.size());
+    char** reducedArgvPtr = reducedArgv.data();
+
+    if (reducedArgc < 2) {
         printUsage();
         return 1;
     }
 
-    std::string subcommand = argv[1];
+    std::string subcommand = reducedArgvPtr[1];
+
+    // Convert the narrow tsPathOverride to wide for the TsDevLib constructor.
+    // The existing toWide() helper lives in an anonymous namespace in
+    // tsdev_lib.cpp (file-local, not accessible here), so the conversion is
+    // performed inline using MultiByteToWideChar (the same Windows API that
+    // toWide() wraps) — no duplicate named helper is introduced.
+    std::wstring tsPathWide;
+    const wchar_t* tsPathWidePtr = nullptr;
+    if (tsPathOverride) {
+        int wlen = MultiByteToWideChar(CP_ACP, 0, tsPathOverride,
+            static_cast<int>(std::strlen(tsPathOverride)),
+            nullptr, 0);
+        tsPathWide.resize(wlen);
+        MultiByteToWideChar(CP_ACP, 0, tsPathOverride,
+            static_cast<int>(std::strlen(tsPathOverride)),
+            &tsPathWide[0], wlen);
+        tsPathWidePtr = tsPathWide.c_str();
+    }
 
     if (iequals(subcommand, "insert")) {
-        if (argc != 5) {
+        if (reducedArgc != 5) {
             printUsage();
             return 1;
         }
-        return cmdInsert(argv[2], argv[3], argv[4]);
+        return cmdInsert(reducedArgvPtr[2], reducedArgvPtr[3],
+                         reducedArgvPtr[4], tsPathWidePtr);
     }
 
     if (iequals(subcommand, "modify")) {
-        if (argc != 5) {
+        if (reducedArgc != 5) {
             printUsage();
             return 1;
         }
-        return cmdModify(argv[2], argv[3], argv[4]);
+        return cmdModify(reducedArgvPtr[2], reducedArgvPtr[3],
+                         reducedArgvPtr[4], tsPathWidePtr);
     }
 
     if (iequals(subcommand, "delete")) {
-        if (argc != 4) {
+        if (reducedArgc != 4) {
             printUsage();
             return 1;
         }
-        return cmdDelete(argv[2], argv[3]);
+        return cmdDelete(reducedArgvPtr[2], reducedArgvPtr[3],
+                         tsPathWidePtr);
     }
 
     std::fprintf(stderr,

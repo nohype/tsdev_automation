@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "manifest": [
+    {
+      "fileVersion": "9.50.01.3344",
+      "peTimestamp": "0x5C01735E",
+      "fileSize": 4924400,
+      "sha256": "318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18",
+      "textVsize": "0x1F72FC",
+      "textRawSize": "0x1F7400",
+      "textRva": "0x1000",
+      "imageBase": "0x10000000",
+      "exportCount": 699,
+      "exportNamedCount": 636,
+      "exportHighestOrdinal": 708,
+      "exportOrdinalBase": 10,
+      "productVersion": "9.50.01.3344",
+      "productName": "EasyLanguage",
+      "fileDescription": "Omega EasyLanguage",
+      "companyName": "TradeStation Technologies, Inc.",
+      "internalName": "OR_LIB",
+      "originalFilename": "OR_LIB.DLL",
+      "signatureSetFile": "v9.50.01.3344.json",
+      "signatureSetId": 1,
+      "verified": true,
+      "verifiedDate": "2026-08-17",
+      "notes": "Baseline version — all 12 signatures verified, all functional tests pass"
+    }
+  ]
+}

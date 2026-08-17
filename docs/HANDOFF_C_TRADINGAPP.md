@@ -2,10 +2,14 @@
 
 **Workstream ID:** C
 **Date:** 2026-08-16
-**Status:** PLANNED — not yet started
+**Status:** **COMPLETE** — All 7 TVSs (C.1–C.7) done and approved. TradingApp is now a fully supported component type.
 **Parent documents:** `AGENTS.md`, `docs/FEASIBILITY.md`, `docs/TS_COMPONENT_TYPES.md`, `tmp/re_artifacts/orlib_param_orders.md`
 
+> **WORKSTREAM C SUMMARY (2026-08-18):** TradingApp expanded whType = **5122 (0x1402)** = `(subType 0x14 << 8) | category 2`. The orlib20 API functions take category=2 (same as Indicator) with sub-type 0x14 passed as CreateEntryEX's 2nd parameter. `.ell` filenames use the expanded whType 5122 (`elmodule_5122_<progId>.ell`). INSERT, DELETE, and MODIFY all work end-to-end via the CLI. The CLI accepts `tradingapp` as a type string. 4 remaining unconfirmed types: ActivityBar, PaintBar, ProbabilityMap, ShowMe. This document is retained as a historical record.
+
 ---
+
+> **WORKSTREAM E PREREQUISITE (2026-08-17):** Workstream E (`docs/ARCHITECTURE_REDESIGN.md`) should be executed before Workstream C. After E, the project has a clean directory structure (`src/` = production, `tests/` = tests, `archive/` = probes, `signatures/` = data, `tools/` = scripts). New test files added by C (e.g., `test_insert_tradingapp.cpp`) should go in `tests/` not `src/`. If C is executed before E, test files would be added to `src/` and need to be moved later. Additionally, E makes the project buildable from a fresh clone, which simplifies CI testing of new component types.
 
 ## 1. Priority Statement
 
@@ -61,7 +65,7 @@ Files in `MyWork\Bin` follow the pattern `elmodule_<whType>_<progId>.ell`. Obser
 
 ## 4. TVS Decomposition
 
-### TVS-C.1 — Discover the TradingApp warehouse-type code
+### TVS-C.1 — Discover the TradingApp warehouse-type code — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
@@ -90,7 +94,7 @@ Files in `MyWork\Bin` follow the pattern `elmodule_<whType>_<progId>.ell`. Obser
 
 ---
 
-### TVS-C.2 — Confirm TradingApp compile/verify/delete requirements and find minimal valid source
+### TVS-C.2 — Confirm TradingApp compile/verify/delete requirements and find minimal valid source — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
@@ -115,7 +119,7 @@ Files in `MyWork\Bin` follow the pattern `elmodule_<whType>_<progId>.ell`. Obser
 
 ---
 
-### TVS-C.3 — Add TradingApp to ComponentType enum and CLI type parsing
+### TVS-C.3 — Add TradingApp to ComponentType enum and CLI type parsing — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
@@ -157,14 +161,14 @@ Update the usage strings in `printUsage()` and error messages in `cmdInsert`/`cm
 
 ---
 
-### TVS-C.4 — TDD red-green: TradingApp INSERT integration test
+### TVS-C.4 — TDD red-green: TradingApp INSERT integration test — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
 | **Type** | IMPLEMENTATION |
 | **Effort** | S |
 | **Goal** | Verify that INSERT (createEntry + saveSource + verifyModule + .ell persistence) works end-to-end for a TradingApp component. |
-| **Scope — DONE** | New test file `src/test_insert_tradingapp.cpp` modeled on `src/test_insert.cpp`, using `ComponentType::TradingApp` and the minimal valid TradingApp source from TVS-C.2. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning (deletes the .ell after the run). |
+| **Scope — DONE** | New test file `src/test_insert_tradingapp.cpp` modeled on `src/test_insert.cpp`, using `ComponentType::TradingApp` and the minimal valid TradingApp source from TVS-C.2. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning (deletes the .ell after the run). (After Workstream E, test files go in `tests/` — update paths accordingly.) |
 | **Scope — NOT DONE** | No changes to tsdev_lib.cpp logic. No DELETE or MODIFY tests (those are TVS-C.5 and TVS-C.6). No CLI changes beyond TVS-C.3. |
 | **Acceptance criteria** | (1) `test_insert_tradingapp.cpp` compiles and links. (2) Test creates a TradingApp entry (createEntry returns ProgId > 0). (3) saveSource returns true. (4) verifyModule returns empty error string (compilation succeeds). (5) `.ell` file exists at `elmodule_<whType>_<progId>.ell` with magic `RNAM`. (6) Exit code 0 in 2 independent runs. (7) Test cleans up its .ell file. (8) `git diff` shows only the new test file and CMakeLists.txt addition. |
 | **Dependencies** | TVS-C.1 (whType), TVS-C.2 (minimal valid source + compile requirements), TVS-C.3 (enum value). |
@@ -180,14 +184,14 @@ Update the usage strings in `printUsage()` and error messages in `cmdInsert`/`cm
 
 ---
 
-### TVS-C.5 — TDD red-green: TradingApp DELETE integration test
+### TVS-C.5 — TDD red-green: TradingApp DELETE integration test — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
 | **Type** | IMPLEMENTATION |
 | **Effort** | S |
 | **Goal** | Verify that DELETE (findExistPos + delete orchestrator + file removal) works end-to-end for a TradingApp component. |
-| **Scope — DONE** | New test file `src/test_delete_tradingapp.cpp` modeled on `test_delete.cpp`, using `ComponentType::TradingApp`. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning (creates a test entry, deletes it, verifies removal). |
+| **Scope — DONE** | New test file `src/test_delete_tradingapp.cpp` modeled on `test_delete.cpp`, using `ComponentType::TradingApp`. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning (creates a test entry, deletes it, verifies removal). (After Workstream E, test files go in `tests/` — update paths accordingly.) |
 | **Scope — NOT DONE** | No changes to tsdev_lib.cpp logic. No MODIFY tests (that is TVS-C.6). |
 | **Acceptance criteria** | (1) Test creates a TradingApp entry (INSERT flow), verifies it exists. (2) Deletes it via `deleteEntry`. (3) `findExistPos` returns ≤0 after deletion. (4) `.ell` file is removed from disk. (5) `MWRKArea.wrk` timestamp changes (deletion persisted). (6) Exit code 0 in 2 independent runs. (7) Negative test: deleting a nonexistent TradingApp returns false. (8) `git diff` shows only the new test file and CMakeLists.txt addition. |
 | **Dependencies** | TVS-C.3 (enum value), TVS-C.4 (INSERT must work first — DELETE test needs to create a test entry to delete). |
@@ -200,14 +204,14 @@ Update the usage strings in `printUsage()` and error messages in `cmdInsert`/`cm
 
 ---
 
-### TVS-C.6 — TDD red-green: TradingApp MODIFY integration test
+### TVS-C.6 — TDD red-green: TradingApp MODIFY integration test — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
 | **Type** | IMPLEMENTATION |
 | **Effort** | S |
 | **Goal** | Verify that MODIFY (findExistPos + saveSource + verifyModule on existing ProgId) works end-to-end for a TradingApp component. |
-| **Scope — DONE** | New test file `src/test_modify_tradingapp.cpp` modeled on `test_modify.cpp`, using `ComponentType::TradingApp`. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning. |
+| **Scope — DONE** | New test file `src/test_modify_tradingapp.cpp` modeled on `test_modify.cpp`, using `ComponentType::TradingApp`. Added to `CMakeLists.txt`. Test passes (exit 0) in 2 independent runs. Test is self-cleaning. (After Workstream E, test files go in `tests/` — update paths accordingly.) |
 | **Scope — NOT DONE** | No changes to tsdev_lib.cpp logic. No CLI wiring of modify subcommand (that is a separate concern — see §6 Risk R6). |
 | **Acceptance criteria** | (1) Test creates a TradingApp entry with source A (INSERT flow). (2) `modifyEntry` with source B returns `Result{success=true}`. (3) ProgId is preserved (same before and after). (4) `.ell` file timestamp changes (re-compiled + re-persisted). (5) Negative test: `modifyEntry` on a nonexistent TradingApp returns `Result{success=false}`. (6) Compile-error test: `modifyEntry` with invalid source returns `Result{success=false}` with non-empty message. (7) Exit code 0 in 2 independent runs. (8) Cleanup: test entry is deleted after the run. (9) `git diff` shows only the new test file and CMakeLists.txt addition. |
 | **Dependencies** | TVS-C.3 (enum value), TVS-C.4 (INSERT must work — MODIFY test needs to create a test entry to modify). |
@@ -222,7 +226,7 @@ Update the usage strings in `printUsage()` and error messages in `cmdInsert`/`cm
 
 ---
 
-### TVS-C.7 — Update documentation to reflect confirmed TradingApp whType
+### TVS-C.7 — Update documentation to reflect confirmed TradingApp whType — **DONE & APPROVED**
 
 | Field | Value |
 |-------|-------|
