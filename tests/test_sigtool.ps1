@@ -23,11 +23,15 @@
 # Configuration / paths
 # ---------------------------------------------------------------------------
 
+param(
+    [switch]$SkipBaselineDllPrompt
+)
+
 # sigtool is built into build\Release\ (relative to this script's location).
 $sigtool = "$PSScriptRoot\..\build\Release\sigtool.exe"
 
 # Baseline DLL used for all tests.
-$dll = "$PSScriptRoot\..\tmp\re_artifacts\orlib20_baseline.dll"
+$dll = "$PSScriptRoot\fixtures\orlib20_baseline.dll"
 
 # Committed signature set for v9.50.01.3344 (12 signatures, 4 patch_site).
 $sigJson = "$PSScriptRoot\..\signatures\v9.50.01.3344.json"
@@ -44,6 +48,11 @@ $expectedSignatureCount = 12
 $ErrorActionPreference = 'Continue'
 
 # ---------------------------------------------------------------------------
+# Shared test helpers (baseline DLL prompting + TS install discovery).
+# ---------------------------------------------------------------------------
+Import-Module (Join-Path $PSScriptRoot "TestHelpers.psm1") -ErrorAction Stop -DisableNameChecking
+
+# ---------------------------------------------------------------------------
 # Prerequisite checks — fail fast if the fixtures are missing.
 # ---------------------------------------------------------------------------
 
@@ -52,8 +61,23 @@ if (-not (Test-Path $sigtool)) {
     exit 1
 }
 
-if (-not (Test-Path $dll)) {
-    Write-Host "FAIL: baseline DLL not found at $dll"
+# Baseline DLL: if missing, prompt the user to copy it from the TS install.
+# Do NOT continue without a user decision. The entire script depends on the
+# DLL, so a decline (or failed copy) is a hard failure. When invoked from
+# run_regression.ps1 with -SkipBaselineDllPrompt (the orchestrator already
+# prompted and the user declined), skip the prompt and fail immediately.
+if ($SkipBaselineDllPrompt) {
+    if (-not (Test-Path -Path $dll -PathType Leaf)) {
+        Write-Host ""
+        Write-Host "FATAL: baseline DLL not available - sigtool verify gate cannot run." -ForegroundColor Red
+        Write-Host "The entire sigtool test suite requires $dll." -ForegroundColor Yellow
+        Write-Host "(prompt suppressed by -SkipBaselineDllPrompt from parent orchestrator)" -ForegroundColor DarkGray
+        exit 1
+    }
+} elseif (-not (Ensure-BaselineDll -DllPath $dll)) {
+    Write-Host ""
+    Write-Host "FATAL: baseline DLL not available - sigtool verify gate cannot run." -ForegroundColor Red
+    Write-Host "The entire sigtool test suite requires $dll." -ForegroundColor Yellow
     exit 1
 }
 

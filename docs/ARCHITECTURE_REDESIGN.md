@@ -96,6 +96,8 @@ tsdev_automation/
 │   ├── test_modify.cpp               # MODIFY functional regression
 │   ├── test_persistence_validation.cpp # Patch byte validation
 │   ├── test_no_hardcoded_rvas.cpp    # RVA deduplication guard (modified)
+│   ├── fixtures/                     # Test fixtures (committed to repo)
+│   │   └── orlib20_baseline.dll      # Baseline DLL copy (for offline testing)
 │   └── CMakeLists.txt                # Test-specific CMake (optional: can stay in root)
 │
 ├── archive/                          # ARCHIVED EXPERIMENTAL PROBES (not compiled)
@@ -125,7 +127,6 @@ tsdev_automation/
 │
 └── tmp/                              # TEMPORARY RE ARTIFACTS (gitignored)
     └── re_artifacts/
-        ├── orlib20_baseline.dll      # Baseline DLL copy (for offline testing)
         ├── b1_signatures.h           # Original header (kept as historical reference; no longer a build dep)
         ├── b1_ghidra_evidence.md     # Ghidra disassembly evidence
         ├── b1_dll_baseline.md        # DLL baseline metadata
@@ -1353,7 +1354,7 @@ occurs in the production code. They are not compiled to keep the build clean.
 1. Write `src/sigtool.cpp` implementing `verify`, `verify-patch`, `info`, `scan`, `manifest` commands.
 2. Link `sigtool` against `orlib_resolver` (uses in-memory buffer constructor for disk-based scanning).
 3. Add `sigtool` target to `CMakeLists.txt`.
-4. **TDD red:** `sigtool verify --dll tmp/re_artifacts/orlib20_baseline.dll` doesn't exist. **TDD green:** All 12 signatures report PASS.
+4. **TDD red:** `sigtool verify --dll tests/fixtures/orlib20_baseline.dll` doesn't exist. **TDD green:** All 12 signatures report PASS.
 5. **Regression:** Existing tests still pass.
 
 **After TVS-2:** `sigtool` is available for the update workflow. No changes to production code.

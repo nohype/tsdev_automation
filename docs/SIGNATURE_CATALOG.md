@@ -31,7 +31,7 @@ All measurements taken from the copied baseline DLL, not the read-only install o
 | Field | Value |
 |---|---|
 | **Source (read-only install)** | `C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll` |
-| **Copied artifact** | `tmp/re_artifacts/orlib20_baseline.dll` |
+| **Copied artifact** | `tests/fixtures/orlib20_baseline.dll` (committed to repo) |
 | **FileVersion** | 9.50.01.3344 |
 | **ProductVersion** | 9.50.01.3344 |
 | **FileDescription** | Omega EasyLanguage |
@@ -646,7 +646,7 @@ cmake --build build --config Release --target sig_scan
 build\Release\sig_scan.exe [path_to_orlib20.dll]
 ```
 
-Defaults to `tmp/re_artifacts/orlib20_baseline.dll` if no argument is given.
+Defaults to `tests/fixtures/orlib20_baseline.dll` if no argument is given.
 
 ### Result
 

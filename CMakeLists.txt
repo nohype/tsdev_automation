@@ -152,3 +152,30 @@ target_link_libraries(orlib_resolver PUBLIC bcrypt)
 # Placeholder main(); real tests added in B.4.3.
 add_executable(test_orlib_resolver tests/test_orlib_resolver.cpp)
 target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
+
+# --- Master regression build dependency target (TVS-B.6.3) -------------------
+# This is a build-only dependency target: it ensures ALL test executables,
+# the production CLI, and sigtool are built when invoked via:
+#   cmake --build build --config Release --target test_regression
+# The actual regression test execution is performed by the PowerShell
+# orchestrator script tests/run_regression.ps1 (which runs sigtool verify,
+# all 13 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
+# build commands of its own - it merely aggregates the dependencies.
+add_custom_target(test_regression)
+add_dependencies(test_regression
+    test_insert
+    test_delete
+    test_delete_tradingapp
+    test_delete_check
+    test_delete_diag
+    test_path_discovery
+    test_modify
+    test_persistence_validation
+    test_no_hardcoded_rvas
+    test_tradingapp_type
+    test_insert_tradingapp
+    test_modify_tradingapp
+    test_orlib_resolver
+    tsdev_cli
+    sigtool
+)

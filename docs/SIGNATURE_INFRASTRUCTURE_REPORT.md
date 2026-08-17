@@ -764,9 +764,11 @@ tsdev_automation/
 │   ├── SIGNATURE_CATALOG.md       # (existing) Human-readable catalog
 │   ├── VERSION_DETECTION.md       # (existing) Version detection design
 │   └── SIGNATURE_INFRASTRUCTURE_REPORT.md  # This report
+├── tests/
+│   └── fixtures/
+│       └── orlib20_baseline.dll   # (existing) Baseline DLL copy (committed to repo)
 ├── tmp/
 │   └── re_artifacts/
-│       ├── orlib20_baseline.dll   # (existing) Baseline DLL copy
 │       └── orlib20_v<ver>.dll     # (future) New version DLL copies
 └── CMakeLists.txt                 # (existing, modified for sigcodegen)
 ```

@@ -3,7 +3,7 @@
 // TVS-B.4 TDD — Cycle 1: construction (test-mode in-memory ctor), PE header
 // parsing, and accessors.
 //
-// This test loads tmp/re_artifacts/orlib20_baseline.dll into an in-memory
+// This test loads tests/fixtures/orlib20_baseline.dll into an in-memory
 // buffer and constructs an OrlibResolver via the test constructor
 // (in-memory PE image, no LoadLibraryW). It then asserts:
 //   - isTestMode() == true
@@ -78,25 +78,28 @@ static bool loadDllBuffer(const char* path, std::vector<uint8_t>& out) {
 // ---------------------------------------------------------------------------
 // findDllPath — try candidate paths and return the first that exists.
 // Candidates cover: run-from-project-root, run-from-build\Release\, and an
-// absolute fallback.
+// absolute fallback. If none exist, the first candidate is returned (so the
+// caller can print a loud error listing every path that was tried).
 // ---------------------------------------------------------------------------
+static const char* kDllCandidates[] = {
+    "tests/fixtures/orlib20_baseline.dll",
+    "../../tests/fixtures/orlib20_baseline.dll",
+    "C:\\Users\\user\\projects\\tsdev_automation\\tests\\fixtures\\orlib20_baseline.dll",
+};
+static const int kDllCandidateCount =
+    sizeof(kDllCandidates) / sizeof(kDllCandidates[0]);
+
 static std::string findDllPath() {
-    static const char* candidates[] = {
-        "tmp/re_artifacts/orlib20_baseline.dll",
-        "../../tmp/re_artifacts/orlib20_baseline.dll",
-        "C:\\Users\\user\\projects\\tsdev_automation\\tmp\\re_artifacts\\orlib20_baseline.dll",
-    };
-    const int n = sizeof(candidates) / sizeof(candidates[0]);
-    for (int i = 0; i < n; i++) {
-        DWORD attr = GetFileAttributesA(candidates[i]);
+    for (int i = 0; i < kDllCandidateCount; i++) {
+        DWORD attr = GetFileAttributesA(kDllCandidates[i]);
         if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
-            std::printf("Using DLL path: %s\n", candidates[i]);
-            return std::string(candidates[i]);
+            std::printf("Using DLL path: %s\n", kDllCandidates[i]);
+            return std::string(kDllCandidates[i]);
         }
     }
     // Fallback: return the first candidate (loadDllBuffer will print the error).
     std::fprintf(stderr, "WARNING: no candidate DLL path found; trying first candidate.\n");
-    return std::string(candidates[0]);
+    return std::string(kDllCandidates[0]);
 }
 
 // ===========================================================================
@@ -113,7 +116,17 @@ int main() {
     std::string dllPath = findDllPath();
     std::vector<uint8_t> buffer;
     if (!loadDllBuffer(dllPath.c_str(), buffer)) {
-        std::fprintf(stderr, "FATAL: could not load baseline DLL. Aborting.\n");
+        std::fprintf(stderr,
+            "\nFATAL: Baseline DLL not found at any of the following paths:\n");
+        for (int i = 0; i < kDllCandidateCount; i++) {
+            std::fprintf(stderr, "  %s\n", kDllCandidates[i]);
+        }
+        std::fprintf(stderr,
+            "This DLL is required for test_orlib_resolver (signature resolution tests).\n"
+            "To obtain it: copy orlib20.dll from your TradeStation installation\n"
+            "(<TS install>\\Program\\orlib20.dll) to tests/fixtures/orlib20_baseline.dll\n"
+            "or run the regression suite (tests/run_regression.ps1) which will prompt\n"
+            "you to copy it automatically.\n\n");
         return 99;
     }
     std::printf("Loaded DLL: %zu bytes\n", buffer.size());

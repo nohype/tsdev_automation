@@ -435,7 +435,7 @@ The resolver is designed to be fully unit-testable without a TradeStation instal
 
 A test (`test_orlib_resolver`, planned for TVS-B.6) can run on any machine without a TradeStation install:
 
-1. **Load a copied DLL into memory.** Read `tmp/re_artifacts/orlib20_baseline.dll` (the offline analysis copy, byte-identical to the install original) into a `std::vector<uint8_t>` buffer.
+1. **Load a copied DLL into memory.** Read `tests/fixtures/orlib20_baseline.dll` (the committed baseline copy, byte-identical to the install original) into a `std::vector<uint8_t>` buffer.
 
 2. **Construct the resolver in test mode.** `OrlibResolver resolver(buffer.data(), buffer.size(), 0x10000000)` — no `LoadLibraryW`, no `HMODULE`.
 

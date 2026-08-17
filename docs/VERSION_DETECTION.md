@@ -195,7 +195,7 @@ The CLI does **not** abort at this stage — the signatures may still match (a m
 
 ### 5.1 Single-version limitation (HONEST STATEMENT)
 
-**Only one `orlib20.dll` version exists on this system:** FileVersion `9.50.01.3344`, SHA-256 `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18`, PE timestamp `0x5C01735E` (Fri Nov 30 17:29:02 2018 UTC), file size 4,924,400 bytes. A recursive search of all TradeStation install directories (`C:\Program Files*\TradeStation*`) and the user profile found exactly one copy, at the known install path. No 64-bit TradeStation directory exists. No backup or update directories contain an `orlib20.dll`. The offline analysis copy (`tmp/re_artifacts/orlib20_baseline.dll`) is byte-identical (same hash, same size).
+**Only one `orlib20.dll` version exists on this system:** FileVersion `9.50.01.3344`, SHA-256 `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18`, PE timestamp `0x5C01735E` (Fri Nov 30 17:29:02 2018 UTC), file size 4,924,400 bytes. A recursive search of all TradeStation install directories (`C:\Program Files*\TradeStation*`) and the user profile found exactly one copy, at the known install path. No 64-bit TradeStation directory exists. No backup or update directories contain an `orlib20.dll`. The offline analysis copy (`tests/fixtures/orlib20_baseline.dll`) is byte-identical (same hash, same size).
 
 **No cross-version signature-stability comparison is possible.** The signature-stability comparison table required by the TVS-B.2 acceptance criteria cannot be produced because there is no second version to compare against. This limitation is fundamental, not an oversight.
 
