@@ -4,10 +4,10 @@
 |---|---|
 | **TVS Identifier** | TVS-B.1 |
 | **Date** | 2026-08-17 |
-| **Status** | APPROVED-pending-review |
+| **Status** | APPROVED |
 | **Purpose** | Primary deliverable of TVS-B.1. Catalogs the 12 code-section RVA targets in `orlib20.dll`, providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 7 export names, 3 data-section RVA targets, and structural constants. This catalog is the baseline for signature-based RVA resolution and version detection in later TVSs. |
 
-> **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth is being migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration change. This migration is **DESIGNED but NOT YET IMPLEMENTED** — the current state (`b1_signatures.h` as the build dependency) remains the actual state until Workstream E's TVSs are executed.
+> **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
 
 **Source artifacts (all in `tmp/re_artifacts/`):**
 
@@ -16,7 +16,7 @@
 | `b1_dll_baseline.md` | DLL baseline metadata (version, SHA-256, PE timestamp, .text section info) |
 | `b1_rva_inventory.md` | Full inventory of 46 entries (12 RVA targets + 3 data offsets + 7 export names + structural constants) |
 | `b1_ghidra_evidence.md` | Ghidra disassembly, raw bytes, calling conventions for all 12 targets |
-| `b1_signatures.h` | The 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) |
+| `b1_signatures.h` | The 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
 | `b1_export_confirmation.md` | Export table confirmation for the 7 export names |
 | `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) |
 
@@ -56,7 +56,7 @@ All measurements taken from the copied baseline DLL, not the read-only install o
 
 ## 2. Wildcard Notation Convention
 
-*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (§Wildcard Notation Convention), `tmp/re_artifacts/b1_signatures.h` (header comment)*
+*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (§Wildcard Notation Convention), `signatures/v9.50.01.3344.json` (header comment)*
 
 In all signatures in this catalog, `??` represents a **wildcard byte** (matches any single byte at that position). All other bytes are **fixed** and must match exactly.
 
@@ -84,7 +84,7 @@ In all signatures in this catalog, `??` represents a **wildcard byte** (matches 
 
 ## 3. Signature Catalog Table
 
-*Source: `tmp/re_artifacts/b1_signatures.h` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
+*Source: `signatures/v9.50.01.3344.json` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
 One row per RVA target (12 rows). For patch sites (targets 9–12), additional patch metadata columns are populated.
 
@@ -118,7 +118,7 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 
 ## 4. Per-Target Detail Sections
 
-*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `tmp/re_artifacts/b1_signatures.h` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
+*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `signatures/v9.50.01.3344.json` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
 **Export status note (applies to all 12 targets):** None of the 12 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 7 exported functions used in production code are documented separately in §5.
 
@@ -373,7 +373,7 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 - The patch overwrites the first 8 bytes of the function with `MOV EAX, 1; RET 0x0C` (`B8 01 00 00 00 C2 0C 00`), making `SymWriter::Save` return success so the `.ell` file is written. This bypasses a .NET `XmlDocument.Save` crash in `ELDebugger.dll`.
 - The signature matches the **original unpatched** bytes. `patchOffset = 0` because the patch overwrites the function entry itself.
 - Original first 8 bytes: `55 8B EC 6A FF 68 CD D3` (PUSH EBP; MOV EBP,ESP; PUSH -1; PUSH 0x101ED3CD).
-- The production code does NOT store/verify original bytes before patching — it overwrites unconditionally after `VirtualProtect`. This is a known fragility (no rollback if the 8-byte window overlaps live code differently in another DLL build).
+- **RESOLVED (TVS-B.1.5):** The production code now validates original bytes before patching via `validatePersistencePatchBytes()`. See AGENTS.md DONE entry for TVS-B.1.5.
 
 **Structural assumptions:**
 - Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 6–9 wildcarded; actual handler = 0x101ED3CD).
@@ -631,10 +631,10 @@ The standalone probe `src/sig_scan.cpp` verifies that each of the 12 candidate s
 1. **Reads the DLL from disk** (does NOT load it into memory). The entire file is read into a `std::vector<uint8_t>`.
 2. **Parses PE headers**: DOS header → `e_lfanew` → NT headers (PE32). Validates DOS signature (`MZ`), PE signature (`PE\0\0`), and optional header magic (`0x010B` = PE32). Asserts `sizeof(void*) == 4` (32-bit build).
 3. **Locates the `.text` section** by iterating section headers (`IMAGE_FIRST_SECTION` macro) and matching the name `.text`. Extracts: virtual address (RVA), virtual size, raw file offset, raw size.
-4. **Parses each signature** from `b1_signatures.h` into a parallel byte array + wildcard mask (`Pattern` struct). `??` tokens become wildcards; `XX` tokens are fixed bytes.
+4. **Parses each signature** from `signatures/v9.50.01.3344.json` into a parallel byte array + wildcard mask (`Pattern` struct). `??` tokens become wildcards; `XX` tokens are fixed bytes.
 5. **Scans the `.text` raw bytes** with wildcard-aware byte matching: for each position `i` in `[0, textRawSize - patLen]`, checks if all non-wildcard bytes match. Collects all match offsets.
 6. **Converts match offsets to RVAs**: `RVA = textRVA + offsetInText`. Reports file offset and RVA for each match.
-7. **PASS criteria**: exactly 1 match AND the match RVA equals the expected RVA from `b1_signatures.h`.
+7. **PASS criteria**: exactly 1 match AND the match RVA equals the expected RVA from `signatures/v9.50.01.3344.json`.
 8. **Patch-site verification**: for patch sites, reads the byte at `matchOffset + patchOffset` and compares it to the first byte of `originalBytes`. Reports OK if they match, WARNING if they differ (may already be patched).
 9. **Exit code**: 0 = all 12 PASS; 1 = at least one FAIL.
 
@@ -671,21 +671,21 @@ All 12 signatures matched exactly once at their expected RVAs within the `.text`
 
 *(Source: `b1_sig_scan_run.md`, final run, exit code 0, "ALL SIGNATURES UNIQUE AND VERIFIED.")*
 
-**Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `b1_signatures.h`.
+**Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `signatures/v9.50.01.3344.json`.
 
 ---
 
 ## 9. Open Items / Deferred
 
-The following items are **out of scope for TVS-B.1** and deferred to later TVSs:
+The following items were **out of scope for TVS-B.1** and have since been completed by later TVSs:
 
-| Item | Deferred to | Description |
+| Item | Status | Description |
 |---|---|---|
-| Data-section RVA resolution | TVS-B.2/B.3 | The 3 data-section RVAs (0x23CEA0, 0x23CEA4, 0x23AAB8) are currently hardcoded. Robust resolution requires finding the referencing code function by signature, then extracting the data reference from the disassembled instruction. See §6. |
-| Signature-based RVA resolution integration | TVS-B.4/B.5 | The 12 signatures in this catalog are verified unique but NOT yet integrated into the production code. The production code still uses hardcoded RVAs. Integration will replace hardcoded RVAs with signature-scanned RVAs at runtime. |
-| Version detection logic | TVS-B.6 | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is the baseline for version detection. Logic to compare the loaded DLL against this baseline (and abort/warn on mismatch) is deferred. |
-| SEH protection on data-array reads | Future robustness TVS | `readErrorsFromArray` reads the global error array without SEH protection. Adding SEH guards around the array pointer dereference and record iteration is a future robustness improvement (noted in TVS-A.4 adversarial review). |
-| Warehouse type resolution | Future TVS | Only Strategy=0, Indicator=2, Function=4 are supported. ActivityBar, PaintBar, ProbabilityMap, ShowMe, TradingApp warehouse types remain unresolved (`src/tsdev_lib.h:22-24`). |
+| Data-section RVA resolution | DONE (TVS-B.4/B.4.5) | The 3 data-section RVAs (0x23CEA0, 0x23CEA4, 0x23AAB8) are now resolved via signature-based instruction-operand extraction. See §6. |
+| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 12 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
+| Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
+| SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
+| Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7); 4 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, and TradingApp (0x1402) are confirmed. ActivityBar, PaintBar, ProbabilityMap, ShowMe warehouse types remain unconfirmed. |
 
 ---
 

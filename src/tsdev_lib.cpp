@@ -4,7 +4,7 @@
 // contract and tmp/re_artifacts/orlib_param_orders.md for the confirmed
 // reverse-engineering findings this is built on.
 //
-// The reference probe (src/elevated_test20.cpp) demonstrates the full flow
+// The reference probe (archive/elevated_test20.cpp) demonstrates the full flow
 // end-to-end; this module encapsulates the same logic in a reusable API.
 
 #include "tsdev_lib.h"
@@ -14,7 +14,6 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
-#include <vector>
 
 // Compile-time debug logging gate. Define TSDEV_DEBUG at build time to
 // enable stderr diagnostics in deleteEntry. Production builds are clean.
@@ -63,6 +62,20 @@ const unsigned char kPersistenceOriginalMask[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00  // 1=check, 0=wildcard
 };
 
+// TD-001: tracks the most recently created warehouse entry so verifyModule
+// can auto-clean it up on compile failure. Set by createEntry, consumed and
+// cleared by verifyModule, and cleared at the start of modifyEntry (modify
+// operates on an existing entry and must never delete it on a compile
+// failure). TsDevLib is thread-affine and used one instance per process, so
+// file-local state is safe here.
+struct LastCreatedEntry {
+    int  progId   = 0;
+    int  category = 0;
+    char name[128] = {};  // Fixed-size buffer (component names are short);
+                          // std::string would require C++ unwinding, which is
+                          // incompatible with the __try/__except in createEntry.
+} g_lastCreated;
+
 // Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in three
 // dispatch helpers so they can be called from any thread, not just the
 // worker thread. Each patch is a single byte.
@@ -73,7 +86,7 @@ const unsigned char kPersistenceOriginalMask[] = {
 //   FUN_101cf5b0_thread_check_INT3 (general dispatch helper)
 //   FUN_101d1fa0_thread_check_INT3 (command 0x17 — save/commit)
 // The patch metadata (offsets, original/replacement bytes) is encoded
-// in b1_signatures.h and loaded by the resolver's signature catalog.
+// in signatures/v9.50.01.3344.json and loaded by the resolver's signature catalog.
 
 // Convert a UTF-8 / ANSI std::string to a std::wstring (ACP).
 std::wstring toWide(const std::string& s) {
@@ -558,13 +571,23 @@ TsDevLib::~TsDevLib() {
     // bytes (B8 01 00 00 00 C2 0C 00 / 0x90) and throws OrlibResolverError.
     if (m_patchesApplied) {
         uintptr_t base = m_resolver->baseAddress();
-        // Persistence patch: restore 8 original bytes.
-        restoreBytes(reinterpret_cast<void*>(base + m_persistencePatchRva),
-                     m_persistenceOriginalBytes, 8);
-        // Thread-check patches: restore 1 original byte (0xCC) each.
+        // Persistence patch: restore 8 original bytes. Guarded by the cached
+        // RVA so a site whose resolve threw before caching (RVA still 0) is
+        // skipped — restoring to base+0 would corrupt the DLL header.
+        if (m_persistencePatchRva != 0) {
+            restoreBytes(reinterpret_cast<void*>(base + m_persistencePatchRva),
+                         m_persistenceOriginalBytes, 8);
+        }
+        // Thread-check patches: restore 1 original byte (0xCC) each. Only
+        // restore sites whose RVA was actually cached before a possible
+        // throw; for a site where applyPatch threw after the RVA was cached,
+        // writing the original byte back is a harmless no-op (the patch was
+        // never written).
         for (int i = 0; i < 3; i++) {
-            restoreBytes(reinterpret_cast<void*>(base + m_threadCheckRvas[i]),
-                         &m_threadCheckOriginalBytes[i], 1);
+            if (m_threadCheckRvas[i] != 0) {
+                restoreBytes(reinterpret_cast<void*>(base + m_threadCheckRvas[i]),
+                             &m_threadCheckOriginalBytes[i], 1);
+            }
         }
         m_patchesApplied = false;
     }
@@ -599,6 +622,14 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
         // CreateEntryEX can raise SEH on certain malformed states; treat as
         // a hard failure (ProgId 0).
         return 0;
+    }
+    if (progId > 0) {
+        g_lastCreated.progId = progId;
+        g_lastCreated.category = getCategory(type);
+        strncpy_s(g_lastCreated.name, sizeof(g_lastCreated.name),
+                  name.c_str(), _TRUNCATE);
+    } else {
+        g_lastCreated = {};
     }
     return progId;
 }
@@ -682,6 +713,25 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
     callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
              compilerMem);
     std::free(compilerMem);
+
+    // TD-001: auto-cleanup a freshly-created entry on compile failure. Only
+    // fires when this verifyModule targets the entry most recently created by
+    // createEntry (and not since cleared), so modifyEntry and standalone
+    // verify calls are unaffected. Best-effort: cleanup failures are swallowed
+    // so they never mask the original compile error.
+    if (!errors.empty() && g_lastCreated.progId == progId &&
+        g_lastCreated.category == getCategory(type)) {
+        std::fprintf(stderr,
+            "tsdev: compile failed — cleaning up partial warehouse entry "
+            "\"%s\" (ProgId=%d)\n", g_lastCreated.name, progId);
+        try {
+            deleteEntry(type, g_lastCreated.name);
+        } catch (...) {
+        }
+        g_lastCreated = {};
+    } else if (errors.empty()) {
+        g_lastCreated = {};
+    }
 
     return errors;
 }
@@ -856,6 +906,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
 // ============================================================================
 Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
                              const std::string& newSource) {
+    g_lastCreated = {};
     // 1. Look up the existing component by name + type.
     int progId = findExistPos(name, type);
     TSDEV_DBG("tsdev: modifyEntry — findExistPos(\"%s\", %d) = %d\n",
@@ -972,6 +1023,10 @@ void TsDevLib::applyPersistencePatch() {
     //   → idempotency check → VirtualProtect → memcpy → restore.
     // OrlibResolverError propagates to the constructor (AC6 diagnostics).
     m_resolver->applyPatch("FUN_10011230_persistence_patch");
+    // Mark applied immediately so the destructor restores this patch even
+    // if a subsequent thread-check patch throws (partial-construction gap,
+    // TD-002). The destructor guards each site by its cached RVA.
+    m_patchesApplied = true;
 }
 
 void TsDevLib::applyThreadCheckPatches() {
@@ -989,21 +1044,20 @@ void TsDevLib::applyThreadCheckPatches() {
     m_threadCheckOriginalBytes[0] = *reinterpret_cast<const unsigned char*>(
         m_resolver->baseAddress() + m_threadCheckRvas[0]);
     m_resolver->applyPatch("FUN_101d0950_thread_check_INT3");
+    m_patchesApplied = true;
 
     PatchSiteDescriptor tc2 = m_resolver->resolveThreadCheck2();
     m_threadCheckRvas[1] = tc2.patchRva;
     m_threadCheckOriginalBytes[1] = *reinterpret_cast<const unsigned char*>(
         m_resolver->baseAddress() + m_threadCheckRvas[1]);
     m_resolver->applyPatch("FUN_101cf5b0_thread_check_INT3");
+    m_patchesApplied = true;
 
     PatchSiteDescriptor tc3 = m_resolver->resolveThreadCheck3();
     m_threadCheckRvas[2] = tc3.patchRva;
     m_threadCheckOriginalBytes[2] = *reinterpret_cast<const unsigned char*>(
         m_resolver->baseAddress() + m_threadCheckRvas[2]);
     m_resolver->applyPatch("FUN_101d1fa0_thread_check_INT3");
-
-    // All 4 patches (persistence + 3 thread-checks) are now applied. Gates
-    // restoration in the destructor.
     m_patchesApplied = true;
 }
 

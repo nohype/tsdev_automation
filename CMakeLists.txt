@@ -124,6 +124,14 @@ target_link_libraries(test_insert_tradingapp tsdev_lib)
 add_executable(test_modify_tradingapp tests/test_modify_tradingapp.cpp)
 target_link_libraries(test_modify_tradingapp tsdev_lib)
 
+# --- Auto-cleanup on compile failure integration test (TD-001, TDD GREEN) -----
+# Verifies that a partial warehouse entry created by createEntry is cleaned up
+# after verifyModule fails compilation. The auto-cleanup is implemented in
+# tsdev_lib.cpp, so this test PASSES (GREEN). Runs on a 64 MB-stack worker
+# thread (same pattern as test_insert).
+add_executable(test_auto_cleanup tests/test_auto_cleanup.cpp)
+target_link_libraries(test_auto_cleanup tsdev_lib)
+
 # --- Production CLI ---------------------------------------------------------
 add_executable(tsdev_cli src/tsdev_cli.cpp)
 target_link_libraries(tsdev_cli tsdev_lib)
@@ -136,9 +144,9 @@ target_include_directories(sigtool PRIVATE third_party)
 target_link_libraries(sigtool PRIVATE orlib_resolver)
 add_dependencies(sigtool siggen)
 
-# --- OrlibResolver library (TVS-B.4 scaffolding) ----------------------------
+# --- OrlibResolver library (TVS-B.4) -----------------------------------------
 # Static library encapsulating all version-specific orlib20.dll knowledge.
-# Stubs only at this stage; real implementation in subsequent TDD cycles.
+# Fully implemented: 45 methods, zero stubs.
 add_library(orlib_resolver STATIC src/orlib_resolver.cpp)
 target_include_directories(orlib_resolver PUBLIC src)
 # Generated header include dir is PUBLIC so consumers (tsdev_lib, tests) that
@@ -148,8 +156,8 @@ target_include_directories(orlib_resolver PUBLIC ${GEN_INCLUDE_DIR})
 add_dependencies(orlib_resolver siggen)
 target_link_libraries(orlib_resolver PUBLIC bcrypt)
 
-# --- OrlibResolver test executable (TVS-B.4 scaffolding) ---------------------
-# Placeholder main(); real tests added in B.4.3.
+# --- OrlibResolver test executable (TVS-B.4) ---------------------------------
+# 184 assertions across 6 TDD cycles.
 add_executable(test_orlib_resolver tests/test_orlib_resolver.cpp)
 target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
 
@@ -159,7 +167,7 @@ target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
 #   cmake --build build --config Release --target test_regression
 # The actual regression test execution is performed by the PowerShell
 # orchestrator script tests/run_regression.ps1 (which runs sigtool verify,
-# all 13 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
+# all 14 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
 # build commands of its own - it merely aggregates the dependencies.
 add_custom_target(test_regression)
 add_dependencies(test_regression
@@ -175,6 +183,7 @@ add_dependencies(test_regression
     test_tradingapp_type
     test_insert_tradingapp
     test_modify_tradingapp
+    test_auto_cleanup
     test_orlib_resolver
     tsdev_cli
     sigtool

@@ -18,7 +18,7 @@ Rationale for rejection: high complexity (32-bit server subprocess, frozen-execu
 
 ## Current State
 
-> **WORKSTREAM E PREREQUISITE (2026-08-17):** Workstream E (`docs/ARCHITECTURE_REDESIGN.md`) should complete before Workstream D begins. After E, the CLI (`tsdev_cli`) builds from a fresh clone without any `tmp/` dependencies, which simplifies Python integration testing and CI. The Python wrapper can assume a standard build process (cmake + build) without needing the `tmp/re_artifacts/` directory to exist.
+> **Workstream E (Architecture Redesign) — COMPLETE.** The CLI builds from a fresh clone (no gitignored dependencies). Signature data is in `signatures/*.json` with build-time codegen. Workstream D is the NEXT active workstream; no Workstream D work has been started.
 
 - The CLI (`tsdev_cli`) is COMPLETE and APPROVED. The `insert`, `delete`, and `modify` subcommands all work reliably (see AGENTS.md TODO for evidence).
 - Exit-code conventions: `0` = success; `5` = not-found (delete / modify); `8` = compile error (insert / modify).

@@ -66,7 +66,7 @@ tsdev_automation/
 │   ├── orlib_resolver.cpp / orlib_resolver.h   signature-scan resolver layer
 │   ├── tsdev_cli.cpp                     production CLI (insert/delete/modify)
 │   └── sigtool.cpp                       signature-verification CLI
-├── tests/          Test files (13 .cpp + 4 .ps1)
+├── tests/          Test files (14 .cpp + 4 .ps1)
 ├── archive/        Archived experimental probes (27 files, NOT built)
 ├── signatures/     JSON signature data — the single source of truth
 │   ├── v9.50.01.3344.json                per-version signatures + patch sites
@@ -162,13 +162,14 @@ them directly from the build output directory:
 
 ```cmd
 build\Release\test_insert.exe
+build\Release\test_insert_tradingapp.exe
+build\Release\test_auto_cleanup.exe
 build\Release\test_delete.exe
 build\Release\test_delete_tradingapp.exe
 build\Release\test_delete_check.exe
 build\Release\test_delete_diag.exe
 build\Release\test_modify.exe
 build\Release\test_modify_tradingapp.exe
-build\Release\test_insert_tradingapp.exe
 build\Release\test_tradingapp_type.exe
 build\Release\test_path_discovery.exe
 build\Release\test_persistence_validation.exe
@@ -179,8 +180,8 @@ build\Release\test_orlib_resolver.exe
 Each test exits `0` on success and non-zero on failure.
 
 **TS dependency:** the integration tests (`test_insert`, `test_insert_tradingapp`,
-`test_delete`, `test_delete_tradingapp`, `test_delete_check`, `test_delete_diag`,
-`test_modify`, `test_modify_tradingapp`) require a TradeStation 9.5 installation
+`test_auto_cleanup`, `test_delete`, `test_delete_tradingapp`, `test_delete_check`,
+`test_delete_diag`, `test_modify`, `test_modify_tradingapp`) require a TradeStation 9.5 installation
 on the machine — they load the real `orlib20.dll` and exercise the live warehouse.
 `test_path_discovery` and `test_persistence_validation` also require a TradeStation
 install: they construct `TsDevLib`, which loads `orlib20.dll`. The remaining three
@@ -207,7 +208,7 @@ the order required by the B.6 acceptance criteria:
 
 1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
    against the baseline DLL. Fast; no live TradeStation install needed.
-2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 13 C++ test executables
+2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 14 C++ test executables
    (or 3 with `-NoTs`). Medium duration.
 3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — 34 E2E CLI test cases per
    `docs/E2E_TEST_SPEC.md`. Slowest; creates and deletes real warehouse entries.
@@ -245,7 +246,7 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
 - No TradeStation processes/services running (for the E2E suite).
 
 ```powershell
-# Full run — all 3 suites (sigtool + 13 unit tests + 34 E2E tests):
+# Full run — all 3 suites (sigtool + 14 unit tests + 34 E2E tests):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
 # No-TradeStation run — sigtool + 3 non-TS unit tests; skips E2E:
@@ -255,14 +256,14 @@ powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -TsPath "D:\TradeStation 9.5"
 
 # Selective runs:
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 13 unit tests
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 14 unit tests
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E only
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # full output for every test
 ```
 
 #### `tests/run_unit_tests.ps1` — C++ unit test runner
 
-Runs all 13 C++ test executables in sequence (not in parallel — the shared
+Runs all 14 C++ test executables in sequence (not in parallel — the shared
 warehouse file `MWRKArea.wrk` is not process-safe), captures exit codes, measures
 per-test duration, and returns a single aggregated exit code.
 
@@ -276,7 +277,7 @@ Exit codes: `0` = all executed tests passed, `1` = one or more failed (or the
 build directory is missing).
 
 ```powershell
-# Run all 13 tests:
+# Run all 14 tests:
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
 
 # Run only the 3 non-TS tests (no TradeStation install needed):
@@ -405,9 +406,10 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `tsdev_lib`                     | library  | Static library wrapping the orlib20 operation set (links `orlib_resolver`). |
 | `tsdev_cli`                     | exec     | Production CLI (`insert`/`delete`/`modify`).                       |
 | `sigtool`                       | exec     | Signature-verification CLI.                                        |
-| `test_regression`               | custom   | Build-only dependency target: builds all 13 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
+| `test_regression`               | custom   | Build-only dependency target: builds all 14 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
 | `test_insert`                   | exec     | INSERT integration test (requires TS).                            |
 | `test_insert_tradingapp`        | exec     | TradingApp INSERT integration test (requires TS).                 |
+| `test_auto_cleanup`             | exec     | Auto-cleanup of partial warehouse entry on compile failure (requires TS — constructs TsDevLib). |
 | `test_delete`                   | exec     | DELETE integration test (requires TS).                            |
 | `test_delete_tradingapp`        | exec     | TradingApp DELETE integration test (requires TS).                 |
 | `test_delete_check`             | exec     | Quick check that deletions persist across restarts (requires TS). |

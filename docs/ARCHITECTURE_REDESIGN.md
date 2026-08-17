@@ -253,7 +253,7 @@ Each versioned signature set is a single JSON file (e.g., `signatures/v9.50.01.3
       "rva": "0x23CEA4",
       "extractionMethod": "instruction_operand",
       "sourceSignature": "StartCompilingProcess",
-      "sourceInstructionOffset": 31,
+      "sourceInstructionOffset": 33,
       "notes": "DAT_1023cea4 — global uint32 count of error records"
     },
     {
@@ -1455,7 +1455,7 @@ TVS-1 is the prerequisite for all others. TVS-2 through TVS-7 can proceed in par
 | Q1 | **Will `sigcodegen.py` generate byte-identical data to `b1_signatures.h`?** | Must be validated in TVS-1. The hex patterns, RVAs, and patch metadata must match exactly. | TVS-1 adversarial review includes a byte-level comparison of generated `kSignatures[]` vs. the original `b1_signatures.h` data. Any discrepancy is a blocker. |
 | Q2 | **Should `sigtool` link `orlib_resolver` or extract a shared scanner library?** | Open. Linking `orlib_resolver` is simpler but pulls in version detection + patch logic. | Start with linking `orlib_resolver` (simplest). If the coupling causes issues, extract a `sig_scanner` static library in a later refactor. |
 | Q3 | **Should `sigtool` use nlohmann/json for `--signatures` flag, or a minimal hand-rolled parser?** | Open. nlohmann/json is ~500KB but well-tested. Hand-rolled is zero-dependency but fragile. | Use nlohmann/json (single-header) included only in `sigtool.cpp`. The production CLI has no JSON dependency. If the dependency is objectional, a minimal parser for the known schema is ~100 lines. |
-| Q4 | **Should the generated header be in `build/generated/` or in `src/`?** | Decided: `build/generated/`. It's a build artifact, not source. | This means `#include "signatures.gen.h"` resolves via `target_include_directories(... PRIVATE ${GEN_INCLUDE_DIR})`. Verified that MSVC supports out-of-source include directories. |
+| Q4 | **Should the generated header be in `build/generated/` or in `src/`?** | Decided: `build/generated/`. It's a build artifact, not source. | **SUPERSEDED:** The implementation uses `PUBLIC ${GEN_INCLUDE_DIR}` (consumers may need signatures.gen.h transitively). See AGENTS.md DONE entry for TVS-E.1. |
 | Q5 | **Should `test_no_hardcoded_rvas.cpp` use Option A (read from generated header) or Option B (keep hardcoded list)?** | Decided: Option A (final state), Option B (transitional in TVS-1). | Option A is implemented in TVS-4 after the codegen pipeline is stable. |
 
 ### 10.2 Migration Risks

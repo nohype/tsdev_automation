@@ -181,7 +181,7 @@ int main() {
     // function pointer at the expected RVA → the try block computes the
     // RVA and CHECK(rva == EXPECTED) → PASS.
     //
-    // Expected RVAs are taken from tmp/re_artifacts/b1_signatures.h
+    // Expected RVAs are taken from signatures.gen.h
     // (the `rva` field of each SignatureDef), cross-checked against
     // docs/SIGNATURE_CATALOG.md §3.
     // ===================================================================
@@ -1147,7 +1147,7 @@ int main() {
     // (GREEN phase, later subagent), each resolver returns a populated
     // PatchSiteDescriptor / RVA at the expected value → PASS.
     //
-    // Expected values are taken from tmp/re_artifacts/b1_signatures.h
+    // Expected values are taken from signatures.gen.h
     // (the kSignatures[] entries for targets 9-12), cross-checked against
     // docs/SIGNATURE_CATALOG.md §3 (patch-site metadata) and §6 (data-
     // section RVA targets: kDataGlobals_v9_50_01_3344[0..2]).
@@ -1206,7 +1206,7 @@ int main() {
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part A: 4 patch-site resolvers ---\n");
 
-    // Patch-site expected values (from b1_signatures.h targets 9-12).
+    // Patch-site expected values (from signatures.gen.h targets 9-12).
     struct PatchSiteExpect {
         const char* name;
         uintptr_t   sigMatchRva;

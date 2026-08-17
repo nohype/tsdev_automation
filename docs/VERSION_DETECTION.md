@@ -4,7 +4,7 @@
 |---|---|
 | **TVS Identifier** | TVS-B.2 |
 | **Date** | 2026-08-17 |
-| **Status** | APPROVED-pending-review |
+| **Status** | APPROVED |
 | **Purpose** | Primary deliverable of TVS-B.2. Investigates version-detection strategies for `orlib20.dll`, documents the baseline version indicators for the currently-tested DLL, assesses indicator stability and discriminating power, recommends a multi-factor version-detection method, and specifies a known-versions manifest format that maps version indicators to expected signatures. Feeds into the `OrlibResolver` design (TVS-B.3) and implementation (TVS-B.4/B.5). |
 | **Input artifacts** | `tmp/re_artifacts/b2_version_indicators.md` (primary), `tmp/re_artifacts/b1_dll_baseline.md` (cross-reference), `docs/SIGNATURE_CATALOG.md` (B.1 signature catalog), `docs/HANDOFF_B_ROBUSTNESS.md` (workstream spec) |
 
@@ -228,9 +228,11 @@ This process ensures the manifest grows organically as new versions are encounte
 
 ## 6. Known-Versions Manifest Format
 
-> **WORKSTREAM E NOTICE (2026-08-17):** The version manifest format is being migrated from a hand-coded `constexpr` array in `orlib_resolver.cpp` to a JSON file (`signatures/version_manifest.json`) consumed via build-time code generation. The `OrlibVersionManifestEntry` struct and 3-tier detection algorithm are UNCHANGED — only the data source changes from hand-coded to generated. See `docs/ARCHITECTURE_REDESIGN.md` §4 (Signature Data Architecture) for the JSON schema and codegen pipeline. This migration is **DESIGNED but NOT YET IMPLEMENTED** — the current state (hand-coded `constexpr` array) remains the actual state until Workstream E's TVSs are executed.
+> **WORKSTREAM E NOTICE (2026-08-17):** The version manifest format has been migrated from a hand-coded `constexpr` array in `orlib_resolver.cpp` to a JSON file (`signatures/version_manifest.json`) consumed via build-time code generation. The `OrlibVersionManifestEntry` struct and 3-tier detection algorithm are UNCHANGED — only the data source changed from hand-coded to generated. See `docs/ARCHITECTURE_REDESIGN.md` §4 (Signature Data Architecture) for the JSON schema and codegen pipeline. This migration is **IMPLEMENTED (Workstream E complete)**.
 
 ### 6.1 Recommendation: C++ constexpr struct array (primary) + JSON (documentation)
+
+> **SUPERSEDED (Workstream E):** The manifest is now implemented via JSON (`signatures/version_manifest.json`) → `sigcodegen.py` codegen → generated header (`signatures.gen.h`). The C++ constexpr approach described here was superseded by the codegen pipeline in Workstream E. The section below is retained as the original design rationale; the actual implementation follows the JSON + codegen approach documented in `docs/ARCHITECTURE_REDESIGN.md` §4.
 
 **Primary format: a C++ `constexpr` struct array, compiled into the CLI binary.**
 

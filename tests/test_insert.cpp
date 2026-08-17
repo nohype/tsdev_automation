@@ -23,7 +23,7 @@
 //
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
-// window (thread-affine). The reference probe (elevated_test20.cpp) runs its
+// window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
 // ENTIRE flow — including orlib init and window creation — in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread.
@@ -44,7 +44,7 @@ const char* kTestName = "zzz_cli_insert_t2";
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
 // multi-line COMMENT block, so the actual code must be OUTSIDE it. The leading
 // comment names the strategy (TSDev convention); the body issues a simple
-// market buy order. This mirrors the proven source from elevated_test20.cpp.
+// market buy order. This mirrors the proven source from archive/elevated_test20.cpp.
 const char* kTestSource =
     "{ zzz_cli_insert_t2 }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";

@@ -201,16 +201,18 @@ namespace tsdev {
 
 // ---------------------------------------------------------------------------
 // Forward reference to the TVS-B.1 signature definitions.
-// tmp/re_artifacts/b1_signatures.h defines SignatureDef and kSignatures[]
-// (12 entries). The resolver consumes these at runtime. The struct is
-// re-declared here (as OrlibSignatureDef) so this header is self-contained
-// and does not hard-include a tmp/ artifact; the implementation (TVS-B.4)
-// bridges the two.
+// signatures/v9.50.01.3344.json (source of truth) is code-generated into
+// signatures.gen.h, which defines SignatureDef and kSignatures[] (12 entries).
+// The resolver consumes these at runtime. The struct is re-declared here
+// (as OrlibSignatureDef) so this header is self-contained and does not
+// hard-include a generated artifact; the implementation (TVS-B.4) bridges
+// the two.
 // ---------------------------------------------------------------------------
 
 /// \brief A single byte signature with wildcard mask.
 ///
-/// Mirrors `SignatureDef` from `tmp/re_artifacts/b1_signatures.h` but uses
+/// Mirrors `SignatureDef` from `signatures.gen.h` (generated from
+/// `signatures/v9.50.01.3344.json`) but uses
 /// structured byte arrays instead of hex strings so the resolver can scan
 /// without parsing at runtime. The implementation (TVS-B.4) converts the
 /// `kSignatures[]` hex patterns into this form at startup (or compile time).
@@ -568,7 +570,7 @@ public:
     // Each method resolves its target by signature scan (via
     // resolveBySignature) and returns a typed function pointer cast to the
     // appropriate calling convention. The signature definitions come from
-    // docs/SIGNATURE_CATALOG.md §3 (targets 1-8) / b1_signatures.h.
+    // docs/SIGNATURE_CATALOG.md §3 (targets 1-8) / signatures.gen.h.
     //
     // On signature no-match or multi-match, each throws OrlibResolverError.
     // ------------------------------------------------------------------------
@@ -955,7 +957,7 @@ private:
 
     // --- Signature catalog (loaded at construction) ---
     //
-    // The 12 signatures from b1_signatures.h, converted to OrlibSignatureDef
+    // The 12 signatures from signatures.gen.h, converted to OrlibSignatureDef
     // form (byte arrays + masks). The implementation (TVS-B.4) populates
     // this from kSignatures[] or from a per-version signature set selected
     // by detectVersion().

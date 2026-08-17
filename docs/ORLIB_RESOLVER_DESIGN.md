@@ -5,10 +5,10 @@
 | **TVS Identifier** | TVS-B.3 |
 | **Companion header** | `src/orlib_resolver.h` |
 | **Status** | Design artifact (header interface only) |
-| **Inputs** | `docs/SIGNATURE_CATALOG.md` (TVS-B.1), `docs/VERSION_DETECTION.md` (TVS-B.2), `tmp/re_artifacts/b1_signatures.h`, `src/tsdev_lib.h`, `src/tsdev_lib.cpp` |
+| **Inputs** | `docs/SIGNATURE_CATALOG.md` (TVS-B.1), `docs/VERSION_DETECTION.md` (TVS-B.2), `signatures/v9.50.01.3344.json`, `src/tsdev_lib.h`, `src/tsdev_lib.cpp` |
 | **Downstream** | TVS-B.4 (`.cpp` implementation), TVS-B.5 (TsDevLib integration), TVS-B.6 (regression suite) |
 
-> **WORKSTREAM E NOTICE (2026-08-17):** The `OrlibResolver` class design, API, and algorithm are UNCHANGED by Workstream E. Only the signature data SOURCE changes: `tmp/re_artifacts/b1_signatures.h` (gitignored, hand-transcribed) is being replaced by `signatures/v9.50.01.3344.json` (version-controlled) → `sigcodegen.py` → generated `signatures.gen.h`. The `kSignatures[]` / `kSignatureCount` symbols consumed by `buildSignatureCatalog()` will be provided by the generated header instead of the tmp/ header. See `docs/ARCHITECTURE_REDESIGN.md` §4 for details. This migration is **DESIGNED but NOT YET IMPLEMENTED** — the current state (`b1_signatures.h` as the build dependency) remains the actual state until Workstream E's TVSs are executed.
+> **WORKSTREAM E NOTICE (2026-08-17):** The `OrlibResolver` class design, API, and algorithm are UNCHANGED by Workstream E. Only the signature data SOURCE changes: `tmp/re_artifacts/b1_signatures.h` (gitignored, hand-transcribed) was replaced by `signatures/v9.50.01.3344.json` (version-controlled) → `sigcodegen.py` → generated `signatures.gen.h`. The `kSignatures[]` / `kSignatureCount` symbols consumed by `buildSignatureCatalog()` are now provided by the generated header instead of the tmp/ header. See `docs/ARCHITECTURE_REDESIGN.md` §4 for details. This migration is **IMPLEMENTED (Workstream E complete — signatures migrated to JSON, generated header consumed by orlib_resolver.cpp)**.
 
 ---
 
@@ -62,7 +62,7 @@ Everything else — opcodes, ModR/M bytes, register encodings, structural immedi
 
 ### Reference to TVS-B.1 verification
 
-The 12 signatures in `tmp/re_artifacts/b1_signatures.h` were each verified to match exactly once at their expected RVA within the `.text` section of `orlib20_baseline.dll` (`docs/SIGNATURE_CATALOG.md` §8, result table). Target 12 required signature extension (from 41 to 57 bytes) to disambiguate a spurious second match at RVA `0x001CFCE0`; the final 57-byte signature is unique. This demonstrates the uniqueness-enforcement discipline: a multi-match is a signal to extend the signature, not to relax the requirement.
+The 12 signatures in `signatures/v9.50.01.3344.json` were each verified to match exactly once at their expected RVA within the `.text` section of `orlib20_baseline.dll` (`docs/SIGNATURE_CATALOG.md` §8, result table). Target 12 required signature extension (from 41 to 57 bytes) to disambiguate a spurious second match at RVA `0x001CFCE0`; the final 57-byte signature is unique. This demonstrates the uniqueness-enforcement discipline: a multi-match is a signal to extend the signature, not to relax the requirement.
 
 ---
 
@@ -76,7 +76,7 @@ Before the class itself, the header declares the supporting types the resolver u
 
 | Type | Lines | Purpose |
 |---|---|---|
-| `OrlibSignatureDef` | 215-229 | A single byte signature with wildcard mask. Mirrors `SignatureDef` from `b1_signatures.h` but uses structured byte arrays (`bytes`, `mask`) instead of hex strings. Carries patch metadata (`originalBytes`, `replacementBytes`, `patchOffset`, `containingFunction`) for the 4 patch-site targets. |
+| `OrlibSignatureDef` | 215-229 | A single byte signature with wildcard mask. Mirrors `SignatureDef` from `signatures.gen.h` but uses structured byte arrays (`bytes`, `mask`) instead of hex strings. Carries patch metadata (`originalBytes`, `replacementBytes`, `patchOffset`, `containingFunction`) for the 4 patch-site targets. |
 | `SignatureSetId` (enum) | 237-240 | Identifies which signature set to use for a DLL version. `SIGSET_NONE` (0) = invalid/unknown; `SIGSET_V9_50_01_3344` (1) = the only tested version. |
 | `OrlibVersionManifestEntry` | 249-280 | One entry in the known-versions manifest. Carries Tier 1 (FileVersion), Tier 2 (PE timestamp + file size), Tier 3 (SHA-256) indicators, plus `.text`/export sanity indicators and PE version-resource metadata. Compiled in as a `constexpr` array. |
 | `VersionTier` (enum class) | 288-295 | Tier-match level reached during detection: `Unknown`, `Tier1Match`, `Tier2Match`, `Tier2Mismatch`, `Tier3Match`, `Tier3Mismatch`. |
@@ -195,7 +195,7 @@ The scan is implemented by the protected virtual `scanTextSection()` (line 861) 
 
 ### Step-by-step
 
-1. **Pattern representation.** Each `OrlibSignatureDef` carries parallel `bytes` and `mask` arrays of length `length`. A mask byte of `0xFF` means the corresponding byte is fixed (must match exactly); `0x00` means wildcard (`??`, matches any byte). The implementation (TVS-B.4) converts the `kSignatures[]` hex patterns from `b1_signatures.h` into this structured form at startup (or compile time), so no hex-string parsing occurs at scan time.
+1. **Pattern representation.** Each `OrlibSignatureDef` carries parallel `bytes` and `mask` arrays of length `length`. A mask byte of `0xFF` means the corresponding byte is fixed (must match exactly); `0x00` means wildcard (`??`, matches any byte). The implementation (TVS-B.4) converts the `kSignatures[]` hex patterns from `signatures.gen.h` into this structured form at startup (or compile time), so no hex-string parsing occurs at scan time.
 
 2. **Scan bounds.** The scan iterates over the `.text` section raw bytes, as parsed by `parsePeHeaders()`. For each offset `i` in `[0, textRawSize - sigLen]`, the matcher checks whether all non-wildcard bytes match: for each byte position `j`, if `mask[j] == 0xFF` then `textBytes[i + j]` must equal `bytes[j]`; if `mask[j] == 0x00`, the byte is skipped. This is the same wildcard-aware matching used by the TVS-B.1 verification probe (`src/sig_scan.cpp`, `docs/SIGNATURE_CATALOG.md` §8).
 
@@ -304,26 +304,26 @@ For the **INT3 patches** (Targets 10-12), no wildcards are needed: the original 
 
 ### Reference to TVS-B.1 patch-byte verification
 
-The patch-site original bytes and replacement bytes for all 4 patch sites are documented in `docs/SIGNATURE_CATALOG.md` §3 (Patch-site metadata table) and encoded in `tmp/re_artifacts/b1_signatures.h` (the `originalBytes`, `replacementBytes`, and `patchOffset` fields of each patch-site `SignatureDef`). The TVS-B.1 scan run verified that the byte at each patch offset matches the expected original byte (§8, result table: "patch byte 0x55 OK" for Target 9, "patch byte 0xCC OK" for Targets 10-12).
+The patch-site original bytes and replacement bytes for all 4 patch sites are documented in `docs/SIGNATURE_CATALOG.md` §3 (Patch-site metadata table) and encoded in `signatures/v9.50.01.3344.json` (the `originalBytes`, `replacementBytes`, and `patchOffset` fields of each patch-site `SignatureDef`). The TVS-B.1 scan run verified that the byte at each patch offset matches the expected original byte (§8, result table: "patch byte 0x55 OK" for Target 9, "patch byte 0xCC OK" for Targets 10-12).
 
 ---
 
 ## 7. Coverage Table
 
-This table maps every one of the 12 RVA targets (8 CALL_TARGETs + 4 PATCH_SITEs) and all 7 exports to its resolution method(s) in the header. It reconciles against `docs/SIGNATURE_CATALOG.md` (authoritative) and `tmp/re_artifacts/b1_signatures.h`.
+This table maps every one of the 12 RVA targets (8 CALL_TARGETs + 4 PATCH_SITEs) and all 7 exports to its resolution method(s) in the header. It reconciles against `docs/SIGNATURE_CATALOG.md` (authoritative) and `signatures/v9.50.01.3344.json`.
 
 ### 7.1 Internal functions — 8 CALL_TARGETs (signature scan)
 
 | # | Name | Target RVA | Header method | Resolution method | Signature source | Uniqueness (TVS-B.1) |
 |---|---|---|---|---|---|---|
-| 1 | StartCompilingProcess | 0x165DE0 | `resolveStartCompilingProcess()` (line 557) | Signature scan | `b1_signatures.h` Target 1 (64 bytes) | 1/1 PASS |
-| 2 | EndCompilingProcess | 0x165ED0 | `resolveEndCompilingProcess()` (line 562) | Signature scan | `b1_signatures.h` Target 2 (55 bytes) | 1/1 PASS |
-| 3 | CELCompiler_ctor | 0x165A00 | `resolveCELCompilerCtor()` (line 567) | Signature scan | `b1_signatures.h` Target 3 (64 bytes) | 1/1 PASS |
-| 4 | CELCompiler_dtor | 0x165AC0 | `resolveCELCompilerDtor()` (line 572) | Signature scan | `b1_signatures.h` Target 4 (38 bytes) | 1/1 PASS |
-| 5 | InitGlobalLookup | 0x1A9460 | `resolveInitGlobalLookup()` (line 577) | Signature scan | `b1_signatures.h` Target 5 (66 bytes) | 1/1 PASS |
-| 6 | DeleteFromTree | 0x1E4030 | `resolveDeleteFromTree()` (line 588) | Signature scan (returns `void*`) | `b1_signatures.h` Target 6 (66 bytes) | 1/1 PASS |
-| 7 | GetWarehouse | 0x1A9650 | `resolveGetWarehouse()` (line 598) | Signature scan (resolved-but-unused) | `b1_signatures.h` Target 7 (45 bytes) | 1/1 PASS |
-| 8 | FUN_101a8360_delete_orchestrator | 0x1A8360 | `resolveDeleteOrchestrator()` (line 607) | Signature scan (returns `void*`) | `b1_signatures.h` Target 8 (64 bytes) | 1/1 PASS |
+| 1 | StartCompilingProcess | 0x165DE0 | `resolveStartCompilingProcess()` (line 557) | Signature scan | `signatures.gen.h` Target 1 (64 bytes) | 1/1 PASS |
+| 2 | EndCompilingProcess | 0x165ED0 | `resolveEndCompilingProcess()` (line 562) | Signature scan | `signatures.gen.h` Target 2 (55 bytes) | 1/1 PASS |
+| 3 | CELCompiler_ctor | 0x165A00 | `resolveCELCompilerCtor()` (line 567) | Signature scan | `signatures.gen.h` Target 3 (64 bytes) | 1/1 PASS |
+| 4 | CELCompiler_dtor | 0x165AC0 | `resolveCELCompilerDtor()` (line 572) | Signature scan | `signatures.gen.h` Target 4 (38 bytes) | 1/1 PASS |
+| 5 | InitGlobalLookup | 0x1A9460 | `resolveInitGlobalLookup()` (line 577) | Signature scan | `signatures.gen.h` Target 5 (66 bytes) | 1/1 PASS |
+| 6 | DeleteFromTree | 0x1E4030 | `resolveDeleteFromTree()` (line 588) | Signature scan (returns `void*`) | `signatures.gen.h` Target 6 (66 bytes) | 1/1 PASS |
+| 7 | GetWarehouse | 0x1A9650 | `resolveGetWarehouse()` (line 598) | Signature scan (resolved-but-unused) | `signatures.gen.h` Target 7 (45 bytes) | 1/1 PASS |
+| 8 | FUN_101a8360_delete_orchestrator | 0x1A8360 | `resolveDeleteOrchestrator()` (line 607) | Signature scan (returns `void*`) | `signatures.gen.h` Target 8 (64 bytes) | 1/1 PASS |
 
 ### 7.2 Patch sites — 4 PATCH_SITEs (signature scan + validation)
 
@@ -441,7 +441,7 @@ A test (`test_orlib_resolver`, planned for TVS-B.6) can run on any machine witho
 
 3. **Detect version.** `auto vd = resolver.detectVersion()` — `readFileVersion()` parses the version resource from the buffer; `parsePeHeaders()` extracts the PE timestamp and `.text` bounds; `computeSha256()` hashes the buffer. Assert `vd.known == true`, `vd.tier == VersionTier::Tier3Match`, `vd.fileVersion == "9.50.01.3344"`.
 
-4. **Resolve all 12 signatures.** Call each `resolve*` method (8 CALL_TARGETs + 4 patch-site `resolvePatchSite` calls). Assert each returns the expected RVA (matching `b1_signatures.h` `rva` fields). Assert no exceptions are thrown.
+4. **Resolve all 12 signatures.** Call each `resolve*` method (8 CALL_TARGETs + 4 patch-site `resolvePatchSite` calls). Assert each returns the expected RVA (matching `signatures.gen.h` `rva` fields). Assert no exceptions are thrown.
 
 5. **Assert uniqueness.** Each `resolveBySignature` call enforces exactly 1 match. If any signature matched 0 or >1 times, an `OrlibResolverError` would be thrown — the test catches this and fails with the diagnostic.
 

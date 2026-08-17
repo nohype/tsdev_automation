@@ -24,7 +24,7 @@
 //
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
-// window (thread-affine). The reference probe (elevated_test20.cpp) runs its
+// window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
 // ENTIRE flow in a worker thread with a 64 MB stack. We do the same: all
 // TsDevLib operations run on a 64 MB-stack worker thread.
 

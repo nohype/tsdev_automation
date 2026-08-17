@@ -32,11 +32,12 @@
 #pragma comment(lib, "version.lib")
 
 // signatures.gen.h is the build-time-generated header (from committed JSON via
-// tools/sigcodegen.py). It defines SignatureDef / kSignatures[] (the TVS-B.1
-// catalog), the SignatureSetId enum, and the version manifest arrays. It
-// includes orlib_resolver.h after defining the enum so that
-// OrlibVersionManifestEntry (which has a SignatureSetId member by value) can
-// use it. This replaces the old tmp/re_artifacts/b1_signatures.h dependency.
+// tools/sigcodegen.py). It defines SignatureDef / kSignatures[] (the
+// signatures/v9.50.01.3344.json catalog), the SignatureSetId enum, and the
+// version manifest arrays. It includes orlib_resolver.h after defining the
+// enum so that OrlibVersionManifestEntry (which has a SignatureSetId member
+// by value) can use it. This replaces the old tmp/re_artifacts/b1_signatures.h
+// dependency.
 #include "signatures.gen.h"
 
 namespace tsdev {

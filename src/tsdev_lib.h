@@ -6,8 +6,8 @@
 // RAII C++ API.
 //
 // All findings are CONFIRMED and documented in
-// tmp/re_artifacts/orlib_param_orders.md. The reference probe is
-// src/elevated_test20.cpp.
+// tmp/re_artifacts/orlib_param_orders.md (gitignored). The reference probe is
+// archive/elevated_test20.cpp.
 //
 // This module is 32-bit only (orlib20.dll is a 32-bit PE).
 
@@ -177,9 +177,12 @@ private:
     unsigned char m_threadCheckOriginalBytes[3] = {};  // original byte (0xCC) at each
                                                        // thread-check site, saved BEFORE
                                                        // patching for restoration.
-    bool       m_patchesApplied = false;         // true once all 4 patches are applied;
-                                                 // gates restoration in the destructor so a
-                                                 // partially-constructed instance is safe.
+    bool       m_patchesApplied = false;         // true once at least one patch has
+                                                 // been applied; set after EACH
+                                                 // successful patch (TD-002) so the
+                                                 // destructor restores whatever was
+                                                 // actually applied. Each restoration
+                                                 // is guarded by its cached RVA.
     bool       m_orlibInitialized = false;       // true once OrlibInit succeeds; gates
                                                  // OrlibExit in the destructor so a
                                                  // partially-constructed instance does not

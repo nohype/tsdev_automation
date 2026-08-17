@@ -9,7 +9,7 @@
       1. sigtool verify gate   (tests/test_sigtool.ps1)
          12 sigtool CLI tests against the baseline DLL. Fast, no live TS.
       2. C++ unit tests        (tests/run_unit_tests.ps1)
-         13 C++ test executables (or 3 with -NoTs). Medium duration.
+         14 C++ test executables (or 3 with -NoTs). Medium duration.
       3. E2E CLI tests         (tests/run_e2e_tests.ps1)
          34 E2E CLI test cases per E2E_TEST_SPEC.md. Slowest; creates and
          deletes real warehouse entries.
@@ -59,7 +59,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-    Runs all 3 suites (sigtool + 13 unit tests + 34 E2E tests).
+    Runs all 3 suites (sigtool + 14 unit tests + 34 E2E tests).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
@@ -67,7 +67,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e
-    Runs sigtool + all 13 unit tests; skips E2E.
+    Runs sigtool + all 14 unit tests; skips E2E.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose

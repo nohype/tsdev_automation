@@ -10,4 +10,5 @@ __pycache__/
 /ghidra_project/
 /tmp/
 *.obj
+*.tsc
 
