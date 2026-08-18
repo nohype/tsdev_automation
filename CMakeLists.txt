@@ -132,8 +132,23 @@ target_link_libraries(test_modify_tradingapp tsdev_lib)
 add_executable(test_auto_cleanup tests/test_auto_cleanup.cpp)
 target_link_libraries(test_auto_cleanup tsdev_lib)
 
+# --- TVS-D.1: Batch feasibility stress test (opt-in, NOT in regression suite) -
+# Validates ONE TsDevLib instance can do N (default 600) sequential
+# insert+compile+verify ops then delete all N, leaving a clean warehouse, all
+# in ONE process on ONE 64 MB-stack worker thread. De-risks batch CLI (TVS-D.3).
+# Heavy/slow and hits the real warehouse — run manually, NOT via run_regression:
+#   cmake --build build --config Release --target test_stress_batch
+#   $env:STRESS_BATCH_N=5;   .\build\Release\test_stress_batch.exe   # smoke
+#   $env:STRESS_BATCH_N=600; .\build\Release\test_stress_batch.exe   # full
+add_executable(test_stress_batch tests/test_stress_batch.cpp)
+target_link_libraries(test_stress_batch tsdev_lib)
+
 # --- Production CLI ---------------------------------------------------------
+# TVS-D.2: tsdev_cli includes nlohmann/json.hpp (vendored under third_party/)
+# for the --json structured output flag. The include mechanism mirrors sigtool
+# (target_include_directories(... PRIVATE third_party)).
 add_executable(tsdev_cli src/tsdev_cli.cpp)
+target_include_directories(tsdev_cli PRIVATE third_party)
 target_link_libraries(tsdev_cli tsdev_lib)
 
 # --- sigtool: standalone orlib20.dll signature verification tool --------------

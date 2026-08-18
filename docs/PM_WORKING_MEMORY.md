@@ -21,7 +21,7 @@
 
 ## Project state (as of 2026-08-18)
 - **ALL WORKSTREAMS COMPLETE:** A (compilation errors), B (robustness), C (TradingApp), E (architecture redesign). Primary acceptance criteria SATISFIED at library + CLI level.
-- **CURRENT WORKSTREAM: NONE IN FLIGHT.** Next: Workstream D (Python Integration) — NOT started.
+- **CURRENT WORKSTREAM: NONE IN FLIGHT.** Workstream D (Python Integration) is COMPLETE (all 6 TVSs D.0–D.5 done, adversarially reviewed + APPROVED, E2E verified). All workstreams A, B, C, D, E COMPLETE.
 - **Tech debt cleanup pass (2026-08-18):** Documentation consolidated (AGENTS.md/PM_WORKING_MEMORY.md condensed, historical detail archived to `docs/PROJECT_HISTORY.md`, 4 completed handoffs archived to `docs/archive/`). Code fixes: TD-001 (auto-cleanup partial entry on compile failure), TD-002 (per-patch restoration gap). Stale comments cleaned. Stray files removed.
 - **CLI supports 4 component types:** Strategy (0), Indicator (2), Function (4), TradingApp (5122, category 2, sub-type 0x14). 4 unconfirmed: ActivityBar, PaintBar, ProbabilityMap, ShowMe.
 - **Regression suite:** `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (sigtool 12 + unit 14 + E2E 34 = 60 tests).
@@ -29,7 +29,7 @@
 - **Detailed TVS history:** See `docs/PROJECT_HISTORY.md`.
 
 ## NEXT WORKSTREAM
-- **(D) Python Integration** — `docs/HANDOFF_D_PYTHON_INTEGRATION.md`. Simple Python wrapper around `tsdev_cli` (msl-loadlib rejected). NOT started. TVS decomposition deferred.
+- **(D) Python Integration** — COMPLETE. Option A+ (batch CLI + JSON I/O, no daemon). `TsDevClient` Python wrapper at `src/tsdev_automation/` drives the 32-bit `tsdev_cli.exe` from 64-bit Python (subprocess, no daemon). Single-item via `--json` + batch mode (line-based manifest, JSON results, init amortized). 29 Python tests + 60 C++ regression tests pass. See `docs/INTEGRATION_APPROACH_EVALUATION.md` for the approach decision. `docs/HANDOFF_D_PYTHON_INTEGRATION.md` superseded (archived).
 
 ## Completed Work Summary
 

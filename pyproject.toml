@@ -1,7 +1,7 @@
 [project]
 name = "tsdev-automation"
 version = "0.1.0"
-description = "Add your description here"
+description = "Python automation wrapper driving the tsdev_cli (TradeStation Development Environment)."
 readme = "README.md"
 authors = [
     { name = "Julian W.", email = "31277958+nohype@users.noreply.github.com" }
@@ -14,6 +14,26 @@ dependencies = [
 [project.scripts]
 tsdev-automation = "tsdev_automation:main"
 
+# uv_build uses src-layout discovery by default: it finds the importable
+# package at src/<normalized_name> (src/tsdev_automation).  The C++ sources
+# live directly under src/ (e.g. src/tsdev_cli.cpp) and are referenced by
+# CMakeLists.txt via explicit paths (no globs), so the Python package and the
+# C++ build coexist without collision.  No extra [tool.uv.build-backend]
+# configuration is required.
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests that drive the real tsdev_cli.exe and TradeStation warehouse",
+]
+# Only collect Python test files; ignore the C++/PowerShell artifacts in tests/.
+python_files = ["test_tsdev_client.py"]

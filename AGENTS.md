@@ -109,6 +109,12 @@ All workstreams A, B, C, E are COMPLETE. Detailed per-TVS logs are archived in `
 | TVS-E.5 | Archive experimental probes | COMPLETE |
 | TVS-E.6 | Move tests to tests/ | COMPLETE |
 | TVS-E.7 | Clean stale RVA comments + rewrite BUILD.md | COMPLETE |
+| TVS-D.0 | Python integration approach evaluation (A+ chosen: batch CLI + JSON, no daemon) | COMPLETE |
+| TVS-D.1 | Stress-test TsDevLib reuse across 600 ops in one process | COMPLETE |
+| TVS-D.2 | --json structured output for single-item CLI subcommands | COMPLETE |
+| TVS-D.3 | Batch mode (batch-insert/modify/delete, line-based manifest, JSON results) | COMPLETE |
+| TVS-D.4 | Python TsDevClient wrapper (single-item + batch, typed exceptions) | COMPLETE |
+| TVS-D.5 | Comprehensive Python E2E (all 4 types) + packaging + README | COMPLETE |
 
 **Key architectural facts:**
 - Signature data: `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen)
@@ -118,9 +124,9 @@ All workstreams A, B, C, E are COMPLETE. Detailed per-TVS logs are archived in `
 - Fresh clone builds without `tmp/` dependencies (Workstream E fixed this)
 
 ### NEXT WORKSTREAMS (in priority order)
-1. **(D) Python Integration** — `docs/HANDOFF_D_PYTHON_INTEGRATION.md`: Simple, robust Python integration to drive INSERT/DELETE/MODIFY (likely a Python wrapper class around the existing CLI; msl-loadlib approach rejected). NOT started. **Soft prerequisite: Workstream E (SATISFIED).**
+1. **(D) Python Integration** — COMPLETE. See `docs/INTEGRATION_APPROACH_EVALUATION.md` (approach decision) and the `tsdev_automation` Python package (`src/tsdev_automation/`). Approach: Option A+ (batch CLI + JSON I/O, no daemon). 64-bit Python drives the 32-bit `tsdev_cli.exe` as a subprocess (in-process 32-bit DLL loading is impossible from 64-bit Python — WOW64 constraint, verified). `TsDevClient` API: `insert`/`modify`/`delete` (single-item via `--json`, returns `TsDevResult`, raises typed exceptions) + `batch_insert`/`batch_modify`/`batch_delete` (line-based manifest, JSON results, init amortized — 600 items in ~140s vs ~386s unbatched). 29 Python tests (20 unit + 9 E2E) + 60 C++ regression tests all passing. Wheel builds via `uv build`.
 
-Workstreams A (compilation errors), B (robustness), C (TradingApp), and E (architecture redesign) are ALL COMPLETE. Their handoff documents have been archived to `docs/archive/`.
+Workstreams A (compilation errors), B (robustness), C (TradingApp), D (Python integration), and E (architecture redesign) are ALL COMPLETE. Their handoff documents have been archived to `docs/archive/`.
 
 ### REMAINING FOLLOW-UPS
 - **4 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap, ShowMe whType codes are NOT confirmed. Code restricts to 4 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff.
