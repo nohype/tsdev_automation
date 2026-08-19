@@ -9,6 +9,9 @@ Usage::
     tsdev-automation insert  strategy MyName ./source.el
     tsdev-automation modify  strategy MyName ./source.el
     tsdev-automation delete  strategy MyName
+    tsdev-automation exists  strategy MyName
+    tsdev-automation get-source  strategy MyName [--output ./out.el]
+    tsdev-automation upsert  strategy MyName ./source.el
     tsdev-automation batch-insert  ./manifest.txt
     tsdev-automation batch-modify  ./manifest.txt
     tsdev-automation batch-delete  ./manifest.txt
@@ -60,6 +63,26 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("type", help="strategy | function | indicator | tradingapp")
     sp.add_argument("name", help="component name")
 
+    sp = sub.add_parser("exists", help="query whether a component exists.")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("name", help="component name")
+    sp.add_argument(
+        "--case-insensitive",
+        action="store_true",
+        default=False,
+        help="match the name case-insensitively (default: exact match)",
+    )
+
+    sp = sub.add_parser("get-source", help="retrieve a component's EasyLanguage source.")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("name", help="component name")
+    sp.add_argument("--output", default=None, metavar="<file>", help="write source to <file> instead of stdout")
+
+    sp = sub.add_parser("upsert", help="insert a component, or modify it if it already exists.")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("name", help="component name")
+    sp.add_argument("source", help="source file path OR inline EasyLanguage source text")
+
     for op in ("batch-insert", "batch-modify", "batch-delete"):
         sp = sub.add_parser(op, help=f"{op} from a manifest file.")
         sp.add_argument("manifest", help="path to manifest file (one item per line)")
@@ -78,6 +101,24 @@ def _main(argv: list[str] | None = None) -> int:
             return 0 if r.success else 1
         if args.command == "delete":
             r = client.delete(args.type, args.name)
+            _print_result(r)
+            return 0 if r.success else 1
+        if args.command == "exists":
+            r = client.exists(args.type, args.name, case_insensitive=args.case_insensitive)
+            if r.exists:
+                print(f"[OK] exists {r.type} {r.name!r} -> ProgId={r.prog_id} stored_name={r.stored_name!r}")
+            else:
+                print(f"[OK] exists {r.type} {r.name!r} -> not found")
+            return 0
+        if args.command == "get-source":
+            r = client.get_source(args.type, args.name, output_file=args.output)
+            if args.output is None:
+                print(r.source, end="")
+            else:
+                print(f"Source written to {args.output}")
+            return 0
+        if args.command == "upsert":
+            r = client.upsert(args.type, args.name, args.source)
             _print_result(r)
             return 0 if r.success else 1
         if args.command.startswith("batch-"):

@@ -54,6 +54,13 @@ struct Result {
     int         progId  = 0;  // valid when success is true (where applicable)
 };
 
+// Result of a case-insensitive enumeration-based existence query.
+struct EnumerateResult {
+    bool        exists = false;
+    std::string storedName;  // verbatim stored name (empty if not found)
+    int         progId  = 0; // ProgId (0 if not found)
+};
+
 // RAII wrapper for an orlib20 session.
 //
 // Constructor:  loads orlib20.dll, pre-loads support DLLs, applies the
@@ -86,6 +93,26 @@ public:
     // Returns true on success.
     bool saveSource(ComponentType type, int progId, const std::string& source);
 
+    // Retrieves EasyLanguage source text for an existing item by name + type.
+    // Returns the source text as a string. Returns empty string on failure
+    // (not found, password-protected, or internal error).
+    std::string getSource(ComponentType type, const std::string& name);
+
+    // Case-insensitive existence query. Uses a two-phase approach:
+    //   Phase 1: _LoadMasterRecsEX@16 (COM interface cache) — works for
+    //     records that existed before this process started. Searches
+    //     records case-insensitively via _stricmp.
+    //   Phase 2: FUN_101a42d0 (official TSDev "find item + get verbatim
+    //     name" function). In server mode (DAT_1023aa8f temporarily set
+    //     to 1), it performs a BST search and lazily fetches the verbatim
+    //     name from the server via command 0x34. The stored name comes
+    //     from the WAREHOUSE SERVER, not from source text (HARD RULE 0).
+    //     ProgId is obtained separately via FindExistPos.
+    // For TradingApp (category 2, subtype 0x14), Phase 1 filters by
+    // rec[0xE9].
+    EnumerateResult enumerateRecords(ComponentType type,
+                                     const std::string& searchName);
+
     // Compile and verify an entry. Persists the .ell file on success.
     // Creates a CELCompiler object, sets its fields, calls
     // StartCompilingProcess + VerifyModule_New + EndCompilingProcess, then
@@ -95,6 +122,15 @@ public:
     // control saveSource uses — for both VerifyModule_New and the
     // CELCompiler +0x18 field.
     std::string verifyModule(ComponentType type, int progId);
+
+    // Refresh the warehouse cache so that the cached _LoadMasterRecsEX@16
+    // enumeration sees items created/modified/deleted in the same process.
+    // If [warehouse+0x5E] (COM interface) is NULL, dispatches cmd 0x0F to
+    // initialize it. Then sets [warehouse+0x12] = 0xC and dispatches
+    // cmd 0x4E via FUN_101cf5b0.
+    // Defensive: skips silently on any failure. SEH-protected. Should be
+    // called before enumerateRecords().
+    void refreshCache();
 
     // Close/flush the warehouse for the current thread. Safe to call once at
     // the end of a batch of operations; the destructor does NOT call this.
@@ -172,9 +208,9 @@ private:
                                                        // kPersistenceOriginalBytes wildcards
                                                        // out), saved BEFORE patching so the
                                                        // destructor can restore them.
-    uintptr_t  m_threadCheckRvas[3] = {};        // RVAs of the 3 thread-check patch sites,
+    uintptr_t  m_threadCheckRvas[11] = {};       // RVAs of the 11 thread-check patch sites,
                                                  // cached BEFORE patching for restoration.
-    unsigned char m_threadCheckOriginalBytes[3] = {};  // original byte (0xCC) at each
+    unsigned char m_threadCheckOriginalBytes[11] = {};  // original byte (0xCC) at each
                                                        // thread-check site, saved BEFORE
                                                        // patching for restoration.
     bool       m_patchesApplied = false;         // true once at least one patch has
@@ -212,6 +248,18 @@ private:
                                                  int progId, int flag,
                                                  void* compilerObj);
     typedef void (__stdcall *CloseWarehouse_t)(int param);
+    typedef HGLOBAL (__stdcall *LoadTextFileExFn)(void* unused, int whType,
+                                                  int progId, void* password);
+    typedef int (__stdcall *LoadMasterRecsExFn)(int category, HGLOBAL* outBuf,
+                                                const char* path, int filterMode);
+    // _GetMasterRecByType@16 — __stdcall, 4 params (category, subtype,
+    // index=ProgId, outBuf). Returns 1 on success (record found and copied
+    // to outBuf), 0 on failure (not found or warehouse unavailable).
+    // The record is 0x10A bytes with the stored name at offset 0x17.
+    // Dispatches cmd 0x0D via FUN_101d15c0 (local mode) — requires the
+    // FUN_101d15c0_thread_check_INT3 patch.
+    typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
+                                                  int index, void* outBuf);
 
     OrlibInit_t          m_pOrlibInit       = nullptr;
     OrlibExit_t          m_pOrlibExit       = nullptr;
@@ -220,6 +268,9 @@ private:
     SaveModule_New_t     m_pSaveModuleNew   = nullptr;
     VerifyModule_New_t   m_pVerifyModule    = nullptr;
     CloseWarehouse_t     m_pCloseWarehouse  = nullptr;
+    LoadTextFileExFn     m_loadTextFileEx   = nullptr;
+    LoadMasterRecsExFn   m_loadMasterRecsEx = nullptr;
+    GetMasterRecByTypeFn m_getMasterRecByType = nullptr;
 
     // --- Resolved internal functions (by RVA from orlib20 base) ---
     // RVAs are resolved at runtime via signature scan; see
@@ -253,6 +304,54 @@ private:
     InitGlobalLookup_t      m_pInitGlobalLookup = nullptr;
     void*                   m_pDeleteFromTree   = nullptr;
     GetWarehouse_t          m_pGetWarehouse     = nullptr;
+    // FUN_101cf5b0 — the generic command dispatcher (__thiscall:
+    // ECX=warehouse, stack=commandId). Already INT3-patched at offset 36.
+    // Stored as void* and invoked via inline asm in a POD-only helper
+    // (callCmdDispatcher) because MSVC has no direct __thiscall function-
+    // pointer type. Used by refreshCache() to dispatch cmd 0x4E.
+    void*                   m_pCmdDispatcher    = nullptr;
+    // FUN_101d0950 — the cmd 0x0F dispatch helper (__thiscall:
+    // ECX=warehouse, stack=typeArray, progId, &outParam). Already INT3-patched
+    // (FUN_101d0950_thread_check_INT3). Stored as void* and invoked via
+    // inline asm in callCmd0FDispatcher. Used by refreshCache() to set
+    // [warehouse+0x5E] (COM interface) before dispatching cmd 0x4E.
+    void*                   m_pCmd0FDispatcher   = nullptr;
+    // FUN_101d43a0 — the type-array builder (__stdcall: 2 stack args —
+    // category, outArray). Stored as void* and invoked via inline asm in
+    // callBuildTypeArray. Used by refreshCache() to build the type array
+    // needed by the cmd 0x0F dispatch.
+    void*                   m_pBuildTypeArray    = nullptr;
+    // FUN_1000dd30 — the CELProgramWriter constructor (__fastcall:
+    // ECX=buffer). Stored as void* and invoked via inline asm in
+    // callCelProgramWriterCtor. Used by refreshCache() to initialize the
+    // output buffer before calling FUN_101d0950 (cmd 0x0F dispatch).
+    void*                   m_pCelProgWriterCtor = nullptr;
+    // FUN_101cfce0 — the cmd 0x0D dispatch helper (__thiscall:
+    // ECX=warehouse, stack=type, param). Already INT3-patched
+    // (FUN_101cfce0_thread_check_INT3). Stored as void* and invoked via
+    // inline asm in callCmd0DDispatcher. Used by refreshCache() to obtain
+    // the correct COM interface (from the server-side cache) at
+    // [warehouse+0x5E], which cmd 0x08 (type select, used by
+    // _LoadMasterRecsEX@16) reads to enumerate records. The cmd 0x0F
+    // interface is stale after create/modify; cmd 0x0D gets a fresh one.
+    void*                   m_pCmd0DDispatcher   = nullptr;
+    // FUN_101a42d0 — find item by name + get verbatim stored name
+    // (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
+    // outVerbatimName; RET 0x8). Stored as void* and invoked via inline asm
+    // in callFindItemGetName. Used by enumerateRecords() Phase 2 to get the
+    // verbatim stored name from the warehouse server (not from source text).
+    void*                   m_pFindItemGetName   = nullptr;
+    // FUN_101d05e0 — BST search wrapper (non-server mode)
+    // (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);
+    // RET 0xC). Stored as void* and invoked via inline asm in
+    // callBstSearchWrapper. Used by enumerateRecords() Phase 2 to find the
+    // BST node for a given item name.
+    void*                   m_pBstSearchWrapper   = nullptr;
+    // FUN_101c36d0 — verbatim name getter (__fastcall: ECX=node pointer,
+    // no stack args; RET). Stored as void* and invoked via inline asm in
+    // callVerbatimNameGetter. Used by enumerateRecords() Phase 2 to get the
+    // verbatim stored name from the BST node found by FUN_101d05e0.
+    void*                   m_pVerbatimNameGetter = nullptr;
 
     // --- Helpers ---
     HWND createHiddenEditControl();

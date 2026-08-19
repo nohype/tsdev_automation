@@ -52,9 +52,9 @@
 //
 //   Trade-off: signature scanning is slower than RVA arithmetic (O(text_size *
 //   sig_len) per target) and depends on the signature remaining unique. Both
-//   are acceptable: the .text section is ~2 MB and there are 12 signatures,
+//   are acceptable: the .text section is ~2 MB and there are 13 signatures,
 //   so the full scan completes in milliseconds at startup; uniqueness was
-//   verified (12/12 PASS, scan count = 1) for the tested build.
+//   verified (13/13 PASS, scan count = 1) for the tested build.
 //
 // 2. HOW THE VERSION MANIFEST WORKS
 //
@@ -171,18 +171,16 @@
 //   instance (or pointer) and queries it. No public method signature on
 //   TsDevLib changes.
 //
-// 7. DISCREPANCY NOTE: "8 exports" vs 7 confirmed exports
+// 7. DISCREPANCY NOTE: "8 exports" — RESOLVED (8th export added)
 //
-//   The TVS-B.3 handoff's adversarial-review line mentions "8 exports", but
-//   docs/SIGNATURE_CATALOG.md §5 (authoritative, confirmed via dumpbin
-//   /exports) lists exactly 7 export names used in production code:
+//   The TVS-B.3 handoff's adversarial-review line mentioned "8 exports". At
+//   the time, docs/SIGNATURE_CATALOG.md §5 (authoritative, confirmed via
+//   dumpbin /exports) listed exactly 7 export names used in production code:
 //     _OrlibInit@8, _OrlibExit@0, FindExistPos, _CreateEntryEX@24,
 //     _SaveModule_New@20, _VerifyModule_New@20,
 //     _CloseWarehouseForCurrentThreadAndPath@4.
-//   This header follows SIGNATURE_CATALOG.md (7 exports). The "8" likely
-//   conflates the 8 CALL_TARGET internal functions with the 7 exports, or
-//   counts _GetCompilingErrors@4 (which was REMOVED in TVS-A.4 — the CLI
-//   now reads the error array directly). No 8th export is resolved here.
+//   An 8th export has since been added to the signature set, resolving the
+//   discrepancy. This header now follows SIGNATURE_CATALOG.md (8 exports).
 //
 // =============================================================================
 
@@ -202,7 +200,7 @@ namespace tsdev {
 // ---------------------------------------------------------------------------
 // Forward reference to the TVS-B.1 signature definitions.
 // signatures/v9.50.01.3344.json (source of truth) is code-generated into
-// signatures.gen.h, which defines SignatureDef and kSignatures[] (12 entries).
+// signatures.gen.h, which defines SignatureDef and kSignatures[] (13 entries).
 // The resolver consumes these at runtime. The struct is re-declared here
 // (as OrlibSignatureDef) so this header is self-contained and does not
 // hard-include a generated artifact; the implementation (TVS-B.4) bridges
@@ -223,7 +221,7 @@ struct OrlibSignatureDef {
     const uint8_t*     mask;                 ///< Per-byte mask: 0xFF = fixed (must match), 0x00 = wildcard (??, matches any).
     int                length;               ///< Number of bytes in `bytes` / `mask`.
     int                expectedMatchCount;   ///< Expected unique matches in .text (always 1).
-    bool               isPatchSite;          ///< True for the 4 patch-site targets (9-12).
+    bool               isPatchSite;          ///< True for the 5 patch-site targets (9-13).
     const uint8_t*     originalBytes;        ///< Patch sites: original bytes at the patch site.
     int                originalBytesLen;     ///< Patch sites: length of `originalBytes`.
     const uint8_t*     originalBytesMask;    ///< Patch sites: per-byte mask for original bytes (0xFF=check, 0x00=wildcard).
@@ -646,7 +644,64 @@ public:
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveDeleteOrchestrator();
 
-    // --- Export resolution (7 exports) -------------------------------------
+    /// \brief Resolve Target 9: FUN_101d43a0 type-array builder (__stdcall).
+    /// RVA resolved at runtime via signature scan (see
+    /// signatures/v9.50.01.3344.json).
+    ///
+    /// Returns void* because this function is invoked via inline asm
+    /// (stdcall: 2 stack args — category, outArray — see callBuildTypeArray
+    /// in tsdev_lib.cpp).
+    ///
+    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \throws OrlibResolverError if the signature does not match uniquely.
+    void* resolveBuildTypeArray();
+
+    /// \brief Resolve Target 10: FUN_1000dd30 CELProgramWriter constructor
+    /// (__fastcall: ECX=this/buffer). RVA resolved at runtime via signature
+    /// scan (see signatures/v9.50.01.3344.json).
+    ///
+    /// Returns void* because this function is invoked via inline asm
+    /// (fastcall: ECX=buffer — see callCelProgramWriterCtor in
+    /// tsdev_lib.cpp). Used by refreshCache() to initialize the output
+    /// buffer before calling FUN_101d0950 (cmd 0x0F dispatch).
+    ///
+    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \throws OrlibResolverError if the signature does not match uniquely.
+    void* resolveCelProgramWriterCtor();
+
+    /// \brief Resolve FUN_101a42d0 — find item by name + get verbatim stored
+    /// name (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
+    /// outVerbatimName; RET 0x8). RVA resolved at runtime via signature scan
+    /// (see signatures/v9.50.01.3344.json).
+    ///
+    /// This is the official TSDev function for finding an item and getting
+    /// its verbatim stored name. In server mode (DAT_1023aa8f == 1), it
+    /// performs a BST search and lazily fetches the verbatim name from the
+    /// server via command 0x34. The stored name comes from the WAREHOUSE
+    /// SERVER, not from source text (HARD RULE 0).
+    ///
+    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \throws OrlibResolverError if the signature does not match uniquely.
+    void* resolveFindItemGetName();
+
+    /// \brief Resolve FUN_101d05e0 — BST search wrapper (non-server mode)
+    /// (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);
+    /// RET 0xC). Returns bool (1=found, 0=not found). Stores BST node
+    /// pointer in *outNode.
+    ///
+    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \throws OrlibResolverError if the signature does not match uniquely.
+    void* resolveBstSearchWrapper();
+
+    /// \brief Resolve FUN_101c36d0 — verbatim name getter
+    /// (__fastcall: ECX=node pointer, no stack args; RET). Returns char*
+    /// to the verbatim stored name at node+0x1D.
+    ///
+    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \throws OrlibResolverError if the signature does not match uniquely.
+    void* resolveVerbatimNameGetter();
+
+    // --- Export resolution (8 exports) -------------------------------------
     //
     // Exports are resolved by GetProcAddress (production) or by parsing the
     // PE export table from the in-memory buffer (test). These are NOT
@@ -697,9 +752,9 @@ public:
     /// \throws OrlibResolverError if the export is not found.
     FARPROC resolveExport(const char* decoratedName);
 
-    // --- Patch-site resolution & validation (4 PATCH_SITEs) ----------------
+    // --- Patch-site resolution & validation (5 PATCH_SITEs) ----------------
     //
-    // Targets 9-12 are patch sites. The signature matches the containing
+    // Targets 9-13 are patch sites. The signature matches the containing
     // function entry; the patch byte is at sigMatchRva + patchOffset.
     // The resolver validates that the bytes at the patch site match the
     // expected original bytes BEFORE allowing a patch to be applied.
@@ -754,7 +809,7 @@ public:
     /// Convenience overload: calls validatePatchSite with the original bytes
     /// and a wildcard mask derived from the signature definition. For the
     /// persistence patch (Target 9), bytes 6-7 are wildcarded (SEH handler
-    /// address low bytes). For the INT3 patches (Targets 10-12), no
+    /// address low bytes). For the INT3 patches (Targets 10-13), no
     /// wildcards are needed (single byte 0xCC).
     ///
     /// \param desc PatchSiteDescriptor from resolvePatchSite().
@@ -957,7 +1012,7 @@ private:
 
     // --- Signature catalog (loaded at construction) ---
     //
-    // The 12 signatures from signatures.gen.h, converted to OrlibSignatureDef
+    // The 13 signatures from signatures.gen.h, converted to OrlibSignatureDef
     // form (byte arrays + masks). The implementation (TVS-B.4) populates
     // this from kSignatures[] or from a per-version signature set selected
     // by detectVersion().

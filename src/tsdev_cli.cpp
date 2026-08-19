@@ -6,6 +6,9 @@
 //   tsdev_cli [--json] [--ts-path <directory>] insert  <type> <name> <source_file>
 //   tsdev_cli [--json] [--ts-path <directory>] modify  <type> <name> <source_file>
 //   tsdev_cli [--json] [--ts-path <directory>] delete  <type> <name>
+//   tsdev_cli [--json] [--ts-path <directory>] exists  <type> <name> [--case-insensitive]
+//   tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> [--output <file>]
+//   tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> <source_file>
 //   tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file>
 //   tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file>
 //   tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file>
@@ -66,6 +69,8 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <io.h>
+#include <fcntl.h>
 
 using namespace tsdev;
 using ordered_json = nlohmann::ordered_json;  // preserves insertion order
@@ -103,6 +108,14 @@ bool readFile(const std::string& path, std::string& out) {
     return true;
 }
 
+// Write a string to a file (binary mode). Returns false on failure.
+bool writeFile(const std::string& path, const std::string& content) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f.write(content.data(), static_cast<std::streamsize>(content.size()));
+    return f.good();
+}
+
 void printUsage() {
     std::fprintf(stderr,
         "Usage:\n"
@@ -111,9 +124,15 @@ void printUsage() {
         "  tsdev_cli [--json] [--ts-path <directory>] modify  <type> <name> "
         "<source_file>\n"
         "  tsdev_cli [--json] [--ts-path <directory>] delete  <type> <name>\n"
-        "  tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file>\n"
-        "  tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file>\n"
-        "  tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file>\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] exists  <type> <name> "
+        "[--case-insensitive]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> "
+        "[--output <file>]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> "
+        "<source_file>\n"
+        "  tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin\n"
         "  <type>         strategy | function | indicator | tradingapp (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
@@ -122,10 +141,18 @@ void printUsage() {
         "                  '#' comments and blank lines are skipped). Lines:\n"
         "                  insert/modify: <type> <name> <source_file>\n"
         "                  delete:        <type> <name>\n"
+        "  --batch-stdin    read the manifest from stdin instead of <manifest_file>\n"
+        "                   (same line format; stdin is read in binary mode).\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
         "human-readable stdout)\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
+        "  --output <file>  (get-source only) Write the retrieved EasyLanguage "
+        "source to <file>\n"
+        "                   instead of stdout. Standard (non-password-protected) "
+        "items only.\n"
+        "  --case-insensitive  (exists only) Match the name case-insensitively.\n"
+        "                      Without this flag, the name must match exactly.\n"
         "  batch-* always emit a JSON array on stdout (one element per item).\n");
 }
 
@@ -169,16 +196,20 @@ struct CliResult {
     std::string humanStdout;
     std::string humanStderr;
     std::string errorMessage;  // concise message for JSON error.message
+    bool        exists = false;  // "exists" op: whether the item was found
+    std::string storedName;  // "exists" op: verbatim stored name (empty if not found)
+    std::string sourceText;  // "get-source" op: retrieved EL source (JSON mode)
 };
 
 // Map an exit code to the machine-readable error.code string (TVS-D.2 §3).
 // The `op` disambiguates exit 5 (insert -> already_exists, modify/delete ->
-// not_found).
+// not_found) and exit 3 (get-source -> output_write_error, else
+// source_file_error).
 std::string errorCodeString(int exitCode, const std::string& op) {
     switch (exitCode) {
         case 1:  return "usage_error";
         case 2:  return "unknown_type";
-        case 3:  return "source_file_error";
+        case 3:  return (op == "get-source") ? "output_write_error" : "source_file_error";
         case 4:  return "init_failure";
         case 5:  return (op == "insert") ? "already_exists" : "not_found";
         case 6:  return "entry_op_failure";
@@ -227,6 +258,13 @@ void emitOutput(const CliResult& r, bool jsonMode) {
     if (r.success) {
         if (r.progId > 0)     j["prog_id"]  = r.progId;
         if (!r.ellPath.empty()) j["ell_path"] = r.ellPath;
+        // "exists" op: emit the exists boolean (found vs not-found, both exit 0).
+        if (r.op == "exists") {
+            j["exists"] = r.exists;
+            j["stored_name"] = r.storedName;
+        }
+        // "get-source" op: emit the retrieved EL source text.
+        if (r.op == "get-source") j["source"] = r.sourceText;
     } else {
         ordered_json err;
         err["code"]    = errorCodeString(r.exitCode, r.op);
@@ -436,6 +474,78 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
                     + "\" deleted (ProgId=" + std::to_string(progId)
                     + " was removed from warehouse, "
                     ".ell/.xml files removed from disk).\n";
+    return r;
+}
+
+// doExists: query whether a component exists by name + type. This is a
+// QUERY, not a mutation: not-found is a valid result (NOT an error). Both
+// found and not-found return exit 0, distinguished by the `exists` field.
+//
+// When caseInsensitive is true, uses enumerateRecords (case-insensitive
+// search) and reports a match regardless of name casing. The verbatim
+// stored name is returned via stored_name.
+//
+// When caseInsensitive is false (default), uses enumerateRecords to find
+// the item case-insensitively (since findExistPos is inherently
+// case-insensitive), then post-compares the stored name with the query
+// name using exact (case-sensitive) comparison. Only reports exists=1
+// when the names match exactly.
+CliResult doExists(TsDevLib& lib, ComponentType type,
+                   const std::string& typeStr, const std::string& name,
+                   bool caseInsensitive) {
+    CliResult r;
+    r.op = "exists";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    EnumerateResult er = lib.enumerateRecords(type, name);
+    if (er.exists) {
+        if (caseInsensitive || er.storedName == name) {
+            r.success = true;
+            r.exitCode = 0;
+            r.exists = true;
+            r.progId = er.progId;
+            r.storedName = er.storedName;
+            r.humanStdout = "exists=1\nstored_name=" + er.storedName
+                            + "\nprogId=" + std::to_string(er.progId) + "\n";
+        } else {
+            r.success = true;
+            r.exitCode = 0;
+            r.exists = false;
+            r.progId = 0;
+            r.storedName = "";
+            r.humanStdout = "exists=0\nstored_name=\nprogId=0\n";
+        }
+    } else {
+        r.success = true;
+        r.exitCode = 0;
+        r.exists = false;
+        r.progId = 0;
+        r.storedName = "";
+        r.humanStdout = "exists=0\nstored_name=\nprogId=0\n";
+    }
+    return r;
+}
+
+// doUpsert: insert-or-modify by name + type + source. Calls findExistPos
+// FIRST, then branches — avoids the overhead of a failed insert attempt.
+// When the item exists (ProgId > 0), delegates to doModify (preserves the
+// ProgId); otherwise delegates to doInsert with flushPerItem=true (assigns a
+// new ProgId). The op field is overridden to "upsert" after delegation
+// (doInsert/doModify set their own op internally). Upsert never emits exit 5
+// (not_found / already_exists) — it branches on existence, so neither
+// condition is possible by construction.
+CliResult doUpsert(TsDevLib& lib, ComponentType type,
+                   const std::string& typeStr, const std::string& name,
+                   const std::string& source) {
+    int progId = lib.findExistPos(name, type);
+    CliResult r;
+    if (progId > 0) {
+        r = doModify(lib, type, typeStr, name, source);
+    } else {
+        r = doInsert(lib, type, typeStr, name, source, /*flushPerItem=*/true);
+    }
+    r.op = "upsert";
     return r;
 }
 
@@ -754,6 +864,357 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     return params.result.exitCode;
 }
 
+// --- The EXISTS subcommand ---
+
+// Parameters passed to the worker thread.
+struct ExistsParams {
+    ComponentType  type;
+    std::string    typeStr;
+    std::string    name;
+    bool           caseInsensitive;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    CliResult      result;          // populated by runExists
+};
+
+// The EXISTS flow, running on a large-stack worker thread. TsDevLib is
+// constructed AND destructed here so the thread-affine EDIT control lives
+// and dies on the same thread that uses it.
+DWORD WINAPI runExists(LPVOID param) {
+    ExistsParams* p = static_cast<ExistsParams*>(param);
+
+    // Construct TsDevLib.
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        CliResult& r = p->result;
+        r.op = "exists";
+        r.typeStr = p->typeStr;
+        r.name = p->name;
+        r.exitCode = 4;
+        r.errorMessage = std::string("init failed: ") + e.what();
+        r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
+        return 0;
+    }
+
+    p->result = doExists(*lib, p->type, p->typeStr, p->name, p->caseInsensitive);
+
+    delete lib; // calls OrlibExit + destroys EDIT control (same thread)
+    return 0;
+}
+
+int cmdExists(const std::string& typeStr, const std::string& name,
+              bool caseInsensitive,
+              const wchar_t* tsPathOverride, bool jsonMode) {
+    CliResult r;
+    r.op = "exists";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.exitCode = 2;
+        r.errorMessage = std::string("unknown type \"") + typeStr
+                         + "\" (expected strategy/function/indicator/tradingapp)";
+        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
+                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    if (name.empty()) {
+        r.exitCode = 2;
+        r.errorMessage = "component name must not be empty";
+        r.humanStderr = "tsdev_cli: component name must not be empty\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    // Run the orlib flow on a 64 MB-stack worker thread.
+    ExistsParams params;
+    params.type     = type;
+    params.typeStr  = typeStr;
+    params.name     = name;
+    params.caseInsensitive = caseInsensitive;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runExists, &params, 0, nullptr);
+    if (!hThread) {
+        r.exitCode = 10;
+        r.errorMessage = std::string("CreateThread failed: ")
+                         + std::to_string(GetLastError());
+        r.humanStderr = std::string("tsdev_cli: CreateThread failed: ")
+                        + std::to_string(GetLastError()) + "\n";
+        emitOutput(r, jsonMode);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    emitOutput(params.result, jsonMode);
+    return params.result.exitCode;
+}
+
+// --- The UPSERT subcommand ---
+
+// Parameters passed to the worker thread.
+struct UpsertParams {
+    ComponentType  type;
+    std::string    typeStr;
+    std::string    name;
+    std::string    source;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    CliResult      result;          // populated by runUpsert
+};
+
+// The UPSERT flow, running on a large-stack worker thread. TsDevLib is
+// constructed AND destructed here so the thread-affine EDIT control lives
+// and dies on the same thread that uses it.
+DWORD WINAPI runUpsert(LPVOID param) {
+    UpsertParams* p = static_cast<UpsertParams*>(param);
+
+    // Construct TsDevLib.
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        CliResult& r = p->result;
+        r.op = "upsert";
+        r.typeStr = p->typeStr;
+        r.name = p->name;
+        r.exitCode = 4;
+        r.errorMessage = std::string("init failed: ") + e.what();
+        r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
+        return 0;
+    }
+
+    p->result = doUpsert(*lib, p->type, p->typeStr, p->name, p->source);
+
+    delete lib; // calls OrlibExit + destroys EDIT control (same thread)
+    return 0;
+}
+
+int cmdUpsert(const std::string& typeStr,
+              const std::string& name,
+              const std::string& sourceFile,
+              const wchar_t* tsPathOverride,
+              bool jsonMode) {
+    CliResult r;
+    r.op = "upsert";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.exitCode = 2;
+        r.errorMessage = std::string("unknown type \"") + typeStr
+                         + "\" (expected strategy/function/indicator/tradingapp)";
+        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
+                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    if (name.empty()) {
+        r.exitCode = 2;
+        r.errorMessage = "component name must not be empty";
+        r.humanStderr = "tsdev_cli: component name must not be empty\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    // 1. Read the source file (on the main thread — no orlib dependency).
+    std::string source;
+    if (!readFile(sourceFile, source)) {
+        r.exitCode = 3;
+        r.errorMessage = std::string("failed to read source file \"") + sourceFile + "\"";
+        r.humanStderr = std::string("tsdev_cli: failed to read source file \"")
+                        + sourceFile + "\"\n";
+        emitOutput(r, jsonMode);
+        return 3;
+    }
+    if (source.empty()) {
+        r.exitCode = 3;
+        r.errorMessage = "source file is empty";
+        r.humanStderr = "tsdev_cli: source file is empty\n";
+        emitOutput(r, jsonMode);
+        return 3;
+    }
+
+    // Run the orlib flow on a 64 MB-stack worker thread (the compiler needs
+    // a large stack and the EDIT control is thread-affine).
+    UpsertParams params;
+    params.type    = type;
+    params.typeStr = typeStr;
+    params.name    = name;
+    params.source  = source;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runUpsert, &params, 0, nullptr);
+    if (!hThread) {
+        r.exitCode = 10;
+        r.errorMessage = std::string("CreateThread failed: ")
+                         + std::to_string(GetLastError());
+        r.humanStderr = std::string("tsdev_cli: CreateThread failed: ")
+                        + std::to_string(GetLastError()) + "\n";
+        emitOutput(r, jsonMode);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    emitOutput(params.result, jsonMode);
+    return params.result.exitCode;
+}
+
+// --- The GET-SOURCE subcommand ---
+
+// doGetSource: retrieve the EasyLanguage source text for an existing item by
+// name + type. getSource returns the source string; an EMPTY string means the
+// item was not found OR the source is unavailable (e.g. password-protected).
+// We cannot distinguish these cases from the empty string, so all failures
+// map to exit 5 / not_found. When an --output file is requested, the source
+// is written to that file (on the worker thread); a write failure maps to
+// exit 3 / output_write_error.
+CliResult doGetSource(TsDevLib& lib, ComponentType type,
+                      const std::string& typeStr, const std::string& name,
+                      const std::string& outputPath) {
+    CliResult r;
+    r.op = "get-source";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    std::string source = lib.getSource(type, name);
+    if (source.empty()) {
+        r.exitCode = 5;
+        r.errorMessage = typeStr + " \"" + name
+                         + "\" not found or source unavailable "
+                           "(may be password-protected).";
+        r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
+                        + name + "\" not found or source unavailable "
+                          "(may be password-protected).\n";
+        return r;
+    }
+
+    // Source retrieved successfully.
+    r.success = true;
+    r.exitCode = 0;
+    r.sourceText = source;
+
+    if (!outputPath.empty()) {
+        // Write the source to the requested file.
+        if (!writeFile(outputPath, source)) {
+            r.success = false;
+            r.exitCode = 3;
+            r.sourceText.clear();
+            r.errorMessage = std::string("failed to write source to output file \"")
+                             + outputPath + "\"";
+            r.humanStderr = std::string("tsdev_cli: failed to write source to "
+                            "output file \"") + outputPath + "\"\n";
+            return r;
+        }
+        // File written — human-readable stdout reports the destination, NOT
+        // the source text. JSON mode still carries the source in `source`.
+        r.humanStdout = std::string("Source written to ") + outputPath + "\n";
+    } else {
+        // stdout mode: emit the raw source text directly (no wrapper).
+        r.humanStdout = source;
+    }
+    return r;
+}
+
+// Parameters passed to the worker thread.
+struct GetSourceParams {
+    ComponentType  type;
+    std::string    typeStr;
+    std::string    name;
+    std::string    outputPath;  // empty = stdout mode
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    CliResult      result;          // populated by runGetSource
+};
+
+// The GET-SOURCE flow, running on a large-stack worker thread. TsDevLib is
+// constructed AND destructed here so the thread-affine EDIT control lives
+// and dies on the same thread that uses it.
+DWORD WINAPI runGetSource(LPVOID param) {
+    GetSourceParams* p = static_cast<GetSourceParams*>(param);
+
+    // Construct TsDevLib.
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        CliResult& r = p->result;
+        r.op = "get-source";
+        r.typeStr = p->typeStr;
+        r.name = p->name;
+        r.exitCode = 4;
+        r.errorMessage = std::string("init failed: ") + e.what();
+        r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
+        return 0;
+    }
+
+    p->result = doGetSource(*lib, p->type, p->typeStr, p->name, p->outputPath);
+
+    delete lib; // calls OrlibExit + destroys EDIT control (same thread)
+    return 0;
+}
+
+int cmdGetSource(const std::string& typeStr, const std::string& name,
+                 const std::string& outputPath,
+                 const wchar_t* tsPathOverride, bool jsonMode) {
+    CliResult r;
+    r.op = "get-source";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.exitCode = 2;
+        r.errorMessage = std::string("unknown type \"") + typeStr
+                         + "\" (expected strategy/function/indicator/tradingapp)";
+        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
+                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    if (name.empty()) {
+        r.exitCode = 2;
+        r.errorMessage = "component name must not be empty";
+        r.humanStderr = "tsdev_cli: component name must not be empty\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    // Run the orlib flow on a 64 MB-stack worker thread.
+    GetSourceParams params;
+    params.type     = type;
+    params.typeStr  = typeStr;
+    params.name     = name;
+    params.outputPath = outputPath;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runGetSource, &params, 0, nullptr);
+    if (!hThread) {
+        r.exitCode = 10;
+        r.errorMessage = std::string("CreateThread failed: ")
+                         + std::to_string(GetLastError());
+        r.humanStderr = std::string("tsdev_cli: CreateThread failed: ")
+                        + std::to_string(GetLastError()) + "\n";
+        emitOutput(r, jsonMode);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    emitOutput(params.result, jsonMode);
+    return params.result.exitCode;
+}
+
 // --- TVS-D.3: batch mode ----------------------------------------------------
 //
 // Three batch subcommands mirror the single-item subcommands but process a
@@ -788,22 +1249,14 @@ std::string trim(const std::string& s) {
     return s.substr(b, e - b);
 }
 
-// Parse a manifest file into a list of BatchItems. Lines starting with '#'
-// (comments) and blank/whitespace-only lines are skipped. Malformed lines
-// (wrong token count, unknown type, empty name) and unreadable source files
-// (insert/modify) are recorded as pre-validated FAILURE items so the batch
-// continues and reports them. Returns false only if the manifest file itself
-// cannot be opened (caller reports exit 1).
-//
-// needsSource: true for batch-insert/batch-modify (3 tokens: type name file),
-//              false for batch-delete (2 tokens: type name).
-bool parseManifest(const std::string& path, bool needsSource,
-                   std::vector<BatchItem>& outItems) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-
+// Parse manifest content (a single string with newline-separated lines) into
+// BatchItems. Used by both the file-path mode (parseManifest) and the
+// --batch-stdin mode. Always succeeds (parsing a string cannot fail to open).
+void parseManifestLines(const std::string& content, bool needsSource,
+                        std::vector<BatchItem>& outItems) {
+    std::istringstream ss(content);
     std::string line;
-    while (std::getline(f, line)) {
+    while (std::getline(ss, line)) {
         // Strip a trailing '\r' (manifest may use CRLF).
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string trimmed = trim(line);
@@ -903,6 +1356,24 @@ bool parseManifest(const std::string& path, bool needsSource,
         item.preValid = true;
         outItems.push_back(std::move(item));
     }
+}
+
+// Parse a manifest file into a list of BatchItems. Lines starting with '#'
+// (comments) and blank/whitespace-only lines are skipped. Malformed lines
+// (wrong token count, unknown type, empty name) and unreadable source files
+// (insert/modify) are recorded as pre-validated FAILURE items so the batch
+// continues and reports them. Returns false only if the manifest file itself
+// cannot be opened (caller reports exit 1).
+//
+// needsSource: true for batch-insert/batch-modify (3 tokens: type name file),
+//              false for batch-delete (2 tokens: type name).
+bool parseManifest(const std::string& path, bool needsSource,
+                   std::vector<BatchItem>& outItems) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+    parseManifestLines(content, needsSource, outItems);
     return true;
 }
 
@@ -1026,25 +1497,42 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
 // Common batch command handler: parses the manifest, launches the worker,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
-             const wchar_t* tsPathOverride) {
+             bool useStdin, const wchar_t* tsPathOverride) {
     const bool needsSource = (op == "insert" || op == "modify");
 
     // Parse the manifest on the main thread (before the worker).
     std::vector<BatchItem> items;
-    if (!parseManifest(manifestFile, needsSource, items)) {
-        // Manifest file not found / unreadable -> exit 1 (batch did not run).
-        // No JSON array on stdout (the batch did not run); stderr only.
-        std::fprintf(stderr, "tsdev_cli: failed to open manifest file \"%s\"\n",
-                     manifestFile.c_str());
-        return 1;
-    }
-
-    if (items.empty()) {
-        // Manifest contained no real items (only comments/blanks) -> exit 1.
-        // No JSON array on stdout (the batch did not run); stderr only.
-        std::fprintf(stderr, "tsdev_cli: manifest \"%s\" is empty\n",
-                     manifestFile.c_str());
-        return 1;
+    if (useStdin) {
+        // Read the manifest from stdin in BINARY mode (avoids CRLF/newline
+        // translation on Windows). EOF / empty stdin -> empty manifest.
+        _setmode(_fileno(stdin), _O_BINARY);
+        std::string content;
+        char buf[8192];
+        size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof(buf), stdin)) > 0) {
+            content.append(buf, n);
+        }
+        parseManifestLines(content, needsSource, items);
+        if (items.empty()) {
+            // No JSON array on stdout (the batch did not run); stderr only.
+            std::fprintf(stderr, "tsdev_cli: manifest from stdin is empty\n");
+            return 1;
+        }
+    } else {
+        if (!parseManifest(manifestFile, needsSource, items)) {
+            // Manifest file not found / unreadable -> exit 1 (batch did not run).
+            // No JSON array on stdout (the batch did not run); stderr only.
+            std::fprintf(stderr, "tsdev_cli: failed to open manifest file \"%s\"\n",
+                         manifestFile.c_str());
+            return 1;
+        }
+        if (items.empty()) {
+            // Manifest contained no real items (only comments/blanks) -> exit 1.
+            // No JSON array on stdout (the batch did not run); stderr only.
+            std::fprintf(stderr, "tsdev_cli: manifest \"%s\" is empty\n",
+                         manifestFile.c_str());
+            return 1;
+        }
     }
 
     // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
@@ -1220,17 +1708,133 @@ int main(int argc, char** argv) {
                          tsPathWidePtr, jsonMode);
     }
 
+    if (iequals(subcommand, "exists")) {
+        // exists takes <type> <name> plus an optional --case-insensitive flag.
+        // --case-insensitive is exists-specific (not a global flag), so it
+        // remains in reducedArgv and is parsed here. Valid forms:
+        //   exists <type> <name>                        (reducedArgc == 4)
+        //   exists <type> <name> --case-insensitive     (reducedArgc == 5)
+        bool caseInsensitive = false;
+        std::vector<char*> exArgs;
+        for (int i = 2; i < reducedArgc; i++) {
+            std::string a = reducedArgvPtr[i];
+            if (a == "--case-insensitive") {
+                caseInsensitive = true;
+            } else {
+                exArgs.push_back(reducedArgvPtr[i]);
+            }
+        }
+        int exArgc = static_cast<int>(exArgs.size());
+        if (exArgc != 2) {
+            CliResult r;
+            r.op = "exists";
+            r.exitCode = 1;
+            r.errorMessage = "exists requires exactly 2 arguments: <type> <name>";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdExists(exArgs[0], exArgs[1], caseInsensitive,
+                         tsPathWidePtr, jsonMode);
+    }
+
+    if (iequals(subcommand, "upsert")) {
+        if (reducedArgc != 5) {
+            CliResult r;
+            r.op = "upsert";
+            r.exitCode = 1;
+            r.errorMessage = "upsert requires exactly 3 arguments: <type> <name> <source_file>";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdUpsert(reducedArgvPtr[2], reducedArgvPtr[3],
+                         reducedArgvPtr[4], tsPathWidePtr, jsonMode);
+    }
+
+    if (iequals(subcommand, "get-source")) {
+        // get-source takes <type> <name> plus an optional --output <file>.
+        // --output is get-source-specific (not a global flag), so it remains
+        // in reducedArgv and is parsed here. Valid forms:
+        //   get-source <type> <name>                      (reducedArgc == 4)
+        //   get-source <type> <name> --output <file>      (reducedArgc == 6)
+        std::string outputPath;
+
+        // Scan for --output and extract it (and its value), counting the
+        // remaining positional args.
+        std::vector<char*> gsArgs;
+        for (int i = 2; i < reducedArgc; i++) {
+            std::string a = reducedArgvPtr[i];
+            if (a == "--output") {
+                if (i + 1 >= reducedArgc) {
+                    CliResult r;
+                    r.op = "get-source";
+                    r.exitCode = 1;
+                    r.errorMessage = "--output requires a file path";
+                    r.humanStderr = "tsdev_cli: --output requires a file path\n";
+                    if (jsonMode) {
+                        emitOutput(r, jsonMode);
+                    } else {
+                        printUsage();
+                    }
+                    return 1;
+                }
+                outputPath = reducedArgvPtr[i + 1];
+                i++;  // skip the value
+            } else if (a.rfind("--output=", 0) == 0) {
+                outputPath = a.substr(std::strlen("--output="));
+                if (outputPath.empty()) {
+                    CliResult r;
+                    r.op = "get-source";
+                    r.exitCode = 1;
+                    r.errorMessage = "--output requires a non-empty file path";
+                    r.humanStderr = "tsdev_cli: --output requires a non-empty file path\n";
+                    if (jsonMode) {
+                        emitOutput(r, jsonMode);
+                    } else {
+                        printUsage();
+                    }
+                    return 1;
+                }
+            } else {
+                gsArgs.push_back(reducedArgvPtr[i]);
+            }
+        }
+
+        if (gsArgs.size() != 2) {
+            CliResult r;
+            r.op = "get-source";
+            r.exitCode = 1;
+            r.errorMessage = "get-source requires exactly 2 arguments: <type> <name>";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdGetSource(gsArgs[0], gsArgs[1], outputPath,
+                            tsPathWidePtr, jsonMode);
+    }
+
     // --- TVS-D.3: batch subcommands ---
     // batch-insert/batch-modify/batch-delete take a single <manifest_file>
-    // argument. They ALWAYS emit a JSON array on stdout (no --json needed).
-    // --json is accepted but ignored (the global pre-scan already handled it).
+    // argument OR --batch-stdin (read the manifest from stdin instead). They
+    // ALWAYS emit a JSON array on stdout (no --json needed). --json is accepted
+    // but ignored (the global pre-scan already handled it).
     if (iequals(subcommand, "batch-insert") ||
         iequals(subcommand, "batch-modify") ||
         iequals(subcommand, "batch-delete")) {
         if (reducedArgc != 3) {
             std::string opName = subcommand;
             std::fprintf(stderr,
-                "tsdev_cli: %s requires exactly 1 argument: <manifest_file>\n",
+                "tsdev_cli: %s requires exactly 1 argument: <manifest_file> or --batch-stdin\n",
                 opName.c_str());
             return 1;
         }
@@ -1238,7 +1842,11 @@ int main(int argc, char** argv) {
         if (iequals(subcommand, "batch-insert"))      op = "insert";
         else if (iequals(subcommand, "batch-modify")) op = "modify";
         else                                          op = "delete";
-        return cmdBatch(op, reducedArgvPtr[2], tsPathWidePtr);
+        std::string arg2 = reducedArgvPtr[2];
+        if (arg2 == "--batch-stdin") {
+            return cmdBatch(op, std::string(), true, tsPathWidePtr);
+        }
+        return cmdBatch(op, arg2, false, tsPathWidePtr);
     }
 
     {

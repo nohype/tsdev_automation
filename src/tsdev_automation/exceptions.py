@@ -10,6 +10,7 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
     usage_error         -> UsageError
     unknown_type        -> UnknownTypeError
     source_file_error   -> SourceFileError
+    output_write_error  -> OutputWriteError
     init_failure        -> InitFailure
     not_found           -> NotFoundError
     already_exists      -> AlreadyExistsError
@@ -50,6 +51,10 @@ class UnknownTypeError(TsDevError):
 
 class SourceFileError(TsDevError):
     """Source file could not be read (exit 3)."""
+
+
+class OutputWriteError(TsDevError):
+    """Failed to write retrieved source to the output file (exit 3)."""
 
 
 class InitFailure(TsDevError):
@@ -93,6 +98,7 @@ ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "usage_error": UsageError,
     "unknown_type": UnknownTypeError,
     "source_file_error": SourceFileError,
+    "output_write_error": OutputWriteError,
     "init_failure": InitFailure,
     "not_found": NotFoundError,
     "already_exists": AlreadyExistsError,

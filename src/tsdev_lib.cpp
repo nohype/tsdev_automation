@@ -76,7 +76,7 @@ struct LastCreatedEntry {
                           // incompatible with the __try/__except in createEntry.
 } g_lastCreated;
 
-// Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in three
+// Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in ten
 // dispatch helpers so they can be called from any thread, not just the
 // worker thread. Each patch is a single byte.
 //
@@ -85,6 +85,13 @@ struct LastCreatedEntry {
 //   FUN_101d0950_thread_check_INT3 (command 0x0F — load program)
 //   FUN_101cf5b0_thread_check_INT3 (general dispatch helper)
 //   FUN_101d1fa0_thread_check_INT3 (command 0x17 — save/commit)
+//   FUN_101d0e80_thread_check_INT3 (command 0x11 — source-text load)
+//   FUN_101d0c30_thread_check_INT3 (command 0x08 — type select, _LoadMasterRecsEX@16)
+//   FUN_101d16c0_thread_check_INT3 (command 0x09 — item retrieval, _LoadMasterRecsEX@16)
+//   FUN_101d0d90_thread_check_INT3 (command 0x07 — count by types, _LoadMasterRecsEX@16)
+//   FUN_101cfce0_thread_check_INT3 (command 0x0D — COM interface get)
+//   FUN_101d15c0_thread_check_INT3 (command 0x0D — local-mode record retrieval)
+//   FUN_101d18c0_thread_check_INT3 (command 0x10 — BST search non-server mode)
 // The patch metadata (offsets, original/replacement bytes) is encoded
 // in signatures/v9.50.01.3344.json and loaded by the resolver's signature catalog.
 
@@ -253,6 +260,124 @@ bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
 }
 #pragma warning(pop)
 
+// SEH-protected __thiscall call to FUN_101cf5b0 (command dispatcher).
+// __thiscall: ECX=warehouse (this), stack=commandId (1 arg, callee cleanup
+// RET 4). POD-only (no C++ objects with destructors) so __try is legal.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
+    __try {
+        __asm {
+            push cmdId
+            mov ecx, warehouse
+            call fnPtr
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+#pragma warning(pop)
+
+// SEH-protected call to _CloseWarehouseForCurrentThreadAndPath@4.
+// __stdcall, 1 arg (wide string pointer cast to int). POD-only.
+void callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
+    __try {
+        fn(param);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Best-effort close; ignore SEH.
+    }
+}
+
+// SEH-protected __thiscall call to FUN_101d0950 (cmd 0x0F dispatch helper).
+// __thiscall: ECX=warehouse (this), stack=typeArray, progId, outParam
+// (3 args, callee cleanup RET 0xC). The outParam must point to a buffer of
+// at least 0x280 bytes (FUN_101d0950 writes to outParam+0x26d on success).
+// POD-only (no C++ objects with destructors) so __try is legal.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
+                         int progId, void* outParam) {
+    __try {
+        __asm {
+            push outParam
+            push progId
+            push typeArray
+            mov ecx, warehouse
+            call fnPtr
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+#pragma warning(pop)
+
+// SEH-protected __stdcall call to FUN_101d43a0 (type-array builder).
+// __stdcall: stack=category, outArray (2 args, callee cleanup RET 0x8).
+// POD-only (no C++ objects with destructors) so __try is legal.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
+    __try {
+        __asm {
+            push outArray
+            push category
+            call fnPtr
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+#pragma warning(pop)
+
+// SEH-protected __fastcall call to FUN_1000dd30 (CELProgramWriter constructor).
+// __fastcall: ECX=buffer (this), no stack args. POD-only (no C++ objects with
+// destructors) so __try is legal.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
+    __try {
+        __asm {
+            mov ecx, buffer
+            call fnPtr
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+#pragma warning(pop)
+
+// SEH-protected __thiscall call to FUN_101cfce0 (cmd 0x0D dispatch helper).
+// __thiscall: ECX=warehouse (this), stack=type, param (2 args, callee cleanup
+// RET 8). Returns the COM interface in EAX (or NULL on failure). The caller
+// must store the returned interface back into [warehouse+0x5E] because
+// FUN_101cfce0 clears [warehouse+0x5E] before returning. POD-only (no C++
+// objects with destructors) so __try is legal.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
+                         int param, void** outInterface) {
+    void* result = nullptr;
+    __try {
+        __asm {
+            push param
+            push typeVal
+            mov ecx, warehouse
+            call fnPtr
+            mov result, eax
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *outInterface = nullptr;
+        return false;
+    }
+    *outInterface = result;
+    return true;
+}
+#pragma warning(pop)
+
 // --- SEH-protected wrappers for OrlibInit, OrlibExit, FindExistPos (TVS-B.5 AC3) ---
 // These three call sites were previously unprotected. Each wrapper is
 // POD-only (no C++ objects with destructors) so __try/__except is legal
@@ -292,6 +417,181 @@ bool callFindExistPos(FindExistPosFn fn, const char* name,
     }
     return true;
 }
+
+// SEH-protected call to _LoadTextFileEX@16 (__stdcall, 4 args).
+// File-scope typedef matching the TsDevLib private member typedef
+// (structurally identical: HGLOBAL (__stdcall*)(void*, int, int, void*)),
+// so this free helper can take a typed function pointer without accessing
+// the class's private members. POD-only (no C++ objects with destructors)
+// so __try/__except is legal under MSVC (no C2712).
+typedef HGLOBAL (__stdcall *LoadTextFileExFn)(void* unused, int whType,
+                                              int progId, void* password);
+struct LoadTextFileExSehResult {
+    HGLOBAL result;   // NULL if _LoadTextFileEX raised
+};
+bool callLoadTextFileEx(LoadTextFileExFn fn, void* unused, int whType,
+                        int progId, void* password,
+                        LoadTextFileExSehResult* out) {
+    out->result = NULL;
+    __try {
+        out->result = fn(unused, whType, progId, password);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// SEH-protected call to _LoadMasterRecsEX@16 (__stdcall, 4 args).
+// File-scope typedef matching the TsDevLib private member typedef
+// (structurally identical: int (__stdcall*)(int, HGLOBAL*, const char*, int)),
+// so this free helper can take a typed function pointer without accessing
+// the class's private members. POD-only (no C++ objects with destructors)
+// so __try/__except is legal under MSVC (no C2712).
+typedef int (__stdcall *LoadMasterRecsExFn)(int category, HGLOBAL* outBuf,
+                                            const char* path, int filterMode);
+struct LoadMasterRecsExSehResult {
+    int result;  // -1 if _LoadMasterRecsEX raised
+};
+bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
+                          const char* path, int filterMode,
+                          LoadMasterRecsExSehResult* out) {
+    out->result = -1;
+    __try {
+        out->result = fn(category, outBuf, path, filterMode);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// SEH-protected call to _GetMasterRecByType@16 (__stdcall, 4 args).
+// File-scope typedef matching the TsDevLib private member typedef
+// (structurally identical: int (__stdcall*)(int, int, int, void*)),
+// so this free helper can take a typed function pointer without accessing
+// the class's private members. POD-only (no C++ objects with destructors)
+// so __try/__except is legal under MSVC (no C2712).
+typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
+                                              int index, void* outBuf);
+struct GetMasterRecByTypeSehResult {
+    int result;  // -1 if _GetMasterRecByType raised
+};
+bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
+                            int index, void* outBuf,
+                            GetMasterRecByTypeSehResult* out) {
+    out->result = -1;
+    __try {
+        out->result = fn(category, subType, index, outBuf);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// DEAD CODE — retained for reference. Superseded by callBstSearchWrapper +
+// callVerbatimNameGetter. FUN_101a42d0 returns the ProgId (not the name) in
+// non-server mode (DAT_1023aa8f == 0, which is our case). The new Phase 2
+// calls FUN_101d05e0 + FUN_101c36d0 directly instead.
+//
+// SEH-protected __fastcall call to FUN_101a42d0 (find item + get verbatim name).
+// __fastcall: ECX=searchName (char*), EDX=componentType (int).
+// Stack args (pushed right-to-left): outVerbatimName (char**), warehouse (void*).
+// Callee cleans 2 stack DWORDs (RET 0x8). Returns 0xFFFFFFFF if not found.
+//
+// Two return conventions depending on the global DAT_1023aa8f (server-mode flag):
+//   Server mode (DAT_1023aa8f == 1): return value = warehouse pointer (success);
+//       the verbatim name is written to *outVerbatimName. The search is by
+//       *warehouse (an ID), NOT by name — the name is only used for a final
+//       confirmation comparison. This path is NOT suitable for name-based lookup.
+//   Non-server mode (DAT_1023aa8f != 1): return value = char* to the verbatim
+//       stored name (success); *outVerbatimName is NOT written. The search is
+//       by name via FUN_101d05e0 (BST + file-based fallback).
+//
+// We use the non-server path (do NOT force DAT_1023aa8f) so the search is by
+// name. The caller must check both result and verbatimName: if verbatimName is
+// null, the return value itself is the name pointer (non-server path).
+// POD-only (no C++ objects with destructors) so __try is legal under MSVC.
+struct FindItemGetNameSehResult {
+    int result;         // return value of FUN_101a42d0
+    char* verbatimName; // output name pointer (server mode only; null in non-server)
+};
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
+                         void* warehouse, FindItemGetNameSehResult* out) {
+    int retVal = (int)0xFFFFFFFF;
+    char* outName = nullptr;
+    __try {
+        __asm {
+            lea eax, outName           // address of local outName (char**)
+            push eax                   // [ESP+4] = &outName (outVerbatimName)
+            push warehouse             // [ESP+0] = warehouse
+            mov ecx, searchName        // ECX = searchName (fastcall arg 1)
+            mov edx, componentType     // EDX = componentType (fastcall arg 2)
+            call fnPtr                 // callee cleans 8 bytes via RET 0x8
+            mov retVal, eax            // capture return value
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        out->result = (int)0xFFFFFFFF;
+        out->verbatimName = nullptr;
+        return false;
+    }
+    out->result = retVal;
+    out->verbatimName = outName;
+    return true;
+}
+#pragma warning(pop)
+
+// SEH-protected __thiscall call to FUN_101d05e0 (BST search wrapper).
+// __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode), RET 0xC.
+// Returns bool (1=found, 0=not found). Stores node pointer in *outNode.
+// POD-only (no C++ objects with destructors) so __try is legal under MSVC.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
+                          const char* name, void** outNode, int* outResult) {
+    *outNode = nullptr;
+    *outResult = 0;
+    int retVal = 0;
+    __try {
+        __asm {
+            mov eax, outNode          ; eax = pointer to void* (where node ptr stored)
+            push eax                  ; arg3: *outNode
+            push name                 ; arg2: name (char*)
+            push typeFilter           ; arg1: typeFilter (int* — type array ptr)
+            mov ecx, warehouse        ; thiscall: ECX = warehouse
+            call fnPtr                ; callee cleans 12 bytes (RET 0xC)
+            mov retVal, eax           ; capture bool return value in local
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    *outResult = retVal;  // write through pointer outside asm
+    return true;
+}
+#pragma warning(pop)
+
+// SEH-protected __fastcall call to FUN_101c36d0 (verbatim name getter).
+// __fastcall: ECX=node pointer, no stack args, RET. Returns char* to the
+// verbatim stored name at node+0x1D.
+// POD-only (no C++ objects with destructors) so __try is legal under MSVC.
+#pragma warning(push)
+#pragma warning(disable: 4731)
+bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
+    *outName = nullptr;
+    void* retVal = nullptr;
+    __try {
+        __asm {
+            mov ecx, nodePtr          ; fastcall: ECX = node pointer
+            call fnPtr                ; no stack args, RET (no cleanup)
+            mov retVal, eax           ; capture char* return value
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    *outName = reinterpret_cast<const char*>(retVal);
+    return true;
+}
+#pragma warning(pop)
 
 // Restore `len` original bytes at an executable address. Used by the
 // TsDevLib destructor to undo the persistence + thread-check patches so a
@@ -504,6 +804,9 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
     m_pSaveModuleNew  = m_resolver->resolveSaveModuleNew();
     m_pVerifyModule   = m_resolver->resolveVerifyModuleNew();
     m_pCloseWarehouse = m_resolver->resolveCloseWarehouse();
+    m_loadTextFileEx  = (LoadTextFileExFn)m_resolver->resolveExport("_LoadTextFileEX@16");
+    m_loadMasterRecsEx = (LoadMasterRecsExFn)m_resolver->resolveExport("_LoadMasterRecsEX@16");
+    m_getMasterRecByType = (GetMasterRecByTypeFn)m_resolver->resolveExport("_GetMasterRecByType@16");
 
     // 9. Resolve 8 internal functions via resolver (signature scan,
     //    replaces old base-address + RVA arithmetic).
@@ -515,6 +818,11 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
     m_pDeleteFromTree     = m_resolver->resolveDeleteFromTree();
     m_pGetWarehouse       = m_resolver->resolveGetWarehouse();
     m_pDeleteOrchestrator = m_resolver->resolveDeleteOrchestrator();
+    m_pBuildTypeArray     = m_resolver->resolveBuildTypeArray();
+    m_pCelProgWriterCtor  = m_resolver->resolveCelProgramWriterCtor();
+    m_pFindItemGetName    = m_resolver->resolveFindItemGetName();
+    m_pBstSearchWrapper   = m_resolver->resolveBstSearchWrapper();
+    m_pVerbatimNameGetter = m_resolver->resolveVerbatimNameGetter();
 
     // 10. Resolve 3 data-global RVAs via resolver (replaces hardcoded
     //    error-array/count/HINSTANCE RVA constants).
@@ -560,7 +868,7 @@ TsDevLib::~TsDevLib() {
     if (m_orlibInitialized && m_pOrlibExit) {
         callOrlibExit(m_pOrlibExit);
     }
-    // Restore all 4 patch sites to their original bytes AFTER OrlibExit but
+    // Restore all 10 patch sites to their original bytes AFTER OrlibExit but
     // BEFORE m_resolver (unique_ptr) is destroyed — the resolver still owns
     // the loaded orlib20.dll and its base address, so baseAddress() is valid
     // here. This returns the in-memory DLL to its original state so that a
@@ -583,7 +891,7 @@ TsDevLib::~TsDevLib() {
         // throw; for a site where applyPatch threw after the RVA was cached,
         // writing the original byte back is a harmless no-op (the patch was
         // never written).
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 11; i++) {
             if (m_threadCheckRvas[i] != 0) {
                 restoreBytes(reinterpret_cast<void*>(base + m_threadCheckRvas[i]),
                              &m_threadCheckOriginalBytes[i], 1);
@@ -646,6 +954,163 @@ bool TsDevLib::saveSource(ComponentType type, int progId,
         return false;
     }
     return (result == 1);
+}
+
+std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
+    // 1. Find the progId via findExistPos (SEH-protected internally).
+    int progId = findExistPos(name, type);
+    if (progId <= 0) return "";  // not found
+
+    // 2. Call _LoadTextFileEX@16 with NULL password (standard items only),
+    //    SEH-protected via the POD-only callLoadTextFileEx helper. getSource
+    //    itself holds std::string objects (with destructors), so __try cannot
+    //    appear directly in this function (MSVC C2712); the helper contains
+    //    only POD types and owns the __try/__except block.
+    LoadTextFileExSehResult seh;
+    if (!callLoadTextFileEx(m_loadTextFileEx, nullptr, getCategory(type),
+                            progId, nullptr, &seh)) {
+        return "";  // SEH exception in orlib20
+    }
+    HGLOBAL hMem = seh.result;
+    if (hMem == NULL) return "";  // failure (password-protected or error)
+
+    // 3. Lock, copy, free. GlobalLock returns a pointer to the ANSI source
+    //    text; GlobalFree releases the HGLOBAL allocated by orlib20.
+    char* text = (char*)GlobalLock(hMem);
+    std::string result;
+    if (text) {
+        result = std::string(text);
+        GlobalUnlock(hMem);
+    }
+    GlobalFree(hMem);
+    return result;
+}
+
+EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
+                                           const std::string& searchName) {
+    EnumerateResult result;
+
+    int category = getCategory(type);
+    int subType = getSubType(type);
+
+    // --- Phase 1: Try _LoadMasterRecsEX@16 (COM interface cache) ---
+    // This works for records that existed before this process started.
+    // Newly created records may not be in the COM interface cache.
+    //
+    // We try twice: first WITHOUT refreshCache() (the COM interface
+    // initialized by OrlibInit already has pre-existing records), then
+    // WITH refreshCache() (which dispatches cmd 0x0F + cmd 0x4E to get a
+    // fresh server-side interface that reflects in-session creates).
+    if (m_loadMasterRecsEx) {
+        for (int pass = 0; pass < 2 && !result.exists; pass++) {
+            if (pass == 1) {
+                refreshCache();
+            }
+
+            HGLOBAL buf = NULL;
+            LoadMasterRecsExSehResult seh;
+            if (callLoadMasterRecsEx(m_loadMasterRecsEx, category, &buf,
+                                      (const char*)NULL, 1, &seh)) {
+                int count = seh.result;
+
+                if (count > 0 && buf != NULL) {
+                    char* records = (char*)GlobalLock(buf);
+                    if (records) {
+                        const int kRecordSize   = 0x10A;   // 266 bytes per master record
+                        const int kNameOffset   = 0x17;    // inline long name
+                        const int kProgIdOffset = 0x00;    // short ProgId
+                        const int kSubTypeOffset = 0xE9;   // category/subtype byte
+
+                        for (int i = 0; i < count; i++) {
+                            char* rec = records + i * kRecordSize;
+                            const char* storedName = rec + kNameOffset;
+
+                            // For category 2 (Indicator), filter by subtype so
+                            // TradingApp queries only match TradingApp records
+                            // and Indicator queries only match Indicator records.
+                            if (category == 2) {
+                                unsigned char recSubType =
+                                    (unsigned char)rec[kSubTypeOffset];
+                                if (subType == 0x14 && recSubType != 0x14) continue;
+                                if (subType == 0x00 && recSubType == 0x14) continue;
+                            }
+
+                            if (_stricmp(storedName, searchName.c_str()) == 0) {
+                                result.exists = true;
+                                result.storedName = std::string(storedName);
+                                result.progId = *(short*)(rec + kProgIdOffset);
+                                break;
+                            }
+                        }
+                        GlobalUnlock(buf);
+                    }
+                }
+                if (buf) GlobalFree(buf);
+            }
+        }
+    }
+
+    if (result.exists) {
+        return result;
+    }
+
+    // --- Phase 2: Direct BST search + verbatim name getter ---
+    // Phase 1 uses _LoadMasterRecsEX@16 which reads from the COM server's
+    // enumeration cache. This cache is populated at warehouse initialization
+    // and is NOT updated when new records are created in-session.
+    //
+    // FUN_101a42d0 returns the ProgId (not the name) in non-server mode
+    // (DAT_1023aa8f == 0, which is our case), so we call FUN_101d05e0
+    // (BST search) + FUN_101c36d0 (name getter) directly. This is the same
+    // path FUN_101a42d0 takes in server mode, but we bypass the
+    // server/non-server branch since FUN_101c36d0 works in both modes.
+    // The stored name comes from the WAREHOUSE, not from source text
+    // (HARD RULE 0).
+    if (m_pBstSearchWrapper && m_pVerbatimNameGetter &&
+        m_pBuildTypeArray && m_pGetWarehouse) {
+        void* warehouse = nullptr;
+        if (callGetWarehouse(
+                reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse),
+                0, &warehouse) && warehouse) {
+
+            // Build the type filter array via FUN_101d43a0 (same as
+            // FUN_101a42d0 does internally). FUN_101d43a0 is __stdcall:
+            // arg1=category, arg2=*outBuf, RET 0x8. Returns outBuf pointer.
+            int typeFilterBuf[3] = {0, 0, 0};
+            if (callBuildTypeArray(m_pBuildTypeArray, category, typeFilterBuf)) {
+
+                // Call FUN_101d05e0 (BST search wrapper).
+                // __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode),
+                // RET 0xC. Returns bool (1=found, 0=not found). Stores BST node
+                // pointer in *outNode.
+                void* nodePtr = nullptr;
+                int bstResult = 0;
+                if (callBstSearchWrapper(
+                        m_pBstSearchWrapper, warehouse, typeFilterBuf,
+                        searchName.c_str(), &nodePtr, &bstResult) &&
+                    bstResult != 0 && nodePtr) {
+
+                    // Call FUN_101c36d0 (verbatim name getter).
+                    // __fastcall: ECX=node pointer, no stack args, RET.
+                    // Returns char* to the verbatim stored name at node+0x1D.
+                    const char* verbatimName = nullptr;
+                    if (callVerbatimNameGetter(
+                            m_pVerbatimNameGetter, nodePtr, &verbatimName) &&
+                        verbatimName) {
+                        result.exists = true;
+                        result.storedName = std::string(verbatimName);
+                        // Get ProgId separately via FindExistPos (BST).
+                        result.progId = findExistPos(searchName, type);
+                        if (result.progId <= 0) {
+                            result.progId = 0;  // shouldn't happen, but be safe
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 std::string TsDevLib::verifyModule(ComponentType type, int progId) {
@@ -734,6 +1199,67 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
     }
 
     return errors;
+}
+
+void TsDevLib::refreshCache() {
+    if (!m_pGetWarehouse || !m_pCmdDispatcher) {
+        return;
+    }
+
+    // TSDev-style cache refresh, emulating FUN_101c09f0 / FUN_101c51b0:
+    //
+    // Step 1: Get the warehouse. If [warehouse+0x5E] (IWHouse interface)
+    //         is null, dispatch cmd 0x0F to initialize it.
+    // Step 2: Set [warehouse+0x12] = 0xC and dispatch cmd 0x4E
+    //         (FUN_101cf5b0) to notify the worker thread.
+    //
+    // Note: This refreshes the IWHouse interface at [warehouse+0x5E] but
+    // does NOT refresh the COM server enumeration cache at [warehouse+0xAE]
+    // used by _LoadMasterRecsEX@16. Newly created records are visible to
+    // FindExistPos (which uses the in-memory BST) but not to
+    // _LoadMasterRecsEX@16's get-all-records method. The two-phase
+    // enumerateRecords() handles this by falling back to FindExistPos +
+    // _GetMasterRecByType@16 in Phase 2 (reading the stored name from the
+    // warehouse record, not from source text).
+
+    // Step 1: Get the warehouse.
+    void* warehouse = nullptr;
+    if (!callGetWarehouse(
+            reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0, &warehouse)) {
+        return;
+    }
+    if (!warehouse) {
+        return;
+    }
+
+    char* wh = reinterpret_cast<char*>(warehouse);
+    void* iface5E = *reinterpret_cast<void**>(wh + 0x5E);
+
+    // Step 1a: If [warehouse+0x5E] is null, dispatch cmd 0x0F to initialize.
+    if (!iface5E && m_pCmd0FDispatcher && m_pBuildTypeArray &&
+        m_pCelProgWriterCtor) {
+        int typeArray[16] = {};
+        if (callBuildTypeArray(m_pBuildTypeArray, 0, typeArray)) {
+            // CELProgramWriter buffer (0x280 bytes, zero-initialized).
+            unsigned char writerBuf[0x280] = {};
+            callCelProgramWriterCtor(m_pCelProgWriterCtor, writerBuf);
+            callCmd0FDispatcher(m_pCmd0FDispatcher, warehouse,
+                                typeArray, 0, writerBuf);
+            // Re-read [warehouse+0x5E] after cmd 0x0F.
+            iface5E = *reinterpret_cast<void**>(wh + 0x5E);
+        }
+    }
+
+    // Step 2: Set [warehouse+0x12] = 0xC and dispatch cmd 0x4E.
+    // (The previous Step 2 — dispatching cmd 0x0D via FUN_101cfce0 to
+    // obtain a fresh COM interface — has been removed. In our CLI context
+    // the COM server cannot provide a fresh interface, so cmd 0x0D
+    // returns null and clears [warehouse+0x5E], making it useless.
+    // The new Phase 2 of enumerateRecords uses _GetMasterRecByType@16
+    // instead, which dispatches cmd 0x0D via a DIFFERENT path
+    // (FUN_101d15c0) and returns a single warehouse record by ProgId.)
+    *reinterpret_cast<int*>(wh + 0x12) = 0xC;
+    callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x4E);
 }
 
 void TsDevLib::closeWarehouse() {
@@ -1045,6 +1571,10 @@ void TsDevLib::applyThreadCheckPatches() {
         m_resolver->baseAddress() + m_threadCheckRvas[0]);
     m_resolver->applyPatch("FUN_101d0950_thread_check_INT3");
     m_patchesApplied = true;
+    // Cache FUN_101d0950's entry point (base + sigMatchRva) for use by
+    // refreshCache(). sigMatchRva is the containing function entry RVA.
+    m_pCmd0FDispatcher = reinterpret_cast<void*>(
+        m_resolver->baseAddress() + tc1.sigMatchRva);
 
     PatchSiteDescriptor tc2 = m_resolver->resolveThreadCheck2();
     m_threadCheckRvas[1] = tc2.patchRva;
@@ -1052,12 +1582,108 @@ void TsDevLib::applyThreadCheckPatches() {
         m_resolver->baseAddress() + m_threadCheckRvas[1]);
     m_resolver->applyPatch("FUN_101cf5b0_thread_check_INT3");
     m_patchesApplied = true;
+    // Cache FUN_101cf5b0's entry point (base + sigMatchRva) for use by
+    // refreshCache(). sigMatchRva is the containing function entry RVA.
+    m_pCmdDispatcher = reinterpret_cast<void*>(
+        m_resolver->baseAddress() + tc2.sigMatchRva);
 
     PatchSiteDescriptor tc3 = m_resolver->resolveThreadCheck3();
     m_threadCheckRvas[2] = tc3.patchRva;
     m_threadCheckOriginalBytes[2] = *reinterpret_cast<const unsigned char*>(
         m_resolver->baseAddress() + m_threadCheckRvas[2]);
     m_resolver->applyPatch("FUN_101d1fa0_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 4: command 0x11 (source-text load, reached from
+    // _LoadTextFileEX@16). No dedicated resolveThreadCheck4() convenience
+    // method exists yet, so resolve the patch site directly via the public
+    // resolvePatchSite() API (same underlying mechanism as the wrappers above).
+    PatchSiteDescriptor tc4 = m_resolver->resolvePatchSite("FUN_101d0e80_thread_check_INT3");
+    m_threadCheckRvas[3] = tc4.patchRva;
+    m_threadCheckOriginalBytes[3] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[3]);
+    m_resolver->applyPatch("FUN_101d0e80_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 5: command 0x08 (type select, used by _LoadMasterRecsEX@16).
+    PatchSiteDescriptor tc5 = m_resolver->resolvePatchSite("FUN_101d0c30_thread_check_INT3");
+    m_threadCheckRvas[4] = tc5.patchRva;
+    m_threadCheckOriginalBytes[4] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[4]);
+    m_resolver->applyPatch("FUN_101d0c30_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 6: command 0x09 (item retrieval, conditionally used by
+    // _LoadMasterRecsEX@16 in headless/local mode). Applied defensively.
+    PatchSiteDescriptor tc6 = m_resolver->resolvePatchSite("FUN_101d16c0_thread_check_INT3");
+    m_threadCheckRvas[5] = tc6.patchRva;
+    m_threadCheckOriginalBytes[5] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[5]);
+    m_resolver->applyPatch("FUN_101d16c0_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 7: command 0x07 (count by types, used by _LoadMasterRecsEX@16
+    // when filterMode != 0). enumerateRecords uses filterMode=1 to include all
+    // records without the filterMode=0 flag filter that excludes newly created
+    // entries.
+    PatchSiteDescriptor tc7 = m_resolver->resolvePatchSite("FUN_101d0d90_thread_check_INT3");
+    m_threadCheckRvas[6] = tc7.patchRva;
+    m_threadCheckOriginalBytes[6] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[6]);
+    m_resolver->applyPatch("FUN_101d0d90_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 8: command 0x0D (COM interface get, used by refreshCache
+    // to obtain the correct [warehouse+0x5E] interface that sees newly
+    // created records). The UI flow (FUN_101a8360 → FUN_101c50b0) uses
+    // cmd 0x0D to get this interface; cmd 0x0F gets a different (stale)
+    // interface that does not reflect in-session creates.
+    PatchSiteDescriptor tc8 = m_resolver->resolvePatchSite("FUN_101cfce0_thread_check_INT3");
+    m_threadCheckRvas[7] = tc8.patchRva;
+    m_threadCheckOriginalBytes[7] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[7]);
+    m_resolver->applyPatch("FUN_101cfce0_thread_check_INT3");
+    m_patchesApplied = true;
+    // Cache FUN_101cfce0's entry point for use by refreshCache().
+    m_pCmd0DDispatcher = reinterpret_cast<void*>(
+        m_resolver->baseAddress() + tc8.sigMatchRva);
+
+    // Thread-check 9: command 0x0D local-mode dispatcher (FUN_101d15c0),
+    // used by _GetMasterRecByType@16 to get a single warehouse record by
+    // ProgId. This is a DIFFERENT function from FUN_101cfce0 (thread-check
+    // 8) — FUN_101d15c0 is the local-mode path inside FUN_101cfe00, while
+    // FUN_101cfce0 is the COM interface resolver. Both dispatch cmd 0x0D
+    // but through different code paths. The INT3 is at offset 84.
+    PatchSiteDescriptor tc9 = m_resolver->resolvePatchSite("FUN_101d15c0_thread_check_INT3");
+    m_threadCheckRvas[8] = tc9.patchRva;
+    m_threadCheckOriginalBytes[8] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[8]);
+    m_resolver->applyPatch("FUN_101d15c0_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 10: command 0x10 BST search non-server mode dispatcher
+    // (FUN_101d18c0), used by FUN_101d05e0 (non-server BST search) via
+    // FUN_101e3db0 or directly. This is the non-server-mode equivalent of
+    // FUN_101d15c0 (thread-check 9) but uses command byte 0x10 instead of
+    // 0x0D. Required for FUN_101a42d0 (name getter) non-server path.
+    // The INT3 is at offset 294 (0x126).
+    PatchSiteDescriptor tc10 = m_resolver->resolvePatchSite("FUN_101d18c0_thread_check_INT3");
+    m_threadCheckRvas[9] = tc10.patchRva;
+    m_threadCheckOriginalBytes[9] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[9]);
+    m_resolver->applyPatch("FUN_101d18c0_thread_check_INT3");
+    m_patchesApplied = true;
+
+    // Thread-check 11: verbatim name getter (FUN_101c36d0) thread-check INT3.
+    // The INT3 fires when FUN_101cfce0 returns 0 (failed to get ProgId).
+    // Required for the direct FUN_101d05e0 + FUN_101c36d0 call path used by
+    // enumerateRecords() Phase 2. The INT3 is at offset 0x6A (106) from
+    // function entry.
+    PatchSiteDescriptor tc11 = m_resolver->resolvePatchSite("FUN_101c36d0_thread_check_INT3");
+    m_threadCheckRvas[10] = tc11.patchRva;
+    m_threadCheckOriginalBytes[10] = *reinterpret_cast<const unsigned char*>(
+        m_resolver->baseAddress() + m_threadCheckRvas[10]);
+    m_resolver->applyPatch("FUN_101c36d0_thread_check_INT3");
     m_patchesApplied = true;
 }
 

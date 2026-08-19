@@ -33,7 +33,7 @@ from .results import TsDevResult
 _VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp"})
 
 # Subcommand name per high-level operation.
-_SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete"}
+_SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "get-source": "get-source", "upsert": "upsert"}
 _BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete"}
 
 
@@ -134,9 +134,76 @@ class TsDevClient:
         """Replace an existing component's source and recompile/verify it."""
         return self._single("modify", type, name, source)
 
+    def upsert(self, type: str, name: str, source: str | os.PathLike) -> TsDevResult:
+        """Insert a new component, or modify the existing one if it already exists.
+
+        Materializes `source` the same way insert/modify do (string -> temp .el file;
+        existing file path -> used directly). Returns TsDevResult on success.
+        Raises CompileError on compile failure, SourceFileError if the source file
+        cannot be read, ValueError for an unknown component type. Never raises
+        NotFoundError/AlreadyExistsError (upsert branches on existence by construction).
+        """
+        return self._single("upsert", type, name, source)
+
     def delete(self, type: str, name: str) -> TsDevResult:
         """Delete an existing component."""
         return self._single("delete", type, name, None)
+
+    def exists(self, type: str, name: str, *, case_insensitive: bool = False) -> TsDevResult:
+        """Query whether a component named `name` of `type` exists in the TSDev Library.
+
+        Returns a TsDevResult with ``.exists`` (bool), ``.prog_id`` (int; 0 if not
+        found) and ``.stored_name`` (the verbatim stored name when found, empty
+        string when not found).
+
+        When ``case_insensitive`` is True, the CLI is invoked with
+        ``--case-insensitive`` so the name matches regardless of casing, and the
+        verbatim stored name is reported via ``.stored_name``.  When False (the
+        default), the name must match exactly (case-sensitive).
+
+        Does NOT raise on not-found (not-found is a valid query result, success=True).
+        Raises typed exceptions on real errors (unknown_type, usage_error, etc.).
+        """
+        t = _validate_type(type)
+        sub = _SINGLE_SUBCMD["exists"]
+        cmd = self._base_cmd() + ["--json", sub, t, name]
+        if case_insensitive:
+            cmd.append("--case-insensitive")
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def get_source(
+        self,
+        type: str,
+        name: str,
+        output_file: str | os.PathLike | None = None,
+    ) -> TsDevResult:
+        """Retrieve the EasyLanguage source of an existing component.
+
+        Returns a TsDevResult with ``.source`` (the EL source text).  Always uses
+        ``--json``.  If ``output_file`` is given, the CLI also writes the source
+        to that file.
+
+        Raises :class:`~tsdev_automation.exceptions.NotFoundError` if the item is
+        not found or is password-protected.
+        Raises :class:`~tsdev_automation.exceptions.OutputWriteError` if writing
+        to ``output_file`` fails.
+        Raises :class:`ValueError` for an unknown component type (client-side
+        validation).
+        """
+        t = _validate_type(type)
+        sub = _SINGLE_SUBCMD["get-source"]
+        cmd = self._base_cmd() + ["--json", sub, t, name]
+        if output_file is not None:
+            cmd += ["--output", str(output_file)]
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
 
     def batch_insert(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
         """Batch-insert many items. Returns one result per item (in order).
@@ -183,10 +250,10 @@ class TsDevClient:
         needs_source = op in ("insert", "modify")
         cleanup: list[Path] = []
         try:
-            manifest = self._write_manifest(items, needs_source, cleanup)
+            manifest = self._build_manifest_string(items, needs_source, cleanup)
             sub = _BATCH_SUBCMD[op]
-            cmd = self._base_cmd() + [sub, str(manifest)]
-            results = self._run_batch(cmd)
+            cmd = self._base_cmd() + [sub, "--batch-stdin"]
+            results = self._run_batch(cmd, input=manifest)
         finally:
             self._cleanup(cleanup)
         return results
@@ -214,7 +281,19 @@ class TsDevClient:
         cleanup.append(path)
         return path
 
-    def _write_manifest(self, items: Sequence[BatchItem], needs_source: bool, cleanup: list[Path]) -> Path:
+    def _build_manifest_string(self, items: Sequence[BatchItem], needs_source: bool, cleanup: list[Path]) -> str:
+        """Build the batch manifest as an in-memory string.
+
+        String sources are still materialized to temporary ``.el`` files (via
+        :meth:`_materialize_source`) and their paths referenced in the manifest
+        lines; only the manifest itself is kept in memory (piped to the CLI via
+        stdin) instead of being written to a ``.manifest`` file.
+
+        The line format is byte-identical to what the previous file-writing
+        implementation produced: one ``<type> <name> [<source_file>]`` line per
+        item, joined with ``\\n`` and terminated with a trailing ``\\n`` when
+        non-empty.
+        """
         lines: list[str] = []
         for it in items:
             t = _validate_type(it.type)
@@ -227,14 +306,10 @@ class TsDevClient:
                 lines.append(f"{t} {it.name} {src_path}")
             else:
                 lines.append(f"{t} {it.name}")
-        fd, tmp = tempfile.mkstemp(suffix=".manifest", prefix="tsdev_batch_")
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(lines))
-            if lines:
-                f.write("\n")
-        path = Path(tmp)
-        cleanup.append(path)
-        return path
+        text = "\n".join(lines)
+        if lines:
+            text += "\n"
+        return text
 
     def _run_cli(self, cmd: list[str]) -> TsDevResult:
         if not self.cli_path.is_file():
@@ -263,7 +338,7 @@ class TsDevClient:
             )
         return TsDevResult.from_json(obj, stdout=stdout, stderr=stderr)
 
-    def _run_batch(self, cmd: list[str]) -> list[TsDevResult]:
+    def _run_batch(self, cmd: list[str], input: str) -> list[TsDevResult]:
         if not self.cli_path.is_file():
             raise FileNotFoundError(f"tsdev_cli.exe not found at {self.cli_path!s}")
         try:
@@ -274,6 +349,7 @@ class TsDevClient:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                input=input,
             )
         except subprocess.TimeoutExpired as e:
             raise TimeoutError(f"tsdev_cli timed out after {self.timeout}s") from e

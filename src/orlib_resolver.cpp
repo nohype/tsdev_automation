@@ -127,7 +127,7 @@ struct SigBackingData {
     std::vector<uint8_t> replacementBytes;
 };
 
-/// \brief Build the OrlibSignatureDef catalog from kSignatures[] (12 entries).
+/// \brief Build the OrlibSignatureDef catalog from kSignatures[] (13 entries).
 ///
 /// The backing byte data is stored in function-local static vectors so the
 /// pointers in the returned OrlibSignatureDef objects remain valid
@@ -712,8 +712,48 @@ void* OrlibResolver::resolveDeleteOrchestrator() {
     return reinterpret_cast<void*>(baseAddress() + rva);
 }
 
+void* OrlibResolver::resolveBuildTypeArray() {
+    const OrlibSignatureDef& sig =
+        findSignature("FUN_101d43a0_build_type_array");
+    uintptr_t rva =
+        resolveBySignature("FUN_101d43a0_build_type_array", sig);
+    return reinterpret_cast<void*>(baseAddress() + rva);
+}
+
+void* OrlibResolver::resolveCelProgramWriterCtor() {
+    const OrlibSignatureDef& sig =
+        findSignature("FUN_1000dd30_celprogwriter_ctor");
+    uintptr_t rva =
+        resolveBySignature("FUN_1000dd30_celprogwriter_ctor", sig);
+    return reinterpret_cast<void*>(baseAddress() + rva);
+}
+
+void* OrlibResolver::resolveFindItemGetName() {
+    const OrlibSignatureDef& sig =
+        findSignature("FUN_101a42d0_find_item_get_name");
+    uintptr_t rva =
+        resolveBySignature("FUN_101a42d0_find_item_get_name", sig);
+    return reinterpret_cast<void*>(baseAddress() + rva);
+}
+
+void* OrlibResolver::resolveBstSearchWrapper() {
+    const OrlibSignatureDef& sig =
+        findSignature("FUN_101d05e0_bst_search_wrapper");
+    uintptr_t rva =
+        resolveBySignature("FUN_101d05e0_bst_search_wrapper", sig);
+    return reinterpret_cast<void*>(baseAddress() + rva);
+}
+
+void* OrlibResolver::resolveVerbatimNameGetter() {
+    const OrlibSignatureDef& sig =
+        findSignature("FUN_101c36d0_verbatim_name_getter");
+    uintptr_t rva =
+        resolveBySignature("FUN_101c36d0_verbatim_name_getter", sig);
+    return reinterpret_cast<void*>(baseAddress() + rva);
+}
+
 // ===========================================================================
-// Export resolution (7 exports + generic)
+// Export resolution (8 exports + generic)
 // ===========================================================================
 
 OrlibInitFn OrlibResolver::resolveOrlibInit() {
@@ -768,7 +808,7 @@ FARPROC OrlibResolver::resolveExport(const char* decoratedName) {
 }
 
 // ===========================================================================
-// Patch-site resolution & validation (4 PATCH_SITEs)
+// Patch-site resolution & validation (5 PATCH_SITEs)
 // ===========================================================================
 
 PatchSiteDescriptor OrlibResolver::resolvePatchSite(const std::string& name) {

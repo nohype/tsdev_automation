@@ -34,9 +34,9 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-EXPECTED_SIGNATURE_COUNT = 12
+EXPECTED_SIGNATURE_COUNT = 25
 EXPECTED_DATA_GLOBAL_COUNT = 3
-EXPECTED_EXPORT_COUNT = 7
+EXPECTED_EXPORT_COUNT = 10
 
 # Hex pattern tokens are split across adjacent C++ string literals in chunks of
 # this many bytes for readability (matches the historical b1_signatures.h style

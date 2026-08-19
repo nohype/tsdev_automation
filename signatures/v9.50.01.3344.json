@@ -243,6 +243,275 @@
         "source": "Ghidra disassembly",
         "reference": "docs/SIGNATURE_CATALOG.md §4.12"
       }
+    },
+    {
+      "name": "FUN_101d0e80_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D0E80",
+      "hexPattern": "55 8B EC 51 8B 45 08 53 8B 1D ?? ?? ?? ?? 56 8B 75 10 57 8B F9 6A FF C7 06 00 00 00 00 89 7D FC FF 77 72 89 47 12 8B 45 0C 89 47 16 FF D3 FF 15 ?? ?? ?? ?? 3B 47 76 74 01 CC FF 77 6E C7 47 04 11 00 00 00 FF 15 ?? ?? ?? ??",
+      "length": 74,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 57,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x11 (source-text load) dispatch helper"
+      },
+      "containingFunction": "FUN_101d0e80",
+      "provenance": {
+        "author": "RE-F4",
+        "date": "2026-08-19",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F4_cmd11_patch_findings.md"
+      }
+    },
+    {
+      "name": "FUN_101d0c30_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D0C30",
+      "hexPattern": "55 8B EC 8B 45 08 83 EC 08 56 57 8B 3D ?? ?? ?? ?? 8B F1 6A FF FF 76 72 89 46 12 FF D7 FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 08 00 00 00",
+      "length": 51,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 40,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x08 (type select) dispatch helper"
+      },
+      "containingFunction": "FUN_101d0c30",
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_enumeration_findings.md"
+      }
+    },
+    {
+      "name": "FUN_101d16c0_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D16C0",
+      "hexPattern": "55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 56 8B F1 57 83 BE AE 00 00 00 00 0F 84 ?? ?? ?? ?? 8B 7D 10 8B 45 08 6A FF C7 07 00 00 00 00 FF 76 72 89 46 12 8B 45 0C 89 46 08 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 09 00 00 00 FF 15 ?? ?? ?? ?? 6A FF FF 76 6A FF 15 ?? ?? ?? ?? FF 76 72 FF 15 ?? ?? ?? ?? 83 7E 5E 00 74 ?? 68 41 02 00 00",
+      "length": 132,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 84,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x09 (item retrieval) dispatch helper"
+      },
+      "containingFunction": "FUN_101d16c0",
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_enumeration_findings.md"
+      }
+    },
+    {
+      "name": "FUN_101d0d90_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D0D90",
+      "hexPattern": "55 8B EC 8B 45 08 53 56 57 33 FF 33 DB 83 38 FF 8B F1 74 50 8B 00 6A FF FF 76 72 89 46 12 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 07 00 00 00",
+      "length": 58,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 47,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x07 (count by types) dispatch helper"
+      },
+      "containingFunction": "FUN_101d0d90",
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_enumeration_findings.md"
+      }
+    },
+    {
+      "name": "FUN_101d43a0_build_type_array",
+      "targetType": "call_target",
+      "callingConvention": "stdcall",
+      "expectedRva": "0x1D43A0",
+      "hexPattern": "55 8B EC 8B 45 08 83 F8 04 0F 87 B8 00 00 00 FF 24 85 ?? ?? ?? ?? 8B 45 0C C7 00 00 00 00 00 C7 40 04 00 02 00 00 C7 40 08 FF FF FF FF 5D C2 08",
+      "length": 48,
+      "expectedMatchCount": 1,
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_warehouse_com_interface.md §8",
+        "notes": "Distinctive: 8B 45 08 83 F8 04 (MOV EAX,[EBP+8]; CMP EAX,4) + FF 24 85 (JMP [EAX*4+...]) + switch-table type-array builder with 0x200/0xFFFFFFFF sentinel"
+      }
+    },
+    {
+      "name": "FUN_1000dd30_celprogwriter_ctor",
+      "targetType": "call_target",
+      "callingConvention": "fastcall",
+      "expectedRva": "0xDD30",
+      "hexPattern": "55 8B EC 51 56 8B F1 89 75 FC E8 C1 1D 1B 00 C7 06 ?? ?? ?? ?? 8B C6 C7 86 41 02 00 00 01 00 00 00 C7 86 45 02 00 00 00 00 00 00 C7 86 49 02 00 00 00 00 00 00 C7 86 4D 02 00 00 00 00 00 00",
+      "length": 63,
+      "expectedMatchCount": 1,
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_warehouse_com_interface.md §8",
+        "notes": "Distinctive: 51 56 8B F1 (push ecx; push esi; mov esi,ecx) + C7 06 (MOV [ESI],vftable) + C7 86 41 02 (MOV [ESI+0x241],1) — CELProgramWriter constructor"
+      }
+    },
+    {
+      "name": "FUN_101cfce0_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1CFCE0",
+      "hexPattern": "55 8B EC 8B 45 08 56 8B F1 6A FF FF 76 72 89 46 12 8B 45 0C 89 46 16 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00",
+      "length": 51,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 40,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x0D (COM interface get) dispatch helper"
+      },
+      "containingFunction": "FUN_101cfce0",
+      "provenance": {
+        "author": "RE-F5",
+        "date": "2026-08-20",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_cache_refresh_feasibility.md",
+        "notes": "Distinctive: 8B 45 08 56 8B F1 (MOV EAX,[EBP+8]; PUSH ESI; MOV ESI,ECX) + 89 46 12 89 46 16 (MOV [ESI+0x12],EAX; MOV [ESI+0x16],EAX) + C7 46 04 0D 00 00 00 (cmd 0x0D) — distinguishes from FUN_101d1fa0 which has cmd 0x17"
+      }
+    },
+    {
+      "name": "FUN_101d15c0_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D15C0",
+      "hexPattern": "55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 53 56 8B F1 83 BE AE 00 00 00 00 0F 84 ?? ?? ?? ?? 8B 5D 10 8B 45 08 6A FF C7 03 00 00 00 00 FF 76 72 89 46 12 8B 45 0C 89 46 16 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00",
+      "length": 95,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 84,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x0D (get record by type+index) local-mode dispatch helper"
+      },
+      "containingFunction": "FUN_101d15c0",
+      "provenance": {
+        "author": "RE-F5-cache-fix",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_cache_fix_findings.md",
+        "notes": "Distinctive: 53 56 8B F1 (PUSH EBX; PUSH ESI; MOV ESI,ECX) + 8B 5D 10 (MOV EBX,[EBP+0x10]) + C7 03 (MOV [EBX],0) + 89 46 16 (MOV [ESI+0x16]) + C7 46 04 0D (cmd 0x0D) — distinguishes from FUN_101d16c0 (cmd 0x09) which has 56 8B F1 57 + 8B 7D 10 + C7 07 + 89 46 08"
+      }
+    },
+    {
+      "name": "FUN_101d18c0_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D18C0",
+      "hexPattern": "74 01 CC FF 76 6E C7 46 04 10 00 00 00 FF 15 88 96 1F 10 6A FF FF 76 6A FF D3",
+      "length": 26,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 2,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in command 0x10 (BST search non-server mode) dispatch helper"
+      },
+      "containingFunction": "FUN_101d18c0",
+      "provenance": {
+        "author": "RE-F5-name-getter",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_name_getter_patch_analysis.md §5.3",
+        "notes": "Distinctive: C7 46 04 10 00 00 00 (cmd 0x10) + FF D3 (CALL EBX for WaitForSingleObject) — distinguishes from FUN_101cfce0 (cmd 0x0D) and FUN_101d15c0 (cmd 0x0D). Pattern starts at the JZ+1 immediately before the INT3 (match at 0x101d19e4) and includes the command-dispatch tail. INT3 is at byte offset 2 within the pattern; the INT3 is at offset 0x126 (294) from function entry 0x101d18c0."
+      }
+    },
+    {
+      "name": "FUN_101a42d0_find_item_get_name",
+      "targetType": "call_target",
+      "callingConvention": "fastcall",
+      "expectedRva": "0x1A42D0",
+      "hexPattern": "55 8B EC 83 EC 48 53 8B D9 89 55 F8 56 8B F3 89 5D F4 57 8D 4E 01 8A 06 46 84 C0 75 F9 2B F1 83 CF FF 85 F6 7E 60 6A 00 E8 ?? ?? ?? ?? 8B F0 C7 45 FC 00 00 00 00 83 C4 04 85 F6 74 49 80 3D ?? ?? ?? ?? 01 75 4B 8B 5D 08 8D 45 FC 50 53 FF 75 F8",
+      "length": 81,
+      "expectedMatchCount": 1,
+      "containingFunction": "FUN_101a42d0",
+      "provenance": {
+        "author": "RE-F5-name-getter",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_name_getter_patch_analysis.md",
+        "notes": "Find item by name + get verbatim stored name (combined BST search + lazy name fetch). Distinctive: 83 EC 48 (72-byte frame) + 8B D9 (MOV EBX,ECX — fastcall arg capture) + inline strlen loop (8A 06 46 84 C0 75 F9) + 80 3D ?? ?? ?? ?? 01 (CMP byte ptr [DAT_1023aa8f],1 — server-mode flag check)"
+      }
+    },
+    {
+      "name": "FUN_101d05e0_bst_search_wrapper",
+      "targetType": "call_target",
+      "callingConvention": "thiscall",
+      "expectedRva": "0x1D05E0",
+      "hexPattern": "55 8B EC 83 B9 C2 00 00 00 01 56 75 23 FF 75 0C FF 75 08 E8 ?? ?? ?? ?? 8B C8 E8 ?? ?? ?? ?? 8B 75 10 89 06 33 C0 39 06 5E 0F 95 C0 5D C2 0C 00 8B 75 10 56 FF 75 0C FF 75 08 E8 A1 12 00 00 33 C0 39 06 5E 0F 95 C0 5D C2 0C",
+      "length": 74,
+      "expectedMatchCount": 1,
+      "provenance": {
+        "author": "RE-F5-name-getter",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_name_getter_patch_analysis.md",
+        "notes": "BST search wrapper (non-server mode). __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode), RET 0xC. Stores BST node pointer in *outNode. Distinctive: 83 B9 C2 00 00 00 01 (CMP [ECX+0xC2],1 — server-mode flag check) + E8 A1 12 00 00 (CALL FUN_101d18c0 — non-server dispatch)."
+      }
+    },
+    {
+      "name": "FUN_101c36d0_verbatim_name_getter",
+      "targetType": "call_target",
+      "callingConvention": "fastcall",
+      "expectedRva": "0x1C36D0",
+      "hexPattern": "55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 81 EC 98 00 00 00 57 8B F9 80 7F 1C 00 0F 85 ?? ?? ?? ?? 6A 01 FF B7 18 02 00 00 8D 4D E0 E8 ?? ?? ?? ?? 8B CF C7 45 FC 00 00 00 00 C6 47 1C 01 E8 ?? ?? ?? ?? 83 7F 10",
+      "length": 80,
+      "expectedMatchCount": 1,
+      "provenance": {
+        "author": "RE-F5-name-getter",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_name_getter_patch_analysis.md",
+        "notes": "Verbatim name getter. __fastcall: ECX=node pointer (from FUN_101d05e0 *outNode), no stack args, RET. Returns char* to verbatim name at node+0x1D. Lazily fetches name via FUN_101cfce0 (cmd 0x0D) + FUN_101cf5b0 (cmd 0x34). Distinctive: 81 EC 98 00 00 00 (152-byte frame) + 8B F9 (MOV EDI,ECX) + 80 7F 1C 00 (CMP [EDI+0x1C],0 — lazy-init flag)."
+      }
+    },
+    {
+      "name": "FUN_101c36d0_thread_check_INT3",
+      "targetType": "patch_site",
+      "callingConvention": "fastcall",
+      "expectedRva": "0x1C36D0",
+      "hexPattern": "85 C0 75 01 CC 8B 4F 0C 8B 47 10 6A 34 89",
+      "length": 14,
+      "expectedMatchCount": 1,
+      "patch": {
+        "offset": 4,
+        "originalBytes": "CC",
+        "replacementBytes": "90",
+        "originalBytesMask": "FF",
+        "description": "NOP thread-check INT3 in verbatim name getter (FUN_101c36d0). The INT3 fires when FUN_101cfce0 returns 0 (failed to get ProgId). INT3 is at offset 0x6A (106) from function entry."
+      },
+      "containingFunction": "FUN_101c36d0",
+      "provenance": {
+        "author": "RE-F5-name-getter",
+        "date": "2026-08-26",
+        "source": "Ghidra disassembly",
+        "reference": "docs/RE/RE_F5_name_getter_patch_analysis.md",
+        "notes": "Distinctive: 85 C0 75 01 CC (TEST EAX,EAX; JNZ +1; INT3) + 8B 4F 0C 8B 47 10 6A 34 (MOV ECX,[EDI+0xC]; MOV EAX,[EDI+0x10]; PUSH 0x34 — cmd 0x34 dispatch). Pattern starts at TEST EAX,EAX before the INT3."
+      }
     }
   ],
   "dataGlobals": [
@@ -306,6 +575,21 @@
     {
       "name": "_CloseWarehouseForCurrentThreadAndPath@4",
       "rva": "0x1A9940",
+      "callingConvention": "stdcall"
+    },
+    {
+      "name": "_LoadTextFileEX@16",
+      "rva": "0x1081A0",
+      "callingConvention": "stdcall"
+    },
+    {
+      "name": "_LoadMasterRecsEX@16",
+      "rva": "0x1A5360",
+      "callingConvention": "stdcall"
+    },
+    {
+      "name": "_GetMasterRecByType@16",
+      "rva": "0x1A0460",
       "callingConvention": "stdcall"
     }
   ]

@@ -135,6 +135,12 @@ class TestSingleItem:
             client.delete("bogus", "X")
         with pytest.raises(ValueError):
             client.modify("bogus", "X", "x;")
+        with pytest.raises(ValueError):
+            client.exists("bogus", "X")
+        with pytest.raises(ValueError):
+            client.upsert("bogus", "X", "x;")
+        with pytest.raises(ValueError):
+            client.get_source("bogus", "X")
 
     def test_string_source_temp_file_cleaned(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
         seen: dict = {}
@@ -203,6 +209,327 @@ class TestSingleItem:
         assert "C:/TS" in seen["cmd"]
 
 
+class TestUpsert:
+    def test_upsert_success(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
+        src = tmp_path / "real.el"
+        src.write_text("input(close, 1);", encoding="utf-8")
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_success_json("upsert", "strategy", "MyStrat", prog_id=1234))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.upsert("strategy", "MyStrat", str(src))
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        assert r.op == "upsert"
+        assert r.prog_id == 1234
+        assert seen["cmd"][-5:] == ["--json", "upsert", "strategy", "MyStrat", str(src)]
+        assert src.exists(), "caller's file must not be deleted"
+
+    def test_upsert_compile_error_raises(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json(
+                    "upsert", "strategy", "Bad", "compile_error", "bad", exit_code=8, prog_id=9, compile_errors="syntax error at line 1"
+                )
+            ),
+        )
+        with pytest.raises(CompileError) as ei:
+            client.upsert("strategy", "Bad", "garbage code")
+        assert ei.value.result.error.compile_errors == "syntax error at line 1"
+        # For compile errors the CLI nests prog_id inside error (exit 8).
+        assert ei.value.result.error.prog_id == 9
+
+    def test_upsert_source_file_error_raises(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("upsert", "strategy", "MyStrat", "source_file_error", "failed to read source file", exit_code=3)
+            ),
+        )
+        with pytest.raises(exc.SourceFileError):
+            client.upsert("strategy", "MyStrat", "input(close, 1);")
+
+    def test_upsert_string_source_materializes_temp_file(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            # The temp source file must exist at call time.
+            src = cmd[-1]
+            seen["src"] = src
+            assert os.path.isfile(src), "temp source file should exist when CLI runs"
+            assert src.endswith(".el"), "temp source file should have .el suffix"
+            return _make_completed(_success_json("upsert", "strategy", "Tmp"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.upsert("strategy", "Tmp", "input(close, 1);")
+        assert not os.path.isfile(seen["src"]), "temp source file must be cleaned up"
+
+    def test_upsert_ts_path_passed_through(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_success_json("upsert", "strategy", "MyStrat"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c.upsert("strategy", "MyStrat", "input(close, 1);")
+        assert "--ts-path" in seen["cmd"]
+        assert "C:/TS" in seen["cmd"]
+
+
+def _exists_json(
+    type_: str,
+    name: str,
+    exists: bool,
+    prog_id: int | None = None,
+    stored_name: str | None = None,
+) -> str:
+    """Fake stdout for the ``exists`` subcommand (success payload).
+
+    ``prog_id`` is omitted from the JSON when the item is not found, matching
+    the C++ CLI schema (no ``prog_id`` key on a not-found result).
+    ``stored_name`` mirrors the C++ CLI ``stored_name`` field (the verbatim
+    stored name when found, empty string when not found).
+    """
+    obj: dict = {"op": "exists", "type": type_, "name": name, "success": True, "exit_code": 0, "exists": exists}
+    if prog_id is not None:
+        obj["prog_id"] = prog_id
+    obj["stored_name"] = stored_name if stored_name is not None else (name if exists else "")
+    return json.dumps(obj)
+
+
+class TestExists:
+    def test_exists_found(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "MyStrat", True, prog_id=1234))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.exists("strategy", "MyStrat")
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        assert r.exists is True
+        assert r.prog_id == 1234
+        # The command tail must be exactly: --json exists <type> <name>
+        assert seen["cmd"][-4:] == ["--json", "exists", "strategy", "MyStrat"]
+
+    def test_exists_not_found_no_raise(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed(_exists_json("strategy", "Nope", False))
+        )
+        r = client.exists("strategy", "Nope")
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        assert r.exists is False
+        assert r.prog_id == 0
+
+    def test_exists_ts_path_passed_through(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "MyStrat", True, prog_id=1234))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c.exists("strategy", "MyStrat")
+        assert "--ts-path" in seen["cmd"]
+        assert "C:/TS" in seen["cmd"]
+
+    def test_exists_does_not_append_source(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "MyStrat", True, prog_id=1234))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.exists("strategy", "MyStrat")
+        cmd = seen["cmd"]
+        # exists takes no source file: the command ends with the name, nothing appended.
+        assert cmd[-4:] == ["--json", "exists", "strategy", "MyStrat"]
+        assert cmd[-1] == "MyStrat"
+
+    def test_exists_stored_name_parsed(self, client: TsDevClient, monkeypatch) -> None:
+        """The ``stored_name`` field from the CLI JSON is surfaced on the result."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _exists_json("strategy", "ZZZ_QUERY", True, prog_id=55, stored_name="zzz_query")
+            ),
+        )
+        r = client.exists("strategy", "ZZZ_QUERY")
+        assert r.exists is True
+        assert r.prog_id == 55
+        assert r.stored_name == "zzz_query"
+
+    def test_exists_stored_name_empty_when_not_found(self, client: TsDevClient, monkeypatch) -> None:
+        """When the item is not found, ``stored_name`` is the empty string."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(_exists_json("strategy", "Nope", False)),
+        )
+        r = client.exists("strategy", "Nope")
+        assert r.exists is False
+        assert r.prog_id == 0
+        assert r.stored_name == ""
+
+    def test_exists_case_insensitive_passes_flag(self, client: TsDevClient, monkeypatch) -> None:
+        """``case_insensitive=True`` appends ``--case-insensitive`` to the CLI cmd."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(
+                _exists_json("strategy", "ZZZ_QUERY", True, prog_id=77, stored_name="zzz_query")
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.exists("strategy", "ZZZ_QUERY", case_insensitive=True)
+        cmd = seen["cmd"]
+        # The --case-insensitive flag must be appended after the name.
+        assert "--case-insensitive" in cmd
+        assert cmd[-5:] == ["--json", "exists", "strategy", "ZZZ_QUERY", "--case-insensitive"]
+        assert r.exists is True
+        assert r.stored_name == "zzz_query"
+        assert r.prog_id == 77
+
+    def test_exists_case_insensitive_default_false_no_flag(self, client: TsDevClient, monkeypatch) -> None:
+        """``case_insensitive`` defaults to False: no ``--case-insensitive`` flag."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "MyStrat", True, prog_id=1))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.exists("strategy", "MyStrat")
+        assert "--case-insensitive" not in seen["cmd"]
+
+    def test_exists_case_insensitive_not_found(self, client: TsDevClient, monkeypatch) -> None:
+        """Case-insensitive search for a nonexistent item: exists=False, no raise."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "ZZZ_NOPE", False))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.exists("strategy", "ZZZ_NOPE", case_insensitive=True)
+        assert r.success is True
+        assert r.exists is False
+        assert r.prog_id == 0
+        assert r.stored_name == ""
+        assert "--case-insensitive" in seen["cmd"]
+
+
+def _get_source_json(type_: str, name: str, source: str = "inputs: MyVar;\nplot MyVar;\n") -> str:
+    """Fake stdout for the ``get-source`` subcommand (success payload).
+
+    The C++ CLI emits a ``source`` field (the retrieved EasyLanguage text) in
+    JSON mode, even when ``--output`` writes the source to a file as a side
+    effect.
+    """
+    return json.dumps(
+        {"op": "get-source", "type": type_, "name": name, "success": True, "exit_code": 0, "source": source}
+    )
+
+
+class TestGetSource:
+    def test_get_source_success(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_get_source_json("strategy", "MyStrat"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.get_source("strategy", "MyStrat")
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        assert r.source == "inputs: MyVar;\nplot MyVar;\n"
+        # The command tail must be exactly: --json get-source <type> <name>
+        # (NO --output appended in stdout mode).
+        assert seen["cmd"][-4:] == ["--json", "get-source", "strategy", "MyStrat"]
+
+    def test_get_source_not_found_raises(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json(
+                    "get-source",
+                    "strategy",
+                    "Nope",
+                    "not_found",
+                    "'Nope' not found or source unavailable (may be password-protected).",
+                    exit_code=5,
+                )
+            ),
+        )
+        with pytest.raises(NotFoundError):
+            client.get_source("strategy", "Nope")
+
+    def test_get_source_output_write_error_raises(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json(
+                    "get-source",
+                    "strategy",
+                    "MyStrat",
+                    "output_write_error",
+                    'failed to write source to output file "C:/bad/path.el"',
+                    exit_code=3,
+                )
+            ),
+        )
+        with pytest.raises(exc.OutputWriteError):
+            client.get_source("strategy", "MyStrat", output_file="C:/bad/path.el")
+
+    def test_get_source_with_output_file(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_get_source_json("strategy", "MyStrat"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.get_source("strategy", "MyStrat", output_file="C:/tmp/out.el")
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        # The JSON still carries the source field even in --output mode.
+        assert r.source == "inputs: MyVar;\nplot MyVar;\n"
+        cmd = seen["cmd"]
+        assert "--output" in cmd
+        assert cmd[cmd.index("--output") + 1] == "C:/tmp/out.el"
+
+    def test_get_source_ts_path_passed_through(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_get_source_json("strategy", "MyStrat"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c.get_source("strategy", "MyStrat")
+        assert "--ts-path" in seen["cmd"]
+        assert "C:/TS" in seen["cmd"]
+
+
 class TestBatch:
     def test_batch_insert_mixed(self, client: TsDevClient, monkeypatch) -> None:
         arr = json.dumps(
@@ -252,10 +579,13 @@ class TestBatch:
 
     def test_batch_string_sources_cleaned(self, client: TsDevClient, monkeypatch) -> None:
         paths: list[str] = []
+        seen: dict = {}
 
         def fake_run(cmd, **kw):
-            manifest = cmd[-1]
-            for line in Path(manifest).read_text(encoding="utf-8").splitlines():
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            assert "input" in kw and isinstance(kw["input"], str)
+            for line in kw["input"].splitlines():
                 if line.strip() and not line.startswith("#"):
                     parts = line.split(None, 2)
                     if len(parts) == 3:
@@ -265,8 +595,175 @@ class TestBatch:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         client.batch_insert([BatchItem("strategy", "A", "input(close,1);")])
+        cmd = seen["cmd"]
+        assert "--batch-stdin" in cmd
+        assert cmd[-1] == "--batch-stdin", "cmd must end with --batch-stdin, not a manifest file path"
+        assert not any(str(c).endswith(".manifest") for c in cmd), "no manifest file path may appear in cmd"
+        assert "input" in seen["kw"]
+        assert isinstance(seen["kw"]["input"], str)
         for p in paths:
             assert not os.path.isfile(p), f"temp source {p} must be cleaned up"
+
+
+class TestBatchStdin:
+    """Tests for the inline-batch-via-stdin change to ``TsDevClient._batch``.
+
+    The manifest is built as an in-memory string and piped to the CLI through
+    stdin via the ``--batch-stdin`` flag, instead of being written to a
+    temporary ``.manifest`` file.  String-source materialization to temp
+    ``.el`` files is still required for insert/modify items; only the manifest
+    file is eliminated.
+    """
+
+    def test_batch_insert_uses_stdin_not_file(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
+        src_a = tmp_path / "a.el"
+        src_a.write_text("input(close, 1);", encoding="utf-8")
+        src_b = tmp_path / "b.el"
+        src_b.write_text("plot(close);", encoding="utf-8")
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps(
+                [
+                    json.loads(_success_json("insert", "strategy", "A")),
+                    json.loads(_success_json("insert", "strategy", "B")),
+                ]
+            )
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert([BatchItem("strategy", "A", str(src_a)), BatchItem("strategy", "B", str(src_b))])
+        assert len(results) == 2 and all(r.success for r in results)
+        cmd = seen["cmd"]
+        # (a) the cmd carries --batch-stdin and ends with it (no manifest path).
+        assert "--batch-stdin" in cmd
+        assert cmd[-1] == "--batch-stdin", "cmd must end with --batch-stdin, not a manifest file path"
+        assert not any(str(c).endswith(".manifest") for c in cmd), "no manifest file path may appear in cmd"
+        # (b) subprocess.run was called with a non-empty `input` string kwarg.
+        assert "input" in seen["kw"], "subprocess.run must be called with an `input` kwarg"
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        # (c) the input string contains the two items' lines.
+        assert "strategy" in seen["kw"]["input"]
+        assert "A" in seen["kw"]["input"]
+        assert "B" in seen["kw"]["input"]
+        # (d) no .manifest temp file was created (no manifest path in cmd).
+        assert not any(Path(str(c)).suffix == ".manifest" for c in cmd)
+
+    def test_batch_delete_stdin_no_source(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps(
+                [
+                    json.loads(_success_json("delete", "strategy", "A")),
+                    json.loads(_success_json("delete", "function", "B")),
+                ]
+            )
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_delete([BatchItem("strategy", "A"), BatchItem("function", "B")])
+        assert len(results) == 2 and all(r.success for r in results)
+        cmd = seen["cmd"]
+        assert "--batch-stdin" in cmd
+        assert cmd[-1] == "--batch-stdin"
+        assert "input" in seen["kw"]
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        # The two delete lines are `<type> <name>` with no source paths.
+        assert "strategy A" in seen["kw"]["input"]
+        assert "function B" in seen["kw"]["input"]
+        assert ".el" not in seen["kw"]["input"], "delete manifest must not reference source files"
+
+    def test_batch_modify_string_source_materializes_temp_el(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            # The materialized temp .el file must exist at call time.
+            assert "input" in kw and isinstance(kw["input"], str)
+            arr = json.dumps([json.loads(_success_json("modify", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_modify([BatchItem("strategy", "A", "input(close, 1);")])
+        assert len(results) == 1 and results[0].success
+        cmd = seen["cmd"]
+        assert "--batch-stdin" in cmd
+        assert cmd[-1] == "--batch-stdin"
+        assert not any(str(c).endswith(".manifest") for c in cmd), "no manifest file may be created"
+        # A temp .el file was materialized and referenced in the input string.
+        assert ".el" in seen["kw"]["input"], "string source must be materialized to a temp .el file"
+        assert "strategy A" in seen["kw"]["input"]
+
+    def test_batch_stdin_input_format(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
+        src = tmp_path / "real.el"
+        src.write_text("plot(close);", encoding="utf-8")
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["kw"] = kw
+            arr = json.dumps(
+                [
+                    json.loads(_success_json("insert", "strategy", "FileSrc")),
+                    json.loads(_success_json("insert", "indicator", "StrSrc")),
+                ]
+            )
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.batch_insert(
+            [BatchItem("strategy", "FileSrc", str(src)), BatchItem("indicator", "StrSrc", "plot(close);")]
+        )
+        assert "input" in seen["kw"]
+        payload = seen["kw"]["input"]
+        # Text mode: the input must be a str (not bytes).
+        assert isinstance(payload, str)
+        lines = [ln for ln in payload.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        # One non-empty, non-comment line per item.
+        assert len(lines) == 2
+        # insert/modify lines are `<type> <name> <source_file>`.
+        assert lines[0] == f"strategy FileSrc {src}"
+        assert lines[1].startswith("indicator StrSrc ")
+        assert lines[1].endswith(".el"), "string source must be materialized to a .el path"
+
+    def test_batch_stdin_empty_items(self, client: TsDevClient, monkeypatch) -> None:
+        # REAL C++ CLI contract (cmdBatch): an empty manifest -- whether from a
+        # file or from stdin -- is a manifest/usage error: exit 1, stderr
+        # "tsdev_cli: manifest from stdin is empty\n" (stdin mode), and NO JSON
+        # array on stdout.  The Python wrapper's _run_batch() raises TsDevError
+        # on exit 1, so empty items -> TsDevError.  The stdin change must
+        # PRESERVE this contract (empty-items semantics are out of scope): the
+        # wrapper still pipes an empty string via stdin (`input=""`), drives the
+        # CLI with --batch-stdin, and surfaces the CLI's exit-1 failure as a
+        # TsDevError.
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed("", stderr="tsdev_cli: manifest from stdin is empty\n", returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(TsDevError) as exc_info:
+            client.batch_insert([])
+        # The stdin mechanics must still be exercised for the empty case: the
+        # cmd carries --batch-stdin (no manifest file) and an empty `input`.
+        cmd = seen["cmd"]
+        assert "--batch-stdin" in cmd
+        assert cmd[-1] == "--batch-stdin"
+        assert not any(str(c).endswith(".manifest") for c in cmd), "no manifest file may be created"
+        assert "input" in seen["kw"], "subprocess.run must still be called with an `input` kwarg"
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"] == "", "empty item list must pipe an empty manifest string"
+        # The CLI's manifest-level failure message must surface on the exception.
+        assert "manifest from stdin is empty" in str(exc_info.value)
 
 
 class TestCliMain:
@@ -291,6 +788,170 @@ class TestCliMain:
 
         main()
         assert calls["insert"] == ("strategy", "MyName", "x;")
+
+
+class TestCliNewSubcommands:
+    """CLI dispatch tests for the ``exists``, ``get-source`` and ``upsert``
+    subcommands.  These mirror :class:`TestCliMain`'s mocking style: a
+    ``FakeClient`` is monkeypatched in for ``tsdev_automation._cli.TsDevClient``
+    so we can assert on the dispatched method calls, and ``_main`` is invoked
+    directly with an explicit ``argv`` so the integer exit code is observable.
+
+    The subcommands themselves are implemented in a later subtask; these tests
+    are expected to FAIL (red) until the dispatch lands in :func:`_main` and
+    :func:`_build_parser`.
+    """
+
+    def test_cli_exists_found(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def exists(self, type_, name, case_insensitive=False):
+                calls["exists"] = (type_, name, case_insensitive)
+                return TsDevResult(
+                    op="exists", type=type_, name=name, success=True, exit_code=0, exists=True, prog_id=1234
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["exists", "strategy", "MyStrat"])
+        out = capsys.readouterr().out
+        # The client method must be dispatched with the parsed positional args.
+        assert calls["exists"] == ("strategy", "MyStrat", False)
+        # A found result is a successful query: exit 0, no exception.
+        assert rc == 0
+        # Human output must mention the name, the prog_id, and indicate existence.
+        assert "MyStrat" in out
+        assert "1234" in out
+        assert "exists" in out.lower()
+
+    def test_cli_exists_not_found(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def exists(self, type_, name, case_insensitive=False):
+                calls["exists"] = (type_, name, case_insensitive)
+                return TsDevResult(
+                    op="exists", type=type_, name=name, success=True, exit_code=0, exists=False, prog_id=0
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["exists", "strategy", "Nope"])
+        out = capsys.readouterr().out
+        assert calls["exists"] == ("strategy", "Nope", False)
+        # Not-found is a valid query result: success, exit 0, no exception raised.
+        assert rc == 0
+        assert "Nope" in out
+        # Output must indicate absence (robust to phrasing: "not found" / "false" / "missing").
+        assert ("not" in out.lower() or "false" in out.lower() or "missing" in out.lower())
+
+    def test_cli_exists_case_insensitive_flag(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def exists(self, type_, name, case_insensitive=False):
+                calls["exists"] = (type_, name, case_insensitive)
+                return TsDevResult(
+                    op="exists", type=type_, name=name, success=True, exit_code=0,
+                    exists=True, prog_id=1234, stored_name="mystrat",
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["exists", "strategy", "MyStrat", "--case-insensitive"])
+        out = capsys.readouterr().out
+        # The --case-insensitive flag must be forwarded as case_insensitive=True.
+        assert calls["exists"] == ("strategy", "MyStrat", True)
+        assert rc == 0
+        assert "MyStrat" in out
+        assert "1234" in out
+
+    def test_cli_get_source_stdout(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def get_source(self, type_, name, output_file=None):
+                calls["get_source"] = (type_, name, output_file)
+                return TsDevResult(
+                    op="get-source", type=type_, name=name, success=True, exit_code=0, source="inputs: MyVar;\n"
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["get-source", "strategy", "MyStrat"])
+        out = capsys.readouterr().out
+        # No --output flag: output_file must be None.
+        assert calls["get_source"] == ("strategy", "MyStrat", None)
+        assert rc == 0
+        # In stdout mode the retrieved EL source is printed to stdout.
+        assert "inputs: MyVar;" in out
+
+    def test_cli_get_source_output_file(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def get_source(self, type_, name, output_file=None):
+                calls["get_source"] = (type_, name, output_file)
+                return TsDevResult(
+                    op="get-source", type=type_, name=name, success=True, exit_code=0, source="inputs: MyVar;\n"
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["get-source", "strategy", "MyStrat", "--output", "out.el"])
+        out = capsys.readouterr().out
+        # --output forwards the file path to the client (str or Path accepted).
+        assert calls["get_source"][:2] == ("strategy", "MyStrat")
+        assert calls["get_source"][2] is not None
+        assert str(calls["get_source"][2]) == "out.el"
+        assert rc == 0
+        # In --output mode a confirmation message naming the file is printed.
+        assert "out.el" in out
+
+    def test_cli_upsert(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def upsert(self, type_, name, source):
+                calls["upsert"] = (type_, name, source)
+                return TsDevResult(
+                    op="upsert", type=type_, name=name, success=True, exit_code=0, prog_id=1234, ell_path="C:/x.ell"
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["upsert", "strategy", "MyStrat", "src.el"])
+        out = capsys.readouterr().out
+        assert calls["upsert"] == ("strategy", "MyStrat", "src.el")
+        assert rc == 0
+        # Success output mirrors insert/modify: name + prog_id present.
+        assert "MyStrat" in out
+        assert "1234" in out
 
 
 class TestExceptionHierarchy:
@@ -395,6 +1056,7 @@ class TestE2E:
         _UNIQUE + "_Dup",
         _UNIQUE + "_BadCompile",
         _UNIQUE + "_Batch",
+        "zzz_py_ci_probe",
     ]
 
     @pytest.fixture(autouse=True)
@@ -534,6 +1196,50 @@ class TestE2E:
     def test_delete_nonexistent_raises_not_found(self) -> None:
         with pytest.raises(NotFoundError):
             self.c.delete("strategy", "DefinitelyNotHerePyAuto")
+
+    # -- Part 5: case-insensitive exists (TVS-F.5) --------------------------
+
+    def test_exists_case_insensitive_e2e(self) -> None:
+        """E2E: case-insensitive ``exists`` returns the verbatim stored name
+        and a non-zero ProgId; case-sensitive mode respects exact casing.
+
+        The source includes a ``{ name }`` EasyLanguage comment block (the
+        convention used by ``enumerateRecords`` Phase 2 to extract the verbatim
+        stored name when the warehouse record is not yet visible to the
+        enumeration API).
+        """
+        name = "zzz_py_ci_probe"
+        # Source with the { name } comment block so enumerateRecords Phase 2
+        # can extract the verbatim stored name.
+        src = "{ " + name + " }\n" + _src("strategy", "insert", name)
+        r = self.c.insert("strategy", name, src)
+        assert r.success, r
+        try:
+            # Case-insensitive query with uppercase name matches the lowercase item.
+            ci = self.c.exists("strategy", "ZZZ_PY_CI_PROBE", case_insensitive=True)
+            assert ci.success is True
+            assert ci.exists is True
+            assert ci.stored_name == name, f"stored_name must be verbatim {name!r}, got {ci.stored_name!r}"
+            assert ci.prog_id is not None and ci.prog_id > 0
+
+            # Case-sensitive (default) with uppercase name: must NOT match.
+            cs_wrong = self.c.exists("strategy", "ZZZ_PY_CI_PROBE")
+            assert cs_wrong.success is True
+            assert cs_wrong.exists is False
+            assert cs_wrong.prog_id == 0
+            assert cs_wrong.stored_name == ""
+
+            # Case-sensitive (default) with exact name: must match.
+            cs_exact = self.c.exists("strategy", name)
+            assert cs_exact.success is True
+            assert cs_exact.exists is True
+            assert cs_exact.prog_id is not None and cs_exact.prog_id > 0
+            assert cs_exact.stored_name == name
+        finally:
+            try:
+                self.c.delete("strategy", name)
+            except Exception:
+                pass
 
     # -- Part 4: orphan sweep (no leftover warehouse entries) ---------------
 

@@ -124,6 +124,48 @@ target_link_libraries(test_insert_tradingapp tsdev_lib)
 add_executable(test_modify_tradingapp tests/test_modify_tradingapp.cpp)
 target_link_libraries(test_modify_tradingapp tsdev_lib)
 
+# --- EXISTS integration test (TVS-F.1, TDD red-green) ------------------------
+# Validates the library-level existence-query primitive (findExistPos) that the
+# future `exists` CLI subcommand will wrap. Inserts a probe strategy, queries
+# findExistPos for the existing name (expects ProgId > 0) and for a nonexistent
+# name (expects 0), then cleans up. Runs on a 64 MB-stack worker thread (same
+# pattern as test_insert).
+add_executable(test_exists tests/test_exists.cpp)
+target_link_libraries(test_exists tsdev_lib)
+
+# --- ENUMERATE integration test (TVS-F.5, TDD RED) ---------------------------
+# Validates the library-level case-insensitive existence-query primitive
+# (enumerateRecords) that the future `exists --case-insensitive` CLI subcommand
+# will wrap. Inserts a probe strategy, queries enumerateRecords with the name
+# in UPPERCASE (expects exists=true, verbatim stored name, ProgId > 0) and for
+# a nonexistent name (expects exists=false, empty stored name, ProgId == 0),
+# then cleans up. Runs on a 64 MB-stack worker thread (same pattern as
+# test_exists). NOTE: enumerateRecords and EnumerateResult do NOT exist yet in
+# tsdev_lib.h — this test is the TDD RED step (F5-S2) and will FAIL TO COMPILE
+# until F5-S4 implements them.
+add_executable(test_enumerate tests/test_enumerate.cpp)
+target_link_libraries(test_enumerate tsdev_lib)
+
+# --- UPSERT integration test (TVS-F.3, TDD red-green) ------------------------
+# Validates the library-level primitives that the future `upsert` CLI subcommand
+# will compose (findExistPos + createEntry + saveSource + verifyModule +
+# modifyEntry + deleteEntry). Inserts a probe strategy, verifies the upsert
+# composition (insert then modify-in-place), asserts the KEY upsert invariant
+# (ProgId preserved after modify), then cleans up. Runs on a 64 MB-stack worker
+# thread (same pattern as test_exists).
+add_executable(test_upsert tests/test_upsert.cpp)
+target_link_libraries(test_upsert tsdev_lib)
+
+# --- GET-SOURCE integration test (TVS-F.4, TDD red-green) ---------------------
+# Validates the library-level source-retrieval primitive (getSource) that the
+# future `get-source` CLI subcommand will wrap. Inserts a probe strategy and a
+# probe function with KNOWN source text, calls getSource to retrieve the source
+# (asserts key substrings present), tests getSource for a nonexistent name
+# (asserts empty string), then cleans up. Runs on a 64 MB-stack worker thread
+# (same pattern as test_exists / test_upsert).
+add_executable(test_get_source tests/test_get_source.cpp)
+target_link_libraries(test_get_source tsdev_lib)
+
 # --- Auto-cleanup on compile failure integration test (TD-001, TDD GREEN) -----
 # Verifies that a partial warehouse entry created by createEntry is cleaned up
 # after verifyModule fails compilation. The auto-cleanup is implemented in
@@ -198,6 +240,10 @@ add_dependencies(test_regression
     test_tradingapp_type
     test_insert_tradingapp
     test_modify_tradingapp
+    test_exists
+    test_enumerate
+    test_upsert
+    test_get_source
     test_auto_cleanup
     test_orlib_resolver
     tsdev_cli

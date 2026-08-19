@@ -402,6 +402,19 @@ Remove-Item -Path $tmpDir -Recurse -Force
 
 ---
 
+## Part D: New Operations & Inline Batch (PENDING SPECIFICATION)
+
+E2E test cases for the following new subcommands will be specified when implementation begins (see AGENTS.md `### NEXT WORKSTREAMS` item 2, Workstream F). They are NOT yet defined here:
+
+- `exists` — query item existence by name + type (case-sensitive and case-insensitive variants); expected: verbatim stored name, exists flag, ProgId, exit code.
+- `get-source` — retrieve EL source to stdout and via `--output <file_path>`; expected: source text matches a known-inserted item; error case for nonexistent item; error case for password-protected item.
+- `upsert` — insert-when-absent and modify-when-present variants for all 4 component types; expected: correct branch taken (verify via `exists` + `get-source`).
+- Inline batch via stdin (`--batch-stdin`) — pipe manifest content via stdin for batch-insert/modify/delete; expected: identical results to the manifest-file path; verify backward compatibility of the manifest-file path still works.
+
+Test cases must follow the existing Part A/B/C structure (test ID, type, name, expected exit code, procedure, cleanup).
+
+---
+
 ## 8. Pass/Fail Criteria
 
 The overall test run verdict is **PASS** only if ALL of the following are true:

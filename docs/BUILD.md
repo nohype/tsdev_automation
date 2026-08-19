@@ -246,7 +246,7 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
 - No TradeStation processes/services running (for the E2E suite).
 
 ```powershell
-# Full run — all 3 suites (sigtool + 14 unit tests + 34 E2E tests):
+# Full run — all 4 suites (sigtool + 15 unit tests + 34 E2E tests + 5 exists tests):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
 # No-TradeStation run — sigtool + 3 non-TS unit tests; skips E2E:
@@ -256,14 +256,14 @@ powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -TsPath "D:\TradeStation 9.5"
 
 # Selective runs:
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 14 unit tests
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 15 unit tests
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E only
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # full output for every test
 ```
 
 #### `tests/run_unit_tests.ps1` — C++ unit test runner
 
-Runs all 14 C++ test executables in sequence (not in parallel — the shared
+Runs all 15 C++ test executables in sequence (not in parallel — the shared
 warehouse file `MWRKArea.wrk` is not process-safe), captures exit codes, measures
 per-test duration, and returns a single aggregated exit code.
 

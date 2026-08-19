@@ -1649,7 +1649,7 @@ int main() {
     //
     // Against the current stubs (RED phase), these methods do not exist
     // → the test fails to compile. After implementation (GREEN phase),
-    // getSignatureCount() returns 12 (matching kSignatureCount) and
+    // getSignatureCount() returns kSignatureCount (currently 13) and
     // getSignatureByIndex(i) returns a const reference to the
     // OrlibSignatureDef at that index, throwing std::out_of_range for
     // index >= count.
@@ -1672,9 +1672,9 @@ int main() {
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
-                      "getSignatureCount()==12 (got %zu)",
-                      sigCount);
-        CHECK(sigCount == 12u, buf);
+                      "getSignatureCount()==kSignatureCount (hardcoded %zu) (got %zu)",
+                      (size_t)tsdev::kSignatureCount, sigCount);
+        CHECK(sigCount == (size_t)tsdev::kSignatureCount, buf);
     }
 
     // --- getSignatureByIndex(i) per-signature field assertions ---

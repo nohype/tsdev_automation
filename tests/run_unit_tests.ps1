@@ -3,7 +3,7 @@
     Orchestrated C++ unit test runner for the TSDev Automation project.
 
 .DESCRIPTION
-    Runs all 14 C++ test executables built into the build\Release directory in
+    Runs all 18 C++ test executables built into the build\Release directory in
     sequence (NOT in parallel, because the shared warehouse file MWRKArea.wrk
     is not process-safe). Captures exit codes, measures per-test duration, and
     returns a single aggregated exit code (0 = all pass, 1 = any fail).
@@ -19,10 +19,14 @@
       8.  test_auto_cleanup           (requires TS - constructs TsDevLib)
       9.  test_modify                 (requires TS)
       10. test_modify_tradingapp      (requires TS)
-      11. test_delete                 (requires TS)
-      12. test_delete_tradingapp      (requires TS)
-      13. test_delete_check           (requires TS)
-      14. test_delete_diag            (requires TS)
+      11. test_exists                 (requires TS - constructs TsDevLib)
+      12. test_enumerate              (requires TS - constructs TsDevLib)
+      13. test_upsert                 (requires TS - constructs TsDevLib)
+      14. test_get_source             (requires TS - constructs TsDevLib)
+      15. test_delete                 (requires TS)
+      16. test_delete_tradingapp      (requires TS)
+      17. test_delete_check           (requires TS)
+      18. test_delete_diag            (requires TS)
 
 .PARAMETER BuildDir
     Directory containing the test executables. Defaults to "build\Release"
@@ -39,7 +43,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
-    Runs all 14 tests.
+    Runs all 17 tests.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
@@ -47,7 +51,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
-    Runs all 14 tests with full output for every test.
+    Runs all 18 tests with full output for every test.
 
 .NOTES
     Exit codes:
@@ -94,6 +98,10 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_auto_cleanup';           RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_modify';                 RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_modify_tradingapp';      RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_exists';                 RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_enumerate';              RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_upsert';                 RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_get_source';             RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_delete';                 RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_delete_tradingapp';      RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_delete_check';           RequiresTs = $true  }
@@ -229,7 +237,7 @@ function Print-Summary {
 Write-Host "TSDev Automation - C++ Unit Test Runner" -ForegroundColor Cyan
 Write-Host "Project root : $ProjectRoot"
 Write-Host "Build dir    : $ResolvedBuildDir"
-Write-Host "Mode         : $(if ($NoTs) { 'no-ts (3 non-TS tests only)' } else { 'full (all 14 tests)' })"
+Write-Host "Mode         : $(if ($NoTs) { 'no-ts (3 non-TS tests only)' } else { 'full (all 18 tests)' })"
 Write-Host "Verbose      : $Verbose"
 
 if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {

@@ -53,6 +53,9 @@ class TsDevResult:
     prog_id: int | None = None
     ell_path: str | None = None
     error: TsDevErrorInfo | None = None
+    exists: bool = False
+    stored_name: str = ""
+    source: str = ""
     # Raw subprocess output retained for debugging.
     stdout: str = ""
     stderr: str = ""
@@ -76,9 +79,12 @@ class TsDevResult:
             name=obj.get("name"),
             success=bool(obj.get("success", False)),
             exit_code=int(obj.get("exit_code", 0)),
-            prog_id=obj.get("prog_id"),
+            prog_id=obj.get("prog_id") if obj.get("prog_id") is not None else 0,
             ell_path=obj.get("ell_path"),
             error=error,
+            exists=bool(obj.get("exists", False)),
+            stored_name=str(obj.get("stored_name", "")),
+            source=str(obj.get("source", "")),
             stdout=stdout,
             stderr=stderr,
         )

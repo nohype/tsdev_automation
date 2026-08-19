@@ -273,6 +273,61 @@
 - **Goal:** If the baseline DLL is not present at test start, prompt the user whether to copy it from the TS installation. Do not continue without user decision. If the user declines, fail the dependent tests with a loud, clear message.
 - **Result:** New `tests/TestHelpers.psm1` shared module with `Find-TsInstallPath` (registry discovery + `--ts-path` override, `KEY_WOW64_32KEY`, no `WOW6432Node`) and `Ensure-BaselineDll` (prompts user, auto-copies on Y, loud failure on N). Added to `test_sigtool.ps1`, `run_unit_tests.ps1`, `run_regression.ps1`. `-SkipBaselineDllPrompt` switch prevents double-prompting from orchestrator. `test_orlib_resolver.cpp` updated with loud FATAL message (exit 99). TDD red-green verified (RED: DLL missing + N → loud failure, exit 1; GREEN: 59/59 pass; auto-copy: Y → copy from TS install, SHA-256 match). Adversarial review: APPROVED (0 CRITICAL/MAJOR, 2 MINOR pre-existing/cosmetic). E2E: 59/59 pass. Commit: 09386a4.
 
+### DONE — TVS-F.1: exists subcommand (exact-match, C++ CLI) (APPROVED)
+- **Goal:** Add an `exists` subcommand to `tsdev_cli` that queries item existence by name + component type (exact-match), returning the ProgId and existence flag, with `--json` output support.
+- **Implementation:** Added to `src/tsdev_cli.cpp`:
+  - `doExists()` — calls `TsDevLib::findExistPos(name, type)`, treats `> 0` as found, `<= 0` as not-found, sets exit 0 in both cases, never emits exit 5/`not_found`.
+  - `cmdExists()` — validates type (exit 2 on unknown) and name (exit 2 on empty), launches a 64MB-stack worker thread (same pattern as insert/modify/delete).
+  - `runExists()` worker + `ExistsParams` struct — constructs/destructs TsDevLib on the worker thread.
+  - Subcommand dispatch in `main()` — `iequals(subcommand, "exists")` with `reducedArgc != 4` guard (prog + sub + type + name).
+  - `CliResult.exists` field + `emitOutput()` emits `exists` boolean + `prog_id` (only when > 0).
+  - `printUsage()` + top-of-file usage comment updated.
+- **findExistPos contract confirmed:** returns `> 0` ProgId if found, `-1` if not found (raw orlib20 result), `0` on SEH exception. `<= 0` = not found (matches existing production convention in deleteEntry/modifyEntry).
+- **Exit code semantics:** Exit 0 for BOTH found and not-found (not-found is a valid query result, not an error). Exit 2 = unknown type / empty name. The `exists` op NEVER emits exit 5 / `not_found`.
+- **JSON output shape:** found → `{op:"exists", type, name, success:true, exit_code:0, prog_id:N, exists:true}`; not-found → `{op:"exists", type, name, success:true, exit_code:0, exists:false}` (no `prog_id` key).
+- **Tests added:**
+  - `tests/test_exists.cpp` — C++ unit test guarding `findExistPos` (constructs TsDevLib on 64MB worker thread, inserts probe, asserts findExistPos > 0 for existing, asserts findExistPos <= 0 for nonexistent, cleans up).
+  - `tests/test_exists.ps1` — 5-case PowerShell E2E (D1.1a insert, D1.1b exists-found, D1.2 exists-not-found, D1.3a delete, D1.3b exists-after-delete). Uses separate stdout/stderr capture (matching the established `Invoke-CliRaw` pattern) because the library emits an intentional stderr diagnostic (`tsdev: TS install path resolved via registry...`) that must not be merged into the JSON stream.
+  - Wired into `CMakeLists.txt` (test_exists target), `tests/run_unit_tests.ps1` (inventory), `tests/run_regression.ps1` (4th suite with `-SkipExists` flag, skipped under `-NoTs`).
+- **TDD red-green:**
+  - RED: E2E test failed because `exists` subcommand didn't exist (CLI returned `unknown subcommand "exists"`, exit 1). Unit test initially had a wiring defect (asserted `findExistPos` returns exactly `0` for not-found; actual is `-1`) — fixed assertion to `> 0` = failure (treating `<= 0` as not-found).
+  - GREEN: After implementation, unit test PASS, E2E 5/5 PASS. One additional fix needed: the E2E harness initially merged stdout+stderr with `2>&1` (broke JSON parsing on the stderr diagnostic) — fixed to capture stdout/stderr separately, matching the established `Invoke-CliRaw` pattern from `test_json_output.ps1`/`test_batch_mode.ps1`.
+- **Adversarial review:** APPROVED. One material gap found (E2E test not wired into regression runner) — fixed by adding `test_exists.ps1` as a 4th suite in `run_regression.ps1`. One minor non-blocking suggestion (comment inaccuracy in test_exists.cpp) — fixed.
+- **Verification results:**
+  - Full regression suite: 66/66 tests pass (12 sigtool + 15 unit incl. test_exists + 34 E2E + 5 exists), 4/4 suites.
+  - E2E CLI verification: 24/24 cases pass across all 4 component types (Strategy, Indicator, Function, TradingApp) — full exists→insert→exists→delete→exists lifecycle per type — plus 4 edge cases (human mode, unknown type, missing name, empty name).
+- **Files changed:** `src/tsdev_cli.cpp`, `tests/test_exists.cpp` (new), `tests/test_exists.ps1` (new), `CMakeLists.txt`, `tests/run_unit_tests.ps1`, `tests/run_regression.ps1`.
+- **Non-blocking follow-up:** Empty-name validation reuses exit code 2 (maps to `error.code: "unknown_type"` in JSON) while `error.message` correctly says "component name must not be empty". Cosmetic mismatch in the code field only; exit code and message are correct. Consistent with existing subcommands' convention.
+- **Plan reference:** `docs/WORKSTREAM_F_PLAN.md` (adversarially reviewed + APPROVED). TVS-F.1 is the first of 6 TVSs in Workstream F. Next TVS: F.2 (inline batch via stdin).
+
+### DONE — TVS-F.5: Case-insensitive `exists` with stored name + ProgId return (APPROVED)
+- **Date:** 2026-08-19
+- **Summary:** Extended the `exists` subcommand (TVS-F.1, exact-match) with case-insensitive name matching, returning the verbatim (correctly-cased) stored item name and ProgId. Implemented in both the C++ CLI and the Python wrapper.
+- **Key architectural decision — two-phase enumerateRecords:** Instead of the originally planned single-phase `_LoadMasterRecsEX@16` with `filterMode=0` (which required cmd 0x0F + cmd 0x4E cache refresh), the implementation uses a two-phase approach:
+  - **Phase 1:** `_LoadMasterRecsEX@16` (cached, for pre-existing records) with case-insensitive `_stricmp` search. Two-pass: tries without refreshCache first, then with refreshCache.
+  - **Phase 2:** `FindExistPos` (BST, case-insensitive) + `getSource` (for verbatim stored name from `{ name }` comment block) — for newly created records not yet in the cache.
+  - This avoids the need for cmd 0x0F + cmd 0x4E cache refresh, simplifying the implementation and reducing the patch surface.
+- **New signature:** `FUN_101cfce0_thread_check_INT3` (cmd 0x0D dispatcher) — 19 total signatures. New export `_LoadMasterRecsEX@16` resolved.
+- **C++ CLI (`src/tsdev_cli.cpp`):** Added `--case-insensitive` (short `-i`) flag for the `exists` subcommand. New output format: `exists=N`, `stored_name=...`, `progId=N`. Default (no flag): case-sensitive (post-compares stored name with query name). With flag: case-insensitive (uses `enumerateRecords` directly). `CliResult.storedName` field added; `emitOutput()` emits `stored_name` in JSON when non-empty.
+- **TsDevLib (`src/tsdev_lib.h`/`.cpp`):** Added `EnumerateResult` struct (`exists`, `storedName`, `progId`), `enumerateRecords(ComponentType, searchName)` method, `LoadMasterRecsExFn` typedef, `m_loadMasterRecsEx` member, `callLoadMasterRecsEx` SEH helper. Thread-check arrays grown to accommodate the new cmd 0x0D patch.
+- **Python wrapper (`src/tsdev_automation/`):** `TsDevClient.exists(type, name, *, case_insensitive=False)` — keyword-only `case_insensitive` param. `TsDevResult` gained `stored_name` field (default `""`). `results.py` `from_json()` parses `stored_name`. Python CLI (`_cli.py`) supports `-i`/`--case-insensitive` flag on the `exists` subcommand.
+- **`{ name }` comment block requirement:** For Phase 2 stored name extraction, `getSource` retrieves the EL source text and parses the verbatim stored name from the `{ name }` comment block in the source. This requires the source to contain a `{ name }` comment block (standard EasyLanguage convention).
+- **Files changed (key files):**
+  - `signatures/v9.50.01.3344.json` — new signature `FUN_101cfce0_thread_check_INT3` + new export `_LoadMasterRecsEX@16`
+  - `tools/sigcodegen.py` — signature/export count bumps
+  - `src/tsdev_lib.h` / `src/tsdev_lib.cpp` — `EnumerateResult`, `enumerateRecords`, SEH helper, patch application
+  - `src/tsdev_cli.cpp` — `--case-insensitive` flag, `storedName` field, output format, dispatch
+  - `src/tsdev_automation/results.py` — `stored_name` field in `TsDevResult`
+  - `src/tsdev_automation/client.py` — `case_insensitive` param in `exists()`
+  - `src/tsdev_automation/_cli.py` — `-i`/`--case-insensitive` flag in `exists` subparser
+  - `tests/test_exists_ci.ps1` — 9 E2E test cases (NEW)
+  - `tests/test_tsdev_client.py` — Python unit + E2E tests for case-insensitive exists
+  - `tests/run_regression.ps1` — new case-insensitive exists sub-suite
+  - `tests/test_sigtool.ps1` — signature count bump
+  - `CMakeLists.txt` — new test target
+- **Test results:** 8/8 C++ regression suites PASS + 60/60 Python tests PASS.
+- **Plan reference:** `docs/WORKSTREAM_F5_PLAN.md` (adversarially reviewed + APPROVED). TVS-F.5 was the last remaining F item (previously marked OPTIONAL). Workstream F is now FULLY COMPLETE (F.1–F.6).
+
 ## PREVIOUS Entries (from PM_WORKING_MEMORY.md)
 
 ## PREVIOUS: TVS-B.6 — Automated regression test suite (COMPLETE, APPROVED)
@@ -508,3 +563,4 @@
 - 2026-08-17: Next TVS = A.4 (ABI fix, caller-side only). A.1/A.3 can be skipped/bypassed by A.4.
 - 2026-08-18: TVS-E.2 (sigtool CLI) COMPLETE & APPROVED. Created standalone developer tool (`src/sigtool.cpp`) for verifying orlib20.dll signatures against a DLL on disk — 5 commands (verify, verify-patch, info, scan, manifest) with exit codes 0/1/2. Vendored nlohmann/json v3.11.3 to `third_party/nlohmann/json.hpp` for the `--signatures <json>` runtime JSON flag. Added public iterator API to OrlibResolver (`getSignatureCount`/`getSignatureByIndex`) — user-approved additive change. TDD red-green: C2039 "not a member" → Cycle 6 (77/77 assertions). sigtool test script 12/12 pass. Full regression: all 10 test executables pass. Adversarial review APPROVED with 4 MINOR non-blocking observations (info exit code spec ambiguity, section header bounds checking, verify-patch test content checks, missing edge case tests). Next: TVS-E.3 (RVA dedup).
 - 2026-08-18: TVS-E.3 (deduplicate test_orlib_resolver.cpp RVAs) COMPLETE & APPROVED. Single-file refactor: replaced all 28+ hardcoded RVA hex literals in `src/test_orlib_resolver.cpp` with generated-header constants (`tsdev::kSignatures[i].rva`, `tsdev::kExports_v9_50_01_3344[i].rva`, `tsdev::kDataGlobals_v9_50_01_3344[i].rva`, patchRva sums). Updated all snprintf diagnostics to format expected values dynamically. Cleaned ~30 comments. TDD green coupling proof PROVEN (bump JSON expectedRva → test fails → restore → all pass). Adversarial review APPROVED (0 CRITICAL/MAJOR/MINOR, independent rebuild + spot-check, 127 CHECK assertions preserved, no scope creep). E2E CLI verification PASS (insert/modify/delete cycle + error cases). Next: TVS-E.4 (evolve test_no_hardcoded_rvas.cpp — Option A §7.4).
+- 2026-08-19: TVS-F.5 (case-insensitive `exists` with stored name + ProgId return) COMPLETE & APPROVED. Two-phase `enumerateRecords` approach: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FindExistPos` (BST, case-insensitive) + `getSource` (verbatim stored name from `{ name }` comment block) for newly created records. Key decision: two-phase (cached + BST fallback) instead of cmd 0x0F + cmd 0x4E cache refresh (simpler, smaller patch surface). New signature `FUN_101cfce0_thread_check_INT3` (cmd 0x0D dispatcher) — 19 total signatures. CLI `--case-insensitive`/`-i` flag; new output format `exists=N`, `stored_name=...`, `progId=N`. Python `TsDevClient.exists(type, name, *, case_insensitive=False)` + `TsDevResult.stored_name` field. Tests: 8/8 C++ regression suites + 60/60 Python tests. **Workstream F FULLY COMPLETE (F.1–F.6).**
