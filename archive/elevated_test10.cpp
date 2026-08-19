@@ -50,7 +50,7 @@ void logf(const char* fmt, ...) {
 DWORD WINAPI probe_main(LPVOID);
 
 int main() {
-    g_log = fopen("C:\\Users\\user\\projects\\tsdev_automation\\elevated_test10_log.txt", "w");
+    g_log = fopen("elevated_test10_log.txt", "w");
     if (!g_log) { printf("FATAL: can't open log file\n"); return 1; }
     setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -142,14 +142,14 @@ DWORD WINAPI probe_main(LPVOID) {
 
     // Step 4: Wait for Frida go signal
     logf("\n--- Step 4: Waiting for Frida go signal ---\n");
-    logf("  Create C:\\Users\\user\\projects\\tsdev_automation\\go_signal.txt to proceed\n");
+    logf("  Create go_signal.txt to proceed\n");
     fflush(g_log);
     for (int i = 0; i < 120; i++) {
-        FILE* go = fopen("C:\\Users\\user\\projects\\tsdev_automation\\go_signal.txt", "r");
+        FILE* go = fopen("go_signal.txt", "r");
         if (go) { fclose(go); break; }
         Sleep(1000);
     }
-    remove("C:\\Users\\user\\projects\\tsdev_automation\\go_signal.txt");
+    remove("go_signal.txt");
     logf("  Go signal received. Proceeding with verify.\n");
 
     // Step 5: Verify pipeline

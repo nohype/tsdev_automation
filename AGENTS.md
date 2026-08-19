@@ -21,7 +21,7 @@ We are replacing TSDev.exe for automated TS library management. Our code should 
 - Modifying existing Strategies and Functions:
    - Provided the name of an existing strategy/function and new EasyLanguage source code, replace the existing strategy's/function's EasyLanguage code and recompile/re-verify (notify if it doesn't exist; fail loudly if compilation of new EasyLanguage code fails)
 - Querying whether an item exists:
-   - Provided a component type and an item name, query whether an item with that name exists in the TSDev Library. Supports an optional case-insensitive search flag (`--case-insensitive` / `-i` on the C++ CLI; `case_insensitive=True` on the Python wrapper). Returns the verbatim (correctly-cased) stored item name, whether it exists, and the ProgId if found. Reuses the existing `--json` flag to toggle between human-friendly and JSON output. Output format: `exists=N`, `stored_name=...`, `progId=N`. Default (no flag): case-sensitive (post-compares stored name with query name). With flag: case-insensitive (uses two-phase `enumerateRecords` — Phase 1: `_LoadMasterRecsEX@16` cached search with `_stricmp`; Phase 2: `FUN_101d05e0` BST search + `FUN_101c36d0` verbatim name getter — retrieves the stored name directly from the warehouse node structure, NOT from source comments).
+   - Provided a component type and an item name, query whether an item with that name exists in the TSDev Library. Supports an optional case-insensitive search flag (`--case-insensitive` on the C++ CLI; `case_insensitive=True` on the Python wrapper). Returns the verbatim (correctly-cased) stored item name, whether it exists, and the ProgId if found. Reuses the existing `--json` flag to toggle between human-friendly and JSON output. Output format: `exists=N`, `stored_name=...`, `progId=N`. Default (no flag): case-sensitive (post-compares stored name with query name). With flag: case-insensitive (uses two-phase `enumerateRecords` — Phase 1: `_LoadMasterRecsEX@16` cached search with `_stricmp`; Phase 2: `FUN_101d05e0` BST search + `FUN_101c36d0` verbatim name getter — retrieves the stored name directly from the warehouse node structure, NOT from source comments).
 - Retrieving the EL source code of an item:
    - Provided the name of an existing item (and its component type), retrieve its EasyLanguage source code. By default, prints the raw EL source to stdout. With an additional `--output <file_path>` flag, writes the EL source directly to the specified file. Supports standard (non-password-protected) items only; password-protected items return an error.
 - Upserting (insert-or-update) an item:
@@ -38,7 +38,9 @@ The C++ CLI must additionally support batch operations both via a manifest file 
 - This project is written in C++ using the Visual Studio Build Tools (already available on this machine).
 
 ## Technical process
-- Use the *luma* MCP tools to reverse engineer, inspect and analyze the TSDev.exe application and its modules
+- Use the *Ghidra MCP tools* and *Frida directly (command line)* to reverse engineer, inspect and analyze the TSDev.exe application and its modules:
+   - Ghidra for static
+   - Frida for dynamic/runtime anaylysis (e.g. instrumentation, tracing, etc.)
 - Determine how this project (a custom, standalone CLI application) can most efficiently, with the least amount of custom implementation and the least complexity, implement the functions (see `## Functions` above)
 
 ## PM (lead agent) role:
@@ -86,6 +88,29 @@ Any files from the TS installation directory which must be inspected, modified, 
 - The TradeStation Development Environment application (TSDev.exe): `C:\Program Files (x86)\TradeStation 9.5\Program\TSDev.exe`
 - The TSDev Library (where strategies, functions, etc. are stored *compiled and encrypted*): `C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin`
 
+## Documentation Index
+
+Read `AGENTS.md` (this file) first — it contains always-on rules and project overview. Read other documents on-demand based on the task:
+
+**Operational reference (read when doing the relevant task):**
+- `docs/BUILD.md` — Build & test instructions. Read when building, running tests, or updating the baseline DLL.
+- `docs/E2E_TEST_SPEC.md` — End-to-end CLI test specification (all 4 component types, all subcommands). Read when running or extending E2E tests.
+- `docs/SIGNATURE_CATALOG.md` — Authoritative human-readable catalog of all 25 orlib20.dll signatures, 10 exports, 3 data globals, 12 patch sites. Read when working with signatures, patches, or the OrlibResolver.
+- `docs/VERSION_DETECTION.md` — orlib20.dll version detection strategy (3-tier multi-factor method). Read when working on version detection or the version manifest.
+- `docs/TS_COMPONENT_TYPES.md` — TradeStation component types and orlib20 warehouse type mappings. Read when working with component types or adding new types.
+- `docs/FEASIBILITY.md` — Reverse-engineering feasibility study (orlib20 primitives, parameter orders, INSERT/MODIFY/DELETE pseudocode). Read when understanding the RE foundation.
+
+**Python integration:**
+- `docs/INTEGRATION_APPROACH_EVALUATION.md` — Decision document for 64-bit Python ↔ 32-bit orlib20.dll integration (Option A+ chosen: batch CLI + JSON I/O). Read when working on the Python wrapper.
+
+**Reverse-engineering reference (read when doing RE work on orlib20.dll):**
+- `docs/RE/` — Durable RE findings for TVS-F.4 (get-source) and TVS-F.5 (case-insensitive exists). Contains ABI documentation, patch-site analysis, BST node structure, and warehouse COM interface analysis. Read when investigating orlib20 internals.
+- `docs/RE/archive/` — Historical RE process artifacts (superseded approaches, adversarial reviews of rejected approaches). Historical context only.
+
+**Historical reference (read for context, not operational guidance):**
+- `docs/PROJECT_HISTORY.md` — Detailed per-TVS completion log. Read for historical context on completed work.
+- `docs/PM_WORKING_MEMORY.md` — PM's operational memory (crash-safety procedures, Frida tips, current state). The PM reads this at the start of every turn.
+- `docs/archive/` — Completed workstream plans, handoffs, and design documents. Historical reference only; counts and details within may be stale.
 
 ## TODO
 This is a running, continually updated TODO list to bring this project to complection.
@@ -94,7 +119,7 @@ Update this list to reflect the current state and the next best steps as the pro
 
 ### Completed Work Summary
 
-All workstreams A, B, C, E are COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G are COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
 
 | TVS | Result | Status |
 |-----|--------|--------|
@@ -113,7 +138,7 @@ All workstreams A, B, C, E are COMPLETE. Detailed per-TVS logs are archived in `
 | TVS-B.4 | OrlibResolver .cpp implementation | COMPLETE |
 | TVS-B.4.5 | resolveErrorHinstRva instruction-offset extraction | COMPLETE |
 | TVS-B.5 | OrlibResolver integration with TsDevLib | COMPLETE |
-| TVS-B.6 | Automated regression test suite (60 tests) | COMPLETE |
+| TVS-B.6 | Automated regression test suite (initial 60 tests, now 93 across 8 sub-suites) | COMPLETE |
 | TVS-B.6.5 | Baseline DLL committed to tests/fixtures/ | COMPLETE |
 | TVS-B.6.6 | Interactive baseline DLL prompting in test runners | COMPLETE |
 | TVS-B.7 | TS install path discovery + --ts-path CLI override | COMPLETE |
@@ -137,39 +162,36 @@ All workstreams A, B, C, E are COMPLETE. Detailed per-TVS logs are archived in `
 | TVS-F.4 | get-source subcommand (C++ CLI, RE-based) | COMPLETE |
 | TVS-F.6 | Python wrapper for all F ops (exists/get-source/upsert + inline batch stdin) | COMPLETE |
 | TVS-F.5 | Case-insensitive exists with stored name + ProgId return (C++ CLI + Python) | COMPLETE |
+| TVS-G.1–G.5 | Distributable bundle (dist/ + artifacts/ zip) | COMPLETE |
 
 **Key architectural facts:**
 - Signature data: `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) — 25 signatures total, 12 patch sites
 - OrlibResolver: signature-based RVA resolution, no hardcoded RVAs in production code
 - CLI supports 4 component types: Strategy (0), Indicator (2), Function (4), TradingApp (5122)
-- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (8 C++ regression suites: sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci). Python: 60 tests. All passing.
+- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (8 C++ regression suites: sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci). Python: 62 tests. All passing.
 - Fresh clone builds without `tmp/` dependencies (Workstream E fixed this)
 - Case-insensitive `exists` uses two-phase `enumerateRecords`: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter, returns char* from warehouse node at offset +0x1D). The stored name comes from the WAREHOUSE, not from source text. Key decision: two-phase instead of cmd 0x0F + cmd 0x4E cache refresh.
 
-### NEXT WORKSTREAMS (in priority order)
-1. **(D) Python Integration** — COMPLETE. See `docs/INTEGRATION_APPROACH_EVALUATION.md` (approach decision) and the `tsdev_automation` Python package (`src/tsdev_automation/`). Approach: Option A+ (batch CLI + JSON I/O, no daemon). 64-bit Python drives the 32-bit `tsdev_cli.exe` as a subprocess (in-process 32-bit DLL loading is impossible from 64-bit Python — WOW64 constraint, verified). `TsDevClient` API: `insert`/`modify`/`delete` (single-item via `--json`, returns `TsDevResult`, raises typed exceptions) + `batch_insert`/`batch_modify`/`batch_delete` (line-based manifest, JSON results, init amortized — 600 items in ~140s vs ~386s unbatched). 29 Python tests (20 unit + 9 E2E) + 66 C++ regression tests all passing. Wheel builds via `uv build`.
+### Project Status
 
-2. **(F) New Operations & Inline Batch** — COMPLETE (ALL 6 TVSs: F.1–F.6 including F.5). Approved plan: `docs/WORKSTREAM_F_PLAN.md` (6 TVSs: F.1 exists exact-match [DONE], F.2 inline batch stdin [DONE], F.3 upsert [DONE], F.4 get-source [DONE], F.5 exists case-insensitive [DONE], F.6 Python wrapper [DONE]).
-   Adds 4 new capabilities to both the C++ CLI and the Python wrapper — ALL NOW COMPLETE in both:
-   - `exists` subcommand — query item existence by name + component type. Supports `--case-insensitive`/`-i` flag (C++ CLI) and `case_insensitive=True` (Python wrapper) for case-insensitive name matching. Returns whether it exists, the verbatim stored name, and the ProgId if found. Output format: `exists=N`, `stored_name=...`, `progId=N`. Default (no flag): case-sensitive. With flag: case-insensitive via two-phase `enumerateRecords` (Phase 1: `_LoadMasterRecsEX@16` cached `_stricmp` search; Phase 2: `FUN_101d05e0` BST search + `FUN_101c36d0` verbatim name getter — retrieves stored name from warehouse node, NOT from source comments). Reuses `--json` for output mode.
-   - `get-source` subcommand — retrieve EasyLanguage source by name + component type. Raw EL to stdout by default; `--output <file_path>` writes to a file. Standard (non-password-protected) items only; password-protected items return an error (indistinguishable from not-found, both exit 5/`not_found`).
-   - `upsert` subcommand — insert-or-modify by name + component type + source file (branches on existence; ProgId preserved on the modify path).
-   - Inline batch via stdin — `batch-insert`/`batch-modify`/`batch-delete` accept the manifest on stdin (via a `--batch-stdin` flag) IN ADDITION to the existing manifest-file path (kept for backward compatibility). The Python wrapper now pipes the manifest via stdin (eliminates temporary manifest files).
-   - Corresponding `TsDevClient` methods and Python CLI subcommands for all of the above — DONE in TVS-F.6 (`TsDevClient.exists`/`get_source`/`upsert`; `_cli.py` `exists`/`get-source`/`upsert` subcommands; `_batch()` uses `--batch-stdin`).
+ALL workstreams (A, B, C, D, E, F, G) are COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build.
 
-   **Feasibility status (all 4 FEASIBLE — ALL COMPLETE):**
-   - `exists` (exact-match), `upsert`, and inline-batch-via-stdin require NO new reverse engineering — they compose existing primitives (`findExistPos`, `doInsert`, `doModify`, `parseManifest`).
-   - `get-source` required MODERATE RE (DONE in TVS-F.4): orlib20 exports `_LoadTextFileEX@16` (source-text retrieval, counterpart to the already-used `_SaveTextEX@16`); source text is stored in the warehouse (not the encrypted `.ell` files). Implementation: (1) resolved the `_LoadTextFileEX@16` named export (RVA 0x1081A0), (2) added a NEW thread-check INT3 patch site for warehouse command `0x11` (signature `FUN_101d0e80_thread_check_INT3`, offset 57, same proven NOP technique as the existing 3 patches for commands 0x0F/0x1E/0x17), and (3) confirmed parameter order via Ghidra static analysis (thunk + authoritative mirror caller `FUN_10108630` — Frida live trace NOT needed; doubly verified by independent adversarial review). See `docs/RE/RE_F4_loadtextfileex_findings.md` and `docs/RE/RE_F4_cmd11_patch_findings.md` for the RE evidence.
-   - The case-insensitive `exists` flag (DONE in TVS-F.5): `findExistPos` is exact-match only and returns a ProgId (not the stored name). Case-insensitive search AND returning the verbatim stored name are implemented via a two-phase `enumerateRecords` approach — Phase 1: `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2: `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter, returns char* from warehouse node at offset +0x1D) for newly created records. The stored name comes from the WAREHOUSE, not from source text. Key architectural decision: two-phase (cached + BST fallback) instead of cmd 0x0F + cmd 0x4E cache refresh. New signatures: `FUN_101cfce0_thread_check_INT3`, `FUN_101d05e0_bst_search_wrapper`, `FUN_101c36d0_verbatim_name_getter`, `FUN_101c36d0_thread_check_INT3` — 25 total signatures. New export `_LoadMasterRecsEX@16`.
+### Active Workstream: G — Distributable Bundle (COMPLETE)
 
-   **TVS-F.6 (Python wrapper) — COMPLETE.** Added `TsDevClient.exists`/`get_source`/`upsert` methods, `OutputWriteError` exception, `TsDevResult.exists`/`source` fields, Python CLI `exists`/`get-source`/`upsert` subcommands, and switched `_batch()` to pipe the manifest via stdin (`--batch-stdin`, eliminating temp manifest files). 53 Python tests pass (24 new: TestExists 4 + TestGetSource 5 + TestUpsert 5 + TestBatchStdin 5 + TestCliNewSubcommands 5). E2E CLI 14/14 PASS with real CLI + real TradeStation. The primary acceptance criteria are now FULLY satisfied: all 6 functions work via both the C++ CLI and the Python wrapper.
+| TVS | Scope | Status |
+|-----|-------|--------|
+| TVS-G.1 | CMake POST_BUILD bundle assembly + .gitignore (dist/ + artifacts/) | COMPLETE |
+| TVS-G.2 | Python wrapper bundle-layout auto-discovery + unit test | COMPLETE |
+| TVS-G.3 | Bundle README template + root README/BUILD.md docs + CMake README copy | COMPLETE |
+| TVS-G.5 | Automatic timestamped zip creation in artifacts/ (PowerShell POST_BUILD) | COMPLETE |
+| TVS-G.4 | (optional) Remove stale capstone runtime dep from pyproject.toml | COMPLETE |
 
-   **TVS-F.5 (case-insensitive exists) — COMPLETE (reworked Aug 2026).** Extended `exists` with case-insensitive name matching, verbatim stored name, and ProgId return. C++ CLI: `--case-insensitive`/`-i` flag; new output format `exists=N`, `stored_name=...`, `progId=N`. Default (no flag): case-sensitive (post-compares stored name with query name). With flag: case-insensitive via two-phase `enumerateRecords` (Phase 1: `_LoadMasterRecsEX@16` cached `_stricmp` search, two-pass without/with refreshCache; Phase 2: `FUN_101d05e0` BST search + `FUN_101c36d0` verbatim name getter — retrieves stored name from warehouse node at offset +0x1D, NOT from source comments). Key architectural decision: two-phase (cached + BST fallback) instead of cmd 0x0F + cmd 0x4E cache refresh. **Rework note**: The original Phase 2 used `findExistPos` + `getSource` and parsed `{ name }` source comments for the stored name — this violated the HARD RULE against relying on mutable item internals. The rework calls `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (name getter, returns char* from warehouse) directly, emulating TSDev's server-mode name retrieval path. Python wrapper: `TsDevClient.exists(type, name, *, case_insensitive=False)` — keyword-only param; `TsDevResult.stored_name` field (default `""`); Python CLI (`_cli.py`) `-i`/`--case-insensitive` flag. New signatures: `FUN_101cfce0_thread_check_INT3`, `FUN_101d18c0_thread_check_INT3`, `FUN_101d05e0_bst_search_wrapper`, `FUN_101c36d0_verbatim_name_getter`, `FUN_101c36d0_thread_check_INT3` — 25 total signatures, 12 patch sites. New export `_LoadMasterRecsEX@16`. Tests: `tests/test_exists_ci.ps1` (9 E2E cases) + Python E2E `test_exists_case_insensitive_e2e`. 8/8 C++ regression suites + 60/60 Python tests PASS.
-
-Workstreams A (compilation errors), B (robustness), C (TradingApp), D (Python integration), E (architecture redesign), and F (new operations & inline batch) are ALL COMPLETE. Their handoff documents have been archived to `docs/archive/`.
+### Candidate Future Work
+1. **4 unconfirmed warehouse-type mappings** (ActivityBar, PaintBar, ProbabilityMap, ShowMe) — feature gap, requires Ghidra/Frida RE work per type. See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. Currently no user need. Defer.
+2. **SEH protection on error array reads** — `readErrorsFromArray` reads raw memory without SEH guards. Low likelihood (array populated by compiler in normal flow). Defer.
 
 ### REMAINING FOLLOW-UPS
-- **4 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap, ShowMe whType codes are NOT confirmed. Code restricts to 4 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff.
+- **4 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap, ShowMe whType codes are NOT confirmed. Code restricts to 4 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff. Currently no user need. Defer.
 - **Partial warehouse entry on compile failure (TD-001):** When `insert` fails compilation, `createEntry` has already allocated a ProgId and created a warehouse entry. The CLI now auto-cleans up this partial entry (fixed in this cleanup pass). See `tests/test_auto_cleanup.cpp`.
 
 ### Resolved follow-ups (closed)
@@ -179,6 +201,14 @@ Workstreams A (compilation errors), B (robustness), C (TradingApp), D (Python in
 - ~~Stale +0x3E comment in tsdev_lib.cpp~~ — Already correct (+0x43). The B.3 flag was itself stale.
 - ~~Stale SIGNATURE_CATALOG.md §4.9 note~~ — RESOLVED (TVS-B.1.5). Doc updated.
 - ~~Partial-construction patch restoration gap (TD-002)~~ — FIXED. `m_patchesApplied` now set after each individual patch; destructor guards restoration by cached RVA.
+
+## Workstream G progress
+- **TVS-G.1: CMake POST_BUILD bundle assembly + .gitignore** — COMPLETE. CMake POST_BUILD copies `tsdev_cli.exe` + 6 `.py` files (`__init__.py`, `client.py`, `exceptions.py`, `results.py`, `__main__.py`, `py.typed`) to `dist/` on every build via `copy_if_different`. `dist/.gitignore` removed; root `.gitignore` updated with `/dist/` and `/artifacts/` entries. Adversarial review APPROVED.
+- **TVS-G.2: Python wrapper bundle-layout auto-discovery** — COMPLETE. New step 3 in `_resolve_cli_path()` (`src/tsdev_automation/client.py`): checks `<package_parent>/tsdev_cli.exe` before the CMakeLists.txt walk-up, so the wrapper auto-discovers the CLI when imported from the `dist/` bundle layout. 2 unit tests added (62 Python tests total). Adversarial review APPROVED.
+- **TVS-G.3: Bundle README** — COMPLETE. `docs/BUNDLE_README.md` → `dist/README.md` via CMake POST_BUILD `copy_if_different`. Root `README.md` "Distribution / Bundle" section added. `docs/BUILD.md` "### 5. Bundle output" subsection added. Adversarial review APPROVED.
+- **TVS-G.5: Automatic timestamped zip in artifacts/** — COMPLETE. `tools/create_bundle_zip.ps1` with `$ErrorActionPreference='Stop'` (fail-loudly). CMake POST_BUILD invokes it. Zip pattern: `tsdev_automation_<yymmdd><HHMM>.zip`. Selective contents: exe + `tsdev_automation/` + `README.md` only. Adversarial review APPROVED.
+- **TVS-G.4 (optional): Remove stale capstone runtime dep** — COMPLETE. Removed `capstone>=5.0.9` from `pyproject.toml` `dependencies` (now `dependencies = []`). Fixed false capstone claim in `README.md` (now correctly states "stdlib-only"). Wrapper and `tools/sigcodegen.py` are stdlib-only (verified: zero capstone imports in production code). Adversarial review APPROVED.
+- **Full E2E:** 7-step E2E passed (8/8 C++ regression suites + 62 Python tests). All adversarial reviews APPROVED.
 
 ### Standing notes
 - TradeStation install paths are READ-ONLY — never modify. Copy files into `tmp/` to work on them.

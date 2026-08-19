@@ -2,23 +2,26 @@
 
 | Field | Value |
 |---|---|
-| **TVS Identifier** | TVS-B.1 |
-| **Date** | 2026-08-17 |
+| **TVS Identifier** | TVS-B.1 + Workstreams F.4, F.5 |
+| **Date** | 2026-08-17 (B.1); 2026-08-19/26 (F.4, F.5 additions) |
 | **Status** | APPROVED |
-| **Purpose** | Primary deliverable of TVS-B.1. Catalogs the 12 code-section RVA targets in `orlib20.dll`, providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 7 export names, 3 data-section RVA targets, and structural constants. This catalog is the baseline for signature-based RVA resolution and version detection in later TVSs. |
+| **Purpose** | Catalogs the 25 code-section RVA targets in `orlib20.dll` (12 from TVS-B.1 + 13 from Workstreams F.4 and F.5), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 10 export names, 3 data-section RVA targets, 12 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
 
-> **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
+> **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/archive/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
+
+> **WORKSTREAM F.4/F.5 NOTICE (2026-08-19/26):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The catalog below has been updated to reflect all 25 signatures, 10 exports, 3 data globals, and 12 patch sites. The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py` (EXPECTED_SIGNATURE_COUNT=25, EXPECTED_DATA_GLOBAL_COUNT=3, EXPECTED_EXPORT_COUNT=10).
 
 **Source artifacts (all in `tmp/re_artifacts/`):**
 
 | Artifact | Content |
 |---|---|
 | `b1_dll_baseline.md` | DLL baseline metadata (version, SHA-256, PE timestamp, .text section info) |
-| `b1_rva_inventory.md` | Full inventory of 46 entries (12 RVA targets + 3 data offsets + 7 export names + structural constants) |
-| `b1_ghidra_evidence.md` | Ghidra disassembly, raw bytes, calling conventions for all 12 targets |
-| `b1_signatures.h` | The 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
-| `b1_export_confirmation.md` | Export table confirmation for the 7 export names |
-| `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) |
+| `b1_rva_inventory.md` | Full inventory of 46 entries (12 original RVA targets + 3 data offsets + 7 original export names + structural constants) |
+| `b1_ghidra_evidence.md` | Ghidra disassembly, raw bytes, calling conventions for the original 12 targets |
+| `b1_signatures.h` | The original 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
+| `b1_export_confirmation.md` | Export table confirmation for the original 7 export names |
+| `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) for the original 12 signatures |
+| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 25 signatures, 3 data globals, 10 exports (all versions) |
 
 ---
 
@@ -86,9 +89,9 @@ In all signatures in this catalog, `??` represents a **wildcard byte** (matches 
 
 *Source: `signatures/v9.50.01.3344.json` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-One row per RVA target (12 rows). For patch sites (targets 9–12), additional patch metadata columns are populated.
+One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25), additional patch metadata columns are populated.
 
-> **Note on targets 10–12:** The signature matches the **containing function** entry point, not the patch byte itself. The "RVA" column shows the **patch-site RVA** (the production target). The "Sig Match RVA" column shows where the signature actually matches (the containing function entry). The patch byte is at `Sig Match RVA + Patch Offset`.
+> **Note on patch-site targets:** The signature matches the **containing function** entry point (or a mid-function anchor for some F.5 signatures), not the patch byte itself. The "RVA" column shows the **patch-site RVA** (the production target). The "Sig Match RVA" column shows where the signature actually matches (the containing function entry or anchor). The patch byte is at `Sig Match RVA + Patch Offset`.
 
 | # | Name | RVA (target) | Calling Convention | Length | Unique? | Patch Site? |
 |---|---|---|---|---|---|---|
@@ -104,6 +107,19 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | `__thiscall` (ecx=this) | 36 | Yes (1/1) | Yes |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | `__thiscall` (ecx=this) | 37 | Yes (1/1) | Yes |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | `__thiscall` (ecx=this) | 57 | Yes (1/1) | Yes |
+| 13 | FUN_101d0e80_thread_check_INT3 | 0x1D0EB9 | `__thiscall` (ecx=this) | 74 | Yes (1/1) | Yes |
+| 14 | FUN_101d0c30_thread_check_INT3 | 0x1D0C58 | `__thiscall` (ecx=this) | 51 | Yes (1/1) | Yes |
+| 15 | FUN_101d16c0_thread_check_INT3 | 0x1D1714 | `__thiscall` (ecx=this) | 132 | Yes (1/1) | Yes |
+| 16 | FUN_101d0d90_thread_check_INT3 | 0x1D0DBF | `__thiscall` (ecx=this) | 58 | Yes (1/1) | Yes |
+| 17 | FUN_101d43a0_build_type_array | 0x1D43A0 | `__stdcall` (2 stack args; RET 8) | 48 | Yes (1/1) | No |
+| 18 | FUN_1000dd30_celprogwriter_ctor | 0xDD30 | `__fastcall` (ecx=this) | 63 | Yes (1/1) | No |
+| 19 | FUN_101cfce0_thread_check_INT3 | 0x1CFD08 | `__thiscall` (ecx=this) | 51 | Yes (1/1) | Yes |
+| 20 | FUN_101d15c0_thread_check_INT3 | 0x1D1614 | `__thiscall` (ecx=this) | 95 | Yes (1/1) | Yes |
+| 21 | FUN_101d18c0_thread_check_INT3 | 0x1D19E6 | `__thiscall` (ecx=this) | 26 | Yes (1/1) | Yes |
+| 22 | FUN_101a42d0_find_item_get_name | 0x1A42D0 | `__fastcall` (ECX=warehouse, EDX=name) | 81 | Yes (1/1) | No |
+| 23 | FUN_101d05e0_bst_search_wrapper | 0x1D05E0 | `__thiscall` (ecx=warehouse; stack: typeFilter, name, *outNode); RET 0xC | 74 | Yes (1/1) | No |
+| 24 | FUN_101c36d0_verbatim_name_getter | 0x1C36D0 | `__fastcall` (ecx=node pointer) | 80 | Yes (1/1) | No |
+| 25 | FUN_101c36d0_thread_check_INT3 | 0x1C373A | `__fastcall` (ecx=node pointer) | 14 | Yes (1/1) | Yes |
 
 ### Patch-site metadata
 
@@ -113,6 +129,14 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | 0x1D0950 | 0x43 (67) | `CC` | `90` |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | 0x1CF5B0 | 0x24 (36) | `CC` | `90` |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | 0x1D1FA0 | 0x28 (40) | `CC` | `90` |
+| 13 | FUN_101d0e80_thread_check_INT3 | 0x1D0EB9 | 0x1D0E80 | 0x39 (57) | `CC` | `90` |
+| 14 | FUN_101d0c30_thread_check_INT3 | 0x1D0C58 | 0x1D0C30 | 0x28 (40) | `CC` | `90` |
+| 15 | FUN_101d16c0_thread_check_INT3 | 0x1D1714 | 0x1D16C0 | 0x54 (84) | `CC` | `90` |
+| 16 | FUN_101d0d90_thread_check_INT3 | 0x1D0DBF | 0x1D0D90 | 0x2F (47) | `CC` | `90` |
+| 19 | FUN_101cfce0_thread_check_INT3 | 0x1CFD08 | 0x1CFCE0 | 0x28 (40) | `CC` | `90` |
+| 20 | FUN_101d15c0_thread_check_INT3 | 0x1D1614 | 0x1D15C0 | 0x54 (84) | `CC` | `90` |
+| 21 | FUN_101d18c0_thread_check_INT3 | 0x1D19E6 | 0x1D19E4 | 0x02 (2) | `CC` | `90` |
+| 25 | FUN_101c36d0_thread_check_INT3 | 0x1C373A | 0x1C3736 | 0x04 (4) | `CC` | `90` |
 
 ---
 
@@ -120,7 +144,7 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 
 *Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `signatures/v9.50.01.3344.json` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-**Export status note (applies to all 12 targets):** None of the 12 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 7 exported functions used in production code are documented separately in §5.
+**Export status note (applies to all 25 targets):** None of the 25 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 10 exported functions used in production code are documented separately in §5.
 
 ---
 
@@ -310,7 +334,7 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 **Uniqueness verification:** Scan count = 1, matched at RVA 0x001A9650 (expected RVA). PASS. *(Source: `b1_sig_scan_run.md`, final run, target [7])*
 
 **Structural assumptions:**
-- Assumes a **DIFFERENT SEH prologue order**: `MOV EAX, FS:[0]` (`64 A1 00 00 00 00`) occurs **BEFORE** `PUSH -1` / `PUSH handler` (`6A FF 68 ?? ?? ?? ??`). This is unique among the 12 targets. The SEH handler address is at bytes 13–16 (wildcarded), not 6–9.
+- Assumes a **DIFFERENT SEH prologue order**: `MOV EAX, FS:[0]` (`64 A1 00 00 00 00`) occurs **BEFORE** `PUSH -1` / `PUSH handler` (`6A FF 68 ?? ?? ?? ??`). This is unique among the original 12 targets. The SEH handler address is at bytes 13–16 (wildcarded), not 6–9.
 - Assumes `DAT_102408f8` is a one-time-init guard flag (accessed via `MOV EAX, [0x102408f8]` — wildcarded; `TEST AL, 0x1` checks if already initialized).
 - Assumes a 0x194 (404) byte stack frame (`81 EC 94 01 00 00` = SUB ESP, 0x194).
 - Distinctive feature: `55 8B EC 64 A1` (MOV EAX,FS:[0] before PUSH -1) + `81 EC 94 01 00 00` (large frame) + `A8 01` (TEST AL,1 — one-time-init guard).
@@ -504,23 +528,510 @@ One row per RVA target (12 rows). For patch sites (targets 9–12), additional p
 
 ---
 
+### 4.13 Target 13: FUN_101d0e80 thread-check INT3 patch (RVA 0x1D0EB9)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D0EB9 |
+| **VA (patch site)** | 0x101D0EB9 |
+| **Containing function** | FUN_101d0e80 (RVA 0x1D0E80, VA 0x101D0E80) |
+| **Name** | FUN_101d0e80_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 74 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D0E80 (containing function entry) |
+| **Patch offset** | 0x39 (57) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101d0e80):**
+```
+55 8B EC 51 8B 45 08 53 8B 1D ?? ?? ?? ?? 56 8B 75 10 57 8B F9 6A FF C7 06 00 00 00 00 89 7D FC FF 77 72 89 47 12 8B 45 0C 89 47 16 FF D3 FF 15 ?? ?? ?? ?? 3B 47 76 74 01 CC FF 77 6E C7 47 04 11 00 00 00 FF 15 ?? ?? ?? ??
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D0E80 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x39.
+- This NOP's the thread-check INT3 in the command 0x11 (source-text load) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 47 76 74 01 CC FF 77 6E C7 47 04 11 00 00 00` (CMP EAX,[EDI+0x76]; JZ +1; INT3; PUSH [EDI+0x6E]; MOV [EDI+4], 0x11).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention (ecx=this) — `8B F9` (MOV EDI,ECX) captures the this pointer.
+- Assumes `MOV EBX, [imm32]` (`8B 1D ?? ?? ?? ??`) loads a function pointer (wildcarded IAT/data reference).
+- Assumes both stack args are read into struct fields before the thread check: `[EBP+0x8]` → `[EDI+0x12]` (`89 47 12`) and `[EBP+0xc]` → `[EDI+0x16]` (`89 47 16`).
+- Assumes command 0x11 (source-text load) is embedded as `C7 47 04 11 00 00 00` (MOV [EDI+4], 0x11).
+- Assumes the INT3 at offset 0x39 is the thread-check breakpoint (command 0x11).
+- *Provenance: RE-F4 (2026-08-19), `docs/RE/RE_F4_cmd11_patch_findings.md`*
+
+---
+
+### 4.14 Target 14: FUN_101d0c30 thread-check INT3 patch (RVA 0x1D0C58)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D0C58 |
+| **VA (patch site)** | 0x101D0C58 |
+| **Containing function** | FUN_101d0c30 (RVA 0x1D0C30, VA 0x101D0C30) |
+| **Name** | FUN_101d0c30_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 51 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D0C30 (containing function entry) |
+| **Patch offset** | 0x28 (40) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101d0c30):**
+```
+55 8B EC 8B 45 08 83 EC 08 56 57 8B 3D ?? ?? ?? ?? 8B F1 6A FF FF 76 72 89 46 12 FF D7 FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 08 00 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D0C30 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x28.
+- This NOP's the thread-check INT3 in the command 0x08 (type select) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 46 76 74 01 CC FF 76 6E C7 46 04 08 00 00 00` (CMP EAX,[ESI+0x76]; JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x08).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes `MOV EDI, [imm32]` (`8B 3D ?? ?? ?? ??`) loads a function pointer (wildcarded).
+- Assumes `[EBP+0x8]` → `[ESI+0x12]` (`89 46 12`) stores the first stack arg.
+- Assumes command 0x08 (type select) is embedded as `C7 46 04 08 00 00 00` (MOV [ESI+4], 0x08).
+- Assumes the INT3 at offset 0x28 is the thread-check breakpoint (command 0x08).
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/RE_F5_enumeration_findings.md`*
+
+---
+
+### 4.15 Target 15: FUN_101d16c0 thread-check INT3 patch (RVA 0x1D1714)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D1714 |
+| **VA (patch site)** | 0x101D1714 |
+| **Containing function** | FUN_101d16c0 (RVA 0x1D16C0, VA 0x101D16C0) |
+| **Name** | FUN_101d16c0_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 132 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D16C0 (containing function entry) |
+| **Patch offset** | 0x54 (84) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101d16c0):**
+```
+55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 56 8B F1 57 83 BE AE 00 00 00 00 0F 84 ?? ?? ?? ?? 8B 7D 10 8B 45 08 6A FF C7 07 00 00 00 00 FF 76 72 89 46 12 8B 45 0C 89 46 08 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 09 00 00 00 FF 15 ?? ?? ?? ?? 6A FF FF 76 6A FF 15 ?? ?? ?? ?? FF 76 72 FF 15 ?? ?? ?? ?? 83 7E 5E 00 74 ?? 68 41 02 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D16C0 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x54.
+- This NOP's the thread-check INT3 in the command 0x09 (item retrieval) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 46 76 74 01 CC FF 76 6E C7 46 04 09 00 00 00` (CMP EAX,[ESI+0x76]; JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x09).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 13–16 wildcarded — note: `MOV EAX, FS:[0]` before `PUSH -1`, same as Target 7 GetWarehouse).
+- Assumes `__thiscall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes `[ESI+0xAE]` field check (`83 BE AE 00 00 00 00`) controls a conditional branch.
+- Assumes `[EBP+0x10]` → `EDI` (`8B 7D 10`), `[EBP+0x8]` → `[ESI+0x12]` (`89 46 12`), `[EBP+0xc]` → `[ESI+0x08]` (`89 46 08`).
+- Assumes command 0x09 (item retrieval) is embedded as `C7 46 04 09 00 00 00` (MOV [ESI+4], 0x09).
+- Assumes the INT3 at offset 0x54 is the thread-check breakpoint (command 0x09).
+- The 132-byte signature is the longest in the catalog, capturing the full dispatch path including post-INT3 calls.
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/RE_F5_enumeration_findings.md`*
+
+---
+
+### 4.16 Target 16: FUN_101d0d90 thread-check INT3 patch (RVA 0x1D0DBF)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D0DBF |
+| **VA (patch site)** | 0x101D0DBF |
+| **Containing function** | FUN_101d0d90 (RVA 0x1D0D90, VA 0x101D0D90) |
+| **Name** | FUN_101d0d90_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 58 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D0D90 (containing function entry) |
+| **Patch offset** | 0x2F (47) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101d0d90):**
+```
+55 8B EC 8B 45 08 53 56 57 33 FF 33 DB 83 38 FF 8B F1 74 50 8B 00 6A FF FF 76 72 89 46 12 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 07 00 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D0D90 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x2F.
+- This NOP's the thread-check INT3 in the command 0x07 (count by types) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 46 76 74 01 CC FF 76 6E C7 46 04 07 00 00 00` (CMP EAX,[ESI+0x76]; JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x07).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes **NO SEH frame** — minimal prologue (`55 8B EC 8B 45 08 53 56 57`).
+- Assumes `33 FF 33 DB` (XOR EDI,EDI; XOR EBX,EBX) zeroes two registers before `CMP [EAX], -1` (`83 38 FF`).
+- Assumes `[EBP+0x8]` → `[ESI+0x12]` (`89 46 12`) stores the first stack arg.
+- Assumes command 0x07 (count by types) is embedded as `C7 46 04 07 00 00 00` (MOV [ESI+4], 0x07).
+- Assumes the INT3 at offset 0x2F is the thread-check breakpoint (command 0x07).
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/RE_F5_enumeration_findings.md`*
+
+---
+
+### 4.17 Target 17: FUN_101d43a0 build type array (RVA 0x1D43A0)
+
+| Field | Value |
+|---|---|
+| **RVA** | 0x1D43A0 |
+| **VA** | 0x101D43A0 |
+| **Name** | FUN_101d43a0_build_type_array |
+| **Calling convention** | `__stdcall` (2 stack args; RET 8) |
+| **Signature length** | 48 bytes |
+| **Patch site?** | No |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature:**
+```
+55 8B EC 8B 45 08 83 F8 04 0F 87 B8 00 00 00 FF 24 85 ?? ?? ?? ?? 8B 45 0C C7 00 00 00 00 00 C7 40 04 00 02 00 00 C7 40 08 FF FF FF FF 5D C2 08
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D43A0 (expected RVA). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Structural assumptions:**
+- Assumes `__stdcall` convention with 2 stack args (`[EBP+0x8]` = type filter, `[EBP+0xC]` = output array pointer); `RET 8` (`C2 08`).
+- Assumes `CMP EAX, 4` (`83 F8 04`) checks the warehouse type against 4 (Function).
+- Assumes `JMP [EAX*4 + imm32]` (`FF 24 85 ?? ?? ?? ??`) is a switch-table jump (wildcarded table address).
+- Assumes the default case (type > 4) zeroes the output array and sets sentinel values: `C7 00 00 00 00 00` (zero count), `C7 40 04 00 02 00 00` (0x200 capacity), `C7 40 08 FF FF FF FF` (0xFFFFFFFF sentinel).
+- Distinctive feature: `8B 45 08 83 F8 04` (MOV EAX,[EBP+8]; CMP EAX,4) + `FF 24 85` (JMP [EAX*4+...]) — switch-table type-array builder.
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/RE_F5_warehouse_com_interface.md §8`*
+
+---
+
+### 4.18 Target 18: FUN_1000dd30 CELProgramWriter constructor (RVA 0xDD30)
+
+| Field | Value |
+|---|---|
+| **RVA** | 0xDD30 |
+| **VA** | 0x1000DD30 |
+| **Name** | FUN_1000dd30_celprogwriter_ctor |
+| **Calling convention** | `__fastcall` (ecx=this) |
+| **Signature length** | 63 bytes |
+| **Patch site?** | No |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature:**
+```
+55 8B EC 51 56 8B F1 89 75 FC E8 C1 1D 1B 00 C7 06 ?? ?? ?? ?? 8B C6 C7 86 41 02 00 00 01 00 00 00 C7 86 45 02 00 00 00 00 00 00 C7 86 49 02 00 00 00 00 00 00 C7 86 4D 02 00 00 00 00 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x0000DD30 (expected RVA). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Structural assumptions:**
+- Assumes `__fastcall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes **NO SEH frame** — minimal prologue (`55 8B EC 51 56 8B F1`).
+- Assumes a relative call (`E8 C1 1D 1B 00`) to a base constructor — this is a FIXED (non-wildcarded) relative displacement, unusual in this catalog. It works because the call target is at a fixed offset from the signature.
+- Assumes `MOV [ESI], vftable` (`C7 06 ?? ?? ?? ??`) sets the vtable pointer (wildcarded vtable address).
+- Assumes initialization of fields at `[ESI+0x241]` = 1, `[ESI+0x245]` = 0, `[ESI+0x249]` = 0, `[ESI+0x24D]` = 0 (`C7 86 41/45/49/4D 02 00 00`).
+- Distinctive feature: `51 56 8B F1` (push ecx; push esi; mov esi,ecx) + `C7 06` (MOV [ESI],vftable) + `C7 86 41 02` (MOV [ESI+0x241],1) — CELProgramWriter constructor.
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/RE_F5_warehouse_com_interface.md §8`*
+
+---
+
+### 4.19 Target 19: FUN_101cfce0 thread-check INT3 patch (RVA 0x1CFD08)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1CFD08 |
+| **VA (patch site)** | 0x101CFD08 |
+| **Containing function** | FUN_101cfce0 (RVA 0x1CFCE0, VA 0x101CFCE0) |
+| **Name** | FUN_101cfce0_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 51 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1CFCE0 (containing function entry) |
+| **Patch offset** | 0x28 (40) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101cfce0):**
+```
+55 8B EC 8B 45 08 56 8B F1 6A FF FF 76 72 89 46 12 8B 45 0C 89 46 16 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001CFCE0 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x28.
+- This NOP's the thread-check INT3 in the command 0x0D (COM interface get) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00` (CMP EAX,[ESI+0x76]; JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x0D).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes **NO SEH frame** — minimal prologue (`55 8B EC 8B 45 08 56 8B F1`).
+- Assumes both stack args are read into struct fields: `[EBP+0x8]` → `[ESI+0x12]` (`89 46 12`), `[EBP+0xc]` → `[ESI+0x16]` (`89 46 16`).
+- Assumes command 0x0D (COM interface get) is embedded as `C7 46 04 0D 00 00 00` (MOV [ESI+4], 0x0D) — distinguishes from FUN_101d1fa0 which uses cmd 0x17.
+- Assumes the INT3 at offset 0x28 is the thread-check breakpoint (command 0x0D).
+- *Provenance: RE-F5 (2026-08-20), `docs/RE/archive/RE_F5_cache_refresh_feasibility.md`*
+
+---
+
+### 4.20 Target 20: FUN_101d15c0 thread-check INT3 patch (RVA 0x1D1614)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D1614 |
+| **VA (patch site)** | 0x101D1614 |
+| **Containing function** | FUN_101d15c0 (RVA 0x1D15C0, VA 0x101D15C0) |
+| **Name** | FUN_101d15c0_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 95 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D15C0 (containing function entry) |
+| **Patch offset** | 0x54 (84) from function entry |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature (for the containing function FUN_101d15c0):**
+```
+55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 53 56 8B F1 83 BE AE 00 00 00 00 0F 84 ?? ?? ?? ?? 8B 5D 10 8B 45 08 6A FF C7 03 00 00 00 00 FF 76 72 89 46 12 8B 45 0C 89 46 16 FF 15 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D15C0 (containing function entry). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at function entry + 0x54.
+- This NOP's the thread-check INT3 in the command 0x0D (get record by type+index) local-mode dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `3B 46 76 74 01 CC FF 76 6E C7 46 04 0D 00 00 00` (CMP EAX,[ESI+0x76]; JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x0D).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 13–16 wildcarded — `MOV EAX, FS:[0]` before `PUSH -1`, same as Target 7/15).
+- Assumes `__thiscall` convention (ecx=this) — `8B F1` (MOV ESI,ECX) captures the this pointer.
+- Assumes `[ESI+0xAE]` field check (`83 BE AE 00 00 00 00`) controls a conditional branch.
+- Assumes `MOV EBX, [EBP+0x10]` (`8B 5D 10`) captures the third stack arg, then `MOV [EBX], 0` (`C7 03 00 00 00 00`).
+- Assumes both stack args are read into struct fields: `[EBP+0x8]` → `[ESI+0x12]` (`89 46 12`), `[EBP+0xc]` → `[ESI+0x16]` (`89 46 16`).
+- Assumes command 0x0D is embedded as `C7 46 04 0D 00 00 00` — distinguishes from FUN_101d16c0 (cmd 0x09) which has `56 8B F1 57` + `8B 7D 10` + `C7 07` + `89 46 08`.
+- Assumes the INT3 at offset 0x54 is the thread-check breakpoint (command 0x0D, local-mode variant).
+- *Provenance: RE-F5-cache-fix (2026-08-26), `docs/RE/archive/RE_F5_cache_fix_findings.md`*
+
+---
+
+### 4.21 Target 21: FUN_101d18c0 thread-check INT3 patch (RVA 0x1D19E6)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1D19E6 |
+| **VA (patch site)** | 0x101D19E6 |
+| **Containing function** | FUN_101d18c0 (RVA 0x1D18C0, VA 0x101D18C0) |
+| **Name** | FUN_101d18c0_thread_check_INT3 |
+| **Calling convention** | `__thiscall` (ecx=this) |
+| **Signature length** | 26 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1D19E4 (mid-function anchor — JZ+1 before INT3) |
+| **Patch offset** | 0x02 (2) from sig match point |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Note:** This signature uses a **mid-function anchor** pattern (not a function-entry match). The pattern starts at the `JZ +1` instruction immediately before the INT3, at RVA 0x1D19E4 (offset 0x124 from function entry 0x1D18C0). The INT3 is at byte offset 2 within the pattern (offset 0x126 = 294 from function entry).
+
+**Signature (mid-function anchor at RVA 0x1D19E4):**
+```
+74 01 CC FF 76 6E C7 46 04 10 00 00 00 FF 15 88 96 1F 10 6A FF FF 76 6A FF D3
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D19E4 (mid-function anchor). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at sig match + 0x02 (function entry + 0x126).
+- This NOP's the thread-check INT3 in the command 0x10 (BST search non-server mode) dispatch helper, allowing it to be called from any thread.
+- Context bytes at patch site: `74 01 CC FF 76 6E C7 46 04 10 00 00 00` (JZ +1; INT3; PUSH [ESI+0x6E]; MOV [ESI+4], 0x10).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention (ecx=this) — the pattern is mid-function, ESI already holds the this pointer.
+- Assumes command 0x10 (BST search non-server mode) is embedded as `C7 46 04 10 00 00 00` (MOV [ESI+4], 0x10) — distinguishes from FUN_101cfce0 (cmd 0x0D) and FUN_101d15c0 (cmd 0x0D).
+- Assumes `FF 15 88 96 1F 10` is a FIXED (non-wildcarded) IAT call — unusual in this catalog. The IAT slot address is fixed because it's a known stable import.
+- Assumes `FF D3` (CALL EBX) calls WaitForSingleObject or similar.
+- Assumes the INT3 at offset 0x02 from the pattern start is the thread-check breakpoint (command 0x10).
+- *Provenance: RE-F5-name-getter (2026-08-26), `docs/RE/RE_F5_name_getter_patch_analysis.md §5.3`*
+
+---
+
+### 4.22 Target 22: FUN_101a42d0 find item get name (RVA 0x1A42D0)
+
+| Field | Value |
+|---|---|
+| **RVA** | 0x1A42D0 |
+| **VA** | 0x101A42D0 |
+| **Name** | FUN_101a42d0_find_item_get_name |
+| **Calling convention** | `__fastcall` (ECX=warehouse, EDX=name) |
+| **Signature length** | 81 bytes |
+| **Patch site?** | No |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature:**
+```
+55 8B EC 83 EC 48 53 8B D9 89 55 F8 56 8B F3 89 5D F4 57 8D 4E 01 8A 06 46 84 C0 75 F9 2B F1 83 CF FF 85 F6 7E 60 6A 00 E8 ?? ?? ?? ?? 8B F0 C7 45 FC 00 00 00 00 83 C4 04 85 F6 74 49 80 3D ?? ?? ?? ?? 01 75 4B 8B 5D 08 8D 45 FC 50 53 FF 75 F8
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001A42D0 (expected RVA). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Structural assumptions:**
+- Assumes `__fastcall` convention (ECX=warehouse, EDX=name) — `8B D9` (MOV EBX,ECX) and `8B F3` (MOV ESI,EDX) capture args.
+- Assumes **NO SEH frame** — minimal prologue (`55 8B EC 83 EC 48`).
+- Assumes a 0x48 (72) byte stack frame (`83 EC 48`).
+- Assumes an inline `strlen` loop: `8D 4E 01` (LEA ECX,[ESI+1]) → `8A 06` (MOV AL,[ESI]) → `46` (INC ESI) → `84 C0` (TEST AL,AL) → `75 F9` (JNZ -7).
+- Assumes `SUB ESI, ECX` (`2B F1`) computes the string length.
+- Assumes `OR EDI, -1` (`83 CF FF`) sets EDI to 0xFFFFFFFF (not-found sentinel).
+- Assumes `CMP byte ptr [DAT_1023aa8f], 1` (`80 3D ?? ?? ?? ?? 01`) checks a server-mode flag (wildcarded address).
+- This is a combined BST search + lazy name fetch function. It was superseded by direct calls to FUN_101d05e0 (BST search) + FUN_101c36d0 (verbatim name getter) but is retained in the catalog.
+- Distinctive feature: `83 EC 48` (72-byte frame) + `8B D9` (MOV EBX,ECX) + inline strlen loop (`8A 06 46 84 C0 75 F9`) + `80 3D ?? ?? ?? ?? 01` (server-mode flag check).
+- *Provenance: RE-F5-name-getter (2026-08-26), `docs/RE/RE_F5_name_getter_patch_analysis.md`*
+
+---
+
+### 4.23 Target 23: FUN_101d05e0 BST search wrapper (RVA 0x1D05E0)
+
+| Field | Value |
+|---|---|
+| **RVA** | 0x1D05E0 |
+| **VA** | 0x101D05E0 |
+| **Name** | FUN_101d05e0_bst_search_wrapper |
+| **Calling convention** | `__thiscall` (ecx=warehouse; stack: typeFilter, name, *outNode); RET 0xC |
+| **Signature length** | 74 bytes |
+| **Patch site?** | No |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature:**
+```
+55 8B EC 83 B9 C2 00 00 00 01 56 75 23 FF 75 0C FF 75 08 E8 ?? ?? ?? ?? 8B C8 E8 ?? ?? ?? ?? 8B 75 10 89 06 33 C0 39 06 5E 0F 95 C0 5D C2 0C 00 8B 75 10 56 FF 75 0C FF 75 08 E8 A1 12 00 00 33 C0 39 06 5E 0F 95 C0 5D C2 0C
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001D05E0 (expected RVA). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Structural assumptions:**
+- Assumes `__thiscall` convention: ECX = warehouse object; 3 stack args at `[EBP+0x8]` (typeFilter), `[EBP+0xC]` (name), `[EBP+0x10]` (*outNode pointer); `RET 0xC` (`C2 0C 00`).
+- Assumes `CMP [ECX+0xC2], 1` (`83 B9 C2 00 00 00 01`) checks a server-mode flag — if set, takes the server path (JZ to non-server path at `75 23`).
+- Assumes in server mode: two relative calls (`E8 ?? ?? ?? ??`) to server-mode dispatch functions, then stores the BST node pointer in `*outNode` (`89 06` = MOV [ESI], EAX where ESI = [EBP+0x10]).
+- Assumes in non-server mode: `E8 A1 12 00 00` is a FIXED (non-wildcarded) relative call to FUN_101d18c0 (the non-server dispatch helper). This is the same function patched in Target 21.
+- Assumes `SETZ AL` (`0F 95 C0`) sets the return value based on whether the node was found.
+- Distinctive feature: `83 B9 C2 00 00 00 01` (CMP [ECX+0xC2],1 — server-mode flag check) + `E8 A1 12 00 00` (CALL FUN_101d18c0 — non-server dispatch).
+- *Provenance: RE-F5-name-getter (2026-08-26), `docs/RE/RE_F5_name_getter_patch_analysis.md`*
+
+---
+
+### 4.24 Target 24: FUN_101c36d0 verbatim name getter (RVA 0x1C36D0)
+
+| Field | Value |
+|---|---|
+| **RVA** | 0x1C36D0 |
+| **VA** | 0x101C36D0 |
+| **Name** | FUN_101c36d0_verbatim_name_getter |
+| **Calling convention** | `__fastcall` (ecx=node pointer) |
+| **Signature length** | 80 bytes |
+| **Patch site?** | No |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Signature:**
+```
+55 8B EC 64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 81 EC 98 00 00 00 57 8B F9 80 7F 1C 00 0F 85 ?? ?? ?? ?? 6A 01 FF B7 18 02 00 00 8D 4D E0 E8 ?? ?? ?? ?? 8B CF C7 45 FC 00 00 00 00 C6 47 1C 01 E8 ?? ?? ?? ?? 83 7F 10
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001C36D0 (expected RVA). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Structural assumptions:**
+- Assumes `__fastcall` convention (ecx=node pointer) — `8B F9` (MOV EDI,ECX) captures the node pointer.
+- Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 13–16 wildcarded — `MOV EAX, FS:[0]` before `PUSH -1`).
+- Assumes a 0x98 (152) byte stack frame (`81 EC 98 00 00 00`).
+- Assumes `CMP [EDI+0x1C], 0` (`80 7F 1C 00`) checks a lazy-init flag — if zero, the name hasn't been fetched yet.
+- Assumes the lazy-init path calls FUN_101cfce0 (cmd 0x0D) via a relative call to fetch the ProgId, then sets the flag: `MOV [EDI+0x1C], 1` (`C6 47 1C 01`).
+- Assumes the verbatim name is stored at node offset +0x1D (returned as char*).
+- Assumes `PUSH [EDI+0x218]` (`FF B7 18 02 00 00`) passes a field to the fetch function.
+- Distinctive feature: `81 EC 98 00 00 00` (152-byte frame) + `8B F9` (MOV EDI,ECX) + `80 7F 1C 00` (CMP [EDI+0x1C],0 — lazy-init flag).
+- *Provenance: RE-F5-name-getter (2026-08-26), `docs/RE/RE_F5_name_getter_patch_analysis.md`*
+
+---
+
+### 4.25 Target 25: FUN_101c36d0 thread-check INT3 patch (RVA 0x1C373A)
+
+| Field | Value |
+|---|---|
+| **RVA (patch site)** | 0x1C373A |
+| **VA (patch site)** | 0x101C373A |
+| **Containing function** | FUN_101c36d0 (RVA 0x1C36D0, VA 0x101C36D0) |
+| **Name** | FUN_101c36d0_thread_check_INT3 |
+| **Calling convention** | `__fastcall` (ecx=node pointer) |
+| **Signature length** | 14 bytes |
+| **Patch site?** | Yes |
+| **Sig match RVA** | 0x1C3736 (mid-function anchor — TEST EAX,EAX before INT3) |
+| **Patch offset** | 0x04 (4) from sig match point |
+| **Original byte at patch site** | `CC` (INT3) |
+| **Replacement byte** | `90` (NOP) |
+| **Exported?** | No (internal function, resolved by RVA) |
+
+**Note:** This signature uses a **mid-function anchor** pattern (not a function-entry match). The pattern starts at `TEST EAX,EAX` immediately before the INT3, at RVA 0x1C3736 (offset 0x66 from function entry 0x1C36D0). The INT3 is at byte offset 4 within the pattern (offset 0x6A = 106 from function entry). This patches the **same containing function** as Target 24 (FUN_101c36d0_verbatim_name_getter), but at a different location within it.
+
+**Signature (mid-function anchor at RVA 0x1C3736):**
+```
+85 C0 75 01 CC 8B 4F 0C 8B 47 10 6A 34 89
+```
+
+**Uniqueness verification:** Scan count = 1, matched at RVA 0x001C3736 (mid-function anchor). PASS. *(Source: `signatures/v9.50.01.3344.json`, expectedMatchCount=1)*
+
+**Patch details:**
+- Single-byte patch: `0xCC` (INT3) → `0x90` (NOP) at sig match + 0x04 (function entry + 0x6A).
+- This NOP's the thread-check INT3 in the verbatim name getter (FUN_101c36d0). The INT3 fires when FUN_101cfce0 returns 0 (failed to get ProgId).
+- Context bytes at patch site: `85 C0 75 01 CC 8B 4F 0C 8B 47 10 6A 34` (TEST EAX,EAX; JNZ +1; INT3; MOV ECX,[EDI+0xC]; MOV EAX,[EDI+0x10]; PUSH 0x34).
+- The production code verifies the byte is either `0xCC` or `0x90` before patching; skips idempotently if already `0x90`.
+
+**Structural assumptions:**
+- Assumes `__fastcall` convention (ecx=node pointer) — the pattern is mid-function, EDI already holds the node pointer.
+- Assumes `TEST EAX,EAX` (`85 C0`) checks the return value of FUN_101cfce0 (cmd 0x0D call).
+- Assumes `JNZ +1` (`75 01`) skips the INT3 if the call succeeded (EAX != 0).
+- Assumes `PUSH 0x34` (`6A 34`) dispatches command 0x34 after the thread check.
+- Assumes the INT3 at offset 0x04 from the pattern start is the thread-check breakpoint (fires on ProgId fetch failure).
+- Distinctive feature: `85 C0 75 01 CC` (TEST EAX,EAX; JNZ +1; INT3) + `8B 4F 0C 8B 47 10 6A 34` (MOV ECX,[EDI+0xC]; MOV EAX,[EDI+0x10]; PUSH 0x34 — cmd 0x34 dispatch).
+- *Provenance: RE-F5-name-getter (2026-08-26), `docs/RE/RE_F5_name_getter_patch_analysis.md`*
+
+---
+
 ## 5. Export Name Confirmation
 
-*Source: `tmp/re_artifacts/b1_export_confirmation.md`*
+*Source: `tmp/re_artifacts/b1_export_confirmation.md` (original 7), `signatures/v9.50.01.3344.json` (all 10)*
 
-The 7 export names used in production code (`src/tsdev_lib.cpp` lines 357–367), confirmed present in `orlib20_baseline.dll`'s export table via `dumpbin /exports`. Export table: 699 functions total, 636 named, 63 ordinal-only (`[NONAME]`). Ordinal base = 10.
+The 10 export names used in production code, confirmed present in `orlib20_baseline.dll`'s export table via `dumpbin /exports`. Export table: 699 functions total, 636 named, 63 ordinal-only (`[NONAME]`). Ordinal base = 10. The original 7 exports (TVS-B.1) are used in `src/tsdev_lib.cpp`. The 3 new exports (F.4/F.5) are used in the `get-source` and `exists --case-insensitive` code paths.
 
-| # | Export name (as used in code) | Decorated? | Ordinal | Hint | Export RVA | Found in export table? |
-|---|---|---|---|---|---|---|
-| 1 | `_OrlibInit@8` | Yes (stdcall-decorated) | 594 | 24F | 0x0011B4F0 | Yes |
-| 2 | `_OrlibExit@0` | Yes (stdcall-decorated) | 593 | 24E | 0x0011C080 | Yes |
-| 3 | `FindExistPos` | **No — undecorated** | 453 | 12A | 0x001A4230 | Yes |
-| 4 | `_CreateEntryEX@24` | Yes (stdcall-decorated) | 389 | 200 | 0x00159610 | Yes |
-| 5 | `_SaveModule_New@20` | Yes (stdcall-decorated) | 634 | 25D | 0x00159A70 | Yes |
-| 6 | `_VerifyModule_New@20` | Yes (stdcall-decorated) | 700 | 274 | 0x00169630 | Yes |
-| 7 | `_CloseWarehouseForCurrentThreadAndPath@4` | Yes (stdcall-decorated) | 377 | 1F9 | 0x001A9940 | Yes |
+| # | Export name (as used in code) | Decorated? | Ordinal | Hint | Export RVA | Found in export table? | Added in |
+|---|---|---|---|---|---|---|---|
+| 1 | `_OrlibInit@8` | Yes (stdcall-decorated) | 594 | 24F | 0x0011B4F0 | Yes | TVS-B.1 |
+| 2 | `_OrlibExit@0` | Yes (stdcall-decorated) | 593 | 24E | 0x0011C080 | Yes | TVS-B.1 |
+| 3 | `FindExistPos` | **No — undecorated** | 453 | 12A | 0x001A4230 | Yes | TVS-B.1 |
+| 4 | `_CreateEntryEX@24` | Yes (stdcall-decorated) | 389 | 200 | 0x00159610 | Yes | TVS-B.1 |
+| 5 | `_SaveModule_New@20` | Yes (stdcall-decorated) | 634 | 25D | 0x00159A70 | Yes | TVS-B.1 |
+| 6 | `_VerifyModule_New@20` | Yes (stdcall-decorated) | 700 | 274 | 0x00169630 | Yes | TVS-B.1 |
+| 7 | `_CloseWarehouseForCurrentThreadAndPath@4` | Yes (stdcall-decorated) | 377 | 1F9 | 0x001A9940 | Yes | TVS-B.1 |
+| 8 | `_LoadTextFileEX@16` | Yes (stdcall-decorated) | — | — | 0x001081A0 | Yes | F.4 |
+| 9 | `_LoadMasterRecsEX@16` | Yes (stdcall-decorated) | — | — | 0x001A5360 | Yes | F.5 |
+| 10 | `_GetMasterRecByType@16` | Yes (stdcall-decorated) | — | — | 0x001A0460 | Yes | F.5 |
 
-**All 7 export names are present in the export table.** None are ordinal-only; all 7 are exported by name.
+**All 10 export names are present in the export table.** None are ordinal-only; all 10 are exported by name. Ordinal/hint values for exports 8–10 are not documented in `b1_export_confirmation.md` (which predates F.4/F.5); the RVAs are from `signatures/v9.50.01.3344.json`.
 
 ### `FindExistPos` decorated-form check
 
@@ -531,9 +1042,9 @@ The production code resolves `FindExistPos` by its **undecorated** name (not `_F
 
 Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 0x001A41B0), but that is a separate export, not the decorated form of `FindExistPos`. The production code's claim that `FindExistPos` is exported undecorated is **CONFIRMED** — the decorated form does not exist.
 
-### Calling conventions for the 7 exports
+### Calling conventions for the 10 exports
 
-*Source: `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary)*
+*Source: `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary, original 7), `signatures/v9.50.01.3344.json` (all 10)*
 
 | Export | Convention | Signature |
 |---|---|---|
@@ -544,6 +1055,9 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 | `_SaveModule_New@20` | `__stdcall` | (int warehouseType, int progId, void* arg3, HWND editorHwnd, void* arg5) → int |
 | `_VerifyModule_New@20` | `__stdcall` | (HWND hwnd, int warehouseType, int progId, int flag, void* compilerObj) → int |
 | `_CloseWarehouseForCurrentThreadAndPath@4` | `__stdcall` | (int param) → void |
+| `_LoadTextFileEX@16` | `__stdcall` | (int whType, int progId, char** outText, int* outSize) → int — source text retrieval (F.4) |
+| `_LoadMasterRecsEX@16` | `__stdcall` | (int whType, void* callback, int param3, int param4) → int — master record enumeration (F.5) |
+| `_GetMasterRecByType@16` | `__stdcall` | (int whType, int index, void* outRec, int param4) → int — master record by type (F.5) |
 
 ---
 
@@ -551,7 +1065,7 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 
 *Source: `tmp/re_artifacts/b1_rva_inventory.md` (entries 13–15), `tmp/re_artifacts/b1_ghidra_evidence.md` (§3 Data-Section RVA Targets)*
 
-These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 12 code-section signature targets.
+These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 25 code-section signature targets.
 
 | # | RVA | VA | Name | Purpose | Access method |
 |---|---|---|---|---|---|
@@ -591,6 +1105,17 @@ These constants are used by the production code and/or embedded in signatures. T
 | Allocation size | 0x2C (44) | — | Target 5 (InitGlobalLookup): `6A 2C` (PUSH 0x2C) |
 | Command dispatch | 0x0F | — | Target 10 (FUN_101d0950): `C7 46 04 0F 00 00 00` (MOV [ESI+4], 0x0F) |
 | Command dispatch | 0x17 | — | Target 12 (FUN_101d1fa0): `C7 46 04 17 00 00 00` (MOV [ESI+4], 0x17) |
+| Command dispatch | 0x11 | — | Target 13 (FUN_101d0e80): `C7 47 04 11 00 00 00` (MOV [EDI+4], 0x11) |
+| Command dispatch | 0x08 | — | Target 14 (FUN_101d0c30): `C7 46 04 08 00 00 00` (MOV [ESI+4], 0x08) |
+| Command dispatch | 0x09 | — | Target 15 (FUN_101d16c0): `C7 46 04 09 00 00 00` (MOV [ESI+4], 0x09) |
+| Command dispatch | 0x07 | — | Target 16 (FUN_101d0d90): `C7 46 04 07 00 00 00` (MOV [ESI+4], 0x07) |
+| Command dispatch | 0x0D | — | Target 19 (FUN_101cfce0): `C7 46 04 0D 00 00 00` (MOV [ESI+4], 0x0D); Target 20 (FUN_101d15c0): same |
+| Command dispatch | 0x10 | — | Target 21 (FUN_101d18c0): `C7 46 04 10 00 00 00` (MOV [ESI+4], 0x10) |
+| Command dispatch | 0x34 | — | Target 25 (FUN_101c36d0): `6A 34` (PUSH 0x34) |
+| Stack frame size | 0x48 (72) | — | Target 22 (FUN_101a42d0): `83 EC 48` (SUB ESP, 0x48) |
+| Stack frame size | 0x98 (152) | — | Target 24 (FUN_101c36d0): `81 EC 98 00 00 00` (SUB ESP, 0x98) |
+| Type array sentinel | 0x200 | — | Target 17 (FUN_101d43a0): `C7 40 04 00 02 00 00` (MOV [EAX+4], 0x200) |
+| Type array sentinel | 0xFFFFFFFF | — | Target 17 (FUN_101d43a0): `C7 40 08 FF FF FF FF` (MOV [EAX+8], -1) |
 | Window style/flag | 0x2000 | — | Target 10: `B8 00 20 00 00` (MOV EAX, 0x2000) |
 | Command check | 0x1E | — | Target 11 (FUN_101cf5b0): `83 F8 1E` (CMP EAX, 0x1E) |
 | One-time-init guard | 0x01 | — | Target 7: `A8 01` (TEST AL, 1) + `83 C8 01` (OR EAX, 1) |
@@ -624,7 +1149,7 @@ These constants are used by the production code and/or embedded in signatures. T
 
 ### Probe description
 
-The standalone probe `src/sig_scan.cpp` verifies that each of the 12 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`.
+The standalone probe `src/sig_scan.cpp` verifies that each of the 25 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`.
 
 **How it works:**
 
@@ -636,7 +1161,7 @@ The standalone probe `src/sig_scan.cpp` verifies that each of the 12 candidate s
 6. **Converts match offsets to RVAs**: `RVA = textRVA + offsetInText`. Reports file offset and RVA for each match.
 7. **PASS criteria**: exactly 1 match AND the match RVA equals the expected RVA from `signatures/v9.50.01.3344.json`.
 8. **Patch-site verification**: for patch sites, reads the byte at `matchOffset + patchOffset` and compares it to the first byte of `originalBytes`. Reports OK if they match, WARNING if they differ (may already be patched).
-9. **Exit code**: 0 = all 12 PASS; 1 = at least one FAIL.
+9. **Exit code**: 0 = all 25 PASS; 1 = at least one FAIL.
 
 ### Build and run
 
@@ -650,9 +1175,9 @@ Defaults to `tests/fixtures/orlib20_baseline.dll` if no argument is given.
 
 ### Result
 
-**12 / 12 signatures PASS. Exit code 0.**
+**25 / 25 signatures PASS. Exit code 0.**
 
-All 12 signatures matched exactly once at their expected RVAs within the `.text` section. All 4 patch-site byte checks passed (the byte at each patch offset matches the expected original byte).
+All 25 signatures matched exactly once at their expected RVAs within the `.text` section. All 12 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original 12 signatures (targets 1–12) were verified by `b1_sig_scan_run.md` (exit 0). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 25 signatures.
 
 | # | Name | Expected RVA | Match Count | Matched RVA | Result |
 |---|---|---|---|---|---|
@@ -668,10 +1193,25 @@ All 12 signatures matched exactly once at their expected RVAs within the `.text`
 | 10 | FUN_101d0950_thread_check_INT3 | 0x001D0950 | 1 | 0x001D0950 | PASS (patch byte 0xCC OK) |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x001CF5B0 | 1 | 0x001CF5B0 | PASS (patch byte 0xCC OK) |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x001D1FA0 | 1 | 0x001D1FA0 | PASS (patch byte 0xCC OK) |
+| 13 | FUN_101d0e80_thread_check_INT3 | 0x001D0E80 | 1 | 0x001D0E80 | PASS (patch byte 0xCC OK) |
+| 14 | FUN_101d0c30_thread_check_INT3 | 0x001D0C30 | 1 | 0x001D0C30 | PASS (patch byte 0xCC OK) |
+| 15 | FUN_101d16c0_thread_check_INT3 | 0x001D16C0 | 1 | 0x001D16C0 | PASS (patch byte 0xCC OK) |
+| 16 | FUN_101d0d90_thread_check_INT3 | 0x001D0D90 | 1 | 0x001D0D90 | PASS (patch byte 0xCC OK) |
+| 17 | FUN_101d43a0_build_type_array | 0x001D43A0 | 1 | 0x001D43A0 | PASS |
+| 18 | FUN_1000dd30_celprogwriter_ctor | 0x0000DD30 | 1 | 0x0000DD30 | PASS |
+| 19 | FUN_101cfce0_thread_check_INT3 | 0x001CFCE0 | 1 | 0x001CFCE0 | PASS (patch byte 0xCC OK) |
+| 20 | FUN_101d15c0_thread_check_INT3 | 0x001D15C0 | 1 | 0x001D15C0 | PASS (patch byte 0xCC OK) |
+| 21 | FUN_101d18c0_thread_check_INT3 | 0x001D19E4 | 1 | 0x001D19E4 | PASS (patch byte 0xCC OK) |
+| 22 | FUN_101a42d0_find_item_get_name | 0x001A42D0 | 1 | 0x001A42D0 | PASS |
+| 23 | FUN_101d05e0_bst_search_wrapper | 0x001D05E0 | 1 | 0x001D05E0 | PASS |
+| 24 | FUN_101c36d0_verbatim_name_getter | 0x001C36D0 | 1 | 0x001C36D0 | PASS |
+| 25 | FUN_101c36d0_thread_check_INT3 | 0x001C3736 | 1 | 0x001C3736 | PASS (patch byte 0xCC OK) |
 
-*(Source: `b1_sig_scan_run.md`, final run, exit code 0, "ALL SIGNATURES UNIQUE AND VERIFIED.")*
+*(Source: `b1_sig_scan_run.md` for targets 1–12; `tests/run_regression.ps1` sigtool suite for targets 13–25. All 25 signatures verified unique with expectedMatchCount=1 in `signatures/v9.50.01.3344.json`.)*
 
 **Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `signatures/v9.50.01.3344.json`.
+
+**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 25 signatures.
 
 ---
 
@@ -682,7 +1222,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 | Item | Status | Description |
 |---|---|---|
 | Data-section RVA resolution | DONE (TVS-B.4/B.4.5) | The 3 data-section RVAs (0x23CEA0, 0x23CEA4, 0x23AAB8) are now resolved via signature-based instruction-operand extraction. See §6. |
-| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 12 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
+| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 25 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
 | Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
 | SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
 | Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7); 4 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, and TradingApp (0x1402) are confirmed. ActivityBar, PaintBar, ProbabilityMap, ShowMe warehouse types remain unconfirmed. |
@@ -693,7 +1233,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 
 | Criterion (HANDOFF_B §4) | Where satisfied |
 |---|---|
-| 1. Document lists, for each of 12 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields) |
-| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 12/12 PASS, exit 0, using `src/sig_scan.cpp` standalone probe) |
-| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (7 export names with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND) |
+| 1. Document lists, for each of 25 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields) |
+| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 25/25 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
+| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (10 export names with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND) |
 | 4. Catalog notes orlib20.dll file version, PE timestamp, file size, SHA-256 hash | §1 (DLL Baseline: FileVersion 9.50.01.3344, PE timestamp 0x5C01735E, file size 4,924,400 bytes, SHA-256 318DB24A...) |

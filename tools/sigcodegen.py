@@ -40,7 +40,7 @@ EXPECTED_EXPORT_COUNT = 10
 
 # Hex pattern tokens are split across adjacent C++ string literals in chunks of
 # this many bytes for readability (matches the historical b1_signatures.h style
-# and the ARCHITECTURE_REDESIGN.md §4.4 example).
+# and the docs/archive/ARCHITECTURE_REDESIGN.md §4.4 example).
 HEX_CHUNK_BYTES = 24
 
 

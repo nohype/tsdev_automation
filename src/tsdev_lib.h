@@ -102,11 +102,17 @@ public:
     //   Phase 1: _LoadMasterRecsEX@16 (COM interface cache) — works for
     //     records that existed before this process started. Searches
     //     records case-insensitively via _stricmp.
-    //   Phase 2: FUN_101a42d0 (official TSDev "find item + get verbatim
-    //     name" function). In server mode (DAT_1023aa8f temporarily set
-    //     to 1), it performs a BST search and lazily fetches the verbatim
-    //     name from the server via command 0x34. The stored name comes
-    //     from the WAREHOUSE SERVER, not from source text (HARD RULE 0).
+    //   Phase 2: FUN_101d05e0 (BST search wrapper, __thiscall:
+    //     ECX=warehouse, stack=(typeFilter, name, *outNode); RET 0xC) +
+    //     FUN_101c36d0 (verbatim name getter, __fastcall: ECX=node pointer,
+    //     no stack args; RET — returns char* from the warehouse node at
+    //     offset +0x1D). FUN_101d05e0 finds the BST node for the item name;
+    //     FUN_101c36d0 reads the verbatim stored name directly from that
+    //     node. (FUN_101a42d0 was the original candidate but was found to
+    //     return the ProgId — not the verbatim name — in non-server mode,
+    //     so it cannot be used to get the verbatim name; it is retained as
+    //     m_pFindItemGetName for reference only.) The stored name comes
+    //     from the WAREHOUSE, not from source text (HARD RULE 0).
     //     ProgId is obtained separately via FindExistPos.
     // For TradingApp (category 2, subtype 0x14), Phase 1 filters by
     // rec[0xE9].
@@ -338,8 +344,12 @@ private:
     // FUN_101a42d0 — find item by name + get verbatim stored name
     // (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
     // outVerbatimName; RET 0x8). Stored as void* and invoked via inline asm
-    // in callFindItemGetName. Used by enumerateRecords() Phase 2 to get the
-    // verbatim stored name from the warehouse server (not from source text).
+    // in callFindItemGetName. SUPERSEDED / DEAD CODE (retained for
+    // reference only): was the original Phase 2 candidate but was found to
+    // return the ProgId (not the verbatim name) in non-server mode, so it
+    // cannot be used to get the verbatim name. enumerateRecords() Phase 2
+    // now uses FUN_101d05e0 (m_pBstSearchWrapper) + FUN_101c36d0
+    // (m_pVerbatimNameGetter) instead.
     void*                   m_pFindItemGetName   = nullptr;
     // FUN_101d05e0 — BST search wrapper (non-server mode)
     // (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);

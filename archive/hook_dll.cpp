@@ -8,7 +8,7 @@
 
 #pragma comment(lib, "psapi.lib")
 
-static const char* LOG_PATH = "C:\\Users\\user\\projects\\tsdev_automation\\tmp\\re_artifacts\\dll_hook_log.txt";
+static const char* LOG_PATH = "tmp\\re_artifacts\\dll_hook_log.txt";
 static CRITICAL_SECTION g_logLock;
 static bool g_initialized = false;
 

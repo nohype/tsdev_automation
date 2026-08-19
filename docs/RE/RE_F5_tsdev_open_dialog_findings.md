@@ -138,7 +138,7 @@ orlib20 API.
 
 ### 3.4 Command 0x4E (Approach A) remains the only cache-reset path
 
-The existing `RE_F5_cache_fix_findings.md` documents command 0x4E
+The existing `docs/RE/archive/RE_F5_cache_fix_findings.md` documents command 0x4E
 (dispatched via `FUN_101c09f0`), which performs a `QueryInterface` on
 the WHServer COM interface. This is a module-level cache invalidation,
 not a master-record refresh. It requires a module object (not the
@@ -351,7 +351,7 @@ if (_GetMasterRecsBuf(category, &buf, &count) && count > 0) {
 - Existing patches for commands 0x0F, 0x1E, 0x17, 0x11 remain required
 - Patch restoration bookkeeping must be updated (array size + destructor
   loop) per the adversarial review corrections in
-  `RE_F5_cache_fix_review.md`
+  `docs/RE/archive/RE_F5_cache_fix_review.md`
 
 ### 6.2 If commands 0x03/0x1A are also cached
 

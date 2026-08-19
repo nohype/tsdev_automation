@@ -2,7 +2,7 @@
 
 **Status:** Production-grade test specification
 **Applies to:** `tsdev_cli.exe` (the production CLI for the TSDev Library)
-**Last verified:** 2025-01-22 (33/33 tests PASSED)
+**Last verified:** 2026-08-20 (34/34 Part A-C tests PASSED + Workstream F tests)
 
 ---
 
@@ -46,7 +46,7 @@ The CLI executable is produced at:
 <build_dir>\Release\tsdev_cli.exe
 ```
 
-The default build directory for this project is `C:\Users\user\projects\tsdev_automation\build`.
+The default build directory for this project is `build`.
 
 ### 2.2 TradeStation must be installed
 
@@ -94,7 +94,7 @@ $srcFile = "$tmpDir\strategy_insert.txt"
 Create a temp directory for test artifacts:
 
 ```powershell
-$tmpDir = "C:\Users\user\projects\tsdev_automation\tmp\e2e_run_$runId"
+$tmpDir = "tmp\e2e_run_$runId"
 New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 ```
 
@@ -105,20 +105,50 @@ New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 Confirmed from `src/tsdev_cli.cpp`:
 
 ```
+# Single-item operations (Parts A-C)
 tsdev_cli [--ts-path <directory>] insert  <type> <name> <source_file>
 tsdev_cli [--ts-path <directory>] modify  <type> <name> <source_file>
 tsdev_cli [--ts-path <directory>] delete  <type> <name>
+
+# New operations (Part D — Workstream F)
+tsdev_cli [--ts-path <directory>] exists  <type> <name> [--case-insensitive]
+tsdev_cli [--ts-path <directory>] get-source  <type> <name> [--output <file>]
+tsdev_cli [--ts-path <directory>] upsert <type> <name> <source_file>
+
+# Batch operations (Part D — Workstream F)
+tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin
+tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin
+tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin
 ```
+
+### Global flags
+
+| Flag | Description |
+|------|-------------|
+| `--ts-path <directory>` | Optional. Overrides the TradeStation install directory (default: auto-discovered from registry). Can appear as `--ts-path <dir>` or `--ts-path=<dir>`. If specified multiple times, the last occurrence wins. |
+| `--json` | Optional. Switches single-item subcommand output from human-friendly text to structured JSON. Reused by `exists`, `get-source`, `upsert`, `insert`, `modify`, `delete`. |
+
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `insert` / `modify` / `delete` | Single-item CRUD (case-insensitive subcommand). |
+| `exists` | Query item existence by `<type>` + `<name>`. Returns `exists=N`, `stored_name=...`, `progId=N`. `--case-insensitive` enables case-insensitive matching. |
+| `get-source` | Retrieve EasyLanguage source for `<type>` + `<name>` to stdout, or to a file via `--output <file>`. Standard (non-password-protected) items only. |
+| `upsert` | Insert-or-modify: if the item exists, perform a modify (ProgId preserved); otherwise perform an insert. |
+| `batch-insert` / `batch-modify` / `batch-delete` | Batch operations driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. |
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `--ts-path <directory>` | Optional. Overrides the TradeStation install directory (default: auto-discovered from registry). Can appear as `--ts-path <dir>` or `--ts-path=<dir>`. If specified multiple times, the last occurrence wins. |
-| `insert` / `modify` / `delete` | Subcommand (case-insensitive). |
 | `<type>` | Component type string: `strategy`, `indicator`, `function`, or `tradingapp` (case-insensitive). |
 | `<name>` | Component name. Must not be empty. |
-| `<source_file>` | Path to a file containing EasyLanguage source. Required for `insert` and `modify`. Not used for `delete`. The file is read in binary mode; must be non-empty. |
+| `<source_file>` | Path to a file containing EasyLanguage source. Required for `insert`, `modify`, and `upsert`. Not used for `delete` or `exists`. The file is read in binary mode; must be non-empty. |
+| `<manifest_file>` | Path to a line-based manifest file for batch operations. Mutually exclusive with `--batch-stdin`. |
+| `--batch-stdin` | Read the manifest from stdin instead of a file (enables inline batch without temp files). |
+| `--output <file>` | (`get-source` only) Write retrieved EL source to the given file instead of stdout. |
+| `--case-insensitive` | (`exists` only) Enable case-insensitive name matching. |
 
 ### Valid type strings
 
@@ -133,17 +163,25 @@ tsdev_cli [--ts-path <directory>] delete  <type> <name>
 
 | Exit code | Meaning | When produced |
 |-----------|---------|---------------|
-| **0** | Success | insert/modify/delete completed successfully |
+| **0** | Success | insert/modify/delete/upsert/get-source completed successfully; **`exists` returns 0 for BOTH found and not-found** (not-found is a valid query result, not an error) |
 | **1** | Usage error (no subcommand or wrong arg count) | No subcommand given, or wrong number of positional args |
 | **2** | Unknown type string | `<type>` is not one of the 4 valid strings |
-| **3** | Source file error | File not found, unreadable, or empty |
+| **3** | Source file error / **output_write_error** | File not found, unreadable, or empty (insert/modify/upsert); **or `get-source` output file write failure** (`--output <file>` could not be written) |
 | **4** | Init failure | TsDevLib construction failed (DLL load, patch, or OrlibInit) |
-| **5** | Not found | Component does not exist in the warehouse (modify/delete), or already exists (insert) |
+| **5** | Not found | Component does not exist in the warehouse (modify/delete/get-source), or already exists (insert). **`upsert` never returns 5** — it branches on existence by construction (modify if present, insert if absent). **`exists` never returns 5** — not-found is reported via exit 0 with `exists=false`. |
 | **6** | Entry operation failure | createEntry or deleteEntry returned failure |
 | **7** | saveSource failure | Source could not be saved to the entry |
 | **8** | Compile error | Compilation/verification failed; error text printed to stderr |
 | **9** | .ell file missing | Compilation succeeded but the `.ell` file was not found on disk |
 | **10** | Thread creation failure | CreateThread failed (system-level error) |
+
+> **Batch subcommands** (`batch-insert`/`batch-modify`/`batch-delete`) use a **separate exit code scheme**:
+>
+>| Exit code | Meaning |
+>|-----------|---------|
+>| **0** | All items succeeded |
+>| **1** | Usage/manifest error — the batch did not run (bad args, unreadable manifest, malformed manifest) |
+>| **2** | One or more items failed (per-item results are reported in the JSON output; the batch ran but was not fully successful) |
 
 The exit codes most relevant to this test specification are **0** (success), **5** (not found), **8** (compile error), and **2** (unknown type).
 
@@ -402,16 +440,29 @@ Remove-Item -Path $tmpDir -Recurse -Force
 
 ---
 
-## Part D: New Operations & Inline Batch (PENDING SPECIFICATION)
+## Part D: New Operations & Inline Batch (Workstream F — COMPLETE)
 
-E2E test cases for the following new subcommands will be specified when implementation begins (see AGENTS.md `### NEXT WORKSTREAMS` item 2, Workstream F). They are NOT yet defined here:
+Workstream F added 4 new operations and inline batch via stdin. All are implemented and tested by dedicated PowerShell test scripts.
 
-- `exists` — query item existence by name + type (case-sensitive and case-insensitive variants); expected: verbatim stored name, exists flag, ProgId, exit code.
-- `get-source` — retrieve EL source to stdout and via `--output <file_path>`; expected: source text matches a known-inserted item; error case for nonexistent item; error case for password-protected item.
-- `upsert` — insert-when-absent and modify-when-present variants for all 4 component types; expected: correct branch taken (verify via `exists` + `get-source`).
-- Inline batch via stdin (`--batch-stdin`) — pipe manifest content via stdin for batch-insert/modify/delete; expected: identical results to the manifest-file path; verify backward compatibility of the manifest-file path still works.
+### D.1: exists (exact-match) — tests/test_exists.ps1 (5 cases)
+- D1.1a: exists on a known item → exists=true, progId>0
+- D1.1b: exists on a non-existent item → exists=false, progId=0
+- D1.2: exists with unknown type → exit 2 (unknown_type)
+- D1.3a/b: exists with empty name / bad args → exit 1/2
 
-Test cases must follow the existing Part A/B/C structure (test ID, type, name, expected exit code, procedure, cleanup).
+### D.2: exists (case-insensitive) — tests/test_exists_ci.ps1 (5 cases)
+- CI.1-CI.5: case-insensitive matching returns verbatim stored name + ProgId
+
+### D.3: get-source — tests/test_get_source.ps1 (6 cases)
+- GS1-GS6: retrieve EL source to stdout, to file (--output), not-found, password-protected, unknown type
+
+### D.4: upsert — tests/test_upsert.ps1 (5 cases)
+- U1: insert-path (new item)
+- U2: modify-path (existing item, ProgId preserved)
+- U3-U5: unknown type, compile error, function-type insert
+
+### D.5: Inline batch via stdin — tests/test_batch_stdin.ps1 (8 cases)
+- S1-S8: insert/delete/modify mixed via stdin, comments/blanks, empty stdin, backward-compat file-path, no-args rejected, stdin≡file equivalence
 
 ---
 
@@ -474,7 +525,7 @@ Where `<timestamp>` is in the format `YYYYMMDD_HHMMSS`.
 
 ## 10. Reference: Known Type-Specific Constraints
 
-The following table documents the EasyLanguage construct constraints that are **verified by this test suite**. These are the known constraints confirmed by the reference test run (2025-01-22, 33/33 PASSED).
+The following table documents the EasyLanguage construct constraints that are **verified by this test suite**. These are the known constraints confirmed by the reference test run (2026-08-20, 34/34 Part A-C PASSED).
 
 | Construct | Strategy | Indicator | Function | TradingApp |
 |-----------|----------|-----------|----------|------------|
@@ -515,7 +566,7 @@ The following is a high-level outline for a PowerShell script that implements th
 ```powershell
 # --- Setup ---
 $runId = Get-Date -Format "yyyyMMdd_HHmmss"
-$projectRoot = "C:\Users\user\projects\tsdev_automation"
+$projectRoot = $PSScriptRoot
 $cli = "$projectRoot\build\Release\tsdev_cli.exe"
 $tmpDir = "$projectRoot\tmp\e2e_run_$runId"
 New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null

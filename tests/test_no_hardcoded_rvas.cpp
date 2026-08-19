@@ -6,7 +6,7 @@
 //
 // The forbidden set is DERIVED FROM signatures.gen.h (the generated header),
 // which is itself produced from signatures/v9.50.01.3344.json by sigcodegen.py.
-// This is "Option A" from docs/ARCHITECTURE_REDESIGN.md §7.4: the single source
+// This is "Option A" from docs/archive/ARCHITECTURE_REDESIGN.md §7.4: the single source
 // of truth becomes JSON -> generated header -> test. There is no longer a
 // hand-maintained forbidden-constants array in this file.
 //

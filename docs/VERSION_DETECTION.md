@@ -228,11 +228,11 @@ This process ensures the manifest grows organically as new versions are encounte
 
 ## 6. Known-Versions Manifest Format
 
-> **WORKSTREAM E NOTICE (2026-08-17):** The version manifest format has been migrated from a hand-coded `constexpr` array in `orlib_resolver.cpp` to a JSON file (`signatures/version_manifest.json`) consumed via build-time code generation. The `OrlibVersionManifestEntry` struct and 3-tier detection algorithm are UNCHANGED — only the data source changed from hand-coded to generated. See `docs/ARCHITECTURE_REDESIGN.md` §4 (Signature Data Architecture) for the JSON schema and codegen pipeline. This migration is **IMPLEMENTED (Workstream E complete)**.
+> **WORKSTREAM E NOTICE (2026-08-17):** The version manifest format has been migrated from a hand-coded `constexpr` array in `orlib_resolver.cpp` to a JSON file (`signatures/version_manifest.json`) consumed via build-time code generation. The `OrlibVersionManifestEntry` struct and 3-tier detection algorithm are UNCHANGED — only the data source changed from hand-coded to generated. See `docs/archive/ARCHITECTURE_REDESIGN.md` §4 (Signature Data Architecture) for the JSON schema and codegen pipeline. This migration is **IMPLEMENTED (Workstream E complete)**.
 
 ### 6.1 Recommendation: C++ constexpr struct array (primary) + JSON (documentation)
 
-> **SUPERSEDED (Workstream E):** The manifest is now implemented via JSON (`signatures/version_manifest.json`) → `sigcodegen.py` codegen → generated header (`signatures.gen.h`). The C++ constexpr approach described here was superseded by the codegen pipeline in Workstream E. The section below is retained as the original design rationale; the actual implementation follows the JSON + codegen approach documented in `docs/ARCHITECTURE_REDESIGN.md` §4.
+> **SUPERSEDED (Workstream E):** The manifest is now implemented via JSON (`signatures/version_manifest.json`) → `sigcodegen.py` codegen → generated header (`signatures.gen.h`). The C++ constexpr approach described here was superseded by the codegen pipeline in Workstream E. The section below is retained as the original design rationale; the actual implementation follows the JSON + codegen approach documented in `docs/archive/ARCHITECTURE_REDESIGN.md` §4.
 
 **Primary format: a C++ `constexpr` struct array, compiled into the CLI binary.**
 

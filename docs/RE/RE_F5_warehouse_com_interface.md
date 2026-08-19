@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-The prior document (`RE_F5_cache_refresh_feasibility.md`) claimed that cmd 0x0E
+The prior document (`docs/RE/archive/RE_F5_cache_refresh_feasibility.md`) claimed that cmd 0x0E
 (used by `saveSource`) writes `[warehouse+0x5E]` (the IWHouse COM interface
 pointer). **This is incorrect.** Direct Ghidra decompilation of the worker
 handler `FUN_101d2150` proves that cmd 0x0E **does not write**
@@ -643,7 +643,7 @@ the BST cache has, which may not reflect external changes.
 
 ## 9. Correction of Prior Document
 
-The following claims in `RE_F5_cache_refresh_feasibility.md` are
+The following claims in `docs/RE/archive/RE_F5_cache_refresh_feasibility.md` are
 **incorrect** and should be disregarded:
 
 | Section | Claim | Correction |

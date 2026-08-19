@@ -3,7 +3,9 @@
 **Document type:** Decision document (research-only evaluation)
 **Date:** 2026-07-15
 **Author:** Systems architecture evaluation (subagent)
-**Status:** Ready for PM/user review
+**Status:** DECISION MADE — Option A+ (batch CLI + JSON I/O, no daemon) chosen and IMPLEMENTED. See `src/tsdev_automation/` for the Python wrapper (`TsDevClient`) and `docs/BUILD.md` for build instructions.
+
+> **DECISION (2026-08):** Option A+ was chosen — 64-bit Python drives the 32-bit `tsdev_cli.exe` as a subprocess via JSON I/O. No daemon (Option B) was pursued. The `TsDevClient` wrapper is implemented at `src/tsdev_automation/`. All 6 functions (insert/modify/delete/exists/get-source/upsert) + batch operations work via the Python wrapper. 60 Python tests (50 unit + 10 E2E) pass.
 
 ---
 
@@ -142,7 +144,7 @@ ProgId=N, .ell=<path>`. stderr contains error messages including compiler errors
 `Line X, Col Y:` prefixes.
 
 **Implementation:** Pure Python — a wrapper class using `subprocess.run()`. No new C++
-code. The CLI already exists, is tested (34 E2E test cases per `docs/E2E_TEST_SPEC.md`),
+code. The CLI already exists, is tested (34 E2E CLI test cases (Part A-C) + Workstream F E2E tests (exists/get-source/upsert/batch-stdin/exists-ci) — see `docs/E2E_TEST_SPEC.md`),
 and is production-approved.
 
 ### 2.2 Option B — CLI daemon / `--serve` mode (persistent 32-bit server)
@@ -217,7 +219,7 @@ client communicates with it via pickle-serialized messages over TCP.
 
 — Source: [msl-loadlib documentation](https://msl-loadlib.readthedocs.io/en/stable/)
 
-**Previous rejection rationale (from `docs/HANDOFF_D_PYTHON_INTEGRATION.md`):**
+**Previous rejection rationale (from `docs/archive/HANDOFF_D_PYTHON_INTEGRATION.md`):**
 "high complexity (32-bit server subprocess, frozen-executable dependency, custom C ABI
 DLL layer, cross-process IPC), fragile dependencies, and unnecessary given that the CLI
 already solves the hard problems."
@@ -641,7 +643,7 @@ information to decide.
 | orlib20 integration complexity (7 support DLLs, patches, SEH) | Project source `src/tsdev_lib.cpp` lines 31–39, 135–211 | `src/tsdev_lib.cpp` |
 | CMake build system (32-bit guard, tsdev_lib static lib) | Project `CMakeLists.txt` | `CMakeLists.txt` |
 | E2E test spec (34 test cases) | Project `docs/E2E_TEST_SPEC.md` | `docs/E2E_TEST_SPEC.md` |
-| Previous msl-loadlib rejection | Project `docs/HANDOFF_D_PYTHON_INTEGRATION.md` | `docs/HANDOFF_D_PYTHON_INTEGRATION.md` |
+| Previous msl-loadlib rejection | Project `docs/archive/HANDOFF_D_PYTHON_INTEGRATION.md` | `docs/archive/HANDOFF_D_PYTHON_INTEGRATION.md` |
 
 ## Appendix B: orlib20.dll PE Header Raw Bytes
 

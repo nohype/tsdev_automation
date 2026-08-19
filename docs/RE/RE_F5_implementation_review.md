@@ -64,14 +64,14 @@ initialize `buf = NULL` and always free it at the end of the block.
 
 The `refreshCache()` function calls `FUN_101cfce0` (cmd 0x0D dispatcher) with
 `type=0, param=0` to obtain a fresh COM interface. The RE findings
-(`RE_F5_cache_fix_findings.md` §1.5) show that `FUN_101cfce0` takes `param_2` (type)
+(`docs/RE/archive/RE_F5_cache_fix_findings.md` §1.5) show that `FUN_101cfce0` takes `param_2` (type)
 and `param_3` (value) from `[module+0x15]` (ProgId) and `[module+0x18]` in the
 `FUN_101c09f0` context. Passing `type=0, param=0` is not directly verified to return
 a valid COM interface.
 
 Additionally, `RE_F5_warehouse_com_interface.md` §6 reports that `[warehouse+0x5E]`
 remains NULL after all our operations (createEntry, saveSource, verifyModule) in
-server mode, which contradicts the earlier `RE_F5_cache_refresh_feasibility.md`
+server mode, which contradicts the earlier `docs/RE/archive/RE_F5_cache_refresh_feasibility.md`
 claim that `[warehouse+0x5E]` is set after INSERT/MODIFY/DELETE.
 
 **Impact:** If `refreshCache()` fails to obtain a valid COM interface, Phase 1
@@ -160,7 +160,7 @@ Verified against `RE_F5_enumeration_findings.md` §4 (independently reviewed in
   which invokes `FUN_101cfce0` to obtain a fresh COM interface via cmd 0x0D.
 - **Pattern uniqueness:** The pattern ends with `C7 46 04 0D 00 00 00`
   (cmd 0x0D), distinguishing it from `FUN_101d1fa0` (cmd 0x17). Verified
-  in `RE_F5_cache_fix_findings.md` §1.5.
+  in `docs/RE/archive/RE_F5_cache_fix_findings.md` §1.5.
 - **INT3 patch at offset 40:** Confirmed by disassembly in the RE findings.
 - **sigcodegen count:** `EXPECTED_SIGNATURE_COUNT = 19` ✓
 - **test_sigtool count:** `$expectedSignatureCount = 19` ✓

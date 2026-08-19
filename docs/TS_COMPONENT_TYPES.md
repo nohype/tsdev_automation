@@ -52,7 +52,7 @@ For types with sub-type 0 (Strategy=0, Indicator=2, Function=4), the expanded wh
 
 ### FindExistPos type parameter
 FindExistPos takes `(name, warehouseType)` where warehouseType is the **category** (low 8 bits of the expanded whType):
-- Type 0: Strategy — **NOT YET CONFIRMED via FindExistPos**
+- Type 0: Strategy — **CONFIRMED (whType=0, working in CLI)**
 - Type 2: Indicator / TradingApp (TradingApp confirmed: FindExistPos with category=2 finds TradingApp entries)
 - Type 4: Function — confirmed: FindExistPos("Average", 4) = 76, FindExistPos("MACD", 4) = 20
 
@@ -63,8 +63,12 @@ FindExistPos takes `(name, warehouseType)` where warehouseType is the **category
 - Type 3: {type=3, subtype=-1}
 - Type 4: {type=4, subtype=-1}
 
+## Resolved questions
+- **WHType for Strategies:** WHType=0 (category 0). CONFIRMED — insert/delete/modify/exists all work.
+- **WHType for Functions:** WHType=4 (category 4). CONFIRMED — insert/delete/modify/exists all work.
+- **WHType for Indicators:** WHType=2 (category 2). CONFIRMED — insert/delete/modify/exists all work.
+- **WHType for TradingApp:** WHType=5122 (0x1402 = category 2 | sub-type 0x14). CONFIRMED — Workstream C.
+- **CreateEntryEX WHType vs FindExistPos type:** Same numbering — both use the category (low 8 bits of the expanded whType encoding).
+
 ## Open questions
-- What WHType should CreateEntryEX use for Strategies? (Currently using 0, which creates entries visible in strategy list, but FindExistPos(type=0) hasn't been tested on them yet)
-- What WHType for Functions? (FindExistPos type=4 finds functions, but is CreateEntryEX WHType=4 for functions?)
-- Are CreateEntryEX WHType and FindExistPos type the same numbering?
-- **4 remaining unconfirmed types:** ActivityBar, PaintBar, ProbabilityMap, ShowMe — their warehouse-type codes have NOT been confirmed and must NOT be treated as known.
+- **4 unconfirmed types:** ActivityBar, PaintBar, ProbabilityMap, ShowMe. These require Ghidra/Frida RE work to determine their WHType values. See `docs/FEASIBILITY.md` §5.2/§5.5.

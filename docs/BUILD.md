@@ -1,8 +1,9 @@
 # Build Guide — tsdev_automation
 
 This project is a C++ CLI that loads the 32-bit `orlib20.dll` from the
-TradeStation 9.5 installation to manage the TSDev Library (insert, delete, and
-modify EasyLanguage strategies and functions) without the TSDev UI. **Every
+TradeStation 9.5 installation to manage the TSDev Library (insert, modify,
+delete, exists, get-source, upsert, and batch operations on EasyLanguage
+strategies and functions) without the TSDev UI. **Every
 build MUST target the x86 (32-bit) platform** — a 64-bit binary cannot load a
 32-bit DLL.
 
@@ -64,9 +65,9 @@ tsdev_automation/
 ├── src/            Production source code (6 files)
 │   ├── tsdev_lib.cpp / tsdev_lib.h       orlib20 wrapper engine (RAII API)
 │   ├── orlib_resolver.cpp / orlib_resolver.h   signature-scan resolver layer
-│   ├── tsdev_cli.cpp                     production CLI (insert/delete/modify)
+│   ├── tsdev_cli.cpp                     production CLI (insert/modify/delete/exists/get-source/upsert/batch-insert/batch-modify/batch-delete)
 │   └── sigtool.cpp                       signature-verification CLI
-├── tests/          Test files (14 .cpp + 4 .ps1)
+├── tests/          Test files (18 .cpp + 10 .ps1 + 1 .py + 1 .psm1)
 ├── archive/        Archived experimental probes (27 files, NOT built)
 ├── signatures/     JSON signature data — the single source of truth
 │   ├── v9.50.01.3344.json                per-version signatures + patch sites
@@ -87,13 +88,13 @@ tsdev_automation/
 |-----------------------|---------------------------------------------------------------|
 | `tsdev_lib.cpp/.h`    | RAII wrapper around orlib20.dll: init, lookup, create, save, compile/verify, close, delete, modify. |
 | `orlib_resolver.cpp/.h` | Encapsulates all version-specific orlib20.dll knowledge: loads the DLL, detects the version, resolves internal functions by signature scan, validates and applies patch sites. |
-| `tsdev_cli.cpp`       | Production CLI exposing `insert`, `delete`, and `modify` subcommands. |
+| `tsdev_cli.cpp`       | Production CLI exposing `insert`, `modify`, `delete`, `exists`, `get-source`, `upsert`, `batch-insert`, `batch-modify`, and `batch-delete` subcommands. |
 | `sigtool.cpp`         | CLI for verifying signatures against a DLL on disk, validating patch sites, inspecting DLL info, and ad-hoc pattern scanning. |
 
 ## Build instructions
 
 All commands are run from the project root
-(`C:\Users\user\projects\tsdev_automation`).
+(`.`).
 
 ### 1. (Optional) Set up the developer environment
 
@@ -129,6 +130,42 @@ build\Release\tsdev_cli.exe        (production CLI)
 build\Release\sigtool.exe          (signature-verification CLI)
 build\Release\test_*.exe           (test executables)
 ```
+
+### 5. Bundle output (`dist/` and `artifacts/`)
+
+The same `cmake --build build --config Release` command automatically
+assembles a distributable bundle via a POST_BUILD custom command on the
+`tsdev_cli` target. No separate build step is required.
+
+**`dist/`** — the assembled bundle at the repo root:
+
+```
+dist/
+├── tsdev_cli.exe        # copied from build\Release\tsdev_cli.exe
+├── tsdev_automation/    # copied from src\tsdev_automation\*.py (6 files)
+└── README.md            # copied from docs\BUNDLE_README.md (quick-start guide)
+```
+
+`copy_if_different` is used throughout so unchanged files keep their
+timestamps. The `tsdev_automation/` subdirectory is wiped and re-copied on
+every build so renamed/deleted `.py` files do not go stale.
+
+**`artifacts/`** — an automatically generated timestamped zip, ready to
+distribute:
+
+```
+artifacts/tsdev_automation_<yymmdd><HHMM>.zip
+```
+
+For example, `tsdev_automation_2608201430.zip` for a build on 2026-08-20 at
+14:30. The zip is **selective** — it contains exactly the three bundle
+components (`tsdev_cli.exe`, `tsdev_automation/`, `README.md`) and nothing
+else (no wheels, sdist, or `__pycache__/`). Each build creates a new
+timestamped zip; a build in the same minute as a previous one overwrites it
+(`-Force`).
+
+Both `dist/` and `artifacts/` are gitignored via the root `.gitignore`, so
+generated artifacts never appear in `git status`.
 
 ## Codegen step (automatic)
 
@@ -175,13 +212,18 @@ build\Release\test_path_discovery.exe
 build\Release\test_persistence_validation.exe
 build\Release\test_no_hardcoded_rvas.exe
 build\Release\test_orlib_resolver.exe
+build\Release\test_exists.exe
+build\Release\test_enumerate.exe
+build\Release\test_upsert.exe
+build\Release\test_get_source.exe
 ```
 
 Each test exits `0` on success and non-zero on failure.
 
 **TS dependency:** the integration tests (`test_insert`, `test_insert_tradingapp`,
 `test_auto_cleanup`, `test_delete`, `test_delete_tradingapp`, `test_delete_check`,
-`test_delete_diag`, `test_modify`, `test_modify_tradingapp`) require a TradeStation 9.5 installation
+`test_delete_diag`, `test_modify`, `test_modify_tradingapp`, `test_exists`,
+`test_enumerate`, `test_upsert`, `test_get_source`) require a TradeStation 9.5 installation
 on the machine — they load the real `orlib20.dll` and exercise the live warehouse.
 `test_path_discovery` and `test_persistence_validation` also require a TradeStation
 install: they construct `TsDevLib`, which loads `orlib20.dll`. The remaining three
@@ -195,23 +237,31 @@ tests do **not** require a live TradeStation install:
 
 ### Test runner scripts
 
-Four PowerShell scripts in `tests/` orchestrate the test suites. Run them from
+PowerShell scripts in `tests/` orchestrate the test suites. Run them from
 the project root after building. The master runner (`run_regression.ps1`)
-invokes the other three in a single command; the individual runners are
+invokes all sub-suites in a single command; the individual runners are
 documented below for developers who want to run a single sub-suite
 independently.
 
 #### `tests/run_regression.ps1` — master regression runner
 
-The single-command regression runner orchestrates **all three** sub-suites in
-the order required by the B.6 acceptance criteria:
+The single-command regression runner orchestrates **all 8 sub-suites** (93
+test cases total) in the order required by the B.6 acceptance criteria:
 
 1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
    against the baseline DLL. Fast; no live TradeStation install needed.
-2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 14 C++ test executables
+2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 18 C++ test executables
    (or 3 with `-NoTs`). Medium duration.
 3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — 34 E2E CLI test cases per
    `docs/E2E_TEST_SPEC.md`. Slowest; creates and deletes real warehouse entries.
+4. **exists tests** (`tests/test_exists.ps1`) — 5 exists CLI test cases.
+5. **batch-stdin tests** (`tests/test_batch_stdin.ps1`) — 8 inline batch test
+   cases via stdin pipe.
+6. **upsert tests** (`tests/test_upsert.ps1`) — 5 upsert CLI test cases.
+7. **get-source tests** (`tests/test_get_source.ps1`) — 6 get-source CLI test
+   cases.
+8. **exists-ci tests** (`tests/test_exists_ci.ps1`) — 5 case-insensitive exists
+   CLI test cases.
 
 Each sub-suite runs in its own child PowerShell process so a crash or hang in
 one suite cannot affect the others. After all suites run, a grand summary table
@@ -246,7 +296,7 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
 - No TradeStation processes/services running (for the E2E suite).
 
 ```powershell
-# Full run — all 4 suites (sigtool + 15 unit tests + 34 E2E tests + 5 exists tests):
+# Full run — all 8 suites (93 test cases: sigtool 12 + 18 unit + 34 E2E + 5 exists + 8 batch-stdin + 5 upsert + 6 get-source + 5 exists-ci):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
 # No-TradeStation run — sigtool + 3 non-TS unit tests; skips E2E:
@@ -256,14 +306,14 @@ powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -TsPath "D:\TradeStation 9.5"
 
 # Selective runs:
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 15 unit tests
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 18 unit tests
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E only
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # full output for every test
 ```
 
 #### `tests/run_unit_tests.ps1` — C++ unit test runner
 
-Runs all 15 C++ test executables in sequence (not in parallel — the shared
+Runs all 18 C++ test executables in sequence (not in parallel — the shared
 warehouse file `MWRKArea.wrk` is not process-safe), captures exit codes, measures
 per-test duration, and returns a single aggregated exit code.
 
@@ -277,7 +327,7 @@ Exit codes: `0` = all executed tests passed, `1` = one or more failed (or the
 build directory is missing).
 
 ```powershell
-# Run all 14 tests:
+# Run all 18 tests:
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
 
 # Run only the 3 non-TS tests (no TradeStation install needed):
@@ -404,9 +454,9 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `siggen`                        | custom   | Runs `sigcodegen.py` to generate `build/gen/signatures.gen.h`.     |
 | `orlib_resolver`                | library  | Static library encapsulating orlib20.dll version-specific knowledge. |
 | `tsdev_lib`                     | library  | Static library wrapping the orlib20 operation set (links `orlib_resolver`). |
-| `tsdev_cli`                     | exec     | Production CLI (`insert`/`delete`/`modify`).                       |
+| `tsdev_cli`                     | exec     | Production CLI (`insert`/`modify`/`delete`/`exists`/`get-source`/`upsert`/`batch-insert`/`batch-modify`/`batch-delete`). |
 | `sigtool`                       | exec     | Signature-verification CLI.                                        |
-| `test_regression`               | custom   | Build-only dependency target: builds all 14 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
+| `test_regression`               | custom   | Build-only dependency target: builds all 18 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
 | `test_insert`                   | exec     | INSERT integration test (requires TS).                            |
 | `test_insert_tradingapp`        | exec     | TradingApp INSERT integration test (requires TS).                 |
 | `test_auto_cleanup`             | exec     | Auto-cleanup of partial warehouse entry on compile failure (requires TS — constructs TsDevLib). |
@@ -421,6 +471,10 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `test_tradingapp_type`          | exec     | TradingApp ComponentType unit test (no TS dependency).            |
 | `test_no_hardcoded_rvas`        | exec     | Verifies no hardcoded RVAs leak into production code (no TS dependency). |
 | `test_orlib_resolver`           | exec     | OrlibResolver unit test (in-memory PE image, no live TS install needed). |
+| `test_exists`                   | exec     | EXISTS integration test — query item existence by name + type (requires TS). |
+| `test_enumerate`                | exec     | Enumerate integration test — list warehouse items by type (requires TS). |
+| `test_upsert`                   | exec     | UPSERT integration test — insert-or-update by name + type (requires TS). |
+| `test_get_source`               | exec     | GET-SOURCE integration test — retrieve EL source by name + type (requires TS). |
 
 ## Verification (confirm the binary is 32-bit)
 

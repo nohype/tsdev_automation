@@ -979,6 +979,67 @@ class TestExceptionHierarchy:
         assert e.result is r
 
 
+class TestResolveCliPath:
+    """Unit tests for the ``_resolve_cli_path`` auto-discovery logic."""
+
+    def test_bundle_layout_auto_discovery(self, tmp_path: Path, monkeypatch) -> None:
+        """The bundle layout resolves ``<package_parent>/tsdev_cli.exe``.
+
+        Mimics ``dist/tsdev_automation/client.py`` -> ``dist/tsdev_cli.exe`` by
+        pointing ``client.__file__`` at a fake package location inside a temp
+        dir and placing a fake (empty) ``tsdev_cli.exe`` as its sibling (one
+        level above the package directory).
+        """
+        from tsdev_automation import client as client_module
+        from tsdev_automation.client import _resolve_cli_path
+
+        # Build the bundle layout:
+        #   <tmp>/tsdev_automation/client.py   (fake package file)
+        #   <tmp>/tsdev_cli.exe                (fake empty exe, sibling of pkg)
+        pkg_dir = tmp_path / "tsdev_automation"
+        pkg_dir.mkdir()
+        fake_client_py = pkg_dir / "client.py"
+        fake_client_py.write_bytes(b"")
+        bundle_exe = tmp_path / "tsdev_cli.exe"
+        bundle_exe.write_bytes(b"")
+
+        # Ensure the env var does not short-circuit before the bundle check,
+        # and make _resolve_cli_path resolve relative to the fake client.py.
+        monkeypatch.delenv("TSDEV_CLI_PATH", raising=False)
+        monkeypatch.setattr(client_module, "__file__", str(fake_client_py))
+
+        resolved = _resolve_cli_path(None)
+        assert resolved.resolve() == bundle_exe.resolve()
+
+    def test_bundle_layout_falls_through_when_no_sibling_exe(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Without a sibling exe, the bundle check is skipped (falls through).
+
+        In the source tree (``src/tsdev_automation/client.py``) there is no
+        ``src/tsdev_cli.exe``, so the bundle check must not return a path here.
+        We assert the bundle check is bypassed by confirming the resolved path
+        is NOT the (nonexistent) sibling exe.
+        """
+        from tsdev_automation import client as client_module
+        from tsdev_automation.client import _resolve_cli_path
+
+        pkg_dir = tmp_path / "tsdev_automation"
+        pkg_dir.mkdir()
+        fake_client_py = pkg_dir / "client.py"
+        fake_client_py.write_bytes(b"")
+        # NOTE: no tsdev_cli.exe placed in tmp_path.
+
+        monkeypatch.delenv("TSDEV_CLI_PATH", raising=False)
+        monkeypatch.setattr(client_module, "__file__", str(fake_client_py))
+
+        resolved = _resolve_cli_path(None)
+        # The bundle candidate is <tmp>/tsdev_cli.exe; it must not be returned
+        # because it does not exist. The function falls through to the
+        # CMakeLists.txt walk-up / fallback instead.
+        assert resolved.resolve() != (tmp_path / "tsdev_cli.exe").resolve()
+
+
 # ---------------------------------------------------------------------------
 # E2E tests (real CLI) -- skipped unless the CLI is available
 # ---------------------------------------------------------------------------

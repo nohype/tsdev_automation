@@ -64,17 +64,30 @@ def _validate_type(type_: str) -> str:
 def _resolve_cli_path(cli_path: str | os.PathLike | None) -> Path:
     """Resolve the path to ``tsdev_cli.exe``.
 
-    Priority: explicit argument > ``TSDEV_CLI_PATH`` env var > repo-root
-    ``build/Release/tsdev_cli.exe`` (discovered by walking up from this file
-    until a ``CMakeLists.txt`` is found).
+    Priority:
+    1. explicit ``cli_path`` argument
+    2. ``TSDEV_CLI_PATH`` env var
+    3. bundle layout: ``<package_parent>/tsdev_cli.exe`` — the exe sits as a
+       sibling of the ``tsdev_automation/`` package directory (e.g.
+       ``dist/tsdev_cli.exe`` next to ``dist/tsdev_automation/``)
+    4. source-tree layout: walk up from this file until a ``CMakeLists.txt`` is
+       found, then return ``<repo>/build/Release/tsdev_cli.exe``
+    5. fallback: ``here.parents[1] / "build/Release/tsdev_cli.exe"``
     """
     if cli_path is not None:
         return Path(cli_path)
     env = os.environ.get("TSDEV_CLI_PATH")
     if env:
         return Path(env)
-    # Walk up from the package directory looking for CMakeLists.txt (repo root).
     here = Path(__file__).resolve().parent
+    # Bundle layout: the exe sits as a sibling of the tsdev_automation/ package
+    # directory (e.g. dist/tsdev_cli.exe next to dist/tsdev_automation/). In the
+    # source tree (src/tsdev_automation/client.py) there is no src/tsdev_cli.exe,
+    # so this falls through to the CMakeLists.txt walk-up below.
+    bundle_exe = here.parent / "tsdev_cli.exe"
+    if bundle_exe.is_file():
+        return bundle_exe
+    # Walk up from the package directory looking for CMakeLists.txt (repo root).
     for parent in [here, *here.parents]:
         if (parent / "CMakeLists.txt").is_file():
             return parent / "build" / "Release" / "tsdev_cli.exe"

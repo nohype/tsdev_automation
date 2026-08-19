@@ -122,7 +122,7 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Warehouse singleton | `void* GetWarehouse(const char* nameOrZero)` (Ord 10 @ 0x101A9650) | HIGH | `evidence_C2b_orlib20_build.md` (`GetWarehouse singleton` disasm); `evidence_C2a_orlib20_lifecycle.md` §2.3. Thread-safe; called by nearly every function. |
 | Warehouse flush/close | `void __stdcall _CloseWarehouseForCurrentThreadAndPath@4(int arg)` | CONFIRMED | `orlib_param_orders.md` §11. **Confirmed:** call with `0` after all operations to flush/close the warehouse. Required at end of INSERT/MODIFY flow before `OrlibExit`. |
 | Direct save (alt) | `MDVault::SaveModule(ModuleInfo*, std::wstring&...)` (ELMDCore.dll, mangled) | LOW (unconfirmed) | `evidence_C2b_orlib20_build.md` §6 (mangled import symbol referenced in `_SaveModule_New` semantics). Bypasses the GUI-bound `_SaveModule_New`. |
-| Get source text | `HGLOBAL __stdcall _LoadTextFileEX@16(void* unused, int whType, int progId, void* passwordBuffer)` — returns a global memory handle containing the source text (caller must `GlobalLock`/`GlobalFree`); returns NULL on failure. | PROVISIONAL | Named export confirmed via Ghidra (addr 0x101081A0, xref EXTERNAL). Parameter order derived from static decompilation, needs live RE confirmation (Frida trace of TSDev.exe). Counterpart to `_SaveTextEX@16` (which sets source text). See note below. |
+| Get source text | `HGLOBAL __stdcall _LoadTextFileEX@16(void* unused, int whType, int progId, void* passwordBuffer)` — returns a global memory handle containing the source text (caller must `GlobalLock`/`GlobalFree`); returns NULL on failure. | CONFIRMED (TVS-F.4) | Named export confirmed via Ghidra (addr 0x101081A0, xref EXTERNAL). Parameter order confirmed via Ghidra static analysis in TVS-F.4 (thunk + authoritative mirror caller FUN_10108630; Frida NOT needed). Implemented in the `get-source` subcommand. Counterpart to `_SaveTextEX@16` (which sets source text). See note below. |
 
 > **Note (`_LoadTextFileEX@16`):** Source text is stored in the warehouse (`MWRKArea.wrk`), NOT in the `.ell` files (which are compiled+encrypted bytecode, magic `RNAM`). Inner logic (`FUN_101a0f90`): GetWarehouse → TypeConvert(whType) → module lookup by type+progId → command 0x11 dispatch (`FUN_101d0e80`) → GlobalAlloc + decryption. The command-0x11 dispatcher contains a thread-check INT3 (`swi(3)`) that must be NOP-patched (same technique as existing patches for commands 0x0F/0x1E/0x17 — see SIGNATURE_CATALOG.md §4.10-4.12). Pass NULL for `passwordBuffer` to retrieve standard (non-password-protected) items; password-protected items are out of scope for the current `get-source` requirement.
 
@@ -218,6 +218,8 @@ int vok = VerifyModule_New(hEdit, whType, progId, 1, compilerObj);
 // 14. GetCompilingErrors — fail loudly if non-empty
 std::string errs = GetCompilingErrors(&retPtr);
 if (!errs.empty()) { fail_loudly("compile failed: %s", errs.c_str()); }
+// NOTE: The `GetCompilingErrors` call in this pseudocode was superseded by direct
+// error array access (TVS-A.4). See `src/tsdev_lib.cpp` for the current implementation.
 
 // 15. EndCompilingProcess(0) — required after VerifyModule_New
 EndCompilingProcess(0);
@@ -311,7 +313,7 @@ OrlibExit();
 
 **Genuinely unresolved:**
 
-1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap / ShowMe / TradingApp** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4.
+1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap / ShowMe** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4/5122 (TradingApp is CONFIRMED as whType 5122, Workstream C complete).
 2. ~~**DELETE flow not yet tested end-to-end**~~ — **RESOLVED — IMPLEMENTED & APPROVED.** The orchestrator-based approach (`FUN_101a8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.7). Prior approaches (`SetSigDeleted` + `RemoveMetaDataModules` + `CleanMastersEX`, command `0x45`, dirty-flag manipulation, `WHServer.exe` termination) are RETIRED/rejected.
 3. **`_SaveTextEX` p1/p4 roles** — uncertain (MED confidence). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead. `_SaveTextEX` remains unmapped for completeness.
 4. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.
@@ -460,7 +462,7 @@ Each function gets a red-green TDD cycle against a disposable test library copy 
 
 ## 9. Evidence Index
 
-All artifacts in `C:\Users\user\projects\tsdev_automation\tmp\re_artifacts\`:
+All artifacts in `tmp\re_artifacts\`:
 
 | File | Contents |
 |------|----------|

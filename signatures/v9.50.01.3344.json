@@ -388,7 +388,7 @@
         "author": "RE-F5",
         "date": "2026-08-20",
         "source": "Ghidra disassembly",
-        "reference": "docs/RE/RE_F5_cache_refresh_feasibility.md",
+        "reference": "docs/RE/archive/RE_F5_cache_refresh_feasibility.md",
         "notes": "Distinctive: 8B 45 08 56 8B F1 (MOV EAX,[EBP+8]; PUSH ESI; MOV ESI,ECX) + 89 46 12 89 46 16 (MOV [ESI+0x12],EAX; MOV [ESI+0x16],EAX) + C7 46 04 0D 00 00 00 (cmd 0x0D) — distinguishes from FUN_101d1fa0 which has cmd 0x17"
       }
     },
@@ -412,7 +412,7 @@
         "author": "RE-F5-cache-fix",
         "date": "2026-08-26",
         "source": "Ghidra disassembly",
-        "reference": "docs/RE/RE_F5_cache_fix_findings.md",
+        "reference": "docs/RE/archive/RE_F5_cache_fix_findings.md",
         "notes": "Distinctive: 53 56 8B F1 (PUSH EBX; PUSH ESI; MOV ESI,ECX) + 8B 5D 10 (MOV EBX,[EBP+0x10]) + C7 03 (MOV [EBX],0) + 89 46 16 (MOV [ESI+0x16]) + C7 46 04 0D (cmd 0x0D) — distinguishes from FUN_101d16c0 (cmd 0x09) which has 56 8B F1 57 + 8B 7D 10 + C7 07 + 89 46 08"
       }
     },

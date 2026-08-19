@@ -26,6 +26,17 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
         "before configuring with Ninja. Detected sizeof(void*)=${CMAKE_SIZEOF_VOID_P}.")
 endif()
 
+# --- Workstream G: distribution output directories ---------------------------
+# NOTE: These directories live in the SOURCE TREE (${CMAKE_SOURCE_DIR}), NOT the
+# build tree. This is INTENTIONAL: the goal is a root-level gitignored dist/
+# containing the assembled bundle (exe + Python wrapper) that can be zipped and
+# distributed directly from the repo root. Do NOT "fix" this to write into the
+# build directory -- that would break the distribution workflow. Both dist/ and
+# artifacts/ are gitignored via the root .gitignore.
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/dist)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/dist/tsdev_automation)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/artifacts)
+
 # --- Python interpreter for build-time codegen (sigcodegen.py) ---------------
 find_package(Python COMPONENTS Interpreter REQUIRED)
 
@@ -95,7 +106,7 @@ target_link_libraries(test_persistence_validation tsdev_lib)
 # --- No hardcoded RVA constants test (AC1 TDD red-green) ---------------------
 # Verifies that tsdev_lib.cpp contains zero hardcoded RVA hex constants.
 # Compiles against the generated header signatures.gen.h: the forbidden set is
-# derived from it (JSON -> generated header -> test), per ARCHITECTURE_REDESIGN
+# derived from it (JSON -> generated header -> test), per docs/archive/ARCHITECTURE_REDESIGN.md
 # §7.4 Option A. The generated arrays are constexpr (header-only), so no library
 # is linked. add_dependencies ensures the header exists before compilation.
 add_executable(test_no_hardcoded_rvas tests/test_no_hardcoded_rvas.cpp)
@@ -192,6 +203,48 @@ target_link_libraries(test_stress_batch tsdev_lib)
 add_executable(tsdev_cli src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli PRIVATE third_party)
 target_link_libraries(tsdev_cli tsdev_lib)
+
+# --- Workstream G (TVS-G.1): POST_BUILD bundle assembly ----------------------
+# Glob the Python wrapper sources with CONFIGURE_DEPENDS so newly added .py
+# files trigger a re-configure automatically.
+file(GLOB TSDEV_PY_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tsdev_automation/*.py)
+
+# Build the per-file copy COMMAND lines at configure time. A foreach loop cannot
+# be embedded directly inside add_custom_command's COMMAND section (COMMAND lines
+# are not imperative CMake), so we expand the GLOB'd list here into a list of
+# COMMAND arguments that are spliced into the POST_BUILD custom command below.
+set(TSDEV_PY_COPY_COMMANDS "")
+foreach(py ${TSDEV_PY_SOURCES})
+    get_filename_component(py_name ${py} NAME)
+    list(APPEND TSDEV_PY_COPY_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${py} ${CMAKE_SOURCE_DIR}/dist/tsdev_automation/${py_name})
+endforeach()
+
+# NOTE: This POST_BUILD command writes into ${CMAKE_SOURCE_DIR}/dist (the source
+# tree), NOT the build tree. This is INTENTIONAL -- see the comment near the
+# file(MAKE_DIRECTORY) calls above. The goal is a root-level gitignored dist/
+# for distribution. copy_if_different avoids touching timestamps on unchanged
+# files. The remove_directory + make_directory pair ensures dist/tsdev_automation
+# is a clean mirror of src/tsdev_automation/*.py on every build (copy_if_different
+# alone does NOT remove files deleted/renamed in source). The README copy was
+# added by TVS-G.3. No zip command here (that is TVS-G.5) -- this block is
+# atomic per-TVS.
+add_custom_command(TARGET tsdev_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:tsdev_cli> ${CMAKE_SOURCE_DIR}/dist/tsdev_cli.exe
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+            ${CMAKE_SOURCE_DIR}/dist/tsdev_automation
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_SOURCE_DIR}/dist/tsdev_automation
+    ${TSDEV_PY_COPY_COMMANDS}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/docs/BUNDLE_README.md
+            ${CMAKE_SOURCE_DIR}/dist/README.md
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/tools/create_bundle_zip.ps1 -SourceDir ${CMAKE_SOURCE_DIR}
+    COMMENT "Assembling dist/ bundle (tsdev_cli.exe + Python wrapper)"
+    VERBATIM
+)
 
 # --- sigtool: standalone orlib20.dll signature verification tool --------------
 # CLI for verifying signatures, validating patch sites, inspecting DLL info,

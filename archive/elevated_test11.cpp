@@ -81,7 +81,7 @@ void listModules() {
 DWORD WINAPI probe_main(LPVOID);
 
 int main() {
-    g_log = fopen("C:\\Users\\user\\projects\\tsdev_automation\\elevated_test11_log.txt", "w");
+    g_log = fopen("elevated_test11_log.txt", "w");
     if (!g_log) { printf("FATAL: can't open log file\n"); return 1; }
     setvbuf(stdout, NULL, _IONBF, 0);
 

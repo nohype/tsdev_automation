@@ -77,14 +77,14 @@ static bool loadDllBuffer(const char* path, std::vector<uint8_t>& out) {
 
 // ---------------------------------------------------------------------------
 // findDllPath — try candidate paths and return the first that exists.
-// Candidates cover: run-from-project-root, run-from-build\Release\, and an
-// absolute fallback. If none exist, the first candidate is returned (so the
+// Candidates cover: run-from-project-root, run-from-build\Release\, and
+// run-from-build\. If none exist, the first candidate is returned (so the
 // caller can print a loud error listing every path that was tried).
 // ---------------------------------------------------------------------------
 static const char* kDllCandidates[] = {
     "tests/fixtures/orlib20_baseline.dll",
     "../../tests/fixtures/orlib20_baseline.dll",
-    "C:\\Users\\user\\projects\\tsdev_automation\\tests\\fixtures\\orlib20_baseline.dll",
+    "../tests/fixtures/orlib20_baseline.dll",
 };
 static const int kDllCandidateCount =
     sizeof(kDllCandidates) / sizeof(kDllCandidates[0]);
