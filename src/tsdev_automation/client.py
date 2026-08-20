@@ -34,7 +34,7 @@ _VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "
 
 # Subcommand name per high-level operation.
 _SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "get-source": "get-source", "upsert": "upsert"}
-_BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete"}
+_BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete", "upsert": "batch-upsert"}
 
 
 @dataclass
@@ -234,6 +234,34 @@ class TsDevClient:
         """Batch-delete many items. See :meth:`batch_insert`."""
         return self._batch("delete", items)
 
+    def batch_upsert(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
+        """Batch-upsert many items (insert-or-modify). See :meth:`batch_insert`."""
+        return self._batch("upsert", items)
+
+    def batch_insert_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+        """Batch-insert all .el files in a directory. File stem = item name, file content = EL source.
+
+        ``extensions`` selects which file extensions to include. ``None`` (default)
+        or an empty list uses the CLI defaults (``.el`` + ``.txt``). A non-empty
+        list like ``["el"]`` selects only ``.el`` files; each element is passed to
+        the CLI as a ``-t <ext>`` flag. Per-item failures are reported in the
+        returned list (NOT raised); a directory-level failure (exit 1) raises
+        :class:`TsDevError`.
+        """
+        return self._batch_dir("insert", type, dir_path, extensions)
+
+    def batch_modify_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+        """Batch-modify all .el files in a directory. See :meth:`batch_insert_dir`."""
+        return self._batch_dir("modify", type, dir_path, extensions)
+
+    def batch_delete_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+        """Batch-delete all .el files in a directory (file stem = item name; content ignored). See :meth:`batch_insert_dir`."""
+        return self._batch_dir("delete", type, dir_path, extensions)
+
+    def batch_upsert_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+        """Batch-upsert all .el files in a directory. See :meth:`batch_insert_dir`."""
+        return self._batch_dir("upsert", type, dir_path, extensions)
+
     # -- internals ---------------------------------------------------------
 
     def _base_cmd(self) -> list[str]:
@@ -260,7 +288,7 @@ class TsDevClient:
         return result
 
     def _batch(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
-        needs_source = op in ("insert", "modify")
+        needs_source = op in ("insert", "modify", "upsert")
         cleanup: list[Path] = []
         try:
             manifest = self._build_manifest_string(items, needs_source, cleanup)
@@ -270,6 +298,17 @@ class TsDevClient:
         finally:
             self._cleanup(cleanup)
         return results
+
+    def _batch_dir(self, op: str, type_: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None) -> list[TsDevResult]:
+        t = _validate_type(type_)
+        exts = list(extensions) if extensions else []
+        for e in exts:
+            if not isinstance(e, str) or not e:
+                raise ValueError(f"invalid extension {e!r}: must be a non-empty string")
+        cmd = self._base_cmd() + [f"batch-{op}-dir", t, str(dir_path)]
+        for e in exts:
+            cmd += ["-t", e]
+        return self._run_batch(cmd, input="")
 
     def _materialize_source(self, source: str | os.PathLike, cleanup: list[Path]) -> Path:
         """Return a path to a source file.

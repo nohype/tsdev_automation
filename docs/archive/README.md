@@ -11,6 +11,7 @@ These documents are historical planning/research/design materials for completed 
 - **WORKSTREAM_F5_PLAN.md** — TVS-F.5 detailed subtask decomposition. COMPLETE.
 - **WORKSTREAM_F5_PLAN_REVIEW.md** — Adversarial review of F5 plan (DISAPPROVED → fixed).
 - **WORKSTREAM_F5_PLAN_REREVIEW.md** — Re-review of F5 plan (APPROVED).
+- **WORKSTREAM_I_PLAN.md** — Workstream I (directory batch operations) plan. IN PROGRESS (3 TVSs I.1–I.3; I.1 COMPLETE, I.2 + I.3 pending).
 
 ## Completed design documents
 - **ARCHITECTURE_REDESIGN.md** — Workstream E architecture design (signature JSON migration, build-time codegen). IMPLEMENTED. The code (`tools/sigcodegen.py`, `signatures/*.json`) and `docs/SIGNATURE_CATALOG.md` are now the source of truth.

@@ -2,7 +2,7 @@
 
 **Status:** Production-grade test specification
 **Applies to:** `tsdev_cli.exe` (the production CLI for the TSDev Library)
-**Last verified:** 2026-08-20 (34/34 Part A-C tests PASSED + Workstream F tests)
+**Last verified:** 2026-08-20 (34/34 Part A-C tests PASSED + Workstream F tests + Workstream I directory batch tests)
 
 ---
 
@@ -119,6 +119,13 @@ tsdev_cli [--ts-path <directory>] upsert <type> <name> <source_file>
 tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin
 tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin
 tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin
+tsdev_cli [--ts-path <directory>] batch-upsert  <manifest_file> | --batch-stdin
+
+# Directory batch operations (Part E — Workstream I)
+tsdev_cli [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 ```
 
 ### Global flags
@@ -137,6 +144,9 @@ tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin
 | `get-source` | Retrieve EasyLanguage source for `<type>` + `<name>` to stdout, or to a file via `--output <file>`. Standard (non-password-protected) items only. |
 | `upsert` | Insert-or-modify: if the item exists, perform a modify (ProgId preserved); otherwise perform an insert. |
 | `batch-insert` / `batch-modify` / `batch-delete` | Batch operations driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. |
+| `batch-upsert` | Batch insert-or-modify driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. Each line: `<type> <name> <source_file>`. If the item exists → modify (ProgId preserved); otherwise → insert. |
+| `batch-insert-dir` / `batch-modify-dir` / `batch-delete-dir` | Directory batch operations: enumerate regular files in `<dir_path>` matching accepted extensions (default `.el`+`.txt`; overridable via repeatable `-t <ext>`), use file stem as item name and file content as EL source (source ignored for delete). Reuse the same batch pipeline as manifest batch ops via shared `runBatchAndEmit()` helper. |
+| `batch-upsert-dir` | Directory batch insert-or-modify: same enumeration as other `batch-*-dir` subcommands. If the item exists → modify (ProgId preserved); otherwise → insert. |
 
 ### Arguments
 
@@ -149,6 +159,8 @@ tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin
 | `--batch-stdin` | Read the manifest from stdin instead of a file (enables inline batch without temp files). |
 | `--output <file>` | (`get-source` only) Write retrieved EL source to the given file instead of stdout. |
 | `--case-insensitive` | (`exists` only) Enable case-insensitive name matching. |
+| `<dir_path>` | (`batch-*-dir` only) Path to a directory whose regular files are enumerated as batch items. File stem (sans last extension) = item name; file content = EL source (for insert/modify/upsert; ignored for delete). |
+| `-t <ext>` | (`batch-*-dir` only) Repeatable extension filter. Default extensions: `.el` + `.txt`. The first `-t` overrides the defaults; subsequent `-t` flags add additional extensions. Dot-prefix is optional (`-t el` ≡ `-t .el`). Case-insensitive. |
 
 ### Valid type strings
 
@@ -175,13 +187,13 @@ tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin
 | **9** | .ell file missing | Compilation succeeded but the `.ell` file was not found on disk |
 | **10** | Thread creation failure | CreateThread failed (system-level error) |
 
-> **Batch subcommands** (`batch-insert`/`batch-modify`/`batch-delete`) use a **separate exit code scheme**:
+> **Batch subcommands** (`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`) use a **separate exit code scheme**:
 >
 >| Exit code | Meaning |
 >|-----------|---------|
 >| **0** | All items succeeded |
->| **1** | Usage/manifest error — the batch did not run (bad args, unreadable manifest, malformed manifest) |
->| **2** | One or more items failed (per-item results are reported in the JSON output; the batch ran but was not fully successful) |
+>| **1** | Usage/manifest error — the batch did not run (bad args, unreadable manifest, malformed manifest, empty directory with no matching files, non-existent directory, missing `-t` argument) |
+>| **2** | One or more items failed (per-item results are reported in the JSON output; the batch ran but was not fully successful; includes unknown type) |
 
 The exit codes most relevant to this test specification are **0** (success), **5** (not found), **8** (compile error), and **2** (unknown type).
 
@@ -463,6 +475,56 @@ Workstream F added 4 new operations and inline batch via stdin. All are implemen
 
 ### D.5: Inline batch via stdin — tests/test_batch_stdin.ps1 (8 cases)
 - S1-S8: insert/delete/modify mixed via stdin, comments/blanks, empty stdin, backward-compat file-path, no-args rejected, stdin≡file equivalence
+
+### D.6: batch-upsert — tests/test_batch_upsert.ps1 (5 cases)
+- BU1: batch-upsert via manifest file, mixed insert+modify paths, ProgId preserved on modify-path
+- BU2: batch-upsert via --batch-stdin, same invariants
+- BU3: compile-error item → exit 2, per-item failure with compile_error
+- BU4: empty manifest → exit 1, stderr "empty"
+- BU5: no args → exit 1, stderr "requires exactly 1 argument"
+
+---
+
+## Part E: Directory Batch Operations (Workstream I — TVS-I.2 COMPLETE)
+
+Workstream I (TVS-I.2) added 4 directory batch subcommands. These enumerate regular files in a directory (default extensions `.el`+`.txt`, overridable via repeatable `-t <ext>` flag), use the file stem as the item name and the file content as the EasyLanguage source, and reuse the existing batch pipeline via a shared `runBatchAndEmit()` helper. Tested by `tests/test_directory_batch.ps1` (9 E2E cases DB1–DB9) and `tests/test_directory_batch.cpp` (6 unit cases for `parseDirectory()` logic).
+
+### E.1: Directory batch test cases — tests/test_directory_batch.ps1 (9 cases)
+
+| Test ID | Subcommand | Scenario | Expected exit | Key assertions |
+|---------|------------|----------|---------------|-----------------|
+| **DB1** | `batch-insert-dir` | Create temp dir with 3 `.el` files (valid EL strategy source), run batch-insert-dir | **0** | JSON array of 3 items, all `success=true`, `op=insert`, `prog_id>0`; each verified via `exists --json` |
+| **DB2** | `batch-modify-dir` | Insert items first (from DB1), then modify via batch-modify-dir with updated source files | **0** | JSON array of 2 items, all `success=true`, `op=modify`; ProgIds preserved (verified via `exists --json` before and after) |
+| **DB3** | `batch-delete-dir` | Insert items (reuse DB1 item + 2 new pre-inserted), then delete via batch-delete-dir | **0** | JSON array of 3 items, all `success=true`, `op=delete`, `prog_id>0`; all verified deleted via `exists --json` (exists=false) |
+| **DB4** | `batch-upsert-dir` | Mixed insert/modify: one file already exists (modify-path, ProgId preserved), one file is new (insert-path) | **0** | JSON array of 2 items; modify-path: `success=true`, `op=upsert`, `prog_id` preserved; insert-path: `success=true`, `op=upsert`, `prog_id>0` (new); both verified via `exists --json` |
+| **DB5** | `batch-insert-dir` | `-t` flag override: dir with `.el`, `.abc`, `.txt` files; run with `-t el -t abc` | **0** | JSON array of 2 items (`.el` + `.abc` only); `.txt` item excluded; `.txt` item verified NOT inserted via `exists --json` |
+| **DB6** | `batch-insert-dir` | Empty directory (no matching files) | **1** | No JSON array on stdout; stderr contains error message |
+| **DB7** | `batch-insert-dir` | Unknown type string (`bogusType`) | **2** | No JSON array on stdout; stderr contains "unknown type" |
+| **DB8** | `batch-insert-dir` | Non-existent directory path | **1** | No JSON array on stdout; stderr contains error message |
+| **DB9** | `batch-insert-dir` | `-t` flag with missing argument (trailing `-t` with no extension) | **1** | No JSON array on stdout; stderr contains "requires an extension argument" |
+
+**Part E total: 9 E2E test cases + 6 C++ unit test cases (parseDirectory logic).**
+
+### E.2: C++ unit test cases — tests/test_directory_batch.cpp (6 cases)
+
+| Test | Scenario | Key assertions |
+|------|----------|-----------------|
+| 1. Extension filtering (default) | Dir with `alpha.el`, `beta.txt`, `gamma.md` | 2 items (alpha, beta); gamma excluded; sources read |
+| 2. Extension override (`.el` only) | Same dir, extensions `{".el"}` | 1 item (alpha); beta.txt excluded |
+| 3. Stem extraction | `my.strategy.el` → stem = "my.strategy" | `path::stem()` strips only last extension |
+| 4. Empty directory | Freshly-created empty dir | 0 items |
+| 5. Subdirectory skipping | Top-level `.el` + nested subdir with `.el` | 1 item (top only); no recursion |
+| 6. Source reading | `needsSource=true` vs `false` | true: source = file content; false (delete): source empty |
+
+### E.3: Directory batch exit codes
+
+Directory batch subcommands use the same exit code scheme as manifest batch subcommands (see §3 Exit codes):
+
+| Exit code | Meaning |
+|-----------|---------|
+| **0** | All items succeeded |
+| **1** | Usage error / empty dir (no matching files) / non-existent directory / missing `-t` argument (batch did not run) |
+| **2** | Batch ran but one or more items failed (incl. unknown type) |
 
 ---
 

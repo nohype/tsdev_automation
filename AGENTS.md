@@ -119,7 +119,7 @@ Update this list to reflect the current state and the next best steps as the pro
 
 ### Completed Work Summary
 
-All workstreams A, B, C, D, E, F, G are COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G, I are COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
 
 | TVS | Result | Status |
 |-----|--------|--------|
@@ -138,7 +138,7 @@ All workstreams A, B, C, D, E, F, G are COMPLETE. Detailed per-TVS logs are arch
 | TVS-B.4 | OrlibResolver .cpp implementation | COMPLETE |
 | TVS-B.4.5 | resolveErrorHinstRva instruction-offset extraction | COMPLETE |
 | TVS-B.5 | OrlibResolver integration with TsDevLib | COMPLETE |
-| TVS-B.6 | Automated regression test suite (initial 60 tests, now 93 across 8 sub-suites) | COMPLETE |
+| TVS-B.6 | Automated regression test suite (initial 60 tests, now 113 across 10 sub-suites) | COMPLETE |
 | TVS-B.6.5 | Baseline DLL committed to tests/fixtures/ | COMPLETE |
 | TVS-B.6.6 | Interactive baseline DLL prompting in test runners | COMPLETE |
 | TVS-B.7 | TS install path discovery + --ts-path CLI override | COMPLETE |
@@ -163,20 +163,23 @@ All workstreams A, B, C, D, E, F, G are COMPLETE. Detailed per-TVS logs are arch
 | TVS-F.6 | Python wrapper for all F ops (exists/get-source/upsert + inline batch stdin) | COMPLETE |
 | TVS-F.5 | Case-insensitive exists with stored name + ProgId return (C++ CLI + Python) | COMPLETE |
 | TVS-G.1–G.5 | Distributable bundle (dist/ + artifacts/ zip) | COMPLETE |
+| TVS-I.1 | batch-upsert (C++ CLI — manifest file + stdin modes) | COMPLETE |
+| TVS-I.2 | Directory batch mode (C++ CLI — all 4 ops: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir) | COMPLETE |
+| TVS-I.3 | Python wrapper — batch_upsert + directory batch + _cli.py subcommands | COMPLETE |
 
 **Key architectural facts:**
 - Signature data: `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) — 25 signatures total, 12 patch sites
 - OrlibResolver: signature-based RVA resolution, no hardcoded RVAs in production code
 - CLI supports 4 component types: Strategy (0), Indicator (2), Function (4), TradingApp (5122)
-- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (8 C++ regression suites: sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci). Python: 62 tests. All passing.
+- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (10 C++ regression suites / 113 cases: sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci + batch-upsert + directory-batch). Python: 83 tests. All passing.
 - Fresh clone builds without `tmp/` dependencies (Workstream E fixed this)
 - Case-insensitive `exists` uses two-phase `enumerateRecords`: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter, returns char* from warehouse node at offset +0x1D). The stored name comes from the WAREHOUSE, not from source text. Key decision: two-phase instead of cmd 0x0F + cmd 0x4E cache refresh.
 
 ### Project Status
 
-ALL workstreams (A, B, C, D, E, F, G) are COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build.
+ALL workstreams (A, B, C, D, E, F, G, I) are COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. Directory batch operations (insert/modify/delete/upsert) are now available via both the C++ CLI and the Python wrapper. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build.
 
-### Active Workstream: G — Distributable Bundle (COMPLETE)
+### Completed Workstream: G — Distributable Bundle
 
 | TVS | Scope | Status |
 |-----|-------|--------|
@@ -189,6 +192,23 @@ ALL workstreams (A, B, C, D, E, F, G) are COMPLETE. The primary acceptance crite
 ### Candidate Future Work
 1. **4 unconfirmed warehouse-type mappings** (ActivityBar, PaintBar, ProbabilityMap, ShowMe) — feature gap, requires Ghidra/Frida RE work per type. See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. Currently no user need. Defer.
 2. **SEH protection on error array reads** — `readErrorsFromArray` reads raw memory without SEH guards. Low likelihood (array populated by compiler in normal flow). Defer.
+
+### Workstream I — Directory Batch Operations (COMPLETE)
+
+Plan: `docs/archive/WORKSTREAM_I_PLAN.md` (3 TVSs: I.1 COMPLETE, I.2 COMPLETE, I.3 COMPLETE — all 3 TVSs done)
+
+**User requirements:**
+- Batch insert/modify/upsert/delete on directories via C++ CLI (`batch-<op>-dir <type> <dir_path>`) and Python wrapper
+- File names (without extension) = item names; file content = EL source
+- `-t <ext>` flag for extension filtering (default `.el`+`.txt`; first `-t` overrides defaults; repeatable)
+- DRY: share logic with manifest codepath (shared `runBatchAndEmit()` helper)
+- `batch-upsert` must be added to manifest file, `--batch-stdin`, AND directory modes
+
+| TVS | Scope | Status |
+|-----|-------|--------|
+| TVS-I.1 | batch-upsert (C++ CLI — manifest + stdin) | COMPLETE |
+| TVS-I.2 | Directory batch mode (C++ CLI — all 4 ops) | COMPLETE |
+| TVS-I.3 | Python wrapper — batch_upsert + directory batch + _cli.py subcommands | COMPLETE |
 
 ### REMAINING FOLLOW-UPS
 - **4 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap, ShowMe whType codes are NOT confirmed. Code restricts to 4 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff. Currently no user need. Defer.

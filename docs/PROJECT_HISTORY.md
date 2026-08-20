@@ -330,6 +330,72 @@
 - **Test results:** 8/8 C++ regression suites PASS + 60/60 Python tests PASS.
 - **Plan reference:** `docs/archive/WORKSTREAM_F5_PLAN.md` (adversarially reviewed + APPROVED). TVS-F.5 was the last remaining F item (previously marked OPTIONAL). Workstream F is now FULLY COMPLETE (F.1–F.6).
 
+### DONE — TVS-I.1: batch-upsert (C++ CLI — manifest + stdin) (APPROVED)
+- **Date:** 2026-08-20
+- **Goal:** Add a `batch-upsert` subcommand to `tsdev_cli` that performs batch insert-or-modify driven by a line-based manifest file or by manifest content piped via stdin with `--batch-stdin`, reusing the existing `doUpsert()` core logic but with `flushPerItem=false` (a single `closeWarehouse()` at the end, like the other batch ops).
+- **Implementation:** Added to `src/tsdev_cli.cpp`:
+  - `doUpsert()` gained a `bool flushPerItem=true` default parameter. The single-item upsert path keeps the default (`true` — flushes after each item as before). The batch-upsert path passes `false` — no per-item `closeWarehouse()`, only one at the very end (the batch "flush once" pattern shared with batch-insert/batch-modify/batch-delete).
+  - `runBatch()` upsert branch — dispatches to `doUpsert(flushPerItem=false)` per manifest item, emitting per-item JSON results with `op:"upsert"`.
+  - `needsSource` includes `upsert` (batch-upsert requires a source file per item, like insert/modify).
+  - `printUsage()` + top-of-file usage comment updated to document `batch-upsert`.
+- **Tests added:**
+  - `tests/test_batch_upsert.cpp` — C++ library-level invariant test: validates multi-item upsert on a single shared `TsDevLib` instance with `flushPerItem=false` (no per-item `closeWarehouse`), mixing insert-path and modify-path, asserting ProgId preservation after modify. Self-cleaning. Runs on a 64MB-stack worker thread (same pattern as other integration tests).
+  - `tests/test_batch_upsert.ps1` — 5-case PowerShell E2E: BU1 manifest-file mixed insert+modify (ProgId preserved), BU2 `--batch-stdin` same invariants, BU3 compile-error item (exit 2, per-item `compile_error`), BU4 empty manifest (exit 1, stderr "empty"), BU5 no-args (exit 1, stderr "requires exactly 1 argument").
+  - Wired into `CMakeLists.txt` (`test_batch_upsert` target), `tests/run_unit_tests.ps1` (inventory), `tests/run_regression.ps1` (Suite 9 with `-SkipBatchUpsert` flag).
+- **TDD red-green:** RED confirmed (library-level test exercised existing primitives; CLI E2E test failed before `batch-upsert` subcommand was implemented). GREEN: after implementation, both tests PASS.
+- **Verification:** Full regression 9/9 suites PASS (99 test cases: sigtool 12 + 19 unit + 34 E2E + 5 exists + 8 batch-stdin + 5 upsert + 6 get-source + 5 exists-ci + 5 batch-upsert).
+- **Adversarial review:** APPROVED. Core implementation in `src/tsdev_cli.cpp` correct; documentation and test comment findings addressed separately.
+- **Files changed:** `src/tsdev_cli.cpp`, `tests/test_batch_upsert.cpp` (new), `tests/test_batch_upsert.ps1` (new), `CMakeLists.txt`, `tests/run_unit_tests.ps1`, `tests/run_regression.ps1`.
+- **Plan reference:** `docs/archive/WORKSTREAM_I_PLAN.md` (adversarially reviewed + APPROVED). TVS-I.1 is the first of 3 TVSs in Workstream I. Next TVS: I.2 (directory batch mode).
+
+### DONE — TVS-I.2: Directory batch mode (C++ CLI — all 4 ops) (APPROVED)
+- **Date:** 2026-08-20
+- **Goal:** Add 4 directory batch subcommands to `tsdev_cli` (`batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, `batch-upsert-dir`) that enumerate regular files in a directory (default extensions `.el`+`.txt`, overridable via repeatable `-t <ext>` flag), use the file stem as the item name and the file content as the EL source, and reuse the existing batch pipeline via a shared `runBatchAndEmit()` helper (DRY).
+- **Implementation:** Added to `src/tsdev_cli.cpp`:
+  - `parseDirectory()` function: enumerates regular files in `<dir_path>` via `std::filesystem::directory_iterator` (no recursion), filters by accepted extensions (default `.el`+`.txt`; first `-t` overrides defaults, subsequent `-t` flags add; dot-prefix optional, case-insensitive), extracts the file stem (sans last extension) as the item name, and reads the file content as the EL source (for insert/modify/upsert; source left empty for delete). Returns 0 items for an empty directory (caller emits the "no files matching" error).
+  - `runBatchAndEmit()` helper: extracted from `cmdBatch()` for DRY reuse — shared by manifest batch ops and directory batch ops. Runs `runBatch()` and emits the JSON array output.
+  - `cmdBatchDir()` handler: parses `<type> <dir_path> [-t <ext>...]` args, calls `parseDirectory()`, then `runBatchAndEmit()`. Handles empty-directory (exit 1), non-existent-directory (exit 1), and missing `-t` argument (exit 1) error cases.
+  - `main()` dispatch: recognizes `batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir` → `cmdBatchDir()` with the appropriate op string.
+  - `printUsage()` + header comment updated to document the 4 new subcommands.
+  - `#ifndef TSDEV_CLI_TEST` guard added around `main()` to allow `tests/test_directory_batch.cpp` to `#include "../src/tsdev_cli.cpp"` (the test `#defines TSDEV_CLI_TEST` to exclude `main()` and access anonymous-namespace internals like `parseDirectory()` and `BatchItem`).
+- **Tests added:**
+  - `tests/test_directory_batch.cpp` — 6-case C++ unit test for `parseDirectory()` filesystem logic: (1) extension filtering with defaults (`.el`+`.txt`, exclude `.md`), (2) extension override (`.el` only), (3) stem extraction (`my.strategy.el` → `"my.strategy"`), (4) empty directory → 0 items, (5) subdirectory skipping (no recursion), (6) source reading (`needsSource=true` reads content; `needsSource=false` leaves empty). Pure unit test — no TsDevLib, no orlib20, no 64MB worker thread. Creates temp dirs with `std::filesystem`.
+  - `tests/test_directory_batch.ps1` — 9-case PowerShell E2E: DB1 batch-insert-dir with `.el` files (3 items, all success, verified via exists), DB2 batch-modify-dir with ProgId preservation, DB3 batch-delete-dir (all deleted, verified), DB4 batch-upsert-dir mixed insert/modify (ProgId preserved on modify-path), DB5 `-t` flag override (`.el`+`.abc` only, `.txt` excluded), DB6 empty dir → exit 1, DB7 unknown type → exit 2, DB8 non-existent dir → exit 1, DB9 `-t` missing argument → exit 1.
+  - Wired into `CMakeLists.txt` (`test_directory_batch` target), `tests/run_unit_tests.ps1` (inventory), `tests/run_regression.ps1` (Suite 10 with `-SkipDirectoryBatch` flag, skipped under `-NoTs`).
+- **TDD red-green:** RED confirmed (unit test failed to compile — `parseDirectory()` did not exist; E2E test failed — `batch-*-dir` subcommands not recognized). GREEN: after implementation, both tests PASS.
+- **Verification:** Full regression 10/10 suites PASS (113 test cases: sigtool 12 + 20 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 6 get-source + 5 exists-ci + 5 batch-upsert + 9 directory-batch).
+- **Adversarial review:** APPROVED with 7 MINOR findings (4 fixed, 3 non-blocking). Fixed findings addressed documentation gaps and stale comments. No CRITICAL or MAJOR findings.
+- **Key architectural notes:**
+  - `parseDirectory()` lives in the anonymous namespace of `tsdev_cli.cpp` (internal linkage) — the unit test reaches it by `#include`-ing the `.cpp` directly, which is why the `#ifndef TSDEV_CLI_TEST` guard on `main()` was necessary.
+  - Directory batch reuses the exact same `runBatch()` / `emitBatchOutput()` machinery as manifest batch — no duplicated batch logic. The only new code is `parseDirectory()` (file enumeration) and `cmdBatchDir()` (arg parsing + dispatch).
+  - `-t <ext>` flag semantics: first `-t` replaces the default extension set `{".el", ".txt"}`; each subsequent `-t` adds to the set. Dot-prefix is normalized (`.el` ≡ `el`). Extension comparison is case-insensitive.
+- **Files changed:** `src/tsdev_cli.cpp`, `tests/test_directory_batch.cpp` (new), `tests/test_directory_batch.ps1` (new), `CMakeLists.txt`, `tests/run_unit_tests.ps1`, `tests/run_regression.ps1`.
+- **Plan reference:** `docs/archive/WORKSTREAM_I_PLAN.md`. TVS-I.2 is the second of 3 TVSs in Workstream I. Next TVS: I.3 (Python wrapper — batch_upsert + directory batch).
+
+### DONE — TVS-I.3: Python wrapper — batch_upsert + directory batch + _cli.py subcommands (APPROVED)
+- **Date:** 2026-08-20
+- **Goal:** Add Python wrapper support for `batch_upsert` (manifest mode) and directory batch operations (`batch_insert_dir`, `batch_modify_dir`, `batch_delete_dir`, `batch_upsert_dir`), plus corresponding `batch-upsert` and `batch-*-dir` subcommands to the `tsdev-automation` Python CLI (`_cli.py`).
+- **Implementation:**
+  - `src/tsdev_automation/client.py`:
+    - `batch_upsert(items)` method — manifest-mode batch upsert via `--batch-stdin` (reuses `_batch()` with `_BATCH_SUBCMD["upsert"]`).
+    - `_batch_dir()` helper — shared logic for all 4 directory batch methods: builds CLI args `<sub> <type> <dir_path> [-t <ext>...]`, runs the CLI, parses the JSON array results.
+    - 4 `batch_*_dir()` methods: `batch_insert_dir(type, dir_path, extensions=None)`, `batch_modify_dir(...)`, `batch_delete_dir(...)`, `batch_upsert_dir(...)` — each delegates to `_batch_dir()` with the appropriate subcommand.
+    - `_BATCH_SUBCMD["upsert"]` entry added to the subcommand dispatch map.
+    - `needs_source` fix — `batch_upsert` now correctly indicates source is needed (matching insert/modify).
+  - `src/tsdev_automation/_cli.py`:
+    - `batch-upsert` subcommand (manifest mode) — dispatches to `client.batch_upsert()`.
+    - 4 `batch-*-dir` subcommands (`batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, `batch-upsert-dir`) — each takes `<type> <dir_path> [-t <ext>...]` args, with `-t` flag using `action="append"` for repeatable extension filtering.
+    - Dispatch branch added to route the new subcommands to the appropriate client methods.
+    - Docstring updates to document the new subcommands.
+  - `tests/test_tsdev_client.py`:
+    - 22 new test functions across 4 test classes: `TestBatchUpsert` (3 tests), `TestBatchDir` (8 tests), `TestCliNewSubcommands` (5 tests), `TestE2E` (5 tests), plus `_TEST_NAMES` update.
+- **TDD red-green:** RED confirmed (new methods/subcommands did not exist → tests failed). GREEN: after implementation, all tests PASS.
+- **Verification:** 83/83 Python tests pass (68 non-e2e + 15 e2e against real CLI + TradeStation warehouse). Full C++ regression unchanged (10/10 suites, 113 cases — no C++ changes in this TVS).
+- **Adversarial review:** APPROVED (1 MINOR non-blocking: README not yet updated — fixed in docs update).
+- **E2E CLI verification:** PASSED — all 5 new methods verified against real CLI with ProgId preservation (batch_upsert manifest mode, batch_insert_dir, batch_modify_dir, batch_delete_dir, batch_upsert_dir).
+- **Files changed:** `src/tsdev_automation/client.py`, `src/tsdev_automation/_cli.py`, `tests/test_tsdev_client.py`.
+- **Plan reference:** `docs/archive/WORKSTREAM_I_PLAN.md`. TVS-I.3 is the third and final TVS in Workstream I. **Workstream I COMPLETE.** No next TVS currently planned.
+
 ## PREVIOUS Entries (from PM_WORKING_MEMORY.md)
 
 ## PREVIOUS: TVS-B.6 — Automated regression test suite (COMPLETE, APPROVED)

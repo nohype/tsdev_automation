@@ -15,6 +15,11 @@ Usage::
     tsdev-automation batch-insert  ./manifest.txt
     tsdev-automation batch-modify  ./manifest.txt
     tsdev-automation batch-delete  ./manifest.txt
+    tsdev-automation batch-upsert  ./manifest.txt
+    tsdev-automation batch-insert-dir  strategy ./mydir [-t el]...
+    tsdev-automation batch-modify-dir  strategy ./mydir [-t el]...
+    tsdev-automation batch-delete-dir  strategy ./mydir [-t el]...
+    tsdev-automation batch-upsert-dir  strategy ./mydir [-t el]...
 
 For insert/modify the source argument is interpreted as a file path if it
 exists, otherwise as inline EasyLanguage source text (matching the Python API).
@@ -83,9 +88,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name", help="component name")
     sp.add_argument("source", help="source file path OR inline EasyLanguage source text")
 
-    for op in ("batch-insert", "batch-modify", "batch-delete"):
+    for op in ("batch-insert", "batch-modify", "batch-delete", "batch-upsert"):
         sp = sub.add_parser(op, help=f"{op} from a manifest file.")
         sp.add_argument("manifest", help="path to manifest file (one item per line)")
+
+    for op in ("batch-insert-dir", "batch-modify-dir", "batch-delete-dir", "batch-upsert-dir"):
+        sp = sub.add_parser(op, help=f"{op} from a directory of .el files.")
+        sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+        sp.add_argument("dir_path", help="path to directory of .el files")
+        sp.add_argument("-t", action="append", dest="extensions", default=None,
+                        help="file extension filter (repeatable; first -t overrides defaults .el+.txt)")
 
     return p
 
@@ -121,7 +133,14 @@ def _main(argv: list[str] | None = None) -> int:
             r = client.upsert(args.type, args.name, args.source)
             _print_result(r)
             return 0 if r.success else 1
-        if args.command.startswith("batch-"):
+        if args.command.endswith("-dir"):
+            # batch-insert-dir, batch-modify-dir, batch-delete-dir, batch-upsert-dir
+            op = args.command[len("batch-"):-len("-dir")]  # "insert", "modify", "delete", "upsert"
+            results = getattr(client, f"batch_{op}_dir")(args.type, args.dir_path, args.extensions)
+            for r in results:
+                _print_result(r)
+            return 0 if all(r.success for r in results) else 1
+        elif args.command.startswith("batch-"):
             op = args.command.split("-", 1)[1]
             items = _read_manifest(Path(args.manifest), needs_source=(op != "delete"))
             results = getattr(client, f"batch_{op}")(items)

@@ -167,6 +167,34 @@ target_link_libraries(test_enumerate tsdev_lib)
 add_executable(test_upsert tests/test_upsert.cpp)
 target_link_libraries(test_upsert tsdev_lib)
 
+# --- BATCH UPSERT integration test (TVS-I.1, TDD red-green) -------------------
+# Validates the library-level composition that the future `batch-upsert` CLI
+# subcommand will rely on: multiple upsert items on a SINGLE shared TsDevLib
+# instance, mixing insert-path and modify-path, with NO per-item
+# closeWarehouse() (only one at the very end — the batch flushPerItem=false
+# "flush once" pattern). Asserts the KEY invariant: each item's ProgId is
+# preserved across the insert->modify transition. Runs on a 64 MB-stack
+# worker thread (same pattern as test_upsert).
+add_executable(test_batch_upsert tests/test_batch_upsert.cpp)
+target_link_libraries(test_batch_upsert tsdev_lib)
+
+# --- DIRECTORY BATCH unit test (TVS-I.2, TDD RED) -----------------------------
+# Unit test for parseDirectory() — the directory-enumeration logic that the
+# future batch-<op>-dir CLI subcommands will rely on. parseDirectory() and
+# BatchItem live inside an anonymous namespace in src/tsdev_cli.cpp (internal
+# linkage), so the test #includes the .cpp directly (same TU) to reach them.
+# This pulls in tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to
+# exclude it (the implementer must wrap main() in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. NOTE: parseDirectory() does NOT exist
+# yet — this is the TDD RED step and will FAIL TO COMPILE until subtask 3
+# implements it (and adds the TSDEV_CLI_TEST guard around main()).
+add_executable(test_directory_batch tests/test_directory_batch.cpp)
+target_include_directories(test_directory_batch PRIVATE third_party)
+target_link_libraries(test_directory_batch tsdev_lib)
+add_dependencies(test_directory_batch siggen)
+
 # --- GET-SOURCE integration test (TVS-F.4, TDD red-green) ---------------------
 # Validates the library-level source-retrieval primitive (getSource) that the
 # future `get-source` CLI subcommand will wrap. Inserts a probe strategy and a
@@ -296,6 +324,8 @@ add_dependencies(test_regression
     test_exists
     test_enumerate
     test_upsert
+    test_batch_upsert
+    test_directory_batch
     test_get_source
     test_auto_cleanup
     test_orlib_resolver

@@ -3,13 +3,13 @@
     Master regression runner for the TSDev Automation project (TVS-B.6.3).
 
 .DESCRIPTION
-    Orchestrates ALL seven regression sub-suites in a single command, in the
+    Orchestrates ALL nine regression sub-suites in a single command, in the
     order required by the B.6 acceptance criteria:
 
       1. sigtool verify gate   (tests/test_sigtool.ps1)
          12 sigtool CLI tests against the baseline DLL. Fast, no live TS.
       2. C++ unit tests        (tests/run_unit_tests.ps1)
-         17 C++ test executables (or 3 with -NoTs). Medium duration.
+         19 C++ test executables (or 3 with -NoTs). Medium duration.
       3. E2E CLI tests         (tests/run_e2e_tests.ps1)
          34 E2E CLI test cases per E2E_TEST_SPEC.md. Slowest; creates and
          deletes real warehouse entries.
@@ -33,6 +33,14 @@
          5 exists-subcommand case-insensitive E2E test cases (CI.1-CI.5).
          Requires live TS; skipped under -NoTs or -SkipExistsCi. Inserts and
          deletes real warehouse entries.
+      9. batch-upsert E2E tests   (tests/test_batch_upsert.ps1)
+         5 batch-upsert-subcommand E2E test cases (BU1-BU5). Requires live TS;
+         skipped under -NoTs or -SkipBatchUpsert. Inserts and deletes real
+         warehouse entries.
+     10. directory-batch E2E tests (tests/test_directory_batch.ps1)
+         8 directory-batch-subcommand E2E test cases (DB1-DB8). Requires live
+         TS; skipped under -NoTs or -SkipDirectoryBatch. Inserts and deletes
+         real warehouse entries.
 
     Each sub-suite is launched in its own PowerShell child process via
     `& powershell -ExecutionPolicy Bypass -File <path> [args]` so that a
@@ -65,6 +73,8 @@
       - Skip the upsert E2E suite entirely (prints "SKIP: upsert tests require live TS").
       - Skip the get-source E2E suite entirely (prints "SKIP: get-source tests require live TS").
       - Skip the exists case-insensitive E2E suite entirely (prints "SKIP: exists-ci tests require live TS").
+      - Skip the batch-upsert E2E suite entirely (prints "SKIP: batch-upsert tests require live TS").
+      - Skip the directory-batch E2E suite entirely (prints "SKIP: directory-batch tests require live TS").
       - Pass -NoTs to run_unit_tests.ps1 (runs only the 3 non-TS unit tests).
       - Still run the sigtool suite (it does not need live TS, only the
         baseline DLL).
@@ -94,25 +104,33 @@
     Switch. Skip the exists case-insensitive E2E test suite
     (tests/test_exists_ci.ps1).
 
+.PARAMETER SkipBatchUpsert
+    Switch. Skip the batch-upsert E2E test suite
+    (tests/test_batch_upsert.ps1).
+
+.PARAMETER SkipDirectoryBatch
+    Switch. Skip the directory-batch E2E test suite
+    (tests/test_directory_batch.ps1).
+
 .PARAMETER Verbose
     Switch. Passed through to all sub-scripts (enables full output for
     every test, not just failures).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-    Runs all 8 suites (sigtool + 17 unit tests + 34 E2E tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests).
+    Runs all 10 suites (sigtool + 19 unit tests + 34 E2E tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests + 5 batch-upsert tests + 8 directory-batch tests).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
-    Runs sigtool + 3 non-TS unit tests; skips E2E, exists, batch-stdin, upsert, get-source, and exists-ci suites.
+    Runs sigtool + 3 non-TS unit tests; skips E2E, exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert, and directory-batch suites.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e
-    Runs sigtool + all 17 unit tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests; skips E2E.
+    Runs sigtool + all 19 unit tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests + 5 batch-upsert tests + 8 directory-batch tests; skips E2E.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose
-    Runs all 8 suites with full output for every test.
+    Runs all 10 suites with full output for every test.
 
 .NOTES
     Exit codes:
@@ -123,13 +141,18 @@
       - The project must be built: cmake --build build --config Release
         (or: cmake --build build --config Release --target test_regression)
       - TradeStation 9.5 must be installed for the E2E, exists, and
-        batch-stdin, upsert, get-source, and exists-ci suites (unless -NoTs, -SkipE2e, -SkipExists, -SkipBatchStdin, -SkipUpsert, -SkipGetSource, or -SkipExistsCi is used).
+        batch-stdin, upsert, get-source, exists-ci, batch-upsert, and
+        directory-batch suites (unless -NoTs, -SkipE2e, -SkipExists,
+        -SkipBatchStdin, -SkipUpsert, -SkipGetSource, -SkipExistsCi,
+        -SkipBatchUpsert, or -SkipDirectoryBatch is used).
       - tests/fixtures/orlib20_baseline.dll must exist for the sigtool
         suite and test_orlib_resolver. If missing, the runner PROMPTS the
         user to copy it from the TradeStation installation. If the user
         declines, the sigtool suite and test_orlib_resolver are marked
         FAILED; other suites still run.
-      - No TradeStation processes/services should be running for the E2E, exists, batch-stdin, upsert, get-source, and exists-ci suites.
+      - No TradeStation processes/services should be running for the E2E,
+        exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert,
+        and directory-batch suites.
 #>
 
 param(
@@ -144,6 +167,8 @@ param(
     [switch]$SkipUpsert,
     [switch]$SkipGetSource,
     [switch]$SkipExistsCi,
+    [switch]$SkipBatchUpsert,
+    [switch]$SkipDirectoryBatch,
     [switch]$Verbose
 )
 
@@ -165,6 +190,8 @@ $BatchStdinScript = Join-Path $PSScriptRoot "test_batch_stdin.ps1"
 $UpsertScript   = Join-Path $PSScriptRoot "test_upsert.ps1"
 $GetSourceScript = Join-Path $PSScriptRoot "test_get_source.ps1"
 $ExistsCiScript  = Join-Path $PSScriptRoot "test_exists_ci.ps1"
+$BatchUpsertScript = Join-Path $PSScriptRoot "test_batch_upsert.ps1"
+$DirectoryBatchScript = Join-Path $PSScriptRoot "test_directory_batch.ps1"
 
 # Baseline DLL prerequisite path.
 $BaselineDll = Join-Path $ProjectRoot "tests\fixtures\orlib20_baseline.dll"
@@ -386,6 +413,8 @@ Write-Host "SkipBatchStdin : $SkipBatchStdin"
 Write-Host "SkipUpsert   : $SkipUpsert"
 Write-Host "SkipGetSource: $SkipGetSource"
 Write-Host "SkipExistsCi : $SkipExistsCi"
+Write-Host "SkipBatchUpsert : $SkipBatchUpsert"
+Write-Host "SkipDirectoryBatch : $SkipDirectoryBatch"
 Write-Host "Verbose      : $Verbose"
 if ($TsPath) { Write-Host "TsPath       : $TsPath" }
 
@@ -478,6 +507,25 @@ if (-not $skipExistsCiActual) { $suiteCount++ }
 # If exists-ci is skipped (e.g. due to -NoTs), still print a SKIP banner so
 # the user sees why. Count it in the total for banner numbering.
 if ($skipExistsCiActual) { $suiteCount++ }
+
+# batch-upsert E2E is skipped if -SkipBatchUpsert is set OR -NoTs is set
+# (batch-upsert requires live TS — it inserts/deletes real warehouse entries).
+$skipBatchUpsertActual = $SkipBatchUpsert -or $NoTs
+if (-not $skipBatchUpsertActual) { $suiteCount++ }
+
+# If batch-upsert is skipped (e.g. due to -NoTs), still print a SKIP banner so
+# the user sees why. Count it in the total for banner numbering.
+if ($skipBatchUpsertActual) { $suiteCount++ }
+
+# directory-batch E2E is skipped if -SkipDirectoryBatch is set OR -NoTs is set
+# (directory-batch requires live TS — it inserts/deletes real warehouse
+# entries).
+$skipDirectoryBatchActual = $SkipDirectoryBatch -or $NoTs
+if (-not $skipDirectoryBatchActual) { $suiteCount++ }
+
+# If directory-batch is skipped (e.g. due to -NoTs), still print a SKIP banner
+# so the user sees why. Count it in the total for banner numbering.
+if ($skipDirectoryBatchActual) { $suiteCount++ }
 
 # ---------------------------------------------------------------------------
 # Suite 1: sigtool verify gate
@@ -621,6 +669,42 @@ else {
     if ($Verbose)  { $existsCiArgs += "-Verbose" }
     Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
         -SuiteName "exists case-insensitive E2E tests" -ScriptPath $ExistsCiScript -Arguments $existsCiArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 9: batch-upsert E2E tests
+# ---------------------------------------------------------------------------
+if ($skipBatchUpsertActual) {
+    $idx++
+    $reason = if ($NoTs) { "batch-upsert tests require live TS" } else { "skipped by -SkipBatchUpsert" }
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "batch-upsert E2E tests" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    $batchUpsertArgs = @()
+    if ($TsPath)   { $batchUpsertArgs += @("-TsPath", $TsPath) }
+    if ($Verbose)  { $batchUpsertArgs += "-Verbose" }
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "batch-upsert E2E tests" -ScriptPath $BatchUpsertScript -Arguments $batchUpsertArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 10: directory-batch E2E tests
+# ---------------------------------------------------------------------------
+if ($skipDirectoryBatchActual) {
+    $idx++
+    $reason = if ($NoTs) { "directory-batch tests require live TS" } else { "skipped by -SkipDirectoryBatch" }
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "directory-batch E2E tests" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    $directoryBatchArgs = @()
+    if ($TsPath)   { $directoryBatchArgs += @("-TsPath", $TsPath) }
+    if ($Verbose)  { $directoryBatchArgs += "-Verbose" }
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "directory-batch E2E tests" -ScriptPath $DirectoryBatchScript -Arguments $directoryBatchArgs | Out-Null
 }
 
 # ---------------------------------------------------------------------------

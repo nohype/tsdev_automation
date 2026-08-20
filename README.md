@@ -27,6 +27,11 @@ tsdev_cli [--json] [--ts-path <dir>] upsert       <type> <name> <source-file>
 tsdev_cli [--ts-path <dir>] batch-insert  <manifest-file> | --batch-stdin
 tsdev_cli [--ts-path <dir>] batch-modify  <manifest-file> | --batch-stdin
 tsdev_cli [--ts-path <dir>] batch-delete  <manifest-file> | --batch-stdin
+tsdev_cli [--ts-path <dir>] batch-upsert  <manifest-file> | --batch-stdin
+tsdev_cli [--ts-path <dir>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <dir>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <dir>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
+tsdev_cli [--ts-path <dir>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 ```
 
 - `insert` — Compile and insert a new component. Fails loudly on compile errors (exit 8).
@@ -35,7 +40,8 @@ tsdev_cli [--ts-path <dir>] batch-delete  <manifest-file> | --batch-stdin
 - `exists` — Query whether a component exists by name. Returns `exists=true/false`, the verbatim stored name, and ProgId. Use `--case-insensitive` for case-insensitive name matching. Exit 0 for both found and not-found.
 - `get-source` — Retrieve the EasyLanguage source of a component. Prints to stdout by default; `--output <file>` writes to a file. Standard (non-password-protected) items only.
 - `upsert` — Insert if the component doesn't exist, otherwise modify. Preserves ProgId on the modify path.
-- `batch-insert`/`batch-modify`/`batch-delete` — Batch operations from a line-based manifest file or stdin (`--batch-stdin`). Always emit a JSON array (one result per item).
+- `batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert` — Batch operations from a line-based manifest file or stdin (`--batch-stdin`). Always emit a JSON array (one result per item).
+- `batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir` — Batch operations on all files in a directory. File stem = item name; file content = EL source. `-t <ext>` filters by extension (default `.el`+`.txt`; first `-t` overrides defaults; repeatable). Always emit a JSON array.
 - `--json` — Emit structured JSON output (single object for single-item ops; batch ops always emit a JSON array).
 - `--ts-path <dir>` — Override the TradeStation install directory (default: auto-discovered from registry).
 
@@ -143,13 +149,21 @@ client = TsDevClient(
 | `batch_insert(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
 | `batch_modify(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
 | `batch_delete(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
+| `batch_upsert(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
+| `batch_insert_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
+| `batch_modify_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
+| `batch_delete_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
+| `batch_upsert_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
 
 `type` is one of `strategy`, `function`, `indicator`, `tradingapp`. `source`
 may be a path to an existing `.el` file (used directly) or an inline
 EasyLanguage source string (written to a temp file and cleaned up
 automatically). Batch methods take a list of `BatchItem(type, name, source)`
 and return one `TsDevResult` per item in order — per-item failures are reported
-in the list, not raised (only a manifest-level failure raises).
+in the list, not raised (only a manifest-level failure raises). Directory batch
+methods (`batch_*_dir`) take a directory path instead of an items list; they
+enumerate files in the directory (file stem = item name, file content = EL
+source) and return one `TsDevResult` per file.
 
 ### Exception hierarchy
 
@@ -214,7 +228,7 @@ and `python -m tsdev_automation`) that wraps the Python API:
 
 ```
 tsdev-automation [--cli-path PATH] [--ts-path DIR] [--timeout SEC]
-                 {insert,modify,delete,exists,get-source,upsert,batch-insert,batch-modify,batch-delete} ...
+                 {insert,modify,delete,exists,get-source,upsert,batch-insert,batch-modify,batch-delete,batch-upsert,batch-insert-dir,batch-modify-dir,batch-delete-dir,batch-upsert-dir} ...
 ```
 
 For `insert`/`modify`, the source argument is interpreted as a file path if it

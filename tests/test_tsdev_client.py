@@ -766,6 +766,221 @@ class TestBatchStdin:
         assert "manifest from stdin is empty" in str(exc_info.value)
 
 
+class TestBatchUpsert:
+    """Mocked-subprocess unit tests for ``TsDevClient.batch_upsert``.
+
+    Mirrors :class:`TestBatch` / :class:`TestBatchStdin`: ``batch_upsert``
+    drives the ``batch-upsert --batch-stdin`` CLI subcommand, materializing
+    string sources to temp ``.el`` files (cleaned up after the call) and
+    piping the manifest via stdin.  Per-item failures are returned in the
+    list (not raised); only a manifest-level failure (exit 1) raises
+    :class:`TsDevError`.
+    """
+
+    def test_batch_upsert_cmd_construction(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            assert "input" in kw and isinstance(kw["input"], str)
+            arr = json.dumps(
+                [
+                    json.loads(_success_json("upsert", "strategy", "A")),
+                    json.loads(_success_json("upsert", "function", "B")),
+                ]
+            )
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_upsert(
+            [BatchItem("strategy", "A", "a;"), BatchItem("function", "B", "b;")]
+        )
+        cmd = seen["cmd"]
+        assert cmd == [str(client.cli_path), "batch-upsert", "--batch-stdin"]
+        assert cmd[-1] == "--batch-stdin"
+        assert "--batch-stdin" in cmd
+        # The input manifest contains lines for both items.
+        payload = seen["kw"]["input"]
+        lines = [ln for ln in payload.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        assert len(lines) == 2
+        assert lines[0].startswith("strategy A ")
+        assert lines[0].endswith(".el"), "string source must be materialized to a .el path"
+        assert lines[1].startswith("function B ")
+        assert lines[1].endswith(".el")
+        # Temp source files must be cleaned up after the call.
+        for ln in lines:
+            src_path = ln.split(None, 2)[2]
+            assert not os.path.isfile(src_path), f"temp source {src_path} must be cleaned up"
+        # Results parsed correctly.
+        assert len(results) == 2
+        assert all(r.success for r in results)
+        assert all(r.op == "upsert" for r in results)
+
+    def test_batch_upsert_needs_source(self, client: TsDevClient, monkeypatch) -> None:
+        def fail_run(*a, **k):
+            pytest.fail("subprocess.run must not be called when source is None")
+
+        monkeypatch.setattr(subprocess, "run", fail_run)
+        with pytest.raises(ValueError, match="source is required"):
+            client.batch_upsert([BatchItem("strategy", "A", None)])
+
+    def test_batch_upsert_mixed_results(self, client: TsDevClient, monkeypatch) -> None:
+        arr = json.dumps(
+            [
+                json.loads(_success_json("upsert", "strategy", "A", prog_id=77)),
+                json.loads(
+                    _failure_json("upsert", "strategy", "B", "compile_error", "bad", exit_code=8, compile_errors="err")
+                ),
+            ]
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr, returncode=2))
+        results = client.batch_upsert(
+            [BatchItem("strategy", "A", "a;"), BatchItem("strategy", "B", "bad")]
+        )
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[0].op == "upsert"
+        assert results[0].prog_id == 77
+        assert results[1].success is False
+        assert results[1].error is not None
+        assert results[1].error.compile_errors == "err"
+
+
+class TestBatchDir:
+    """Mocked-subprocess unit tests for the ``batch_*_dir`` methods.
+
+    Each drives the corresponding ``batch-<op>-dir`` CLI subcommand with
+    ``<type> <dir_path> [-t <ext>...]`` arguments.  Extensions default to
+    ``None`` (no ``-t`` flags → CLI uses its built-in defaults of .el+.txt).
+    An empty extensions list is treated the same as ``None``.
+    """
+
+    def test_batch_insert_dir_cmd_construction(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert_dir("strategy", "C:/mydir")
+        cmd = seen["cmd"]
+        assert cmd == [str(client.cli_path), "batch-insert-dir", "strategy", "C:/mydir"]
+        assert "-t" not in cmd, "no -t flags when extensions=None"
+        assert seen["kw"].get("input") == "", "input must be empty string for dir batch"
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_modify_dir_cmd_construction(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps([json.loads(_success_json("modify", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_modify_dir("strategy", "C:/mydir")
+        cmd = seen["cmd"]
+        assert cmd == [str(client.cli_path), "batch-modify-dir", "strategy", "C:/mydir"]
+        assert "-t" not in cmd
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_delete_dir_cmd_construction(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_delete_dir("strategy", "C:/mydir")
+        cmd = seen["cmd"]
+        assert cmd == [str(client.cli_path), "batch-delete-dir", "strategy", "C:/mydir"]
+        assert "-t" not in cmd
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_upsert_dir_cmd_construction(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps([json.loads(_success_json("upsert", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_upsert_dir("strategy", "C:/mydir")
+        cmd = seen["cmd"]
+        assert cmd == [str(client.cli_path), "batch-upsert-dir", "strategy", "C:/mydir"]
+        assert "-t" not in cmd
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_insert_dir_extensions(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        # Single extension.
+        client.batch_insert_dir("strategy", "C:/mydir", extensions=["el"])
+        cmd = seen["cmd"]
+        assert cmd.count("-t") == 1
+        assert cmd[cmd.index("-t") + 1] == "el"
+        # Two extensions in order.
+        client.batch_insert_dir("strategy", "C:/mydir", extensions=["el", "txt"])
+        cmd = seen["cmd"]
+        t_indices = [i for i, c in enumerate(cmd) if c == "-t"]
+        assert len(t_indices) == 2
+        assert cmd[t_indices[0] + 1] == "el"
+        assert cmd[t_indices[1] + 1] == "txt"
+        # Empty list → treated as None → no -t flags.
+        client.batch_insert_dir("strategy", "C:/mydir", extensions=[])
+        cmd = seen["cmd"]
+        assert "-t" not in cmd
+        # None → no -t flags.
+        client.batch_insert_dir("strategy", "C:/mydir", extensions=None)
+        cmd = seen["cmd"]
+        assert "-t" not in cmd
+
+    def test_batch_dir_exit1_raises(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed("", stderr="usage error", returncode=1)
+        )
+        with pytest.raises(TsDevError):
+            client.batch_insert_dir("strategy", "C:/mydir")
+
+    def test_batch_dir_unknown_type_raises(self, client: TsDevClient, monkeypatch) -> None:
+        def fail_run(*a, **k):
+            pytest.fail("subprocess.run must not be called for an unknown type")
+
+        monkeypatch.setattr(subprocess, "run", fail_run)
+        with pytest.raises(ValueError):
+            client.batch_insert_dir("bogus", "C:/mydir")
+
+    def test_batch_dir_invalid_extension_raises(self, client: TsDevClient, monkeypatch) -> None:
+        def fail_run(*a, **k):
+            pytest.fail("subprocess.run must not be called for an invalid extension")
+
+        monkeypatch.setattr(subprocess, "run", fail_run)
+        with pytest.raises(ValueError, match="extension"):
+            client.batch_insert_dir("strategy", "C:/mydir", extensions=[""])
+        with pytest.raises(ValueError, match="extension"):
+            client.batch_insert_dir("strategy", "C:/mydir", extensions=["el", ""])
+
+
 class TestCliMain:
     def test_main_insert_dispatch(self, monkeypatch, fake_cli: Path, capsys) -> None:
         calls: dict = {}
@@ -953,6 +1168,140 @@ class TestCliNewSubcommands:
         assert "MyStrat" in out
         assert "1234" in out
 
+    def test_cli_batch_upsert(self, monkeypatch, capsys, tmp_path: Path) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def batch_upsert(self, items):
+                calls["batch_upsert"] = items
+                return [
+                    TsDevResult(
+                        op="upsert", type=it.type, name=it.name, success=True, exit_code=0, prog_id=1, ell_path="C:/x.ell"
+                    )
+                    for it in items
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        manifest = tmp_path / "manifest.txt"
+        manifest.write_text("strategy A /path/a.el\nfunction B /path/b.el\n", encoding="utf-8")
+        rc = _main(["batch-upsert", str(manifest)])
+        out = capsys.readouterr().out
+        items = calls["batch_upsert"]
+        assert len(items) == 2
+        assert isinstance(items[0], BatchItem)
+        assert items[0].type == "strategy"
+        assert items[0].name == "A"
+        assert items[0].source == "/path/a.el"
+        assert items[1].type == "function"
+        assert items[1].name == "B"
+        assert items[1].source == "/path/b.el"
+        assert rc == 0, "all success → exit 0"
+        assert "A" in out
+        assert "B" in out
+
+    def test_cli_batch_insert_dir(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def batch_insert_dir(self, type_, dir_path, extensions=None):
+                calls.setdefault("batch_insert_dir", []).append((type_, dir_path, extensions))
+                return [
+                    TsDevResult(
+                        op="insert", type=type_, name="X", success=True, exit_code=0, prog_id=1, ell_path="C:/x.ell"
+                    )
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["batch-insert-dir", "strategy", "C:/mydir"])
+        assert calls["batch_insert_dir"][-1] == ("strategy", "C:/mydir", None)
+        assert rc == 0
+        rc = _main(["batch-insert-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
+        assert calls["batch_insert_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
+        assert rc == 0
+
+    def test_cli_batch_modify_dir(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def batch_modify_dir(self, type_, dir_path, extensions=None):
+                calls.setdefault("batch_modify_dir", []).append((type_, dir_path, extensions))
+                return [
+                    TsDevResult(
+                        op="modify", type=type_, name="X", success=True, exit_code=0, prog_id=1, ell_path="C:/x.ell"
+                    )
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["batch-modify-dir", "strategy", "C:/mydir"])
+        assert calls["batch_modify_dir"][-1] == ("strategy", "C:/mydir", None)
+        assert rc == 0
+        rc = _main(["batch-modify-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
+        assert calls["batch_modify_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
+        assert rc == 0
+
+    def test_cli_batch_delete_dir(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def batch_delete_dir(self, type_, dir_path, extensions=None):
+                calls.setdefault("batch_delete_dir", []).append((type_, dir_path, extensions))
+                return [
+                    TsDevResult(op="delete", type=type_, name="X", success=True, exit_code=0)
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["batch-delete-dir", "strategy", "C:/mydir"])
+        assert calls["batch_delete_dir"][-1] == ("strategy", "C:/mydir", None)
+        assert rc == 0
+        rc = _main(["batch-delete-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
+        assert calls["batch_delete_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
+        assert rc == 0
+
+    def test_cli_batch_upsert_dir(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+
+            def batch_upsert_dir(self, type_, dir_path, extensions=None):
+                calls.setdefault("batch_upsert_dir", []).append((type_, dir_path, extensions))
+                return [
+                    TsDevResult(
+                        op="upsert", type=type_, name="X", success=True, exit_code=0, prog_id=1, ell_path="C:/x.ell"
+                    )
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["batch-upsert-dir", "strategy", "C:/mydir"])
+        assert calls["batch_upsert_dir"][-1] == ("strategy", "C:/mydir", None)
+        assert rc == 0
+        rc = _main(["batch-upsert-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
+        assert calls["batch_upsert_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
+        assert rc == 0
+
 
 class TestExceptionHierarchy:
     def test_all_subclass_tsdeverror(self) -> None:
@@ -1118,6 +1467,16 @@ class TestE2E:
         _UNIQUE + "_BadCompile",
         _UNIQUE + "_Batch",
         "zzz_py_ci_probe",
+        _UNIQUE + "_UpsA",
+        _UNIQUE + "_UpsB",
+        _UNIQUE + "_DirA",
+        _UNIQUE + "_DirB",
+        _UNIQUE + "_DirC",
+        _UNIQUE + "_UDirA",
+        _UNIQUE + "_UDirB",
+        _UNIQUE + "_MDirA",
+        _UNIQUE + "_MDirB",
+        _UNIQUE + "_TxtA",
     ]
 
     @pytest.fixture(autouse=True)
@@ -1301,6 +1660,126 @@ class TestE2E:
                 self.c.delete("strategy", name)
             except Exception:
                 pass
+
+    # -- Part 6: batch upsert + directory batch ops (TVS-I.3) --------------
+
+    def test_e2e_batch_upsert_mixed(self) -> None:
+        """E2E: batch_upsert with 1 modify-path (pre-existing) + 1 insert-path.
+
+        Item X is pre-inserted so its upsert is a modify (ProgId preserved);
+        item Y is new so its upsert is an insert.
+        """
+        name_x = _UNIQUE + "_UpsA"
+        name_y = _UNIQUE + "_UpsB"
+        # Pre-insert X so the upsert of X is a modify-path.
+        r = self.c.insert("strategy", name_x, _src("strategy", "insert", name_x))
+        assert r.success, r
+        prog_id_x = r.prog_id
+        # Verify exists before upsert.
+        ex = self.c.exists("strategy", name_x)
+        assert ex.exists and ex.prog_id == prog_id_x
+        # batch_upsert: X (modify-path) + Y (insert-path).
+        results = self.c.batch_upsert(
+            [
+                BatchItem("strategy", name_x, _src("strategy", "modify", name_x)),
+                BatchItem("strategy", name_y, _src("strategy", "insert", name_y)),
+            ]
+        )
+        assert len(results) == 2
+        assert all(r.success for r in results), results
+        # X's ProgId must be preserved (modify-path).
+        assert results[0].prog_id == prog_id_x, "ProgId must be preserved on modify-path upsert"
+        # Y was newly inserted.
+        assert results[1].prog_id is not None and results[1].prog_id > 0
+        # Verify exists after upsert.
+        ex_after = self.c.exists("strategy", name_x)
+        assert ex_after.exists and ex_after.prog_id == prog_id_x
+
+    def test_e2e_batch_insert_dir_then_delete_dir(self, tmp_path: Path) -> None:
+        """E2E: batch_insert_dir then batch_delete_dir on a temp dir of .el files."""
+        names = [_UNIQUE + "_DirA", _UNIQUE + "_DirB", _UNIQUE + "_DirC"]
+        d = tmp_path / "batchdir"
+        d.mkdir()
+        for name in names:
+            (d / f"{name}.el").write_text(_src("strategy", "insert", name), encoding="utf-8")
+        # Insert all 3.
+        results = self.c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 3
+        assert all(r.success for r in results), results
+        # Delete all 3.
+        del_results = self.c.batch_delete_dir("strategy", str(d))
+        assert len(del_results) == 3
+        assert all(r.success for r in del_results), del_results
+
+    def test_e2e_batch_upsert_dir_mixed(self, tmp_path: Path) -> None:
+        """E2E: batch_upsert_dir with 1 pre-existing (modify) + 1 new (insert)."""
+        name_a = _UNIQUE + "_UDirA"
+        name_b = _UNIQUE + "_UDirB"
+        d = tmp_path / "upsertdir"
+        d.mkdir()
+        # Pre-insert A.
+        r = self.c.insert("strategy", name_a, _src("strategy", "insert", name_a))
+        assert r.success, r
+        prog_id_a = r.prog_id
+        # Write both .el files (A with modified source, B with insert source).
+        (d / f"{name_a}.el").write_text(_src("strategy", "modify", name_a), encoding="utf-8")
+        (d / f"{name_b}.el").write_text(_src("strategy", "insert", name_b), encoding="utf-8")
+        # batch_upsert_dir.
+        results = self.c.batch_upsert_dir("strategy", str(d))
+        assert len(results) == 2
+        assert all(r.success for r in results), results
+        # The pre-existing one (A) should be a modify: ProgId preserved.
+        a_result = [r for r in results if r.name == name_a][0]
+        assert a_result.prog_id == prog_id_a, "ProgId must be preserved on modify-path upsert"
+
+    def test_e2e_batch_modify_dir(self, tmp_path: Path) -> None:
+        """E2E: batch_insert then batch_modify_dir with modified source.
+
+        Both items are pre-inserted via batch_insert, then batch_modify_dir is
+        called on a directory containing modified source files.  ProgIds must
+        be preserved across the modify.
+        """
+        name_a = _UNIQUE + "_MDirA"
+        name_b = _UNIQUE + "_MDirB"
+        d = tmp_path / "modifydir"
+        d.mkdir()
+        # Pre-insert both via batch_insert.
+        ins = self.c.batch_insert(
+            [
+                BatchItem("strategy", name_a, _src("strategy", "insert", name_a)),
+                BatchItem("strategy", name_b, _src("strategy", "insert", name_b)),
+            ]
+        )
+        assert len(ins) == 2 and all(r.success for r in ins), ins
+        prog_id_a = ins[0].prog_id
+        prog_id_b = ins[1].prog_id
+        # Write modified source files.
+        (d / f"{name_a}.el").write_text(_src("strategy", "modify", name_a), encoding="utf-8")
+        (d / f"{name_b}.el").write_text(_src("strategy", "modify", name_b), encoding="utf-8")
+        # batch_modify_dir.
+        results = self.c.batch_modify_dir("strategy", str(d))
+        assert len(results) == 2
+        assert all(r.success for r in results), results
+        # ProgIds must be preserved.
+        a_result = [r for r in results if r.name == name_a][0]
+        b_result = [r for r in results if r.name == name_b][0]
+        assert a_result.prog_id == prog_id_a
+        assert b_result.prog_id == prog_id_b
+
+    def test_e2e_batch_dir_t_override(self, tmp_path: Path) -> None:
+        """E2E: batch_insert_dir with extensions=['txt'] on a .txt-only dir.
+
+        The directory contains only ``.txt`` files (not ``.el``), so the
+        default extensions would find nothing.  Passing ``extensions=['txt']``
+        overrides the default so the files are picked up.
+        """
+        name = _UNIQUE + "_TxtA"
+        d = tmp_path / "txtdir"
+        d.mkdir()
+        (d / f"{name}.txt").write_text(_src("strategy", "insert", name), encoding="utf-8")
+        results = self.c.batch_insert_dir("strategy", str(d), extensions=["txt"])
+        assert len(results) == 1
+        assert all(r.success for r in results), results
 
     # -- Part 4: orphan sweep (no leftover warehouse entries) ---------------
 

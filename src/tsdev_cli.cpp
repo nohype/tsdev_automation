@@ -12,6 +12,11 @@
 //   tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file>
 //   tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file>
 //   tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file>
+//   tsdev_cli [--ts-path <directory>] batch-upsert  <manifest_file>
+//   tsdev_cli [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 //
 //   <type>        "strategy", "function", "indicator", or "tradingapp" (case-insensitive)
 //   <name>        component name
@@ -19,8 +24,8 @@
 //   <manifest_file> path to a line-based manifest (one item per line; '#'
 //                 comments and blank lines are skipped). The op is fixed by the
 //                 subcommand; each line carries only the per-item args:
-//                   batch-insert/batch-modify: <type> <name> <source_file>
-//                   batch-delete:              <type> <name>
+//                   batch-insert/batch-modify/batch-upsert: <type> <name> <source_file>
+//                   batch-delete:                              <type> <name>
 //   --json        Global flag. When present, emit a single JSON object on stdout
 //                 (followed by a newline) describing the operation result, and
 //                 suppress the human-readable stdout messages. Exit codes are
@@ -69,6 +74,7 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <filesystem>
 #include <io.h>
 #include <fcntl.h>
 
@@ -133,14 +139,19 @@ void printUsage() {
         "  tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin\n"
         "  tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin\n"
         "  tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--ts-path <directory>] batch-upsert  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
         "  <type>         strategy | function | indicator | tradingapp (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
         "(insert/modify)\n"
         "  <manifest_file> path to a line-based manifest (one item per line;\n"
         "                  '#' comments and blank lines are skipped). Lines:\n"
-        "                  insert/modify: <type> <name> <source_file>\n"
-        "                  delete:        <type> <name>\n"
+        "                  insert/modify/upsert: <type> <name> <source_file>\n"
+        "                  delete:               <type> <name>\n"
         "  --batch-stdin    read the manifest from stdin instead of <manifest_file>\n"
         "                   (same line format; stdin is read in binary mode).\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
@@ -153,6 +164,10 @@ void printUsage() {
         "items only.\n"
         "  --case-insensitive  (exists only) Match the name case-insensitively.\n"
         "                      Without this flag, the name must match exactly.\n"
+        "  -t <ext>       (batch-*-dir only) Filter files by extension. Repeatable.\n"
+        "                 First -t overrides defaults (.el, .txt); subsequent -t flags add.\n"
+        "                 Extensions are case-insensitive; dot prefix optional (el == .el).\n"
+        "                 File stem (sans last extension) = item name.\n"
         "  batch-* always emit a JSON array on stdout (one element per item).\n");
 }
 
@@ -530,20 +545,21 @@ CliResult doExists(TsDevLib& lib, ComponentType type,
 // doUpsert: insert-or-modify by name + type + source. Calls findExistPos
 // FIRST, then branches — avoids the overhead of a failed insert attempt.
 // When the item exists (ProgId > 0), delegates to doModify (preserves the
-// ProgId); otherwise delegates to doInsert with flushPerItem=true (assigns a
+// ProgId); otherwise delegates to doInsert with the caller-supplied
+// flushPerItem (true for single-item, false for batch) (assigns a
 // new ProgId). The op field is overridden to "upsert" after delegation
 // (doInsert/doModify set their own op internally). Upsert never emits exit 5
 // (not_found / already_exists) — it branches on existence, so neither
 // condition is possible by construction.
 CliResult doUpsert(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
-                   const std::string& source) {
+                   const std::string& source, bool flushPerItem = true) {
     int progId = lib.findExistPos(name, type);
     CliResult r;
     if (progId > 0) {
         r = doModify(lib, type, typeStr, name, source);
     } else {
-        r = doInsert(lib, type, typeStr, name, source, /*flushPerItem=*/true);
+        r = doInsert(lib, type, typeStr, name, source, flushPerItem);
     }
     r.op = "upsert";
     return r;
@@ -1435,6 +1451,9 @@ DWORD WINAPI runBatch(LPVOID param) {
                          item.source, /*flushPerItem=*/false);
         } else if (op == "modify") {
             r = doModify(*lib, item.type, item.typeStr, item.name, item.source);
+        } else if (op == "upsert") {
+            r = doUpsert(*lib, item.type, item.typeStr, item.name,
+                         item.source, /*flushPerItem=*/false);
         } else {  // delete
             r = doDelete(*lib, item.type, item.typeStr, item.name);
         }
@@ -1494,11 +1513,40 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
     std::fflush(stdout);
 }
 
+// Shared batch execution + emit helper: sets up BatchParams, launches the
+// worker thread (64 MB stack), runs runBatch, emits the JSON array, and
+// returns the batch exit code. Used by both cmdBatch() (manifest mode) and
+// cmdBatchDir() (directory mode) so the batch execution logic is not
+// duplicated.
+int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
+                    const wchar_t* tsPathOverride) {
+    // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
+    BatchParams params;
+    params.op = op;
+    params.items = std::move(items);
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runBatch, &params, 0, nullptr);
+    if (!hThread) {
+        // Thread creation failure -> exit 1 (batch did not run). stderr only.
+        std::fprintf(stderr, "tsdev_cli: CreateThread failed: %lu\n",
+                     GetLastError());
+        return 1;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    // Emit the JSON array (always, for batch mode that ran).
+    emitBatchOutput(params.results);
+    return params.exitCode;
+}
+
 // Common batch command handler: parses the manifest, launches the worker,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
              bool useStdin, const wchar_t* tsPathOverride) {
-    const bool needsSource = (op == "insert" || op == "modify");
+    const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
 
     // Parse the manifest on the main thread (before the worker).
     std::vector<BatchItem> items;
@@ -1535,30 +1583,161 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
         }
     }
 
-    // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
-    BatchParams params;
-    params.op = op;
-    params.items = std::move(items);
-    params.tsPathOverride = tsPathOverride;
+    return runBatchAndEmit(op, items, tsPathOverride);
+}
 
-    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
-                                  runBatch, &params, 0, nullptr);
-    if (!hThread) {
-        // Thread creation failure -> exit 1 (batch did not run). stderr only.
-        std::fprintf(stderr, "tsdev_cli: CreateThread failed: %lu\n",
-                     GetLastError());
+// --- TVS-I.2: directory batch mode -------------------------------------------
+//
+// parseDirectory: enumerate regular files in dirPath using
+// std::filesystem::directory_iterator (NOT recursive — subdirectories are
+// skipped via is_regular_file()). Filter by accepted extensions: if
+// `extensions` is empty, use defaults {".el", ".txt"}; if non-empty, use only
+// the specified extensions. Extension matching is case-insensitive (normalize
+// by lowercasing both the file extension and the accepted extension). Each
+// accepted extension is normalized: prepend '.' if missing and non-empty (so
+// "el" -> ".el"; "" stays "" to match extensionless files). For each matching
+// file: BatchItem with type = the type int, typeStr = the type string,
+// name = file stem (path::stem() strips only the last extension,
+// so my.strategy.el -> my.strategy), sourceFile = the file path string,
+// source = readFile(path) if needsSource is true, else empty string. The
+// directory_iterator construction is wrapped in try/catch for
+// filesystem_error — on error, emit stderr and return false (caller emits
+// exit 1 without a second message). Returns true on success (outItems may
+// still be empty if no files matched). Items are sorted by name for
+// deterministic ordering.
+bool parseDirectory(int type, const std::string& typeStr, const std::string& dirPath,
+                    const std::vector<std::string>& extensions, bool needsSource,
+                    std::vector<BatchItem>& outItems) {
+    // Build the normalized accepted-extensions set. If empty, use defaults.
+    std::vector<std::string> acceptedExts;
+    if (extensions.empty()) {
+        acceptedExts = {".el", ".txt"};
+    } else {
+        for (const std::string& ext : extensions) {
+            std::string norm = ext;
+            // Prepend '.' if missing and non-empty (so "el" -> ".el"; an
+            // empty string stays empty to match extensionless files).
+            if (!norm.empty() && norm[0] != '.') norm = "." + norm;
+            // Lowercase for case-insensitive comparison.
+            std::transform(norm.begin(), norm.end(), norm.begin(),
+                [](char c) { return static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c))); });
+            acceptedExts.push_back(norm);
+        }
+    }
+
+    // Enumerate regular files in dirPath (non-recursive).
+    std::filesystem::directory_iterator it;
+    try {
+        it = std::filesystem::directory_iterator(dirPath);
+    } catch (const std::filesystem::filesystem_error&) {
+        std::fprintf(stderr, "tsdev_cli: failed to open directory \"%s\"\n",
+                     dirPath.c_str());
+        return false;
+    }
+
+    for (const auto& entry : it) {
+        // Skip subdirectories — only regular files.
+        if (!std::filesystem::is_regular_file(entry.status())) continue;
+
+        const std::filesystem::path& p = entry.path();
+        // Extract the file extension (includes the leading dot; empty if none).
+        std::string fileExt = p.extension().string();
+        // Lowercase for case-insensitive comparison.
+        std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(),
+            [](char c) { return static_cast<char>(
+                std::tolower(static_cast<unsigned char>(c))); });
+
+        bool matches = false;
+        for (const std::string& acc : acceptedExts) {
+            if (fileExt == acc) { matches = true; break; }
+        }
+        if (!matches) continue;
+
+        BatchItem item;
+        item.type = static_cast<ComponentType>(type);
+        item.typeStr = typeStr;
+        item.name = p.stem().string();
+        item.sourceFile = p.string();
+        if (needsSource) {
+            if (!readFile(item.sourceFile, item.source)) {
+                // Mirror parseManifestLines: read failure -> preValid false,
+                // exit 3, source_file_error. The batch continues and reports
+                // this item as a failure.
+                item.preValid = false;
+                item.result.typeStr = typeStr;
+                item.result.name = item.name;
+                item.result.exitCode = 3;
+                item.result.errorMessage =
+                    std::string("failed to read source file \"") + item.sourceFile + "\"";
+                outItems.push_back(std::move(item));
+                continue;
+            }
+        }
+        item.preValid = true;
+        outItems.push_back(std::move(item));
+    }
+
+    // Sort by name for deterministic ordering.
+    std::sort(outItems.begin(), outItems.end(),
+        [](const BatchItem& a, const BatchItem& b) { return a.name < b.name; });
+    return true;
+}
+
+// cmdBatchDir: directory batch command handler. Validates the type, parses
+// the directory into BatchItems via parseDirectory(), then calls the shared
+// runBatchAndEmit() helper. If parseDirectory returns false (directory could
+// not be opened), the "failed to open directory" message was already emitted
+// by parseDirectory — return exit 1 without a second message. If it returns
+// true but yielded zero items (empty dir, no matching files), emit the
+// "no files matching" message and return exit 1 (no JSON array emitted).
+int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
+                const std::string& dirPath, const std::vector<std::string>& extensions,
+                const wchar_t* tsPath) {
+    // Validate type (unknown -> exit 2, matching existing pattern).
+    ComponentType ctype;
+    if (!parseType(typeStr, ctype)) {
+        std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
+                     "(expected strategy/function/indicator/tradingapp)\n",
+                     typeStr.c_str());
+        return 2;
+    }
+
+    const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
+
+    std::vector<BatchItem> items;
+    if (!parseDirectory(type, typeStr, dirPath, extensions, needsSource, items)) {
+        // Directory open failed — parseDirectory already emitted the
+        // "failed to open directory" stderr message. Exit 1, no JSON array.
         return 1;
     }
-    WaitForSingleObject(hThread, INFINITE);
-    CloseHandle(hThread);
 
-    // Emit the JSON array (always, for batch mode that ran).
-    emitBatchOutput(params.results);
-    return params.exitCode;
+    if (items.empty()) {
+        // No matching files (empty dir or no matches). Exit 1, stderr only,
+        // no JSON array emitted. Build the extensions description for the
+        // message.
+        std::string extDesc;
+        if (extensions.empty()) {
+            extDesc = ".el,.txt";
+        } else {
+            for (size_t i = 0; i < extensions.size(); ++i) {
+                if (i > 0) extDesc += ",";
+                std::string norm = extensions[i];
+                if (!norm.empty() && norm[0] != '.') norm = "." + norm;
+                extDesc += norm;
+            }
+        }
+        std::fprintf(stderr, "tsdev_cli: no files matching %s found in %s\n",
+                     extDesc.c_str(), dirPath.c_str());
+        return 1;
+    }
+
+    return runBatchAndEmit(op, items, tsPath);
 }
 
 } // namespace
 
+#ifndef TSDEV_CLI_TEST
 int main(int argc, char** argv) {
     // --- Global flag pre-scan: --ts-path and --json ---
     // Scan argv[1..argc-1] for the optional global flags and remove them
@@ -1830,7 +2009,8 @@ int main(int argc, char** argv) {
     // but ignored (the global pre-scan already handled it).
     if (iequals(subcommand, "batch-insert") ||
         iequals(subcommand, "batch-modify") ||
-        iequals(subcommand, "batch-delete")) {
+        iequals(subcommand, "batch-delete") ||
+        iequals(subcommand, "batch-upsert")) {
         if (reducedArgc != 3) {
             std::string opName = subcommand;
             std::fprintf(stderr,
@@ -1841,12 +2021,79 @@ int main(int argc, char** argv) {
         std::string op;
         if (iequals(subcommand, "batch-insert"))      op = "insert";
         else if (iequals(subcommand, "batch-modify")) op = "modify";
+        else if (iequals(subcommand, "batch-upsert")) op = "upsert";
         else                                          op = "delete";
         std::string arg2 = reducedArgvPtr[2];
         if (arg2 == "--batch-stdin") {
             return cmdBatch(op, std::string(), true, tsPathWidePtr);
         }
         return cmdBatch(op, arg2, false, tsPathWidePtr);
+    }
+
+    // --- TVS-I.2: directory batch subcommands ---
+    // batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir take
+    // <type> <dir_path> plus an optional repeatable -t <ext> flag. They ALWAYS
+    // emit a JSON array on stdout (no --json needed). --json is accepted but
+    // ignored (the global pre-scan already handled it). The -t flag is
+    // directory-batch-specific: it survives the global pre-scan and is parsed
+    // here (similar to --case-insensitive in the exists dispatch).
+    if (iequals(subcommand, "batch-insert-dir") ||
+        iequals(subcommand, "batch-modify-dir") ||
+        iequals(subcommand, "batch-delete-dir") ||
+        iequals(subcommand, "batch-upsert-dir")) {
+        std::string op;
+        if (iequals(subcommand, "batch-insert-dir"))      op = "insert";
+        else if (iequals(subcommand, "batch-modify-dir")) op = "modify";
+        else if (iequals(subcommand, "batch-upsert-dir")) op = "upsert";
+        else                                               op = "delete";
+
+        // Scan reducedArgv for -t <ext> pairs. Extract the extension argument,
+        // add to the extensions vector, and remove both tokens from the arg
+        // list. The remaining args should be: program + subcommand + type + dir
+        // (argc == 4).
+        std::vector<std::string> extensions;
+        std::vector<char*> dirArgs;
+        dirArgs.push_back(reducedArgvPtr[0]);  // program name
+        dirArgs.push_back(reducedArgvPtr[1]);  // subcommand
+        for (int i = 2; i < reducedArgc; i++) {
+            std::string a = reducedArgvPtr[i];
+            if (a == "-t") {
+                // Space-separated form: the next token is the extension.
+                if (i + 1 >= reducedArgc) {
+                    std::fprintf(stderr,
+                        "tsdev_cli: -t requires an extension argument\n");
+                    return 1;
+                }
+                extensions.push_back(reducedArgvPtr[i + 1]);
+                i++;  // skip the extension argument
+            } else {
+                dirArgs.push_back(reducedArgvPtr[i]);
+            }
+        }
+        int dirArgc = static_cast<int>(dirArgs.size());
+        if (dirArgc != 4) {
+            std::string opName = subcommand;
+            std::fprintf(stderr,
+                "tsdev_cli: %s requires exactly 2 arguments: <type> <dir_path> "
+                "[-t <ext>...]\n",
+                opName.c_str());
+            return 1;
+        }
+        std::string typeStr = dirArgs[2];
+        std::string dirPath = dirArgs[3];
+
+        // Resolve the type int for parseDirectory.
+        ComponentType ctype;
+        if (!parseType(typeStr, ctype)) {
+            std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
+                         "(expected strategy/function/indicator/tradingapp)\n",
+                         typeStr.c_str());
+            return 2;
+        }
+        int typeInt = static_cast<int>(ctype);
+
+        return cmdBatchDir(op, typeInt, typeStr, dirPath, extensions,
+                           tsPathWidePtr);
     }
 
     {
@@ -1865,3 +2112,4 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+#endif  // TSDEV_CLI_TEST
