@@ -38,11 +38,11 @@ jobs:
       # Run mocked Python tests (e2e tests deselected)
       - run: uv run pytest -m "not e2e"
 
-      # Upload the bundle zip; fail loudly if it wasn't created
+      # Upload the dist/ bundle contents; upload-artifact zips them once
       - uses: actions/upload-artifact@v7
         with:
           name: tsdev-automation-bundle
-          path: artifacts/*.zip
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -53,15 +53,18 @@ jobs:
     permissions:
       contents: write  # needed to create releases
     steps:
-      # Download the bundle artifact uploaded by the build job
+      # Download the bundle artifact (extracted to bundle/)
       - uses: actions/download-artifact@v8
         with:
           name: tsdev-automation-bundle
-          path: artifacts
+          path: bundle
 
-      # Create a GitHub Release with the bundle attached
+      # Re-zip the bundle contents for the release attachment
+      - run: cd bundle && zip -r "../tsdev_automation_${{ github.ref_name }}.zip" .
+
+      # Create a GitHub Release with the bundle zip attached
       - uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/*.zip
+          files: tsdev_automation_${{ github.ref_name }}.zip
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
