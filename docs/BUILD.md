@@ -535,3 +535,36 @@ to be updated:
    powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
    ```
 6. Commit the updated DLL and signature set.
+
+## CI (GitHub Actions)
+
+The repo has a GitHub Actions workflow at `.github/workflows/ci.yml`.
+
+**Triggers:** Builds on every push to any branch, on PRs targeting `main`,
+and on version tag pushes (`v*`).
+
+**Build job** (`windows-latest`):
+
+- Sets up uv + Python 3.14, configures CMake (Win32), and builds all targets
+  (Release).
+- Runs the regression suite in `-NoTs` mode (sigtool + 3 non-TradeStation
+  unit tests).
+- Runs non-e2e Python tests (`pytest -m "not e2e"`, 68 mocked tests).
+- Uploads the bundle zip (`artifacts/*.zip`) as a workflow artifact.
+
+**Release job** (`ubuntu-latest`, tag pushes only):
+
+- Runs only on tag pushes (`v*`). Downloads the bundle artifact and creates a
+  GitHub Release with the zip attached. The release version is the tag name;
+  release notes are auto-generated from commits since the last tag.
+
+**TradeStation dependency:** Most C++ regression suites and all e2e Python
+tests require a live TradeStation installation, which is not available on CI.
+Only the `-NoTs` subset runs in CI.
+
+**Triggering a release:**
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```

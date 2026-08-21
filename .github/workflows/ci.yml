@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  # Build on every commit push to any branch
+  push:
+    branches: ['**']
+    # Tag pushes (v*) trigger release creation
+    tags: ['v*']
+  # Build pull requests targeting main only
+  pull_request:
+    branches: ['main']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      # Check out the repository
+      - uses: actions/checkout@v7
+
+      # Install uv (v10.0.0 stable, >7 days old; bare v8 tag does not exist)
+      - uses: astral-sh/setup-uv@v10.0.0
+
+      # Install Python 3.14 + pytest from uv.lock (frozen, no mutation)
+      - run: uv sync --frozen
+
+      # Configure CMake for Win32 (32-bit x86, required for orlib20.dll)
+      - run: cmake -S . -B build -A Win32
+
+      # Build all targets; POST_BUILD step auto-creates artifacts/*.zip
+      - run: cmake --build build --config Release
+
+      # Run sigtool + non-TradeStation unit tests (-NoTs skips TS-dependent suites)
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_regression.ps1 -NoTs
+
+      # Run mocked Python tests (e2e tests deselected)
+      - run: uv run pytest -m "not e2e"
+
+      # Upload the bundle zip; fail loudly if it wasn't created
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tsdev-automation-bundle
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    # Only run on tag pushes
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create releases
+    steps:
+      # Download the bundle artifact uploaded by the build job
+      - uses: actions/download-artifact@v8
+        with:
+          name: tsdev-automation-bundle
+          path: artifacts
+
+      # Create a GitHub Release with the bundle attached
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*.zip
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true

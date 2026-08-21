@@ -142,6 +142,18 @@ All workstreams A, B, C, D, E, F, G, I complete. Detailed per-TVS logs archived 
   - **Fixed 34 stale cross-references** across 12 files (docs + code + signatures JSON) to point to new archive locations.
 - **Final doc structure (progressive disclosure):** AGENTS.md (root, always-on rules + doc index) → docs/{BUILD, E2E_TEST_SPEC, SIGNATURE_CATALOG, VERSION_DETECTION, TS_COMPONENT_TYPES, FEASIBILITY, INTEGRATION_APPROACH_EVALUATION, PROJECT_HISTORY, PM_WORKING_MEMORY}.md (operational reference) → docs/RE/ (10 durable RE findings) → docs/archive/ + docs/RE/archive/ (historical).
 
+## CI (GitHub Actions) — COMPLETE (2026-08-21)
+- **Workflow:** `.github/workflows/ci.yml` — single workflow, 2 jobs.
+- **Triggers:** push (all branches + `v*` tags), pull_request (main only).
+- **Build job** (windows-latest): checkout@v7 → setup-uv@v8 → `uv sync --frozen` → `cmake -S . -B build -A Win32` → `cmake --build build --config Release` → `run_regression.ps1 -NoTs` → `uv run pytest -m "not e2e"` → upload-artifact@v7 (`artifacts/*.zip`, `if-no-files-found: error`).
+- **Release job** (ubuntu-latest, `needs: build`, `if: startsWith(github.ref, 'refs/tags/')`, `permissions: contents: write`): download-artifact@v8 → softprops/action-gh-release@v3 (`files: artifacts/*.zip`, `tag_name: ${{ github.ref_name }}`, `generate_release_notes: true`).
+- **Manual release trigger:** push a tag (`git tag v0.1.0 && git push origin v0.1.0`). No workflow_dispatch.
+- **Action versions:** checkout@v7, upload-artifact@v7, download-artifact@v8, setup-uv@v8 (NOT v10 — released <24h ago, supply chain risk), action-gh-release@v3.
+- **Side effect:** `uv.lock` updated to remove stale `capstone` entry (leftover from TVS-G.4 which removed capstone from pyproject.toml but never re-locked). Necessary for `uv sync --frozen` to succeed in CI.
+- **Docs:** `docs/BUILD.md` — new `## CI (GitHub Actions)` section added at end.
+- **Adversarial review:** APPROVED, zero findings.
+- **Verification:** All CI-equivalent commands verified locally (build ~46s, regression -NoTs 2/2 suites PASS, pytest 68/68 non-e2e PASS, zip artifact created).
+
 ## Reminders to self
 - Re-read this file every turn / after context compaction.
 - Do NOT accept sub-par quality from subagents. Production-grade only.
