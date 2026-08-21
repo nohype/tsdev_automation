@@ -67,7 +67,7 @@ tsdev_automation/
 │   ├── orlib_resolver.cpp / orlib_resolver.h   signature-scan resolver layer
 │   ├── tsdev_cli.cpp                     production CLI (insert/modify/delete/exists/get-source/upsert/batch-insert/batch-modify/batch-delete/batch-upsert/batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir)
 │   └── sigtool.cpp                       signature-verification CLI
-├── tests/          Test files (20 .cpp + 11 .ps1 + 1 .py + 1 .psm1)
+├── tests/          Test files (26 .cpp + 12 .ps1 + 1 .py + 1 .psm1)
 ├── archive/        Archived experimental probes (27 files, NOT built)
 ├── signatures/     JSON signature data — the single source of truth
 │   ├── v9.50.01.3344.json                per-version signatures + patch sites
@@ -88,7 +88,7 @@ tsdev_automation/
 |-----------------------|---------------------------------------------------------------|
 | `tsdev_lib.cpp/.h`    | RAII wrapper around orlib20.dll: init, lookup, create, save, compile/verify, close, delete, modify. |
 | `orlib_resolver.cpp/.h` | Encapsulates all version-specific orlib20.dll knowledge: loads the DLL, detects the version, resolves internal functions by signature scan, validates and applies patch sites. |
-| `tsdev_cli.cpp`       | Production CLI exposing `insert`, `modify`, `delete`, `exists`, `get-source`, `upsert`, `batch-insert`, `batch-modify`, `batch-delete`, `batch-upsert`, `batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, and `batch-upsert-dir` subcommands. |
+| `tsdev_cli.cpp`       | Production CLI exposing `insert`, `modify`, `delete`, `exists`, `get-source`, `upsert`, `batch-insert`, `batch-modify`, `batch-delete`, `batch-upsert`, `batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, `batch-upsert-dir`, and `serve` subcommands. Also includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
 | `sigtool.cpp`         | CLI for verifying signatures against a DLL on disk, validating patch sites, inspecting DLL info, and ad-hoc pattern scanning. |
 
 ## Build instructions
@@ -218,6 +218,12 @@ build\Release\test_upsert.exe
 build\Release\test_batch_upsert.exe
 build\Release\test_get_source.exe
 build\Release\test_directory_batch.exe
+build\Release\test_elevation_guard.exe
+build\Release\test_json_serialize.exe
+build\Release\test_serve_dispatch.exe
+build\Release\test_serve_framing.exe
+build\Release\test_crash_handler.exe
+build\Release\test_showme_type.exe
 ```
 
 Each test exits `0` on success and non-zero on failure.
@@ -229,14 +235,19 @@ Each test exits `0` on success and non-zero on failure.
 `test_directory_batch`) require a TradeStation 9.5 installation
 on the machine — they load the real `orlib20.dll` and exercise the live warehouse.
 `test_path_discovery` and `test_persistence_validation` also require a TradeStation
-install: they construct `TsDevLib`, which loads `orlib20.dll`. The remaining three
-tests do **not** require a live TradeStation install:
+install: they construct `TsDevLib`, which loads `orlib20.dll`. The following tests do **not** require a live TradeStation install:
 
 - `test_no_hardcoded_rvas` — static check against the generated signature header.
 - `test_tradingapp_type` — pure unit test for the `TradingApp` enum entry and
   `getCategory`/`getSubType` helpers (no orlib20 dependency).
 - `test_orlib_resolver` — operates on an in-memory PE image (a copied
   `orlib20_baseline.dll`); no live TradeStation install needed.
+- `test_elevation_guard` — pure unit test for the `isElevated()` helper and `errorCodeString(11)` (no orlib20 dependency).
+- `test_json_serialize` — pure unit test for `cliResultToJson()` serialization (no orlib20 dependency).
+- `test_serve_dispatch` — pure unit test for `parseServeRequest()` validation logic (no orlib20 dependency).
+- `test_serve_framing` — pure unit test for `writeFramed`/`readFramed` helpers (no orlib20 dependency).
+- `test_crash_handler` — tests the VEH crash handler in both normal mode (exit 0) and `--crash` mode (deliberately triggers an access violation; the VEH catches it and calls `TerminateProcess` with the NT status code). No orlib20 dependency. **Note:** the `--crash` mode test deliberately crashes the process — run it in isolation, not alongside other tests.
+- `test_showme_type` — pure unit test for the `ShowMe` enum entry and `getCategory`/`getSubType` helpers (no orlib20 dependency).
 
 ### Test runner scripts
 
@@ -253,8 +264,8 @@ test cases total) in the order required by the B.6 acceptance criteria:
 
 1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
    against the baseline DLL. Fast; no live TradeStation install needed.
-2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 20 C++ test executables
-   (or 3 with `-NoTs`). Medium duration.
+2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 26 C++ test executables
+   (or 9 with `-NoTs`). Medium duration.
 3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — 34 E2E CLI test cases per
    `docs/E2E_TEST_SPEC.md`. Slowest; creates and deletes real warehouse entries.
 4. **exists tests** (`tests/test_exists.ps1`) — 5 exists CLI test cases.
@@ -319,24 +330,24 @@ powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # f
 
 #### `tests/run_unit_tests.ps1` — C++ unit test runner
 
-Runs all 20 C++ test executables in sequence (not in parallel — the shared
+Runs all 26 C++ test executables in sequence (not in parallel — the shared
 warehouse file `MWRKArea.wrk` is not process-safe), captures exit codes, measures
 per-test duration, and returns a single aggregated exit code.
 
 | Parameter    | Type    | Default          | Description                                                  |
 |--------------|---------|------------------|--------------------------------------------------------------|
 | `$BuildDir`  | string  | `build\Release`  | Directory containing the test executables.                   |
-| `-NoTs`      | switch  | —                | Run only the 3 non-TS-dependent tests; skip the rest.        |
+| `-NoTs`      | switch  | —                | Run only the 9 non-TS-dependent tests; skip the rest.        |
 | `-Verbose`   | switch  | —                | Print full stdout/stderr for every test, not just failures.  |
 
 Exit codes: `0` = all executed tests passed, `1` = one or more failed (or the
 build directory is missing).
 
 ```powershell
-# Run all 20 tests:
+# Run all 26 tests:
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
 
-# Run only the 3 non-TS tests (no TradeStation install needed):
+# Run only the 9 non-TS tests (no TradeStation install needed):
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
 
 # Run all tests with full output:
@@ -346,8 +357,8 @@ powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
 #### `tests/run_e2e_tests.ps1` — E2E CLI test runner
 
 Implements the 34-test-case E2E CLI test specification in
-`docs/E2E_TEST_SPEC.md`, covering all 4 supported component types (Strategy,
-Indicator, Function, TradingApp) across three parts: Part A (16 tests,
+`docs/E2E_TEST_SPEC.md`, covering all 5 supported component types (Strategy,
+Indicator, Function, TradingApp, ShowMe) across three parts: Part A (16 tests,
 insert/modify/delete lifecycle), Part B (8 tests, type-specific semantic
 errors), Part C (10 tests, general errors). Each test writes ASCII-encoded
 EasyLanguage source to a temp file, invokes `tsdev_cli.exe`, and verifies the
@@ -460,9 +471,9 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `siggen`                        | custom   | Runs `sigcodegen.py` to generate `build/gen/signatures.gen.h`.     |
 | `orlib_resolver`                | library  | Static library encapsulating orlib20.dll version-specific knowledge. |
 | `tsdev_lib`                     | library  | Static library wrapping the orlib20 operation set (links `orlib_resolver`). |
-| `tsdev_cli`                     | exec     | Production CLI (`insert`/`modify`/`delete`/`exists`/`get-source`/`upsert`/`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`). |
+| `tsdev_cli`                     | exec     | Production CLI (`insert`/`modify`/`delete`/`exists`/`get-source`/`upsert`/`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`/`serve`). Includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
 | `sigtool`                       | exec     | Signature-verification CLI.                                        |
-| `test_regression`               | custom   | Build-only dependency target: builds all 20 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
+| `test_regression`               | custom   | Build-only dependency target: builds all 26 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
 | `test_insert`                   | exec     | INSERT integration test (requires TS).                            |
 | `test_insert_tradingapp`        | exec     | TradingApp INSERT integration test (requires TS).                 |
 | `test_auto_cleanup`             | exec     | Auto-cleanup of partial warehouse entry on compile failure (requires TS — constructs TsDevLib). |
@@ -483,6 +494,12 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `test_batch_upsert`             | exec     | BATCH-UPSERT integration test — multi-item upsert on shared TsDevLib, single closeWarehouse, ProgId preservation (requires TS). |
 | `test_get_source`               | exec     | GET-SOURCE integration test — retrieve EL source by name + type (requires TS). |
 | `test_directory_batch`          | exec     | DIRECTORY-BATCH unit test — parseDirectory() filesystem logic: extension filtering, stem extraction, empty dir, subdirectory skipping, source reading (requires TS — constructs TsDevLib via included tsdev_cli.cpp). |
+| `test_elevation_guard`          | exec     | Elevation guard unit test — isElevated() helper + errorCodeString(11) (no TS dependency). |
+| `test_json_serialize`           | exec     | JSON serialization unit test — cliResultToJson() (no TS dependency). |
+| `test_serve_dispatch`           | exec     | Serve dispatch unit test — parseServeRequest() validation (no TS dependency). |
+| `test_serve_framing`            | exec     | Serve framing unit test — writeFramed/readFramed helpers (no TS dependency). |
+| `test_crash_handler`            | exec     | VEH crash handler test — normal mode (exit 0) + --crash mode (deliberate access violation, VEH catches + TerminateProcess). No TS dependency. Run --crash mode in isolation. |
+| `test_showme_type`              | exec     | ShowMe ComponentType unit test — enum entry, getCategory/getSubType helpers (no TS dependency). |
 
 ## Verification (confirm the binary is 32-bit)
 
@@ -536,6 +553,156 @@ to be updated:
    ```
 6. Commit the updated DLL and signature set.
 
+## Admin Privileges (TSDEV_REQUIRE_ADMIN)
+
+The CMake option `TSDEV_REQUIRE_ADMIN` (default **ON**) controls whether
+**all TS-accessing executables** require administrator privileges to start.
+This covers `tsdev_cli.exe` plus the TS-dependent test executables that
+load `orlib20.dll`. The 9 non-TS unit tests
+(`test_no_hardcoded_rvas`, `test_tradingapp_type`, `test_orlib_resolver`,
+`test_elevation_guard`, `test_json_serialize`, `test_serve_dispatch`,
+`test_serve_framing`, `test_crash_handler`, `test_showme_type`) and
+`sigtool` are excluded — they do not access the TSDev Library and must run
+non-elevated in CI.
+
+- **When ON (default):** each TS-accessing executable embeds
+  `requestedExecutionLevel="requireAdministrator"` in its application manifest.
+  Windows refuses to start them without an elevated token.
+- **When OFF:** the manifests default to `asInvoker` (no elevation
+  requirement). Pass `-DTSDEV_REQUIRE_ADMIN=OFF` at configure time to
+  produce a non-elevated build variant:
+  ```cmd
+  cmake -S . -B build -A Win32 -DTSDEV_REQUIRE_ADMIN=OFF
+  ```
+
+**Why:** TradeStation Desktop and `TSDev.exe` always run elevated, so the
+TSDev Library (`orlib20.dll`) is only accessible to elevated processes. The
+CLI and TS-dependent test executables load this library and therefore must be
+elevated.
+
+**UX (one UAC prompt per session):** Run the *parent* process — your terminal,
+Python session, or test runner — as Administrator once. All CLI subprocesses
+spawned by that parent inherit the elevated token silently, so there are **no
+per-invocation UAC prompts**. You get exactly one UAC prompt per session (to
+elevate the parent), then silent inheritance for every CLI child.
+
+**CI:** CI builds with the default ON. The 9 non-TS unit tests and `sigtool`
+are excluded from the admin manifest (they do not access the TSDev Library),
+so they run non-elevated in CI. Non-e2e Python tests mock `subprocess.run`, so
+CI is unaffected by the elevation requirement.
+
+## Serve mode (`--serve` / `use_serve`)
+
+Serve mode is the **one-UAC UX** for the Python wrapper. Instead of requiring
+the *parent* Python process to be elevated (which means one UAC prompt for the
+terminal/IDE, then silent subprocess inheritance), serve mode lets a
+**non-elevated** Python session trigger exactly **one** UAC prompt to start an
+elevated broker process, then routes all subsequent operations to that broker
+over a Windows named pipe. When the Python session is already elevated, the
+direct `subprocess.run` path is used with zero overhead (no broker is started).
+
+### `tsdev_cli serve` — the elevated named-pipe broker
+
+The `serve` subcommand starts the CLI as an elevated named-pipe broker. It
+creates a Windows named pipe, services multiple requests in a loop on a
+long-lived 64 MB-stack worker thread (one `TsDevLib` instance for the whole
+session, like `runBatch`), and exits when the pipe is closed or a `quit`
+request is received.
+
+```
+tsdev_cli serve [--serve-pipe-file <path>]
+```
+
+- **Pipe name:** `\\.\pipe\tsdev_cli_<PID>` where `<PID>` is the broker's
+  process ID (unique per broker instance). The broker writes the full pipe
+  name (and its PID) to the file specified by `--serve-pipe-file <path>`
+  immediately after `CreateNamedPipeW` succeeds, so the Python wrapper can
+  poll that file and connect. If `--serve-pipe-file` is omitted, the pipe
+  name is printed to stdout (for manual use).
+- **Framing protocol:** every message (request and response) is a 4-byte
+  little-endian length prefix followed by a UTF-8 JSON payload. The payload
+  length is capped at 64 MiB (`67108864` bytes); messages outside this range
+  close the connection. No trailing newline — the length prefix delimits
+  messages.
+- **Request/response JSON schema:** requests carry an `op` field
+  (`insert`/`modify`/`delete`/`exists`/`upsert`/`get-source`/`quit`) plus
+  `type`, `name`, `source` (raw EL text, not a file path), and optional
+  `case_insensitive`/`output_path` fields. Responses are the **exact same
+  JSON object** that `--json` mode emits today (produced by
+  `cliResultToJson()`), plus a `{"op":"quit","success":true,"exit_code":0}`
+  acknowledgement for the `quit` op. The full request/response schema,
+  error-handling table, and connection-lifecycle details are specified in
+  [`docs/workstream_serve_plan.md`](workstream_serve_plan.md) §2 (Protocol
+  specification) — this section summarizes it and does not duplicate the
+  spec.
+- **`quit` op:** a request with `"op":"quit"` signals the broker to shut
+  down gracefully. The broker responds with a success `CliResult`, then
+  closes the pipe, calls `closeWarehouse()`, and exits. The Python wrapper
+  sends `quit` on `TsDevClient` teardown (with a `TerminateProcess` fallback
+  after a 5 s timeout).
+- **Security:** the pipe is created with an explicit security descriptor
+  (`D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)`) —
+  owner/admins/SYSTEM full control, owner read/write, and a Medium-IL
+  mandatory label so a non-elevated (Medium-IL) client can write to the
+  elevated (High-IL) broker's pipe. See
+  [`docs/workstream_serve_plan.md`](workstream_serve_plan.md) §3 for the
+  full security design.
+
+### `use_serve` Python flag on `TsDevClient`
+
+The `TsDevClient` constructor accepts a `use_serve` flag (default **`True`**)
+that controls routing:
+
+- **Default `True` (auto-elevate when not elevated):** when the Python
+  session is **not** elevated, the first operation lazily auto-starts the
+  elevated broker via `ShellExecuteExW` with `lpVerb="runas"` (one UAC
+  prompt). All subsequent single-item ops (`insert`/`modify`/`delete`/
+  `exists`/`get_source`/`upsert`) are routed over the named pipe to that
+  same broker process — no further UAC prompts.
+- **Falls back to `subprocess.run` when already elevated:** if the Python
+  session is already elevated, the direct subprocess path is used with
+  **zero overhead** (no broker is started, no pipe I/O). This preserves the
+  pre-serve behavior for elevated sessions.
+- **Batch ops:** batch methods (`batch_insert`/`batch_modify`/`batch_delete`/
+  `batch_upsert` and the `batch_*_dir` variants) are **not** routed through
+  the broker in the MVP. When the session is not elevated and serve is
+  active, batch ops raise `NotImplementedError("batch ops require an
+  elevated session; use serve mode for single ops or run elevated")`.
+  Batch-over-serve is deferred (see
+  [`docs/workstream_serve_plan.md`](workstream_serve_plan.md) §6).
+
+### One-UAC UX
+
+From a **non-elevated** Python session, constructing `TsDevClient()` (the
+default) and performing any single-item operation triggers **one** UAC prompt
+(the broker auto-start). All subsequent operations reuse the same broker
+process over the named pipe — no per-call prompts. When the `TsDevClient` is
+garbage-collected or the interpreter exits, the broker receives a `quit`
+request and shuts down gracefully.
+
+### Running the serve E2E test
+
+The serve-mode end-to-end test is `tests/run_serve_e2e.ps1`, which drives
+`tests/test_serve_e2e.py` (2 pytest cases). It **must be run from an elevated
+PowerShell session** — the script launches pytest unelevated via Task
+Scheduler (with `-RunLevel Limited`) so the test exercises the real
+non-elevated → broker auto-start path. It temporarily sets
+`ConsentPromptBehaviorAdmin=0` (auto-elevate, no UAC prompt) so the broker
+auto-start is silent, and restores the original value in a `finally` block.
+
+```powershell
+# From an ELEVATED PowerShell session:
+powershell -ExecutionPolicy Bypass -File tests\run_serve_e2e.ps1
+
+# With extra pytest args:
+powershell -ExecutionPolicy Bypass -File tests\run_serve_e2e.ps1 -PytestArgs "-v --tb=long -s"
+```
+
+The master regression runner (`tests/run_regression.ps1`) executes this as
+**Suite 11** automatically; skip it with `-SkipServeE2e` (or `-NoTs`). See
+[`docs/E2E_TEST_SPEC.md`](E2E_TEST_SPEC.md) (Part F) for the full test
+procedure and expected results.
+
 ## CI (GitHub Actions)
 
 The repo has a GitHub Actions workflow at `.github/workflows/ci.yml`.
@@ -547,9 +714,9 @@ and on version tag pushes (`v*`).
 
 - Sets up uv + Python 3.14, configures CMake (Win32), and builds all targets
   (Release).
-- Runs the regression suite in `-NoTs` mode (sigtool + 3 non-TradeStation
+- Runs the regression suite in `-NoTs` mode (sigtool + 9 non-TradeStation
   unit tests).
-- Runs non-e2e Python tests (`pytest -m "not e2e"`, 68 mocked tests).
+- Runs non-e2e Python tests (`pytest -m "not e2e"`, 100 mocked tests).
 - Uploads the bundle zip (`artifacts/*.zip`) as a workflow artifact.
 
 **Release job** (`ubuntu-latest`, tag pushes only):

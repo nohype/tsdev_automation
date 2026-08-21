@@ -2,7 +2,7 @@
 
 **Status:** Production-grade test specification
 **Applies to:** `tsdev_cli.exe` (the production CLI for the TSDev Library)
-**Last verified:** 2026-08-20 (34/34 Part A-C tests PASSED + Workstream F tests + Workstream I directory batch tests)
+**Last verified:** 2026-08-20 — core runner `tests/run_e2e_tests.ps1` PASSED 34/34 Part A-C cases, plus Workstream F tests and Workstream I directory batch tests. ShowMe is NOT executed by that runner; it is covered by the separate suite `tests/test_showme_e2e.ps1` (regression Suite 12, cases SM1-SM9). Serve mode E2E is implemented and passing as regression Suite 11 (`tests/run_serve_e2e.ps1` driving `tests/test_serve_e2e.py`, 2 pytest cases; TVS-K.6a complete).
 
 ---
 
@@ -14,11 +14,11 @@ This document is the **definitive end-to-end (E2E) CLI test specification** for 
 
 - **After every TVS** that touches the CLI, `tsdev_lib`, or component type handling — as part of the mandatory E2E CLI verification described in `AGENTS.md`.
 - **As a regression gate** whenever the orlib20 integration, compiler error handling, or warehouse persistence logic changes.
-- **On demand** when a full health check of all 4 supported component types is needed.
+- **On demand** when a full health check of all 5 supported component types is needed.
 
 ### What it covers
 
-- All 4 supported component types: **Strategy, Indicator, Function, TradingApp**
+- All 5 supported component types: **Strategy, Indicator, Function, TradingApp, ShowMe**
 - **Success cases:** insert → modify → delete lifecycle for each type
 - **Type-specific semantic error cases:** constructs that are valid in some types but rejected by the compiler in others (e.g., Plot in a Strategy, Buy in an Indicator)
 - **General error cases:** invalid syntax, modify/delete nonexistent, unknown type strings
@@ -27,8 +27,10 @@ This document is the **definitive end-to-end (E2E) CLI test specification** for 
 ### What it does NOT cover
 
 - Unit tests or library-level tests (those have their own test suites)
-- The 4 unsupported types (ActivityBar, PaintBar, ProbabilityMap, ShowMe) — these are not yet wired into the CLI
+- The 3 unsupported types (ActivityBar, PaintBar, ProbabilityMap) — these are not yet wired into the CLI
 - Performance or stress testing
+- **Serve mode E2E** — implemented and passing as regression Suite 11; the detailed operator procedure is documented in Part F below (TVS-K.6b)
+- **Crash handling E2E** — VEH crash handler + TsDevCrashError (see Part G below for the planned test procedure)
 
 ---
 
@@ -147,12 +149,13 @@ tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>.
 | `batch-upsert` | Batch insert-or-modify driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. Each line: `<type> <name> <source_file>`. If the item exists → modify (ProgId preserved); otherwise → insert. |
 | `batch-insert-dir` / `batch-modify-dir` / `batch-delete-dir` | Directory batch operations: enumerate regular files in `<dir_path>` matching accepted extensions (default `.el`+`.txt`; overridable via repeatable `-t <ext>`), use file stem as item name and file content as EL source (source ignored for delete). Reuse the same batch pipeline as manifest batch ops via shared `runBatchAndEmit()` helper. |
 | `batch-upsert-dir` | Directory batch insert-or-modify: same enumeration as other `batch-*-dir` subcommands. If the item exists → modify (ProgId preserved); otherwise → insert. |
+| `serve` | Named-pipe server mode: the CLI runs as an elevated broker serving requests dispatched over the pipe (used by the Python serve-broker; exercised by regression Suite 11, see Part F). Fully documented in TVS-K.6b (Part F below). |
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<type>` | Component type string: `strategy`, `indicator`, `function`, or `tradingapp` (case-insensitive). |
+| `<type>` | Component type string: `strategy`, `indicator`, `function`, `tradingapp`, or `showme` (case-insensitive). |
 | `<name>` | Component name. Must not be empty. |
 | `<source_file>` | Path to a file containing EasyLanguage source. Required for `insert`, `modify`, and `upsert`. Not used for `delete` or `exists`. The file is read in binary mode; must be non-empty. |
 | `<manifest_file>` | Path to a line-based manifest file for batch operations. Mutually exclusive with `--batch-stdin`. |
@@ -170,6 +173,7 @@ tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>.
 | `indicator` | Indicator | 2 | `elmodule_2_<ProgId>.ell` |
 | `function` | Function | 4 | `elmodule_4_<ProgId>.ell` |
 | `tradingapp` | TradingApp | 5122 | `elmodule_5122_<ProgId>.ell` |
+| `showme` | ShowMe | 1282 | `elmodule_1282_<ProgId>.ell` |
 
 ### Exit codes
 
@@ -177,7 +181,7 @@ tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>.
 |-----------|---------|---------------|
 | **0** | Success | insert/modify/delete/upsert/get-source completed successfully; **`exists` returns 0 for BOTH found and not-found** (not-found is a valid query result, not an error) |
 | **1** | Usage error (no subcommand or wrong arg count) | No subcommand given, or wrong number of positional args |
-| **2** | Unknown type string | `<type>` is not one of the 4 valid strings |
+| **2** | Unknown type string | `<type>` is not one of the 5 valid strings |
 | **3** | Source file error / **output_write_error** | File not found, unreadable, or empty (insert/modify/upsert); **or `get-source` output file write failure** (`--output <file>` could not be written) |
 | **4** | Init failure | TsDevLib construction failed (DLL load, patch, or OrlibInit) |
 | **5** | Not found | Component does not exist in the warehouse (modify/delete/get-source), or already exists (insert). **`upsert` never returns 5** — it branches on existence by construction (modify if present, insert if absent). **`exists` never returns 5** — not-found is reported via exit 0 with `exists=false`. |
@@ -186,6 +190,7 @@ tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>.
 | **8** | Compile error | Compilation/verification failed; error text printed to stderr |
 | **9** | .ell file missing | Compilation succeeded but the `.ell` file was not found on disk |
 | **10** | Thread creation failure | CreateThread failed (system-level error) |
+| **11** | Not elevated | Process is not running with administrator privileges (elevation guard, TVS-K.1). JSON form: `{"success":false,"exit_code":11,"error":{"code":"not_elevated","message":"..."}}` |
 
 > **Batch subcommands** (`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`) use a **separate exit code scheme**:
 >
@@ -201,7 +206,7 @@ The exit codes most relevant to this test specification are **0** (success), **5
 
 ## 4. Test Procedure — Part A: Success Cases (insert → modify → delete cycle)
 
-For each of the 4 component types, run the full insert → modify → delete lifecycle. Each step must produce the expected exit code.
+For each of the 5 component types, run the full insert → modify → delete lifecycle. Each step must produce the expected exit code.
 
 ### 4.1 Test source table
 
@@ -211,12 +216,13 @@ For each of the 4 component types, run the full insert → modify → delete lif
 | **Indicator** | `Inputs: int x(0);` + newline + `Plot1(x, "MyPlot");` | `Inputs: int x(1);` + newline + `Plot1(x * 2, "MyPlot2");` | Plot statements are allowed in Indicators |
 | **Function** | `<FuncName> = 1;` | `<FuncName> = 42;` | **Function name in source MUST match the `<name>` argument** passed to the CLI. Replace `<FuncName>` with the actual test name (e.g., `E2E_20250122_Func = 1;`). No comment wrapper or `value =` syntax needed. |
 | **TradingApp** | `using elsystem;` | `using elsystem;` + newline + `using elsystem.windows.forms;` | Minimal source `using elsystem;` compiles successfully |
+| **ShowMe** | `Inputs: int x(0);` + newline + `Plot1(Close, "MyPlot");` | `Inputs: int x(1);` + newline + `Plot1(Close * 2, "MyPlot2");` | Plot statements are allowed in ShowMe (like Indicators) |
 
 > **Function note (critical):** EasyLanguage functions require the function body to assign a value to the function name. The name used in the source assignment MUST exactly match the `<name>` argument passed to the CLI. For example, if the CLI command is `tsdev_cli insert function E2E_20250122_Func source.txt`, then `source.txt` must contain `E2E_20250122_Func = 1;`. A mismatch will cause a secondary compiler error: `"A value was never assigned to user function."`
 
 ### 4.2 Procedure per type
 
-For each type (Strategy, Indicator, Function, TradingApp), using the appropriate test name and source from the table above:
+For each type (Strategy, Indicator, Function, TradingApp, ShowMe), using the appropriate test name and source from the table above:
 
 **Step 1 — Insert:**
 ```powershell
@@ -276,8 +282,14 @@ For each type (Strategy, Indicator, Function, TradingApp), using the appropriate
 | A4.2 | tradingapp | modify | 0 | ProgId preserved |
 | A4.3 | tradingapp | delete | 0 | `.ell` removed |
 | A4.4 | tradingapp | delete-neg | 5 | "not found in the warehouse" |
+| A5.1 | showme | insert | 0 | ProgId assigned, `.ell` created |
+| A5.2 | showme | modify | 0 | ProgId preserved |
+| A5.3 | showme | delete | 0 | `.ell` removed |
+| A5.4 | showme | delete-neg | 5 | "not found in the warehouse" |
 
-**Part A total: 16 test cases.**
+> **ShowMe cases — executed by `tests/test_showme_e2e.ps1` (regression Suite 12), NOT by `tests/run_e2e_tests.ps1`.** The main runner implements exactly the 16 cases A1.1–A4.4 (4 types × 4 steps) and contains zero ShowMe calls. ShowMe lifecycle coverage (insert/exists/get-source/modify/delete, incl. ProgId preservation and delete-negativity) is provided by the separate ShowMe suite (cases SM1–SM9).
+
+**Part A total (main runner, `run_e2e_tests.ps1`): 16 test cases** (A1.1–A4.4). The 4 ShowMe rows above (A5.1–A5.4) are covered by the ShowMe suite (Suite 12).
 
 ---
 
@@ -297,8 +309,12 @@ This is the **key section** that verifies the EasyLanguage compiler enforces typ
 | **B6** | tradingapp | `Plot1(Close, "Test");` | **8** | Plot statements not allowed in TradingApps | `"This word only allowed in an Indicator, ShowMe or PaintBar study."` |
 | **B7** (control) | indicator | `Plot1(Close, "Test");` | **0** | Plot IS allowed in Indicators (positive control) | — (success, ProgId assigned, `.ell` created) |
 | **B8** (control) | strategy | `Buy next bar at market;` | **0** | Buy IS allowed in Strategies (positive control) | — (success, ProgId assigned, `.ell` created) |
+| **B9** | showme | `Buy next bar at market;` | **8** | Order statements not allowed in ShowMe | `"This word not allowed in a study."` |
+| **B10** (control) | showme | `Plot1(Close, "Test");` | **0** | Plot IS allowed in ShowMe (positive control, like Indicators) | — (success, ProgId assigned, `.ell` created) |
 
-**Part B total: 8 test cases.**
+> **ShowMe cases — executed by `tests/test_showme_e2e.ps1` (regression Suite 12), NOT by `tests/run_e2e_tests.ps1`.** The main runner implements exactly the 8 cases B1–B8 and contains zero ShowMe calls. Equivalent ShowMe semantic coverage is provided by the ShowMe suite: SM7 = Buy-in-ShowMe rejected with exit 8 / "not allowed in a study" (cf. B9); SM1 = valid Plot1 source inserts successfully (cf. B10).
+
+**Part B total (main runner, `run_e2e_tests.ps1`): 8 test cases** (B1–B8). B9/B10 are covered by the ShowMe suite (Suite 12).
 
 ### 5.2 Procedure per test case
 
@@ -351,7 +367,7 @@ When compilation fails (exit 8), the CLI creates a warehouse entry via `createEn
 
 ## 6. Test Procedure — Part C: General Error Cases
 
-These tests verify that the CLI handles general error conditions correctly across all 4 types.
+These tests verify that the CLI handles general error conditions correctly across all 5 types.
 
 ### 6.1 Test case table
 
@@ -362,13 +378,17 @@ These tests verify that the CLI handles general error conditions correctly acros
 | **C2.2** | indicator | Modify nonexistent component | **5** | `"not found in the warehouse. Use insert to create it."` |
 | **C2.3** | function | Modify nonexistent component | **5** | `"not found in the warehouse. Use insert to create it."` |
 | **C2.4** | tradingapp | Modify nonexistent component | **5** | `"not found in the warehouse. Use insert to create it."` |
+| **C2.5** | showme | Modify nonexistent component | **5** | `"not found in the warehouse. Use insert to create it."` |
 | **C3.1** | strategy | Delete nonexistent component | **5** | `"not found in the warehouse."` |
 | **C3.2** | indicator | Delete nonexistent component | **5** | `"not found in the warehouse."` |
 | **C3.3** | function | Delete nonexistent component | **5** | `"not found in the warehouse."` |
 | **C3.4** | tradingapp | Delete nonexistent component | **5** | `"not found in the warehouse."` |
+| **C3.5** | showme | Delete nonexistent component | **5** | `"not found in the warehouse."` |
 | **C4** | (any) | Unknown type string (e.g., `paintbar`) | **2** | `"unknown type"` message |
 
-**Part C total: 10 test cases.**
+> **ShowMe cases — executed by `tests/test_showme_e2e.ps1` (regression Suite 12), NOT by `tests/run_e2e_tests.ps1`.** The main runner implements exactly the 10 cases C1, C2.1–C2.4, C3.1–C3.4, C4 and contains zero ShowMe calls. ShowMe not-found behavior is exercised by the ShowMe suite (SM9 verifies non-existence after delete).
+
+**Part C total (main runner, `run_e2e_tests.ps1`): 10 test cases** (C1, C2.1–C2.4, C3.1–C3.4, C4). C2.5/C3.5 are covered by the ShowMe suite (Suite 12).
 
 ### 6.2 Procedure
 
@@ -383,14 +403,14 @@ $src = "this is not valid easylanguage;"
 & $cli delete strategy "E2E_${runId}_C1"
 ```
 
-**C2.x — Modify nonexistent (for each of the 4 types):**
+**C2.x — Modify nonexistent (for each of the 5 types):**
 ```powershell
 # Use a name that definitely does not exist
 & $cli modify $type "E2E_${runId}_NonExistent" "$tmpDir\any_valid_source.txt"
 # Expected: exit 5, stderr contains "not found in the warehouse. Use insert to create it."
 ```
 
-**C3.x — Delete nonexistent (for each of the 4 types):**
+**C3.x — Delete nonexistent (for each of the 5 types):**
 ```powershell
 & $cli delete $type "E2E_${runId}_NonExistent"
 # Expected: exit 5, stderr contains "not found in the warehouse."
@@ -420,10 +440,11 @@ $allTestNames = @(
     "E2E_${runId}_TA",
     "E2E_${runId}_B1", "E2E_${runId}_B2", "E2E_${runId}_B3", "E2E_${runId}_B4",
     "E2E_${runId}_B5", "E2E_${runId}_B6", "E2E_${runId}_B7", "E2E_${runId}_B8",
+    "E2E_${runId}_B9", "E2E_${runId}_B10",
     "E2E_${runId}_C1"
 )
 foreach ($name in $allTestNames) {
-    foreach ($type in @("strategy","indicator","function","tradingapp")) {
+    foreach ($type in @("strategy","indicator","function","tradingapp","showme")) {
         & $cli delete $type $name 2>$null
         # Expected: exit 5 (not found). If any returns 0, that entry was not cleaned up.
     }
@@ -534,11 +555,13 @@ The overall test run verdict is **PASS** only if ALL of the following are true:
 
 | Criterion | Requirement |
 |-----------|-------------|
-| **Part A — Success cases** | All 16 test cases pass (exit codes match expected for every insert/modify/delete/delete-neg step) |
-| **Part A — ProgId preservation** | ProgId is preserved across modify for all 4 types |
-| **Part A — `.ell` files** | `.ell` files are created on insert and removed on delete for all 4 types |
-| **Part B — Semantic errors** | All 8 test cases pass: negative tests return exit 8 with correct error text, positive controls return exit 0 |
-| **Part C — General errors** | All 10 test cases pass (exit codes match expected) |
+| **Part A — Success cases** | All 16 main-runner test cases pass (A1.1–A4.4; exit codes match expected for every insert/modify/delete/delete-neg step) |
+| **Part A — ProgId preservation** | ProgId is preserved across modify for all 4 main-runner types (+ ShowMe via Suite 12, SM5) |
+| **Part A — `.ell` files** | `.ell` files are created on insert and removed on delete for all 4 main-runner types (+ ShowMe via Suite 12) |
+| **Part B — Semantic errors** | All 8 main-runner test cases pass (B1–B8): negative tests return exit 8 with correct error text, positive controls return exit 0 |
+| **Part C — General errors** | All 10 main-runner test cases pass (C1, C2.1–C2.4, C3.1–C3.4, C4; exit codes match expected) |
+| **ShowMe suite (Suite 12)** | All 9 `tests/test_showme_e2e.ps1` cases pass (SM1–SM9) |
+| **Serve E2E (Suite 11)** | Both `tests/test_serve_e2e.py` pytest cases pass (driven by `tests/run_serve_e2e.ps1`) |
 | **Cleanup — Warehouse** | No leftover warehouse entries (all cleanup deletes return exit 5) |
 | **Cleanup — `.ell` files** | No orphaned `.ell` files for any test ProgId |
 | **Cleanup — Temp files** | Temp source files removed |
@@ -587,14 +610,14 @@ Where `<timestamp>` is in the format `YYYYMMDD_HHMMSS`.
 
 ## 10. Reference: Known Type-Specific Constraints
 
-The following table documents the EasyLanguage construct constraints that are **verified by this test suite**. These are the known constraints confirmed by the reference test run (2026-08-20, 34/34 Part A-C PASSED).
+The following table documents the EasyLanguage construct constraints that are **verified by this test suite**. These are the known constraints confirmed by the reference test run (2026-08-20, 34/34 Part A-C PASSED via `run_e2e_tests.ps1`); the ShowMe column was confirmed via the ShowMe E2E suite (`test_showme_e2e.ps1`, TVS-C.8).
 
-| Construct | Strategy | Indicator | Function | TradingApp |
-|-----------|----------|-----------|----------|------------|
-| **Plot statements** (Plot1, Plot2, etc.) | **NO** | **YES** | **NO** | **NO** |
-| **Buy/Sell order statements** | **YES** | **NO** | **NO** | **NO** |
-| **`using elsystem;`** | YES | YES | YES | YES |
-| **Function name assignment** (e.g., `MyFunc = 1;`) | N/A | N/A | **Required** | N/A |
+| Construct | Strategy | Indicator | Function | TradingApp | ShowMe |
+|-----------|----------|-----------|----------|------------|--------|
+| **Plot statements** (Plot1, Plot2, etc.) | **NO** | **YES** | **NO** | **NO** | **YES** |
+| **Buy/Sell order statements** | **YES** | **NO** | **NO** | **NO** | **NO** |
+| **`using elsystem;`** | YES | YES | YES | YES | YES |
+| **Function name assignment** (e.g., `MyFunc = 1;`) | N/A | N/A | **Required** | N/A | N/A |
 
 ### Error messages by violation
 
@@ -606,6 +629,7 @@ The following table documents the EasyLanguage construct constraints that are **
 | Buy/Sell in Function | `This word not allowed in a function.` |
 | Buy/Sell in TradingApp | `This word not allowed in a study.` |
 | Plot in TradingApp | `This word only allowed in an Indicator, ShowMe or PaintBar study.` |
+| Buy/Sell in ShowMe | `This word not allowed in a study.` |
 | Function without return assignment | `A value was never assigned to user function.` (secondary error) |
 
 > **NOTE:** This table documents the KNOWN constraints verified by this test suite. There may be other type-specific constraints in the EasyLanguage compiler that are not yet tested by this specification. If new constraints are discovered, they should be added as additional Part B test cases and documented here.
@@ -618,6 +642,121 @@ The following table documents the EasyLanguage construct constraints that are **
 | Indicator | 2 | `elmodule_2_<ProgId>.ell` |
 | Function | 4 | `elmodule_4_<ProgId>.ell` |
 | TradingApp | 5122 | `elmodule_5122_<ProgId>.ell` |
+| ShowMe | 1282 | `elmodule_1282_<ProgId>.ell` |
+
+---
+
+## Part F: Serve Mode E2E (Workstream K — TVS-K.6b)
+
+**Status:** DONE — implemented and passing as regression **Suite 11**: `tests/run_serve_e2e.ps1` drives `tests/test_serve_e2e.py` (2 pytest cases). TVS-K.6a verified the end-to-end path (commit 027e7fe); TVS-K.6b documented this procedure and flipped the `use_serve` default to `True`.
+
+### F.1: Prerequisites
+
+- A built `tsdev_cli.exe` in `build\Release\` (the standard build output).
+- TradeStation 9.5 installed (the broker loads the real `orlib20.dll`).
+- No TradeStation processes or services running.
+- An **elevated** PowerShell session to launch the runner (see F.2 — the
+  runner itself launches pytest unelevated via Task Scheduler so the test
+  exercises the real non-elevated → broker auto-start path).
+
+### F.2: Procedure — run `tests/run_serve_e2e.ps1`
+
+The runner script handles the elevation mechanics automatically. From an
+**elevated** PowerShell session at the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\run_serve_e2e.ps1
+```
+
+What the script does:
+
+1. Saves the current `ConsentPromptBehaviorAdmin` registry value.
+2. Sets `ConsentPromptBehaviorAdmin=0` (auto-elevate without a UAC prompt)
+   so the broker auto-start inside the test is silent.
+3. Launches `uv run pytest tests/test_serve_e2e.py` **unelevated** via a
+   Task Scheduler task with `-RunLevel Limited` — this is the key step:
+   the pytest process runs as a non-elevated (Medium-IL) process, exactly
+   like a real non-elevated Python session.
+4. Captures stdout+stderr to a temp file and waits for the task to finish.
+5. Restores `ConsentPromptBehaviorAdmin` to its original value in a
+   `finally` block (always, even on error).
+6. Prints the pytest output and returns the pytest exit code.
+
+> **Note:** the temporary `ConsentPromptBehaviorAdmin=0` setting means any
+> elevation request during the test session auto-approves silently. This is
+> restored in the `finally` block even on error. The script also cleans up
+> the scheduled task and temp files in the same block.
+
+### F.3: What it verifies
+
+The pytest module `tests/test_serve_e2e.py` contains 2 test cases:
+
+**`test_serve_full_lifecycle`** — verifies the full serve-mode lifecycle from
+a non-elevated Python process:
+
+1. A non-elevated Python process constructs `TsDevClient()` with the default
+   `use_serve=True`.
+2. The first operation auto-starts the elevated broker via **one**
+   `ShellExecuteExW` `"runas"` call (one UAC prompt — silenced by the
+   `ConsentPromptBehaviorAdmin=0` setting).
+3. All subsequent operations reuse the **same** broker process over the
+   named pipe (the test asserts the broker is NOT restarted between
+   operations).
+4. The full lifecycle is exercised against the real TSDev Library:
+   `insert` → `exists` → `get-source` → `modify` → `get-source` → `delete`
+   → `exists` (confirming deletion).
+5. Each step's result is asserted to match the expected `TsDevResult`
+   fields (success, ProgId, source text, etc.).
+
+**`test_serve_compile_failure_recovery`** — verifies broker resilience:
+
+1. The broker (started by the lifecycle test or reused) receives an
+   `insert` request whose EasyLanguage source fails to compile.
+2. The broker **survives** the compile error (returns a `CompileError`
+   result, does not crash) and the partial warehouse entry is
+   auto-cleaned.
+3. The broker continues serving subsequent requests normally.
+
+### F.4: Expected result
+
+```
+2 passed, 0 failed
+```
+
+The two test cases `test_serve_full_lifecycle` and
+`test_serve_compile_failure_recovery` must both pass. The runner script
+parses the pytest output for `(\d+) passed` / `(\d+) failed` and returns
+exit `0` on success, `1` on failure.
+
+### F.5: Backwards-compat verification (part of TVS-K.6a)
+
+As part of TVS-K.6a, the full existing E2E suite (Parts A–E above) was
+re-run **without** `use_serve` (elevated session, direct `subprocess.run`)
+and confirmed byte-identical JSON output vs. the pre-serve baseline. This
+verifies that serve mode is purely additive and does not change the
+behavior of the direct-subprocess path when the session is already
+elevated.
+
+---
+
+## Part G: Crash Handling E2E (VEH + TsDevCrashError)
+
+**Status:** C++ VEH crash handler and Python TsDevCrashError are COMPLETE. Tests: test_crash_handler.cpp (normal mode + --crash mode), test_crash_handler.ps1. Review APPROVED.
+
+### G.1: C++ VEH crash handler test — tests/test_crash_handler.cpp (COMPLETE)
+
+- **Normal mode:** Run test_crash_handler.exe without `--crash` flag. Asserts the VEH is installed and the process exits normally (exit 0).
+- **Crash mode:** Run test_crash_handler.exe with `--crash` flag. The test deliberately triggers an access violation. Asserts the VEH catches it and calls `TerminateProcess` with the correct NT status code (0xC0000005). No TSCrashReport.exe dialog should appear.
+
+### G.2: Python TsDevCrashError test (COMPLETE)
+
+- Python tests verify that `TsDevCrashError` is raised when crash NT status codes are detected in subprocess return codes.
+- `_is_crash_exit()` helper handles both signed and unsigned returncode representations.
+- Crash detection is tested in `_run_cli()`, `_run_batch()`, and `_ServeBroker.call()` code paths (mocked).
+
+### G.3: E2E crash verification (recommended when running Suite 11)
+
+When running serve mode E2E (Part F / regression Suite 11), verify that if the broker process crashes (e.g., due to an orlib20 access violation), the Python client receives a `TsDevCrashError` with the correct `exit_code` attribute, and no TSCrashReport.exe dialog appears (the VEH prevents it). This is a recommended additional check whenever the serve E2E suite is run.
 
 ---
 
@@ -661,8 +800,8 @@ function Run-Cli($args) {
 
 # --- Part C: General errors (per test case table) ---
 #   C1: invalid syntax -> exit 8
-#   C2.x: modify nonexistent -> exit 5 (all 4 types)
-#   C3.x: delete nonexistent -> exit 5 (all 4 types)
+#   C2.x: modify nonexistent -> exit 5 (all 5 types)
+#   C3.x: delete nonexistent -> exit 5 (all 5 types)
 #   C4: unknown type -> exit 2
 
 # --- Cleanup ---

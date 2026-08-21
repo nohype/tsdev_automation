@@ -1225,7 +1225,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 | Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 25 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
 | Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
 | SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
-| Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7); 4 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, and TradingApp (0x1402) are confirmed. ActivityBar, PaintBar, ProbabilityMap, ShowMe warehouse types remain unconfirmed. |
+| Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7) and ShowMe (TVS-C.8); 3 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, TradingApp (0x1402), and ShowMe (0x0502) are confirmed. ActivityBar, PaintBar, ProbabilityMap warehouse types remain unconfirmed. |
 
 ---
 

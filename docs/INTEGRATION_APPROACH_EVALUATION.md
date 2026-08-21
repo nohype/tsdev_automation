@@ -5,7 +5,9 @@
 **Author:** Systems architecture evaluation (subagent)
 **Status:** DECISION MADE — Option A+ (batch CLI + JSON I/O, no daemon) chosen and IMPLEMENTED. See `src/tsdev_automation/` for the Python wrapper (`TsDevClient`) and `docs/BUILD.md` for build instructions.
 
-> **DECISION (2026-08):** Option A+ was chosen — 64-bit Python drives the 32-bit `tsdev_cli.exe` as a subprocess via JSON I/O. No daemon (Option B) was pursued. The `TsDevClient` wrapper is implemented at `src/tsdev_automation/`. All 6 functions (insert/modify/delete/exists/get-source/upsert) + batch operations work via the Python wrapper. 60 Python tests (50 unit + 10 E2E) pass.
+> **DECISION (2026-08):** Option A+ was chosen — 64-bit Python drives the 32-bit `tsdev_cli.exe` as a subprocess via JSON I/O. No daemon (Option B) was pursued. The `TsDevClient` wrapper is implemented at `src/tsdev_automation/`. All 6 functions (insert/modify/delete/exists/get-source/upsert) + batch operations work via the Python wrapper. 60 Python tests (50 unit + 10 E2E) passed at decision time; as of 2026-08-21 pytest collects 131 tests, of which 116 run non-E2E (15 E2E tests deselected without a live TradeStation install).
+
+> **ADDENDUM (2026-08-21):** Workstream K subsequently added an opt-in persistent elevated serve broker — a `serve` subcommand in `tsdev_cli.exe` plus a Python `_ServeBroker` communicating over a named pipe. This is architecturally adjacent to the rejected Option B, but its motivation is UAC/elevation UX (one elevation prompt per session rather than per CLI invocation), not performance. The core Option A+ architecture (batch CLI subprocess + JSON I/O) is unchanged; `use_serve` now defaults to `True` (flipped in TVS-K.6b, 2026-08-21).
 
 ---
 

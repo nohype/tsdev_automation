@@ -1026,13 +1026,20 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
                             const char* storedName = rec + kNameOffset;
 
                             // For category 2 (Indicator), filter by subtype so
-                            // TradingApp queries only match TradingApp records
-                            // and Indicator queries only match Indicator records.
+                            // TradingApp queries only match TradingApp records,
+                            // Indicator queries only match Indicator records, and
+                            // ShowMe queries only match ShowMe records. Indicator
+                            // now properly excludes ALL non-Indicator category-2
+                            // subtypes (PaintBar, ShowMe, Expert, etc.) by
+                            // accepting only raw subtypes 0x00 and 0x01.
+                            // ShowMe records use raw subtype 0x03 or 0x05 (both
+                            // map to power type 5 / expanded whType 0x0502).
                             if (category == 2) {
                                 unsigned char recSubType =
                                     (unsigned char)rec[kSubTypeOffset];
                                 if (subType == 0x14 && recSubType != 0x14) continue;
-                                if (subType == 0x00 && recSubType == 0x14) continue;
+                                if (subType == 0x00 && recSubType != 0x00 && recSubType != 0x01) continue;
+                                if (subType == 0x05 && recSubType != 0x05 && recSubType != 0x03) continue;
                             }
 
                             if (_stricmp(storedName, searchName.c_str()) == 0) {
@@ -1076,7 +1083,7 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
             // Build the type filter array via FUN_101d43a0 (same as
             // FUN_101a42d0 does internally). FUN_101d43a0 is __stdcall:
             // arg1=category, arg2=*outBuf, RET 0x8. Returns outBuf pointer.
-            int typeFilterBuf[3] = {0, 0, 0};
+            int typeFilterBuf[16] = {};
             if (callBuildTypeArray(m_pBuildTypeArray, category, typeFilterBuf)) {
 
                 // Call FUN_101d05e0 (BST search wrapper).
@@ -1190,7 +1197,13 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
             "tsdev: compile failed — cleaning up partial warehouse entry "
             "\"%s\" (ProgId=%d)\n", g_lastCreated.name, progId);
         try {
-            deleteEntry(type, g_lastCreated.name);
+            // flush=false: in serve/batch mode (long-lived TsDevLib), calling
+            // closeWarehouse() here would free the IWHouse interface and crash
+            // subsequent ops. The partial entry was just created in-process
+            // and never persisted to disk (compile failed, no .ell file);
+            // DeleteFromTree inside deleteEntry updates the BST, and OrlibExit
+            // in the destructor handles persistence.
+            deleteEntry(type, g_lastCreated.name, /*flush=*/false);
         } catch (...) {
         }
         g_lastCreated = {};
@@ -1250,6 +1263,19 @@ void TsDevLib::refreshCache() {
         }
     }
 
+    // If [warehouse+0x5E] is still NULL after the cmd 0x0F re-initialization
+    // attempt, we cannot safely dispatch cmd 0x4E (it dereferences the
+    // IWHouse interface at [warehouse+0x5E], causing ACCESS_VIOLATION on
+    // NULL). This happens in serve mode after a delete operation corrupts
+    // the warehouse interface. Skip the refresh — the caller
+    // (enumerateRecords) will fall back to Phase 2 (findExistPos +
+    // _GetMasterRecByType@16) which does not need the IWHouse interface.
+    if (!iface5E) {
+        TSDEV_DBG("tsdev: refreshCache — [warehouse+0x5E] is NULL after cmd 0x0F, "
+                  "skipping cmd 0x4E (interface cannot be re-initialized)\n");
+        return;
+    }
+
     // Step 2: Set [warehouse+0x12] = 0xC and dispatch cmd 0x4E.
     // (The previous Step 2 — dispatching cmd 0x0D via FUN_101cfce0 to
     // obtain a fresh COM interface — has been removed. In our CLI context
@@ -1298,7 +1324,8 @@ const char* TsDevLib::getWrkPath() const {
     return m_wrkPath.c_str();
 }
 
-bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
+bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
+                           bool flush) {
     int category = getCategory(type);
     int expandedWhType = static_cast<int>(type);
 
@@ -1406,9 +1433,19 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name) {
     }
 
     // 4. CloseWarehouse (best-effort flush).
-    TSDEV_DBG("tsdev: deleteEntry — calling closeWarehouse()\n");
-    closeWarehouse();
-    TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() done\n");
+    //    Skipped when flush=false (serve/batch mode) because closing the
+    //    warehouse frees the IWHouse interface ([warehouse+0x5E]), which
+    //    causes subsequent enumerateRecords/refreshCache calls to crash with
+    //    NULL pointer dereference in orlib20's cmd 0x4E handler. In serve/batch
+    //    mode, the warehouse stays open for the session lifetime and is closed
+    //    once at the end by runServe/runBatch.
+    if (flush) {
+        TSDEV_DBG("tsdev: deleteEntry — calling closeWarehouse()\n");
+        closeWarehouse();
+        TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() done\n");
+    } else {
+        TSDEV_DBG("tsdev: deleteEntry — skipping closeWarehouse (flush=false)\n");
+    }
 
     // 5. Delete the .ell and .xml files from disk.
     char ellPath[512];

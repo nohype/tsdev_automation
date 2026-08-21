@@ -10,6 +10,8 @@ path exists).
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 import json
 import os
 import subprocess
@@ -26,10 +28,14 @@ from tsdev_automation import (
     CompileError,
     NotFoundError,
     TsDevClient,
+    TsDevCrashError,
     TsDevError,
     TsDevResult,
 )
 from tsdev_automation import exceptions as exc
+from tsdev_automation import _pipe
+from tsdev_automation.client import _ServeBroker, _detect_elevation, _is_crash_exit, _SHELLEXECUTEINFOW
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +57,7 @@ def fake_cli(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(fake_cli: Path) -> TsDevClient:
-    return TsDevClient(cli_path=str(fake_cli))
+    return TsDevClient(cli_path=str(fake_cli), use_serve=False)
 
 
 def _success_json(op: str, type_: str, name: str, prog_id: int = 42, ell: str = "C:/x.ell") -> str:
@@ -203,7 +209,7 @@ class TestSingleItem:
             return _make_completed(_success_json("delete", "strategy", "X"))
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
         c.delete("strategy", "X")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -278,7 +284,7 @@ class TestUpsert:
             return _make_completed(_success_json("upsert", "strategy", "MyStrat"))
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
         c.upsert("strategy", "MyStrat", "input(close, 1);")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -340,7 +346,7 @@ class TestExists:
             return _make_completed(_exists_json("strategy", "MyStrat", True, prog_id=1234))
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
         c.exists("strategy", "MyStrat")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -524,7 +530,7 @@ class TestGetSource:
             return _make_completed(_get_source_json("strategy", "MyStrat"))
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS")
+        c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
         c.get_source("strategy", "MyStrat")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -1317,6 +1323,7 @@ class TestExceptionHierarchy:
             "CompileError",
             "EllMissingError",
             "ThreadFailure",
+            "TsDevCrashError",
         ]:
             cls = getattr(exc, name)
             assert issubclass(cls, TsDevError)
@@ -1326,6 +1333,28 @@ class TestExceptionHierarchy:
         r = TsDevResult(op="insert", type="strategy", name="X", success=False, exit_code=8)
         e = CompileError(r)
         assert e.result is r
+
+    def test_crash_error_subclass_and_exit_code(self) -> None:
+        """``TsDevCrashError`` is a ``TsDevError`` subclass with an ``exit_code``."""
+        e = TsDevCrashError(exit_code=0xC0000005)
+        assert isinstance(e, TsDevError)
+        assert isinstance(e, Exception)
+        assert e.exit_code == 0xC0000005
+        # Default message includes the hex exit code.
+        assert "0xC0000005" in str(e)
+
+    def test_crash_error_default_message_no_exit_code(self) -> None:
+        """Without an exit code, a generic message is used."""
+        e = TsDevCrashError()
+        assert isinstance(e, TsDevError)
+        assert e.exit_code is None
+        assert "crashed" in str(e).lower()
+
+    def test_crash_error_custom_message(self) -> None:
+        """An explicit message is used verbatim."""
+        e = TsDevCrashError(message="boom", exit_code=42)
+        assert str(e) == "boom"
+        assert e.exit_code == 42
 
 
 class TestResolveCliPath:
@@ -1387,6 +1416,621 @@ class TestResolveCliPath:
         # because it does not exist. The function falls through to the
         # CMakeLists.txt walk-up / fallback instead.
         assert resolved.resolve() != (tmp_path / "tsdev_cli.exe").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Serve-broker integration (TVS-K.5) — mocked unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestPipeFramedJson:
+    """Unit tests for :mod:`tsdev_automation._pipe` send/recv with mocked
+    ``WriteFile``/``ReadFile`` (no real named pipe)."""
+
+    def test_send_request_writes_framed_json(self, monkeypatch) -> None:
+        """``send_request`` writes a 4-byte LE length prefix + UTF-8 JSON payload."""
+        written: list[bytes] = []
+
+        def fake_write_all(handle, data):
+            written.append(bytes(data))
+
+        monkeypatch.setattr(_pipe, "_write_all", fake_write_all)
+        _pipe.send_request(12345, {"op": "insert", "name": "X"})
+        # Two writes: the 4-byte header and the payload.
+        assert len(written) == 2
+        import struct as _struct
+
+        (n,) = _struct.unpack("<I", written[0])
+        assert n == len(written[1])
+        assert json.loads(written[1].decode("utf-8")) == {"op": "insert", "name": "X"}
+
+    def test_recv_response_reads_framed_json(self, monkeypatch) -> None:
+        """``recv_response`` reads the 4-byte length prefix then the payload."""
+        payload = json.dumps({"op": "exists", "exists": True}).encode("utf-8")
+        import struct as _struct
+
+        frames = [_struct.pack("<I", len(payload)), payload]
+        calls: list[int] = []
+
+        def fake_read_exact(handle, n):
+            idx = len(calls)
+            calls.append(n)
+            return frames[idx]
+
+        monkeypatch.setattr(_pipe, "_read_exact", fake_read_exact)
+        obj = _pipe.recv_response(999)
+        assert obj == {"op": "exists", "exists": True}
+        assert calls == [4, len(payload)]
+
+    def test_recv_response_empty_payload(self, monkeypatch) -> None:
+        """A zero-length payload decodes to an empty dict."""
+        import struct as _struct
+
+        frames = [_struct.pack("<I", 0)]
+
+        def fake_read_exact(handle, n):
+            return frames.pop(0)
+
+        monkeypatch.setattr(_pipe, "_read_exact", fake_read_exact)
+        assert _pipe.recv_response(1) == {}
+
+    def test_close_noop_for_invalid_handle(self) -> None:
+        """``close`` is a no-op for None / 0 / INVALID_HANDLE_VALUE."""
+        _pipe.close(None)
+        _pipe.close(0)
+        _pipe.close(_pipe.INVALID_HANDLE_VALUE)
+
+
+class TestServeBrokerStart:
+    """Unit tests for :class:`_ServeBroker.start` with mocked
+    ``ShellExecuteExW`` and pipe I/O (no real broker / UAC)."""
+
+    def test_start_polls_pipe_file_and_connects(self, monkeypatch, tmp_path: Path) -> None:
+        """``start`` writes the pipe name to the temp file, polls it, then connects."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")  # start() validates the CLI path exists first.
+        broker = _ServeBroker(cli_exe)
+
+        # Fake ShellExecuteExW: populate hProcess with a fake handle.
+        fake_handle = 4242
+
+        def fake_shell_execute(sei):
+            ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents.hProcess = fake_handle
+            return True
+
+        monkeypatch.setattr(
+            ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute
+        )
+        # Fake WaitForSingleObject: report WAIT_TIMEOUT (process still running).
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda *a, **k: 0x00000102,  # WAIT_TIMEOUT
+        )
+        # Intercept tempfile.mkstemp so we control the path; write the pipe
+        # name to it so the poll loop finds it.  Mock os.close / os.unlink so
+        # the file survives to the poll loop (the real code closes the fd and
+        # unlinks the placeholder before the broker rewrites it).
+        pipe_name = r"\\.\pipe\tsdev_test_1234"
+        pipe_file = tmp_path / "serve.pipe"
+
+        def fake_mkstemp(*a, **k):
+            pipe_file.write_text(pipe_name, encoding="utf-8")
+            return (999, str(pipe_file))
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr("tsdev_automation.client.os.close", lambda fd: None)
+        monkeypatch.setattr("tsdev_automation.client.os.unlink", lambda p: None)
+        # Fake _pipe.connect: just return a fake handle.
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7777)
+        # Prevent atexit registration from running shutdown on interpreter exit.
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker.start()
+        assert broker._started is True
+        assert broker._process_handle == fake_handle
+        assert broker._pipe_handle == 7777
+
+    def test_start_raises_permission_error_on_uac_decline(self, monkeypatch, tmp_path: Path) -> None:
+        """When ShellExecuteExW returns False, ``PermissionError`` is raised."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")  # start() validates the CLI path exists first.
+        broker = _ServeBroker(cli_exe)
+        monkeypatch.setattr(
+            ctypes.windll.shell32, "ShellExecuteExW", lambda sei: False
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client.tempfile.mkstemp",
+            lambda *a, **k: (999, str(tmp_path / "x.pipe")),
+        )
+        monkeypatch.setattr("tsdev_automation.client.os.close", lambda fd: None)
+        monkeypatch.setattr("tsdev_automation.client.os.unlink", lambda p: None)
+        with pytest.raises(PermissionError):
+            broker.start()
+
+    def test_shutdown_sends_quit_and_closes_handles(self, monkeypatch, tmp_path: Path) -> None:
+        """``shutdown`` sends ``{"op":"quit"}`` over the pipe and closes handles."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        sent: list[dict] = []
+
+        def fake_send(handle, obj):
+            sent.append(obj)
+
+        monkeypatch.setattr(_pipe, "send_request", fake_send)
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True
+        )
+
+        broker.shutdown()
+        assert sent == [{"op": "quit"}]
+        assert broker._pipe_handle is None
+        assert broker._process_handle is None
+        assert broker._started is False
+
+
+class TestServeRouting:
+    """Unit tests for :class:`TsDevClient` serve-broker routing decisions."""
+
+    def test_uses_subprocess_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
+        """When ``use_serve=False`` is passed explicitly, the subprocess.run path is used."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        # Force _is_elevated to False so the only thing preventing serve is use_serve.
+        c._is_elevated = False
+        assert c._serve_active() is False
+
+        called: dict = {}
+
+        def fake_run(cmd, **kw):
+            called["cmd"] = cmd
+            return _make_completed(_success_json("insert", "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = c.insert("strategy", "X", "x;")
+        assert r.success
+        assert c._broker is None, "no broker should be created when serve is inactive"
+
+    def test_uses_subprocess_when_elevated(self, fake_cli: Path, monkeypatch) -> None:
+        """When the session is already elevated, the subprocess.run path is used
+        even if ``use_serve=True`` (zero overhead, no extra UAC)."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = True
+        assert c._serve_active() is False
+
+        called: dict = {}
+
+        def fake_run(cmd, **kw):
+            called["cmd"] = cmd
+            return _make_completed(_success_json("delete", "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = c.delete("strategy", "X")
+        assert r.success
+        assert c._broker is None, "no broker should be created when elevated"
+
+    def test_routes_through_broker_when_not_elevated_and_use_serve(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """When not elevated AND ``use_serve=True``, ops go through the broker."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        assert c._serve_active() is True
+
+        # Inject a fake broker so no real UAC / pipe is touched.
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_success_json("insert", "strategy", "X"))
+        c._broker = fake_broker
+
+        r = c.insert("strategy", "X", "input(close,1);")
+        assert r.success
+        assert r.op == "insert"
+        # The broker was called with the right request (source read inline).
+        sent = fake_broker.call.call_args[0][0]
+        assert sent["op"] == "insert"
+        assert sent["type"] == "strategy"
+        assert sent["name"] == "X"
+        assert sent["source"] == "input(close,1);"
+
+    def test_broker_exists_request_includes_case_insensitive(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """``exists`` with ``case_insensitive=True`` forwards the flag to the broker."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(
+            _exists_json("strategy", "X", True, prog_id=5, stored_name="x")
+        )
+        c._broker = fake_broker
+
+        r = c.exists("strategy", "X", case_insensitive=True)
+        assert r.exists is True
+        sent = fake_broker.call.call_args[0][0]
+        assert sent["op"] == "exists"
+        assert sent["case_insensitive"] is True
+
+    def test_broker_exists_request_omits_case_insensitive_when_false(
+        self, fake_cli: Path
+    ) -> None:
+        """``exists`` without ``case_insensitive`` does NOT add the field."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_exists_json("strategy", "X", False))
+        c._broker = fake_broker
+
+        c.exists("strategy", "X")
+        sent = fake_broker.call.call_args[0][0]
+        assert "case_insensitive" not in sent
+
+    def test_broker_get_source_request_includes_output_path(
+        self, fake_cli: Path
+    ) -> None:
+        """``get_source`` with ``output_file`` forwards it as ``output_path``."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_get_source_json("strategy", "X"))
+        c._broker = fake_broker
+
+        c.get_source("strategy", "X", output_file="C:/out.el")
+        sent = fake_broker.call.call_args[0][0]
+        assert sent["op"] == "get-source"
+        assert sent["output_path"] == "C:/out.el"
+
+    def test_broker_get_source_request_omits_output_path_when_none(
+        self, fake_cli: Path
+    ) -> None:
+        """``get_source`` without ``output_file`` does NOT add ``output_path``."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_get_source_json("strategy", "X"))
+        c._broker = fake_broker
+
+        c.get_source("strategy", "X")
+        sent = fake_broker.call.call_args[0][0]
+        assert "output_path" not in sent
+
+    def test_broker_delete_has_no_source(self, fake_cli: Path) -> None:
+        """``delete`` through the broker omits the ``source`` field."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_success_json("delete", "strategy", "X"))
+        c._broker = fake_broker
+
+        c.delete("strategy", "X")
+        sent = fake_broker.call.call_args[0][0]
+        assert sent["op"] == "delete"
+        assert "source" not in sent
+
+    def test_broker_lazy_started_on_first_op(self, fake_cli: Path, monkeypatch) -> None:
+        """The broker is NOT created in ``__init__``; it is created on first op."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        assert c._broker is None
+
+        # Patch _ServeBroker so start() is a no-op and call() returns a success.
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_success_json("insert", "strategy", "X"))
+        monkeypatch.setattr(
+            "tsdev_automation.client._ServeBroker", lambda *a, **k: fake_broker
+        )
+        c.insert("strategy", "X", "x;")
+        assert c._broker is fake_broker
+
+    def test_broker_failure_raises_typed_exception(self, fake_cli: Path) -> None:
+        """A failed broker response is surfaced via the typed exception path."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(
+            _failure_json("insert", "strategy", "Dup", "already_exists", "exists", exit_code=5, existing_prog_id=7)
+        )
+        c._broker = fake_broker
+
+        with pytest.raises(AlreadyExistsError) as ei:
+            c.insert("strategy", "Dup", "x;")
+        assert ei.value.result.error.existing_prog_id == 7
+
+
+class TestServeBatchNotImplemented:
+    """Batch ops raise ``NotImplementedError`` when serve is active and not elevated."""
+
+    def test_batch_insert_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError, match="batch ops require an elevated session"):
+            c.batch_insert([BatchItem("strategy", "A", "a;")])
+
+    def test_batch_delete_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError):
+            c.batch_delete([BatchItem("strategy", "A")])
+
+    def test_batch_upsert_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError):
+            c.batch_upsert([BatchItem("strategy", "A", "a;")])
+
+    def test_batch_modify_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError):
+            c.batch_modify([BatchItem("strategy", "A", "a;")])
+
+    def test_batch_insert_dir_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError):
+            c.batch_insert_dir("strategy", "C:/mydir")
+
+    def test_batch_delete_dir_raises_when_serve_active(self, fake_cli: Path) -> None:
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        with pytest.raises(NotImplementedError):
+            c.batch_delete_dir("strategy", "C:/mydir")
+
+    def test_batch_works_when_elevated_even_with_use_serve(self, fake_cli: Path, monkeypatch) -> None:
+        """When elevated, batch ops use subprocess.run even if use_serve=True."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = True
+        arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
+        results = c.batch_insert([BatchItem("strategy", "A", "a;")])
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_works_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
+        """When use_serve=False, batch ops use subprocess.run regardless of elevation."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        c._is_elevated = False
+        arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
+        results = c.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+
+
+class TestDetectElevation:
+    """Unit tests for the ``_detect_elevation`` helper."""
+
+    def test_returns_bool(self) -> None:
+        """``_detect_elevation`` returns a bool (True or False), never raises."""
+        result = _detect_elevation()
+        assert isinstance(result, bool)
+
+    def test_use_serve_param_accepted(self, fake_cli: Path) -> None:
+        """``use_serve`` is an accepted kwarg and stored on the instance."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        assert c._use_serve is True
+        c2 = TsDevClient(cli_path=str(fake_cli))
+        assert c2._use_serve is True
+
+    def test_use_serve_default_is_true(self, fake_cli: Path) -> None:
+        """The ``use_serve`` default is ``True`` (flipped in K.6b).
+
+        Constructing a :class:`TsDevClient` without an explicit ``use_serve``
+        argument opts into serve-broker routing for non-elevated sessions.
+        """
+        c = TsDevClient(cli_path=str(fake_cli))
+        assert c._use_serve is True
+
+
+# ---------------------------------------------------------------------------
+# Crash detection (VEH / NT status code exit codes) — mocked unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestIsCrashExit:
+    """Unit tests for the :func:`_is_crash_exit` helper."""
+
+    def test_positive_access_violation(self) -> None:
+        is_crash, crash_type = _is_crash_exit(0xC0000005)
+        assert is_crash is True
+        assert crash_type == "ACCESS_VIOLATION"
+
+    def test_negative_access_violation(self) -> None:
+        """subprocess.run may report a negative returncode for a large NT status."""
+        # -1073741819 == 0xC0000005 as a signed 32-bit int.
+        is_crash, crash_type = _is_crash_exit(-1073741819)
+        assert is_crash is True
+        assert crash_type == "ACCESS_VIOLATION"
+
+    def test_stack_overflow(self) -> None:
+        is_crash, crash_type = _is_crash_exit(0xC00000FD)
+        assert is_crash is True
+        assert crash_type == "STACK_OVERFLOW"
+
+    def test_stack_buffer_overrun(self) -> None:
+        is_crash, crash_type = _is_crash_exit(0xC0000409)
+        assert is_crash is True
+        assert crash_type == "STACK_BUFFER_OVERRUN"
+
+    def test_heap_corruption(self) -> None:
+        is_crash, crash_type = _is_crash_exit(0xC0000374)
+        assert is_crash is True
+        assert crash_type == "HEAP_CORRUPTION"
+
+    def test_normal_exit_codes_not_crash(self) -> None:
+        for rc in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+            is_crash, crash_type = _is_crash_exit(rc)
+            assert is_crash is False, f"exit {rc} should not be a crash"
+            assert crash_type is None
+
+    def test_none_returncode_not_crash(self) -> None:
+        is_crash, crash_type = _is_crash_exit(None)  # type: ignore[arg-type]
+        assert is_crash is False
+        assert crash_type is None
+
+
+class TestRunCliCrashDetection:
+    """Unit tests for crash detection in :meth:`TsDevClient._run_cli`."""
+
+    def test_run_cli_raises_crash_on_access_violation(self, client: TsDevClient, monkeypatch) -> None:
+        """A negative returncode (0xC0000005) raises ``TsDevCrashError``."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed("", stderr="", returncode=-1073741819),
+        )
+        with pytest.raises(TsDevCrashError) as ei:
+            client.insert("strategy", "X", "x;")
+        assert ei.value.exit_code == -1073741819
+        assert "ACCESS_VIOLATION" in str(ei.value)
+
+    def test_run_cli_raises_crash_on_positive_code(self, client: TsDevClient, monkeypatch) -> None:
+        """A positive NT status exit code also raises ``TsDevCrashError``."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed("", stderr="", returncode=0xC00000FD),
+        )
+        with pytest.raises(TsDevCrashError) as ei:
+            client.delete("strategy", "X")
+        assert ei.value.exit_code == 0xC00000FD
+        assert "STACK_OVERFLOW" in str(ei.value)
+
+    def test_run_cli_no_crash_on_normal_exit(self, client: TsDevClient, monkeypatch) -> None:
+        """A normal exit code does NOT raise ``TsDevCrashError``."""
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed(_success_json("insert", "strategy", "X"))
+        )
+        r = client.insert("strategy", "X", "x;")
+        assert r.success is True
+
+
+class TestRunBatchCrashDetection:
+    """Unit tests for crash detection in :meth:`TsDevClient._run_batch`."""
+
+    def test_run_batch_raises_crash_on_access_violation(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed("", stderr="", returncode=-1073741819),
+        )
+        with pytest.raises(TsDevCrashError) as ei:
+            client.batch_insert([BatchItem("strategy", "A", "a;")])
+        assert ei.value.exit_code == -1073741819
+        assert "ACCESS_VIOLATION" in str(ei.value)
+
+    def test_run_batch_no_crash_on_normal_exit(self, client: TsDevClient, monkeypatch) -> None:
+        arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
+        results = client.batch_insert([BatchItem("strategy", "A", "a;")])
+        assert len(results) == 1 and results[0].success
+
+
+class TestServeBrokerCrashDetection:
+    """Unit tests for crash detection in :meth:`_ServeBroker.call`."""
+
+    def test_call_raises_crash_when_broker_exited_with_crash_code(self, monkeypatch, tmp_path: Path) -> None:
+        """A broken pipe + crash exit code raises ``TsDevCrashError`` (no retry)."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+
+        # First send_request raises PipeError (broken pipe).
+        call_count = {"n": 0}
+
+        def fake_send(handle, obj):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise _pipe.PipeError("broken pipe")
+
+        monkeypatch.setattr(_pipe, "send_request", fake_send)
+        monkeypatch.setattr(_pipe, "recv_response", lambda handle: {})
+        # _get_exit_code returns a crash code.
+        monkeypatch.setattr(broker, "_get_exit_code", lambda: 0xC0000005)
+        # _reset_pipe should not raise (mock the internals).
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True
+        )
+
+        with pytest.raises(TsDevCrashError) as ei:
+            broker.call({"op": "insert", "type": "strategy", "name": "X", "source": "x;"})
+        assert ei.value.exit_code == 0xC0000005
+        assert "ACCESS_VIOLATION" in str(ei.value)
+        # The request must NOT be retried after a crash.
+        assert call_count["n"] == 1
+
+    def test_call_retries_on_non_crash_broken_pipe(self, monkeypatch, tmp_path: Path) -> None:
+        """A broken pipe with the broker still alive triggers a reconnect+retry."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+
+        call_count = {"n": 0}
+
+        def fake_send(handle, obj):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise _pipe.PipeError("broken pipe")
+
+        monkeypatch.setattr(_pipe, "send_request", fake_send)
+        monkeypatch.setattr(_pipe, "recv_response", lambda handle: {"op": "insert", "success": True})
+        # Broker is still alive (None exit code).
+        monkeypatch.setattr(broker, "_get_exit_code", lambda: None)
+        # _reset_pipe + start() must be no-ops.
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True
+        )
+        monkeypatch.setattr(broker, "start", lambda: setattr(broker, "_pipe_handle", 333))
+
+        obj = broker.call({"op": "insert", "type": "strategy", "name": "X", "source": "x;"})
+        # The request was retried (send called twice).
+        assert call_count["n"] == 2
+        assert obj["success"] is True
+
+    def test_get_exit_code_returns_none_when_still_active(self, monkeypatch, tmp_path: Path) -> None:
+        """``_get_exit_code`` returns ``None`` when STILL_ACTIVE (259)."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._process_handle = 999
+
+        def fake_get_exit_code(handle, out):
+            ctypes.cast(out, ctypes.POINTER(wintypes.DWORD)).contents.value = 259  # STILL_ACTIVE
+            return True
+
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.GetExitCodeProcess", fake_get_exit_code
+        )
+        assert broker._get_exit_code() is None
+
+    def test_get_exit_code_returns_code_when_exited(self, monkeypatch, tmp_path: Path) -> None:
+        """``_get_exit_code`` returns the exit code when the process has exited."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._process_handle = 999
+
+        def fake_get_exit_code(handle, out):
+            ctypes.cast(out, ctypes.POINTER(wintypes.DWORD)).contents.value = 0xC0000005
+            return True
+
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.GetExitCodeProcess", fake_get_exit_code
+        )
+        assert broker._get_exit_code() == 0xC0000005
+
+    def test_get_exit_code_returns_none_when_no_handle(self, tmp_path: Path) -> None:
+        """``_get_exit_code`` returns ``None`` when there is no process handle."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._process_handle = None
+        assert broker._get_exit_code() is None
 
 
 # ---------------------------------------------------------------------------

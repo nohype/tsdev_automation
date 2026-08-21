@@ -31,7 +31,8 @@ enum class ComponentType : int {
     Strategy    = 0,
     Indicator   = 2,
     Function    = 4,
-    TradingApp  = 5122   // 0x1402 = (subType 0x14 << 8) | category 2
+    TradingApp  = 5122,  // 0x1402 = (subType 0x14 << 8) | category 2
+    ShowMe      = 1282   // 0x0502 = (subType 0x05 << 8) | category 2
 };
 
 // Decompose an expanded whType (the enum value) into its category and
@@ -156,7 +157,8 @@ public:
     //   closeWarehouse (best-effort flush) →
     //   OrlibExit (in destructor, persists the deletion) →
     //   delete .ell/.xml files via Windows API.
-    bool deleteEntry(ComponentType type, const std::string& name);
+    bool deleteEntry(ComponentType type, const std::string& name,
+                     bool flush = true);
 
     // Modify an existing component's EasyLanguage source and recompile/re-verify.
     // Flow (reuses the existing INSERT primitives directly — no new orlib20

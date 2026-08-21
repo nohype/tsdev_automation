@@ -3,7 +3,7 @@
     Orchestrated C++ unit test runner for the TSDev Automation project.
 
 .DESCRIPTION
-    Runs all 20 C++ test executables built into the build\Release directory in
+    Runs all 26 C++ test executables built into the build\Release directory in
     sequence (NOT in parallel, because the shared warehouse file MWRKArea.wrk
     is not process-safe). Captures exit codes, measures per-test duration, and
     returns a single aggregated exit code (0 = all pass, 1 = any fail).
@@ -11,33 +11,41 @@
     Test inventory (in execution order):
       1.  test_no_hardcoded_rvas      (no TS dependency)
       2.  test_tradingapp_type        (no TS dependency - pure unit test)
-      3.  test_orlib_resolver         (no live TS dependency - uses copied DLL)
-      4.  test_path_discovery         (requires TS - constructs TsDevLib)
-      5.  test_persistence_validation (requires TS - constructs TsDevLib)
-      6.  test_insert                 (requires TS)
-      7.  test_insert_tradingapp      (requires TS)
-      8.  test_auto_cleanup           (requires TS - constructs TsDevLib)
-      9.  test_modify                 (requires TS)
-      10. test_modify_tradingapp      (requires TS)
-      11. test_exists                 (requires TS - constructs TsDevLib)
-      12. test_enumerate              (requires TS - constructs TsDevLib)
-      13. test_upsert                 (requires TS - constructs TsDevLib)
-      14. test_batch_upsert           (requires TS - constructs TsDevLib)
-      15. test_directory_batch        (requires TS - parseDirectory unit test)
-      16. test_get_source             (requires TS - constructs TsDevLib)
-      17. test_delete                 (requires TS)
-      18. test_delete_tradingapp      (requires TS)
-      19. test_delete_check           (requires TS)
-      20. test_delete_diag            (requires TS)
+      3.  test_showme_type            (no TS dependency - pure unit test)
+      4.  test_elevation_guard        (no TS dependency - pure unit test)
+      5.  test_crash_handler          (no TS dependency - pure unit test)
+      6.  test_json_serialize         (no TS dependency - pure unit test)
+      7.  test_serve_dispatch         (no TS dependency - pure unit test)
+      8.  test_serve_framing          (no TS dependency - pure unit test)
+      9.  test_orlib_resolver         (no live TS dependency - uses copied DLL)
+      10. test_path_discovery         (requires TS - constructs TsDevLib)
+      11. test_persistence_validation (requires TS - constructs TsDevLib)
+      12. test_insert                 (requires TS)
+      13. test_insert_tradingapp      (requires TS)
+      14. test_auto_cleanup           (requires TS - constructs TsDevLib)
+      15. test_modify                 (requires TS)
+      16. test_modify_tradingapp      (requires TS)
+      17. test_exists                 (requires TS - constructs TsDevLib)
+      18. test_enumerate              (requires TS - constructs TsDevLib)
+      19. test_upsert                 (requires TS - constructs TsDevLib)
+      20. test_batch_upsert           (requires TS - constructs TsDevLib)
+      21. test_directory_batch        (requires TS - parseDirectory unit test)
+      22. test_get_source             (requires TS - constructs TsDevLib)
+      23. test_delete                 (requires TS)
+      24. test_delete_tradingapp      (requires TS)
+      25. test_delete_check           (requires TS)
+      26. test_delete_diag            (requires TS)
 
 .PARAMETER BuildDir
     Directory containing the test executables. Defaults to "build\Release"
     relative to the project root (parent of this script's tests\ directory).
 
 .PARAMETER NoTs
-    Switch (--no-ts). When set, run ONLY the 3 non-TS-dependent tests
-    (test_no_hardcoded_rvas, test_tradingapp_type, test_orlib_resolver) and
-    skip all TS-dependent tests with a "SKIP (requires TS)" message.
+    Switch (--no-ts). When set, run ONLY the 9 non-TS-dependent tests
+    (test_no_hardcoded_rvas, test_tradingapp_type, test_showme_type,
+    test_elevation_guard, test_crash_handler, test_json_serialize,
+    test_serve_dispatch, test_serve_framing, test_orlib_resolver) and skip
+    all TS-dependent tests with a "SKIP (requires TS)" message.
 
 .PARAMETER Verbose
     Switch (--verbose). When set, print full stdout/stderr for ALL tests,
@@ -45,15 +53,15 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
-    Runs all 20 tests.
+    Runs all 26 tests.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
-    Runs only the 3 non-TS tests.
+    Runs only the 9 non-TS tests.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
-    Runs all 20 tests with full output for every test.
+    Runs all 26 tests with full output for every test.
 
 .NOTES
     Exit codes:
@@ -92,6 +100,12 @@ $BaselineDll = Join-Path $ProjectRoot "tests\fixtures\orlib20_baseline.dll"
 $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_no_hardcoded_rvas';      RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_tradingapp_type';        RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_showme_type';            RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_elevation_guard';        RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_crash_handler';          RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_json_serialize';         RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_serve_dispatch';         RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_serve_framing';          RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_orlib_resolver';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_path_discovery';         RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_persistence_validation'; RequiresTs = $true  }
@@ -241,7 +255,7 @@ function Print-Summary {
 Write-Host "TSDev Automation - C++ Unit Test Runner" -ForegroundColor Cyan
 Write-Host "Project root : $ProjectRoot"
 Write-Host "Build dir    : $ResolvedBuildDir"
-Write-Host "Mode         : $(if ($NoTs) { 'no-ts (3 non-TS tests only)' } else { 'full (all 20 tests)' })"
+Write-Host "Mode         : $(if ($NoTs) { 'no-ts (9 non-TS tests only)' } else { 'full (all 26 tests)' })"
 Write-Host "Verbose      : $Verbose"
 
 if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {

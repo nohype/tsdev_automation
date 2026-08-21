@@ -41,6 +41,11 @@
          8 directory-batch-subcommand E2E test cases (DB1-DB8). Requires live
          TS; skipped under -NoTs or -SkipDirectoryBatch. Inserts and deletes
          real warehouse entries.
+     11. serve E2E tests        (tests/run_serve_e2e.ps1)
+         1 serve-mode end-to-end test case. Requires live TS AND an elevated
+         parent shell; skipped under -NoTs or -SkipServeE2e. Launches an
+         unelevated Python client via Task Scheduler that connects to an
+         elevated broker through a named pipe.
 
     Each sub-suite is launched in its own PowerShell child process via
     `& powershell -ExecutionPolicy Bypass -File <path> [args]` so that a
@@ -75,6 +80,7 @@
       - Skip the exists case-insensitive E2E suite entirely (prints "SKIP: exists-ci tests require live TS").
       - Skip the batch-upsert E2E suite entirely (prints "SKIP: batch-upsert tests require live TS").
       - Skip the directory-batch E2E suite entirely (prints "SKIP: directory-batch tests require live TS").
+      - Skip the serve E2E suite entirely (prints "SKIP: serve E2E tests require live TS").
       - Pass -NoTs to run_unit_tests.ps1 (runs only the 3 non-TS unit tests).
       - Still run the sigtool suite (it does not need live TS, only the
         baseline DLL).
@@ -112,17 +118,20 @@
     Switch. Skip the directory-batch E2E test suite
     (tests/test_directory_batch.ps1).
 
+.PARAMETER SkipServeE2e
+    Switch. Skip the serve E2E test suite (tests/run_serve_e2e.ps1).
+
 .PARAMETER Verbose
     Switch. Passed through to all sub-scripts (enables full output for
     every test, not just failures).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-    Runs all 10 suites (sigtool + 19 unit tests + 34 E2E tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests + 5 batch-upsert tests + 8 directory-batch tests).
+    Runs all 11 suites (sigtool + 19 unit tests + 34 E2E tests + 5 exists tests + 8 batch-stdin tests + 5 upsert tests + 6 get-source tests + 5 exists-ci tests + 5 batch-upsert tests + 8 directory-batch tests + 1 serve E2E test).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
-    Runs sigtool + 3 non-TS unit tests; skips E2E, exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert, and directory-batch suites.
+    Runs sigtool + 3 non-TS unit tests; skips E2E, exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert, directory-batch, and serve E2E suites.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e
@@ -130,7 +139,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose
-    Runs all 10 suites with full output for every test.
+    Runs all 11 suites with full output for every test.
 
 .NOTES
     Exit codes:
@@ -141,10 +150,11 @@
       - The project must be built: cmake --build build --config Release
         (or: cmake --build build --config Release --target test_regression)
       - TradeStation 9.5 must be installed for the E2E, exists, and
-        batch-stdin, upsert, get-source, exists-ci, batch-upsert, and
-        directory-batch suites (unless -NoTs, -SkipE2e, -SkipExists,
-        -SkipBatchStdin, -SkipUpsert, -SkipGetSource, -SkipExistsCi,
-        -SkipBatchUpsert, or -SkipDirectoryBatch is used).
+        batch-stdin, upsert, get-source, exists-ci, batch-upsert,
+        directory-batch, and serve E2E suites (unless -NoTs, -SkipE2e,
+        -SkipExists, -SkipBatchStdin, -SkipUpsert, -SkipGetSource,
+        -SkipExistsCi, -SkipBatchUpsert, -SkipDirectoryBatch, or
+        -SkipServeE2e is used).
       - tests/fixtures/orlib20_baseline.dll must exist for the sigtool
         suite and test_orlib_resolver. If missing, the runner PROMPTS the
         user to copy it from the TradeStation installation. If the user
@@ -152,7 +162,7 @@
         FAILED; other suites still run.
       - No TradeStation processes/services should be running for the E2E,
         exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert,
-        and directory-batch suites.
+        directory-batch, and serve E2E suites.
 #>
 
 param(
@@ -169,6 +179,7 @@ param(
     [switch]$SkipExistsCi,
     [switch]$SkipBatchUpsert,
     [switch]$SkipDirectoryBatch,
+    [switch]$SkipServeE2e,
     [switch]$Verbose
 )
 
@@ -192,6 +203,7 @@ $GetSourceScript = Join-Path $PSScriptRoot "test_get_source.ps1"
 $ExistsCiScript  = Join-Path $PSScriptRoot "test_exists_ci.ps1"
 $BatchUpsertScript = Join-Path $PSScriptRoot "test_batch_upsert.ps1"
 $DirectoryBatchScript = Join-Path $PSScriptRoot "test_directory_batch.ps1"
+$ServeE2eScript = Join-Path $PSScriptRoot "run_serve_e2e.ps1"
 
 # Baseline DLL prerequisite path.
 $BaselineDll = Join-Path $ProjectRoot "tests\fixtures\orlib20_baseline.dll"
@@ -415,6 +427,7 @@ Write-Host "SkipGetSource: $SkipGetSource"
 Write-Host "SkipExistsCi : $SkipExistsCi"
 Write-Host "SkipBatchUpsert : $SkipBatchUpsert"
 Write-Host "SkipDirectoryBatch : $SkipDirectoryBatch"
+Write-Host "SkipServeE2e : $SkipServeE2e"
 Write-Host "Verbose      : $Verbose"
 if ($TsPath) { Write-Host "TsPath       : $TsPath" }
 
@@ -526,6 +539,12 @@ if (-not $skipDirectoryBatchActual) { $suiteCount++ }
 # If directory-batch is skipped (e.g. due to -NoTs), still print a SKIP banner
 # so the user sees why. Count it in the total for banner numbering.
 if ($skipDirectoryBatchActual) { $suiteCount++ }
+
+# serve E2E is skipped if -SkipServeE2e is set OR -NoTs is set
+# (serve E2E requires live TS + an elevated parent shell).
+$skipServeE2eActual = $SkipServeE2e -or $NoTs
+if (-not $skipServeE2eActual) { $suiteCount++ }
+if ($skipServeE2eActual) { $suiteCount++ }
 
 # ---------------------------------------------------------------------------
 # Suite 1: sigtool verify gate
@@ -705,6 +724,39 @@ else {
     if ($Verbose)  { $directoryBatchArgs += "-Verbose" }
     Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
         -SuiteName "directory-batch E2E tests" -ScriptPath $DirectoryBatchScript -Arguments $directoryBatchArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 11: serve E2E tests
+# ---------------------------------------------------------------------------
+# serve E2E requires an elevated parent shell (it temporarily modifies
+# HKLM registry for ConsentPromptBehaviorAdmin). If not elevated, skip
+# with a clear message rather than failing with a registry access error.
+$script:Elevated = $false
+try {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    $script:Elevated = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+} catch {
+    $script:Elevated = $false
+}
+
+if ($skipServeE2eActual -or -not $script:Elevated) {
+    $idx++
+    if (-not $script:Elevated -and -not $skipServeE2eActual) {
+        $reason = "serve E2E requires an elevated parent shell"
+    } elseif ($NoTs) {
+        $reason = "serve E2E tests require live TS"
+    } else {
+        $reason = "skipped by -SkipServeE2e"
+    }
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "serve E2E tests" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "serve E2E tests" -ScriptPath $ServeE2eScript -Arguments @() | Out-Null
 }
 
 # ---------------------------------------------------------------------------

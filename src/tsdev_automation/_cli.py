@@ -60,16 +60,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     for op in ("insert", "modify"):
         sp = sub.add_parser(op, help=f"{op} a component.")
-        sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+        sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
         sp.add_argument("name", help="component name")
         sp.add_argument("source", help="source file path OR inline EasyLanguage source text")
 
     sp = sub.add_parser("delete", help="delete a component.")
-    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
     sp.add_argument("name", help="component name")
 
     sp = sub.add_parser("exists", help="query whether a component exists.")
-    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
     sp.add_argument("name", help="component name")
     sp.add_argument(
         "--case-insensitive",
@@ -79,12 +79,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sp = sub.add_parser("get-source", help="retrieve a component's EasyLanguage source.")
-    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
     sp.add_argument("name", help="component name")
     sp.add_argument("--output", default=None, metavar="<file>", help="write source to <file> instead of stdout")
 
     sp = sub.add_parser("upsert", help="insert a component, or modify it if it already exists.")
-    sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
     sp.add_argument("name", help="component name")
     sp.add_argument("source", help="source file path OR inline EasyLanguage source text")
 
@@ -94,7 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     for op in ("batch-insert-dir", "batch-modify-dir", "batch-delete-dir", "batch-upsert-dir"):
         sp = sub.add_parser(op, help=f"{op} from a directory of .el files.")
-        sp.add_argument("type", help="strategy | function | indicator | tradingapp")
+        sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
         sp.add_argument("dir_path", help="path to directory of .el files")
         sp.add_argument("-t", action="append", dest="extensions", default=None,
                         help="file extension filter (repeatable; first -t overrides defaults .el+.txt)")

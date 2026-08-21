@@ -30,6 +30,7 @@ from .exceptions import (
     SaveSourceError,
     SourceFileError,
     ThreadFailure,
+    TsDevCrashError,
     TsDevError,
     UnknownTypeError,
     UsageError,
@@ -55,6 +56,7 @@ __all__ = [
     "CompileError",
     "EllMissingError",
     "ThreadFailure",
+    "TsDevCrashError",
     "main",
 ]
 

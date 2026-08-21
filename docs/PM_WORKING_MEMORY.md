@@ -1,7 +1,40 @@
-# PM Working Memory — TSDev Automation
+﻿# PM Working Memory — TSDev Automation
 
 > **READ THIS FILE FIRST at the start of every turn / after any context compaction.**
 > This is the PM's outsourced memory. Keep it updated; re-read it regularly.
+
+## K.6a COMPLETE (2026-08-21)
+
+All 7 phases passed. Adversarial review APPROVED (all findings fixed: 1 CRITICAL, 1 MAJOR, 4 MINOR).
+
+### Bugs found and fixed during K.6a:
+1. `client.py`: `--serve` → `serve` subcommand
+2. `client.py`: `f.read().strip()` → `f.readline().strip()` (handshake file has 2 lines)
+3. `_pipe.py`: `ctypes.get_last_error()` → `_kernel32.GetLastError()` (Python 3.14 ctypes bug)
+4. `tsdev_cli.cpp createServePipe()`: SDDL `OW` → dynamic user SID (OW resolves to Admins when elevated)
+5. `tsdev_cli.cpp dispatchServeRequest()`: Removed per-op `closeWarehouse()`, use `flushPerItem=false`
+6. `tsdev_cli.cpp doDelete()`: Added `flushPerItem` param
+7. `tsdev_lib.cpp deleteEntry()`: Added `flush` param, skip `closeWarehouse()` when false
+8. `tsdev_lib.cpp refreshCache()`: NULL check on `[warehouse+0x5E]` after cmd 0x0F
+9. `tsdev_lib.cpp verifyModule()`: Auto-cleanup `deleteEntry` uses `flush=false` (CRITICAL fix from review)
+10. `test_serve_e2e.py`: Valid EL source + compile-failure recovery test + public `broker_process_handle()`
+
+### Frida trace findings:
+- Crash at orlib20.dll RVA 0x1CF71B (cmd 0x4E handler, NULL deref on [warehouse+0x5E])
+- Root cause: deleteEntry's closeWarehouse() frees IWHouse interface; refreshCache can't re-init; cmd 0x4E crashes
+
+### Test counts:
+- C++ regression: 12 suites, 135 cases (Suite 11: serve E2E, 2 pytest cases; Suite 12: ShowMe E2E, SM1-SM9)
+- Python: pytest collects 131 tests (116 non-e2e + 15 e2e)
+- Serve E2E: 2 tests (full lifecycle + compile-failure recovery)
+
+### K.6b COMPLETE (2026-08-21)
+- `use_serve` default flipped to `True` in `TsDevClient.__init__`
+- Critical bug fixed: `_ServeBroker.start()` now validates CLI path exists before `ShellExecuteExW` (raises `FileNotFoundError` instead of Windows popup on non-existent CLI path)
+- Serve-mode docs added to BUILD.md, E2E_TEST_SPEC.md (Part F), README.md
+- `test_serve_e2e.py` updated to use default (no explicit `use_serve=True`)
+- E2E: 2/2 serve E2E passed (default-flip path), 12/12 C++ regression suites / 135 cases passed
+- Adversarial review: APPROVED (17 INFO findings)
 
 ## HARD RULES (never violate)
 0. **NEVER rely on mutable item internals (e.g. source comments) for correctness.** Item source text, comments, naming conventions inside source code, etc. are ARBITRARY user-controlled content. We can never assume specific comments are present (e.g. `{ name }` blocks), that they match the stored name, or that they exist at all. Any implementation that parses source text to extract metadata (names, types, etc.) is INVALID. Metadata must come from orlib20 warehouse records or APIs, never from item source content.
@@ -34,6 +67,8 @@
    - **CRASH CASCADE WARNING:** Regression test scripts (run_regression.ps1, test_*.ps1) will keep spawning tsdev_cli.exe in a loop even after a crash. If a crash happens during a regression run, you MUST kill the parent PowerShell process (run_regression.ps1) AND all child processes to stop the cascade. Use `Get-CimInstance Win32_Process` to find parent PIDs.
    - **MCP HANG RECOVERY:** When a computer-use MCP tool call hangs indefinitely (e.g. screenshot, openai_computer), kill the corresponding Node.js processes (usually multiple ones). When you then try to call the MCP tools again, they will automatically be restarted and reconnected. Use: `Get-Process | Where-Object { $_.ProcessName -match 'node' } | Stop-Process -Force` then retry the MCP call.
    - **FRIDA FOR LIVE TRACING:** Use the `frida` CLI directly (NOT via MCP) for live instrumentation and tracing of orlib20 functions. Frida can attach to running processes, hook function entry/exit, log arguments, and catch exceptions/crashes to identify exact crash addresses. This is often more effective than static Ghidra analysis for diagnosing runtime crashes. **VERIFIED**: Used Frida to trace FUN_101a42d0 call chain and discovered that FUN_101c2e90 returns the ProgId (not the verbatim name as the RE doc claimed). Key technique: use FindExistPos export as a trigger to install hooks after TsDevLib constructor completes (avoiding signature-matching interference).
+5. **No hacks: never suppress compiler errors/warnings or use workarounds that mask real issues.** If code produces warnings or errors, fix the root cause or find a clean, production-worthy alternative. If no clean approach exists, use the most explicit/raw form (e.g. a numeric constant with a comment naming the intended symbol) rather than suppressing the warning. Example: 
+tstatus.h redefines some STATUS_SXS_* macros from winnt.h — instead of #pragma warning(disable: 4005) around the include, use the raw hex constant  xC0000374 with a comment // STATUS_HEAP_CORRUPTION.
 
 ## TVS-F.5 CRITICAL FINDINGS (Frida trace 2026-08-20) — RESOLVED
 
@@ -62,19 +97,31 @@
 
 **Hard rules, subagent profiles, work orchestration, and acceptance criteria are in `AGENTS.md` — do not duplicate them here. This file contains ONLY PM-specific operational memory: crash-safety procedures, Frida tips, current task/state, and reminders.**
 
-## Project state (as of 2026-08-20)
-- **ALL WORKSTREAMS COMPLETE:** A (compilation errors), B (robustness), C (TradingApp), D (Python integration), E (architecture redesign), F (new operations & inline batch), G (distributable bundle), I (directory batch operations). Primary acceptance criteria SATISFIED at library + CLI + Python wrapper level.
+## Project state (as of 2026-08-22)
+- **Doc-sync pass COMPLETE + VERIFIED (2026-08-22):** Full documentation audit found ~20 discrepancies (2 CRITICAL: README ShowMe "Unconfirmed", RE_F5 wrong name-getter claims without erratum; plus MAJOR stale test counts everywhere, false BUILD.md CI/E2E claims, PROJECT_HISTORY/serve_plan marking K.6a PENDING, missing J/CI history entries, re-introduced username leaks). ALL FIXED across 15 files; adversarial review APPROVED. Ground truth now: **12 suites / 135 cases** (Suite 11 serve E2E wired earlier; Suite 12 ShowMe E2E SM1-SM9 wired by this pass w/ `-SkipShowMeE2e`), pytest collects 130 (115 non-e2e). VERIFIED: full elevated regression rc=0 ("ALL SUITES PASSED", run_regression.ps1 exits 0 ONLY on line 808 after that banner); `-NoTs` 2/2 PASS with new structure; pytest 115 passed / 15 deselected.
+- **Elevated-run lessons:** (1) `cmake` NOT on PATH — use full path `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` (documented in BUILD.md); build does NOT need elevation. (2) Child powershell Write-Host output does NOT flow through stdout pipes in PS 5.1 — capture elevated runs via exit code or Start-Transcript inside the child. (3) Mixing elevated/non-elevated runs POISONS pytest dirs (`.pytest_cache`, `$env:TEMP\pytest-of-user`) with admin ACLs → non-elevated pytest gets 88 setup PermissionErrors; fix = delete both dirs from an elevated process (non-elevated deletion is denied). Driver script kept at tmp\elevated_verify.ps1 (untracked).
+- **Doc-sync hygiene reminder:** NEVER write personal usernames or absolute C:\Users\<name> paths into tracked files — Workstream H scrubbed history once already; leaks were re-introduced into PM_WORKING_MEMORY.md and had to be re-scrubbed. Use neutral placeholders (`<username>`, `$env:USERPROFILE`).
+- **Workstreams A, B, C, D, E, F, G, I, J COMPLETE.** Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe component type (TVS-C.8) COMPLETE. Primary acceptance criteria SATISFIED at library + CLI + Python wrapper level.
+- **ShowMe support (TVS-C.8):** whType=1282 (0x0502), category 2, sub-type 0x05. Added to C++ CLI, Python wrapper, and tests. Fixed `enumerateRecords` category-2 stack overflow (typeFilterBuf[3] → [16]). Files: src/tsdev_lib.cpp, src/tsdev_lib.h, src/tsdev_cli.cpp, src/tsdev_automation/_cli.py, src/tsdev_automation/client.py, tests/test_showme_type.cpp, tests/test_showme_e2e.ps1.
+- **CLI supports 5 component types:** Strategy (0), Indicator (2), Function (4), TradingApp (5122, category 2, sub-type 0x14), ShowMe (1282, category 2, sub-type 0x05). 3 unconfirmed: ActivityBar, PaintBar, ProbabilityMap.
 - **WORKSTREAM I — Directory Batch Operations — COMPLETE (I.1–I.3).** TVS-I.1 (`batch-upsert` C++ CLI manifest+stdin), TVS-I.2 (directory batch all 4 ops, C++ CLI), and TVS-I.3 (Python wrapper `batch_upsert` + directory batch + `_cli.py` subcommands) are ALL COMPLETE. Directory batch operations (insert/modify/delete/upsert) now work via BOTH the C++ CLI AND the Python wrapper (`TsDevClient`).
 - **WORKSTREAM (F) New Operations & Inline Batch — COMPLETE (F.1–F.6, including F.5).** TVS-F.1 (`exists`, C++ CLI), TVS-F.2 (inline batch stdin, C++ CLI), TVS-F.3 (`upsert`, C++ CLI), TVS-F.4 (`get-source`, C++ CLI, RE-based), TVS-F.5 (case-insensitive `exists` with stored name + ProgId return, C++ CLI + Python), and TVS-F.6 (Python wrapper for all F ops) are ALL COMPLETE. All 6 functions now work via BOTH the C++ CLI AND the Python wrapper (`TsDevClient`). Workstreams A, B, C, D, E, F ALL COMPLETE.
 - **Tech debt cleanup pass (2026-08-18):** Documentation consolidated (AGENTS.md/PM_WORKING_MEMORY.md condensed, historical detail archived to `docs/PROJECT_HISTORY.md`, 4 completed handoffs archived to `docs/archive/`). Code fixes: TD-001 (auto-cleanup partial entry on compile failure), TD-002 (per-patch restoration gap). Stale comments cleaned. Stray files removed.
-- **CLI supports 4 component types:** Strategy (0), Indicator (2), Function (4), TradingApp (5122, category 2, sub-type 0x14). 4 unconfirmed: ActivityBar, PaintBar, ProbabilityMap, ShowMe.
-- **Regression suite:** `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci + batch-upsert + directory-batch = 10 C++ regression suites / 113 cases). Python: 83 tests. All passing.
+- **Regression suite:** `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26 exes) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9); skip flags include `-SkipServeE2e`, `-SkipShowMeE2e`; under `-NoTs` only sigtool + 9 non-TS unit tests run). C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: pytest collects 131 tests (116 non-e2e; 15 e2e deselected without live TS). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
 - **Architecture:** `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) → `src/orlib_resolver.cpp`. No runtime JSON dep in production CLI. `src/sigtool.cpp` = standalone signature verification tool.
 - **Detailed TVS history:** See `docs/PROJECT_HISTORY.md`.
 - **Workstream F (New Operations & Inline Batch):** COMPLETE (F.1–F.6, including F.5). TVS-F.1 (`exists` exact-match, C++ CLI), TVS-F.2 (inline batch via stdin, C++ CLI), TVS-F.3 (`upsert` subcommand, C++ CLI), TVS-F.4 (`get-source` subcommand, C++ CLI, RE-based), TVS-F.5 (case-insensitive `exists` with stored name + ProgId return, C++ CLI + Python), and TVS-F.6 (Python wrapper for all F ops) ALL COMPLETE. Approved plan at `docs/archive/WORKSTREAM_F_PLAN.md` (6 TVSs: F.1 [DONE], F.2 [DONE], F.3 [DONE], F.4 [DONE], F.5 [DONE], F.6 [DONE]). See AGENTS.md `### NEXT WORKSTREAMS` item 2.
 
 ## NEXT WORKSTREAM
-**Workstream I — Directory Batch Operations (COMPLETE).** Plan at `docs/archive/WORKSTREAM_I_PLAN.md` (3 TVSs: I.1 batch-upsert manifest+stdin [DONE], I.2 directory batch all 4 ops [DONE], I.3 Python wrapper + _cli.py subcommands [DONE]). All 3 TVSs complete. No active workstream — all workstreams (A, B, C, D, E, F, G, I) are COMPLETE.
+**Workstream K — Serve Mode — FULLY COMPLETE (K.1–K.6b, 2026-08-21).** Plan at `docs/workstream_serve_plan.md`.
+
+All planned workstreams (A–K) are now COMPLETE. The project's primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Serve mode is enabled by default (`use_serve=True`). No further workstreams are currently planned.
+
+### K.6a — E2E integration + backwards-compat verification (COMPLETE — 2026-08-21)
+All 7 phases passed. Adversarial review APPROVED (1 CRITICAL, 1 MAJOR, 4 MINOR — all fixed). See "K.6a COMPLETE" section at top of this file for full details (bugs fixed, Frida findings, test counts).
+
+### K.6b — Documentation + `use_serve` default flip (COMPLETE — 2026-08-21)
+`use_serve` default flipped to `True`; `_ServeBroker.start()` FileNotFoundError guard added; serve-mode docs added to BUILD.md, E2E_TEST_SPEC.md (Part F), README.md; `test_serve_e2e.py` updated to use default. E2E: 2/2 serve E2E passed (default-flip path), 12/12 C++ regression suites / 135 cases passed. Adversarial review APPROVED (17 INFO findings).
 
 ## Workstream I progress
 - **TVS-I.1: batch-upsert (C++ CLI — manifest file + stdin modes)** — COMPLETE (2026-08-20). Added `batch-upsert` subcommand to `src/tsdev_cli.cpp` (6 surgical edits): (1) `doUpsert()` gained `bool flushPerItem = true` default param — `doInsert()` call now passes `flushPerItem` through (not hardcoded `true`); single-item `cmdUpsert`/`runUpsert` unchanged (call `doUpsert` with 5 args → default `true`, NO behavioral change). (2) `runBatch()` gained `else if (op == "upsert")` branch calling `doUpsert(..., /*flushPerItem=*/false)` (batch "flush once" pattern — single `closeWarehouse()` at end, no per-item flush). (3) `cmdBatch()` `needsSource` now `(op == "insert" || op == "modify" || op == "upsert")`. (4) `main()` dispatch recognizes `batch-upsert` → `op = "upsert"` (both `<manifest_file>` and `--batch-stdin` paths reuse `cmdBatch()`). (5) `printUsage()` + (6) header comment list `batch-upsert` + manifest format updated. Exit codes match existing batch pattern (0/1/2), no new exit codes, per-item upsert never emits exit 5 by construction. Tests: `tests/test_batch_upsert.cpp` (library-level invariant — multi-item upsert on shared TsDevLib, ProgId preservation, single closeWarehouse) + `tests/test_batch_upsert.ps1` (5 E2E cases BU1-BU5: manifest file mixed insert+modify paths w/ ProgId preservation, --batch-stdin, compile-error exit 2, empty manifest exit 1, no-args exit 1). Wiring: CMakeLists.txt (test_batch_upsert exe + test_regression dep), run_unit_tests.ps1 ($TestDefinitions), run_regression.ps1 (Suite 9, `-SkipBatchUpsert`). Verification: TDD red→green (RED 0/5 unknown subcommand → GREEN 5/5), full regression 9/9 suites PASS (99 cases: 12 sigtool + 19 unit + 34 E2E + 5 exists + 8 batch-stdin + 5 upsert + 6 get-source + 5 exists-ci + 5 batch-upsert), adversarial review APPROVED (1 DISAPPROVE→fix→APPROVE cycle: 3 MAJOR doc gaps + 2 MINOR stale-comment findings all fixed), E2E CLI verification PASSED (manifest file + stdin + compile-error; ProgId preservation confirmed: 5930→5930, 5931→5931). Docs updated: BUILD.md (19 exes, 9 suites, 99 cases), E2E_TEST_SPEC.md (D.6), PROJECT_HISTORY.md (DONE entry). **Next: TVS-I.2 (directory batch mode).**
@@ -82,29 +129,78 @@
 - **TVS-I.3: Python wrapper — batch_upsert + directory batch + _cli.py subcommands** — COMPLETE (2026-08-20). Added Python wrapper support for `batch_upsert` (manifest mode) and 4 directory batch methods, plus corresponding `_cli.py` subcommands. `src/tsdev_automation/client.py`: `batch_upsert(items)` method (manifest-mode via `--batch-stdin`, reuses `_batch()` with `_BATCH_SUBCMD["upsert"]`), `_batch_dir()` helper (shared logic for all 4 directory batch methods — builds CLI args `<sub> <type> <dir_path> [-t <ext>...]`, runs CLI, parses JSON array), 4 `batch_*_dir()` methods (`batch_insert_dir`/`batch_modify_dir`/`batch_delete_dir`/`batch_upsert_dir`, each takes `type, dir_path, extensions=None`), `_BATCH_SUBCMD["upsert"]` entry, `needs_source` fix. `src/tsdev_automation/_cli.py`: `batch-upsert` subcommand (manifest mode), 4 `batch-*-dir` subcommands (with `-t` flag via `action="append"`), dispatch branch, docstring updates. Tests: `tests/test_tsdev_client.py` — 22 new test functions (3 TestBatchUpsert + 8 TestBatchDir + 5 TestCliNewSubcommands + 5 TestE2E + `_TEST_NAMES` update). Verification: TDD red→green, 83/83 Python tests pass (68 non-e2e + 15 e2e against real CLI + TradeStation warehouse), adversarial review APPROVED (1 MINOR non-blocking: README not yet updated — fixed in docs update), E2E CLI verification PASSED (all 5 new methods verified against real CLI with ProgId preservation). **Workstream I COMPLETE.** No next TVS currently planned.
 
 ## Workstream H (Username Scrubbing for Public Release) — COMPLETE (2026-08-20)
-Scrubbed usernames "user" (USERPROFILE) and "user" (USERNAME) from repo before public release.
-- **TVS-H.1 (working-tree scrub):** 20 tracked files edited — absolute paths `C:\Users\user\projects\tsdev_automation\...` replaced with relative paths (code) / `$env:USERPROFILE` (home-dir-relative docs) / `$PSScriptRoot` (script outline). Adversarial review APPROVED. Zero "user"/"user" in tracked files.
+Scrubbed the two personal usernames (leaked via USERPROFILE- and USERNAME-derived absolute paths) from repo before public release.
+- **TVS-H.1 (working-tree scrub):** 20 tracked files edited — absolute paths `C:\Users\<user>\projects\tsdev_automation\...` replaced with relative paths (code) / `$env:USERPROFILE` (home-dir-relative docs) / `$PSScriptRoot` (script outline). Adversarial review APPROVED. Zero personal-username hits in tracked files.
 - **TVS-H.2 (history analysis):** 57 commits → 9 condensed per-workstream commits. Plan adversarially reviewed (DISAPPROVED first pass — 4 critical findings: hash invalidation, missing --force, wrong verification, read-tree stale files; all fixed).
-- **TVS-H.3 (history rewrite):** Committed H.1 → condensed 57→9 via orphan branch + `git read-tree --reset -u` → `git filter-repo --replace-text` (regex:user==>user) for text blobs → `--invert-paths` stripped binary artifacts (build/, build_probe/, ghidra_project/, *.obj/exe/lib/pdb/pyc/gbf/grf/ps/bin, __pycache__) → first adversarial review found CRITICAL uppercase user in .tlog files + proprietary TradeStation files in history → FIX: `--invert-paths --path tmp/` (stripped ALL of tmp/ including ~10,000 proprietary .xml/.ell files + 4 .dlls + .tlog files with user) + case-insensitive scrub `regex:(?i)user==>user` → force-pushed to origin. Final adversarial review APPROVED (all 10 checks pass: zero user/user in any text or binary blob across all 9 commits, H.1 relative paths preserved in HEAD, 129 files, key files intact, monotonic trees, .gitignore covers future contamination).
+- **TVS-H.3 (history rewrite):** Committed H.1 → condensed 57→9 via orphan branch + `git read-tree --reset -u` → `git filter-repo --replace-text` (regex:`<username>`==>user) for text blobs → `--invert-paths` stripped binary artifacts (build/, build_probe/, ghidra_project/, *.obj/exe/lib/pdb/pyc/gbf/grf/ps/bin, __pycache__) → first adversarial review found CRITICAL uppercase variants of the username in .tlog files + proprietary TradeStation files in history → FIX: `--invert-paths --path tmp/` (stripped ALL of tmp/ including ~10,000 proprietary .xml/.ell files + 4 .dlls + .tlog files containing the username) + case-insensitive scrub `regex:(?i)<username>==>user` → force-pushed to origin. Final adversarial review APPROVED (all 10 checks pass: zero username hits in any text or binary blob across all 9 commits, H.1 relative paths preserved in HEAD, 129 files, key files intact, monotonic trees, .gitignore covers future contamination).
 - **Build + regression verification:** 8/8 C++ suites (93 cases) + 62/62 Python tests PASS. No regressions. (Historical — now 10/10 suites / 113 cases after TVS-I.1 + TVS-I.2.)
-- **Backup:** `C:\Users\user\tsdev_automation_backup_pre_rewrite.bundle` (2.04 MB) — full pre-rewrite history for rollback.
+- **Backup:** `$env:USERPROFILE\tsdev_automation_backup_pre_rewrite.bundle` (2.04 MB) — full pre-rewrite history for rollback.
 - **Key lesson:** filter-repo `--replace-text` regex is CASE-SENSITIVE by default — always use `(?i)` for username scrubs. MSVC .tlog files uppercase paths. Binary blobs need `--invert-paths` stripping, not just `--replace-text`.
 - **Key lesson (2026-08-21): `git filter-repo` strips the upstream tracking config.** filter-repo deliberately removes the `origin` remote after rewriting history (safety mechanism to prevent accidental pushes of rewritten history). Re-adding the remote (`git remote add origin <url>`) restores only the `[remote "origin"]` config section — it does NOT restore the `[branch "main"]` tracking section (`branch.main.remote` + `branch.main.merge`). This went unnoticed for 3 commits (TVS-I.1/I.2/I.3) because agents don't push unless explicitly asked. The user discovered it when a bare `git push` failed with "no upstream branch." **FIX after any `git filter-repo` run:** always use `git push -u origin main` (the `-u` flag restores tracking) — NOT just `git push --force origin main` (which works without tracking but doesn't set it). Verify with `git config --get branch.main.remote` (should print `origin`) and `git status -sb` (should show `## main...origin/main`).
 
+## Workstream J (Admin Privilege Enforcement) — COMPLETE (2026-08-21)
+Force all TS-accessing executables (tsdev_cli + 18 TS-dependent test executables) to run elevated via `requireAdministrator` manifest, gated by CMake option `TSDEV_REQUIRE_ADMIN` (default ON). UX: run parent (terminal/Python/test runner) elevated once → all child processes inherit token silently (no per-run UAC prompt). No way to fully avoid UAC on Windows while preserving stdout-JSON piping (scheduled tasks/services run in separate sessions, can't pipe stdout back — dealbreaker). `-DTSDEV_REQUIRE_ADMIN=OFF` for dev builds. CI safe with default ON (no -NoTs suite or non-e2e Python test spawns tsdev_cli.exe or TS-dependent test exes). 9 non-TS unit tests (test_no_hardcoded_rvas, test_tradingapp_type, test_showme_type, test_orlib_resolver, test_elevation_guard, test_crash_handler, test_json_serialize, test_serve_dispatch, test_serve_framing) + sigtool excluded from manifest (run non-elevated in CI). Changes: CMakeLists.txt (option + `TSDEV_ADMIN_TARGETS` list + foreach loop applying `/MANIFESTUAC:level='requireAdministrator'` to all TS-accessing targets), docs/BUILD.md + README.md + docs/BUNDLE_README.md (admin UX docs). Verified: mt.exe manifest extraction (8/8 sample exes: TS targets→requireAdministrator, non-TS+sigtool→asInvoker), non-elevated CreateProcess→ERROR_ELEVATION_REQUIRED, -NoTs regression 2/2 PASS. Adversarial review APPROVED (2 MINOR non-blocking findings: stale PM_WORKING_MEMORY ref fixed, test_directory_batch conservatively included though pure unit test — harmless).
+
+## Workstream K (Serve Mode) — K.1–K.6b COMPLETE
+Plan: `docs/workstream_serve_plan.md`. Goal: `--serve` mode for tsdev_cli.exe — elevated named-pipe broker, one UAC per session, no per-call prompts, native speed, no third-party dependency.
+
+### Completed TVSs
+- **TVS-K.1 (elevation guard):** `isElevated()` helper, exit code 11, "not_elevated" error string, guard in main() before all subcommands including serve. Test: test_elevation_guard.cpp. Review APPROVED.
+- **TVS-K.2 (cliResultToJson):** Extracted JSON serialization from emitOutput() into `cliResultToJson(const CliResult&)`. emitOutput() and emitBatchOutput() refactored to use it. Byte-identical output preserved. Test: test_json_serialize.cpp. Review APPROVED.
+- **TVS-K.3 (serve dispatch):** `ServeRequest` struct, `parseServeRequest()` (validates op/type/name/source/case_insensitive/output_path), `dispatchServeRequest()` (routes to doInsert/doModify/doDelete/doUpsert/doExists/doGetSource/quit). Test: test_serve_dispatch.cpp. Review APPROVED.
+- **TVS-K.4 (named pipe server):** Framing helpers (writeAll/readAll/writeFramed/readFramed with 64MB cap), createServePipe (SDDL: D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)), runServe (64MB-stack worker thread, one TsDevLib for whole session), cmdServe (--serve-pipe-file atomic handshake), `serve` subcommand in main(). Test: test_serve_framing.cpp. Review APPROVED.
+- **TVS-K.5 (Python serve-broker):** _pipe.py (framed-JSON pipe I/O via ctypes), _ServeBroker class (ShellExecuteExW runas, lazy start, reconnect-once, shutdown with quit+terminate), _detect_elevation(), use_serve=False param on TsDevClient, routing logic (elevated→subprocess, non-elevated+use_serve→broker, batch→NotImplementedError when serve active). 115 Python tests pass. Review APPROVED (after fixing 3 MAJOR findings: 64MB cap in recv_response, orphaned broker on start failure, reconnect process leak).
+
+### Completed TVSs (continued)
+- **TVS-K.6a (E2E integration): COMPLETE (2026-08-21)** — All 7 phases passed, adversarial review APPROVED. See "K.6a COMPLETE" section at top of this file for full details.
+- **TVS-K.6b (documentation + default flip): COMPLETE (2026-08-21)** — `use_serve` default flipped to `True`; `_ServeBroker.start()` FileNotFoundError guard added (critical bug fix — Windows popup on non-existent CLI path); serve-mode docs added to BUILD.md, E2E_TEST_SPEC.md (Part F), README.md; `test_serve_e2e.py` updated to use default (no explicit `use_serve=True`). E2E: 2/2 serve E2E passed (default-flip path), 12/12 C++ regression suites / 135 cases passed. Adversarial review APPROVED (17 INFO findings).
+
+## Crash Handling (VEH + TsDevCrashError) — COMPLETE (not in original plan)
+Added alongside Workstream K to make serve mode safe — a non-elevated Python client cannot kill an elevated TSCrashReport.exe, so crashes must be prevented from spawning the dialog in the first place.
+
+### C++ VEH (Vectored Exception Handler)
+- `vehCrashHandler()` in anonymous namespace catches EXCEPTION_ACCESS_VIOLATION (0xC0000005), EXCEPTION_STACK_OVERFLOW (0xC00000FD), STATUS_STACK_BUFFER_OVERRUN (0xC0000409), 0xC0000374 (STATUS_HEAP_CORRUPTION — raw hex, no ntstatus.h include due to winnt.h conflicts, no warning suppression per hard rule 5).
+- Calls `TerminateProcess(GetCurrentProcess(), code)` — prevents TSCrashReport.exe from spawning.
+- Installed as FIRST thing in main() via `AddVectoredExceptionHandler(1, ...)` + `SetErrorMode(SEM_NOGPFAULTERRORBOX)`.
+- Test: test_crash_handler.cpp (normal mode + --crash mode), test_crash_handler.ps1. Review APPROVED.
+
+### Python TsDevCrashError
+- New exception subclass of TsDevError with `exit_code` attribute.
+- `_is_crash_exit()` helper checks NT status codes (handles signed/unsigned returncodes).
+- Crash detection in `_run_cli()`, `_run_batch()`, and `_ServeBroker.call()`.
+- `_ServeBroker._get_exit_code()` via GetExitCodeProcess.
+- No taskkill/TSCrashReport killing (VEH prevents dialogs).
+- 115 Python tests pass. Review APPROVED.
+
+### Key findings about the crash handling approach
+- **VEH runs before orlib20's unhandled exception filter** — `AddVectoredExceptionHandler(1, ...)` with priority 1 means our handler is called FIRST, before orlib20's own unhandled exception filter or the Windows default crash dialog.
+- **TerminateProcess prevents TSCrashReport.exe** — by calling `TerminateProcess(GetCurrentProcess(), code)` from the VEH, the process exits immediately without triggering the Windows Error Reporting dialog or TSCrashReport.exe. This is critical for serve mode where the broker runs elevated and a non-elevated Python client cannot kill an elevated TSCrashReport.exe.
+- **Works for elevated broker** — the VEH is installed in the broker process itself, so it works regardless of elevation level. The Python client never needs to interact with crash dialogs.
+- **Hard rule 5 applied:** `ntstatus.h` could not be included (conflicts with `winnt.h` redefining STATUS_SXS_* macros). Instead of suppressing the warning with `#pragma warning(disable: 4005)`, the raw hex constant `0xC0000374` was used with a comment `// STATUS_HEAP_CORRUPTION`. This follows hard rule 5: use the most explicit/raw form rather than suppressing warnings.
+
+## ShowMe Component Type (TVS-C.8) — COMPLETE (kept per user decision)
+- ShowMe support added: whType=1282 (0x0502), category 2, sub-type 0x05.
+- C++ CLI, Python wrapper, and tests all support ShowMe.
+- Fixed `enumerateRecords` category-2 stack overflow (typeFilterBuf[3] → [16]).
+- Files: src/tsdev_lib.cpp, src/tsdev_lib.h, src/tsdev_cli.cpp, src/tsdev_automation/_cli.py, src/tsdev_automation/client.py, tests/test_showme_type.cpp, tests/test_showme_e2e.ps1, docs/TS_COMPONENT_TYPES.md, docs/FEASIBILITY.md.
+
 ## Completed Work Summary
 
-All workstreams A, B, C, D, E, F, G, I complete. Detailed per-TVS logs archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G, I, J complete. Workstream K (Serve mode) K.1–K.6b complete. Crash handling complete. ShowMe (TVS-C.8) complete. Detailed per-TVS logs archived in `docs/PROJECT_HISTORY.md`.
 
 | Workstream | TVSs | Result |
 |------------|------|--------|
 | A (Compilation errors) | A.2, A.4, A.6 | Real compiler error text with source location (Line/Col) |
 | B (Robustness) | B.1–B.7, B.6.5, B.6.6 | OrlibResolver (signature-based RVA resolution), version detection, regression suite (113 test cases across 10 sub-suites), path discovery |
-| C (TradingApp) | C.1–C.7 | TradingApp whType 5122, INSERT/DELETE/MODIFY via CLI |
+| C (TradingApp + ShowMe) | C.1–C.7, C.8 | TradingApp whType 5122 + ShowMe whType 1282, INSERT/DELETE/MODIFY via CLI |
 | D (Python integration) | D.0–D.5 | TsDevClient wrapper (single-item + batch + inline stdin), --json output, batch mode, Python E2E + packaging |
 | E (Architecture) | E.1–E.7 | JSON signature source of truth + build-time codegen, sigtool CLI, probe archival, test relocation, RVA dedup |
 | F (New Operations & Inline Batch) | F.1–F.6 | exists, get-source, upsert, inline batch stdin, case-insensitive exists, Python wrapper for F ops |
 | G (Distributable bundle) | G.1, G.2, G.3, G.5 | dist/ bundle (exe + Python package + README) via CMake POST_BUILD + timestamped zip in artifacts/ |
 | I (Directory Batch Operations) | I.1–I.3 | batch-upsert (manifest+stdin), directory batch all 4 ops, Python wrapper for batch_upsert + directory batch |
+| J (Admin Privilege Enforcement) | J.1 | requireAdministrator manifest on all TS-accessing executables |
+| K (Serve Mode) | K.1–K.6b COMPLETE | Elevation guard, cliResultToJson, serve dispatch, named pipe server, Python serve-broker, E2E integration verified, documentation + default flip (use_serve=True). |
+| Crash Handling | VEH + TsDevCrashError | C++ VEH crash handler (prevents TSCrashReport.exe), Python TsDevCrashError exception |
 
 ## Workstream F progress
 - **TVS-F.6: Python wrapper for all new operations** — COMPLETE. Added Python wrapper support for the 4 new C++ CLI ops so all 6 functions work via BOTH the C++ CLI AND `TsDevClient` (satisfies the primary acceptance criteria). Changes: `src/tsdev_automation/results.py` — added `TsDevResult.exists: bool` + `TsDevResult.source: str` fields; `from_json()` parses `exists` (default False) + `source` (default ""); `prog_id` absent/None now coerces to `0` (int) instead of None (needed for exists not-found; verified no existing test asserts `prog_id is None` on a from_json-constructed result). `src/tsdev_automation/exceptions.py` — added `OutputWriteError(TsDevError)` (exit 3, error.code "output_write_error", mirrors SourceFileError style) + `ERROR_CODE_MAP["output_write_error"]` entry. `src/tsdev_automation/client.py` — added `exists(type, name)` (calls `_single("exists", type, name, None)`; does NOT raise on not-found since C++ returns success=True/exists=False; raises ValueError on bad type via `_validate_type`), `get_source(type, name, output_file=None)` (inline impl, NOT `_single` — builds `--json get-source <t> <name>` + optional `--output <file>`; raises NotFoundError on exit 5 [covers password-protected, indistinguishable] / OutputWriteError on exit 3; always uses --json, reads `result.source`), `upsert(type, name, source)` (calls `_single("upsert", type, name, source)`; reuses source materialization; raises CompileError/SourceFileError/ValueError, never NotFoundError/AlreadyExistsError); added "exists"/"get-source"/"upsert" to `_SINGLE_SUBCMD`; **inline batch via stdin**: `_batch()` now builds the manifest as an in-memory string via new `_build_manifest_string()` helper (replaces removed `_write_manifest()`; byte-identical line format + string-source temp `.el` materialization preserved) and pipes it via `input=` to `_run_batch()` with cmd `[sub, "--batch-stdin"]` (NO temp manifest file); `_run_batch()` gained `input: str` param passed to `subprocess.run`. Empty items → `input=""` → C++ exit 1 → `TsDevError` (contract PRESERVED — no empty-items guard added). `src/tsdev_automation/__init__.py` — exported `OutputWriteError`. `src/tsdev_automation/_cli.py` — added `exists`/`get-source`/`upsert` subparsers + dispatch (exists: prints `[OK] exists ... -> ProgId=N` / `-> not found`, returns 0 always [query]; get-source: prints raw `r.source` to stdout when no --output, else `Source written to <file>`; upsert: reuses `_print_result`). NO `case_insensitive` param (deferred to F.5 — C++ CLI has no `--case-insensitive` flag yet); NO `verbatim_name` field (deferred to F.5); NO `PasswordProtectedError` (C++ maps password-protected to exit 5 "not_found", indistinguishable — NotFoundError covers it, message carries detail). Tests: `tests/test_tsdev_client.py` — added `TestExists` (4), `TestGetSource` (5), `TestUpsert` (5), `TestBatchStdin` (5), `TestCliNewSubcommands` (5) classes; extended `test_unknown_type_raises_valueerror` to cover exists/upsert/get_source (6 ValueError blocks); updated `test_batch_string_sources_cleaned` to read manifest from `input` kwarg instead of manifest file path. Total Python suite: 53 passed, 0 failed. Verification: TDD red-green per feature (5 features × write-test/RED/implement/GREEN), adversarial review APPROVED (3 minor findings: #1 newline pinning was INVALID — `subprocess.run`/`Popen` rejects `newline=` kwarg on Py3.14.7, broke real-CLI E2E test, REVERTED; original CRLF concern mitigated by C++ `\r`-stripping; #2 extended unknown-type test coverage — applied; #3 prog_id annotation cosmetic — left as-is), C++ regression (non-TS: sigtool 12/12 + 3 unit tests) PASS, **E2E CLI 14/14 PASS** with REAL CLI + REAL TradeStation (upsert insert+modify paths ProgId 4946 preserved; exists found+non-raising-not-found; get_source round-trip reflects modified source + NotFoundError on missing; inline batch stdin 2 functions compiled+inserted; full cleanup no library pollution). NOTE: adversarial reviewer incorrectly claimed `subprocess.run` accepts `newline=` since Py3.7 — it does NOT (`Popen.__init__` has no `newline` param); the real-CLI E2E test caught this. LESSON: always run real-subprocess E2E, not just mocked unit tests, before accepting a subprocess-related change.
@@ -122,8 +218,10 @@ All workstreams A, B, C, D, E, F, G, I complete. Detailed per-TVS logs archived 
 - **Full E2E:** 7-step E2E passed (8/8 C++ regression suites + 62 Python tests). All adversarial reviews APPROVED.
 
 ## OBSERVATIONS / potential future TVS items (not blocking)
+- **Shell privilege note (2026-08-22):** Default agent shell is NON-ELEVATED — tsdev_cli.exe and TS-dependent test exes carry requireAdministrator manifests (Workstream J) and cannot run from it. Safe here: pytest -m "not e2e", run_regression.ps1 -NoTs, builds, static checks. Full TS-side verification requires an elevated process (user may approve one UAC prompt on request).
+- **RE_F5_bst_node_structure.md:104 label:** says FUN_101c36d0 is `__thiscall`; authoritative sources (signatures JSON, SIGNATURE_CATALOG, erratum banner) say `__fastcall` (binary-equivalent for single-ECX-arg). Cosmetic label fix.
 - **SEH protection on error array reads:** `readErrorsFromArray` reads raw memory from orlib20.dll's data section without SEH guards. Low likelihood (array populated by compiler in normal flow). Defer.
-- **4 unconfirmed warehouse types:** ActivityBar, PaintBar, ProbabilityMap, ShowMe. Require Ghidra/Frida RE work per type. Feature gap, not debt.
+- **3 unconfirmed warehouse types:** ActivityBar, PaintBar, ProbabilityMap. Require Ghidra/Frida RE work per type. Feature gap, not debt. (ShowMe was previously in this list but is now CONFIRMED — whType=1282, TVS-C.8.)
 - **Multi-version signature selection untested:** Only one orlib20.dll version exists. Design is conservative (unknown → warning). Inherent limitation.
 - **Empty-name `error.code` cosmetic mismatch (non-blocking, from TVS-F.1):** Empty-name validation reuses exit code 2, which maps to `error.code: "unknown_type"` in JSON output, while the `error.message` correctly says "component name must not be empty". Cosmetic mismatch in the code field only; exit code and message are correct. Consistent with existing subcommands' convention.
 
@@ -164,3 +262,12 @@ All workstreams A, B, C, D, E, F, G, I complete. Detailed per-TVS logs archived 
 - Use `subagent_general` for non-trivial work (NOT `subagent_explore`).
 - **ATOMIC SUBTASKS ONLY.** One subagent = one narrowly focused task. No multi-stage/complex tasks.
 - **Git commits on PowerShell — NO HEREDOC:** PowerShell does NOT support `$(cat <<'EOF' ... EOF)`. Write commit message to `tmp\commit_msg.txt` then `git commit -F tmp\commit_msg.txt`. Also: PowerShell uses `;` not `&&`; use `&` for executables with spaces in path. This is now a Standing Note in AGENTS.md so all agents are aware.
+
+## CRITICAL LESSON � UAC prompt storm (2026-08-21)
+**NEVER run test suites (run_unit_tests.ps1, run_regression.ps1 WITHOUT -NoTs) from a non-elevated process.** Workstream J added `requireAdministrator` manifests to all TS-accessing test executables. Spawning them from a non-elevated parent triggers a UAC prompt PER EXECUTABLE (dozens of prompts). The user had to confirm dozens of prompts manually � unacceptable.
+
+**Correct approaches for running TS-dependent tests:**
+1. **Non-TS tests only (NO UAC):** Run only the `asInvoker` executables individually (test_no_hardcoded_rvas, test_tradingapp_type, test_showme_type, test_orlib_resolver, sigtool). Use `run_regression.ps1 -NoTs`.
+2. **TS-dependent tests (ONE UAC prompt):** Spawn ONE elevated PowerShell via `Start-Process powershell -Verb RunAs`. Child processes inherit the token silently.
+3. **Best option:** Ask the user to open an elevated terminal themselves and run the test suite there. Zero UAC prompts.
+4. **NEVER** run `run_unit_tests.ps1` without `--no-ts` from a non-elevated process. **NEVER** run `run_regression.ps1` without `-NoTs` from a non-elevated process.

@@ -128,7 +128,7 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 
 ### 5.2 WHType enum
 
-> **Evidence:** `orlib_param_orders.md` §1. The four mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap, ShowMe) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ShowMe/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
+> **Evidence:** `orlib_param_orders.md` §1. The mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. ShowMe is now **CONFIRMED** (whType 1282, TVS-C.8). The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
 
 | WHType | Name | Letter | Subtypes | Status |
 |--------|------|--------|----------|--------|
@@ -138,11 +138,14 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | 3 | ActivityBar | B | (single) | UNCONFIRMED (static survey) |
 | 4 | Function | M | (single) | **CONFIRMED** |
 | 5122 (0x1402) | TradingApp | — | expanded whType = (subType 0x14 << 8) \| category 2 | **CONFIRMED** — see `tmp/re_artifacts/tradingapp_whtype.md` + `tmp/re_artifacts/c1_adversarial_review.md` |
+| 1282 (0x0502) | ShowMe | — | expanded whType = (subType 0x05 << 8) \| category 2 | **CONFIRMED** — Ghidra RE confirmed via GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280. See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`. CLI support added (TVS-C.8). |
 | 0x32 (50) | Unknown (composite/project?) | — | Appears in verify/save; meaning unknown. | UNCONFIRMED |
 
 **TradingApp** uses an **expanded whType** of 5122 (0x1402), encoded as `(subType << 8) | category` = `(0x14 << 8) | 2`. The orlib20 API functions (`CreateEntryEX`, `FindExistPos`, `SaveModule_New`, `VerifyModule_New`, delete orchestrator) take **category=2** (the low 8 bits — same as Indicator), with the sub-type 0x14 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 5122 (`elmodule_5122_<progId>.ell`). For Strategy/Indicator/Function (sub-type 0), the expanded whType equals the category, so no decomposition is needed.
 
-**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap, ShowMe. Any code written today must restrict itself to the four confirmed types (0=Strategy, 2=Indicator, 4=Function, 5122=TradingApp).
+**ShowMe** uses an **expanded whType** of 1282 (0x0502), encoded as `(subType << 8) | category` = `(0x05 << 8) | 2`. Like TradingApp, the orlib20 API functions take **category=2** (same as Indicator), with the sub-type 0x05 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 1282 (`elmodule_1282_<progId>.ell`). CLI support added in TVS-C.8.
+
+**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap. Any code written today must restrict itself to the five confirmed types (0=Strategy, 2=Indicator, 4=Function, 5122=TradingApp, 1282=ShowMe).
 
 TypeConvert (`0x101d43a0`) expands a WHType into a composite-ID list (subtype<<8 | WHType) terminated by -1, used by warehouse lookups to search all subtypes.
 
@@ -313,7 +316,7 @@ OrlibExit();
 
 **Genuinely unresolved:**
 
-1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap / ShowMe** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4/5122 (TradingApp is CONFIRMED as whType 5122, Workstream C complete).
+1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4/5122/1282 (TradingApp is CONFIRMED as whType 5122, Workstream C complete; ShowMe is CONFIRMED as whType 1282, TVS-C.8 complete).
 2. ~~**DELETE flow not yet tested end-to-end**~~ — **RESOLVED — IMPLEMENTED & APPROVED.** The orchestrator-based approach (`FUN_101a8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.7). Prior approaches (`SetSigDeleted` + `RemoveMetaDataModules` + `CleanMastersEX`, command `0x45`, dirty-flag manipulation, `WHServer.exe` termination) are RETIRED/rejected.
 3. **`_SaveTextEX` p1/p4 roles** — uncertain (MED confidence). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead. `_SaveTextEX` remains unmapped for completeness.
 4. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.

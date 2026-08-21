@@ -18,23 +18,54 @@ coexist without collision.
 
 from __future__ import annotations
 
+import atexit
+import ctypes
 import json
 import os
 import subprocess
 import tempfile
+import time
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from .exceptions import TsDevError, exception_for
+from . import _pipe
+from .exceptions import TsDevCrashError, TsDevError, exception_for
 from .results import TsDevResult
 
-# The four component types confirmed in tsdev_cli.cpp (parseType).
-_VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp"})
+# The component types confirmed in tsdev_cli.cpp (parseType).
+_VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp", "showme"})
 
 # Subcommand name per high-level operation.
 _SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "get-source": "get-source", "upsert": "upsert"}
 _BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete", "upsert": "batch-upsert"}
+
+
+# NT status codes that indicate a crash (VEH catches these and calls
+# TerminateProcess with the NT status code as the process exit code).
+_NT_CRASH_CODES: dict[int, str] = {
+    0xC0000005: "ACCESS_VIOLATION",
+    0xC00000FD: "STACK_OVERFLOW",
+    0xC0000409: "STACK_BUFFER_OVERRUN",
+    0xC0000374: "HEAP_CORRUPTION",
+}
+
+
+def _is_crash_exit(returncode: int) -> tuple[bool, str | None]:
+    """Check if a subprocess returncode indicates a crash.
+
+    Returns a ``(is_crash, crash_type_name)`` tuple.  ``crash_type_name`` is
+    ``None`` when ``is_crash`` is ``False``.
+    """
+    if returncode is None:
+        return False, None
+    # subprocess.run returncode may be negative (signed) on Windows when the
+    # process was terminated with a large NT status code; mask to 32 bits.
+    rc = returncode & 0xFFFFFFFF
+    if rc in _NT_CRASH_CODES:
+        return True, _NT_CRASH_CODES[rc]
+    return False, None
 
 
 @dataclass
@@ -95,6 +126,354 @@ def _resolve_cli_path(cli_path: str | os.PathLike | None) -> Path:
     return here.parents[1] / "build" / "Release" / "tsdev_cli.exe"
 
 
+# --- Elevation detection (Windows) ----------------------------------------
+
+_TOKEN_QUERY = 0x0020
+_TokenElevation = 20
+
+_advapi32 = ctypes.windll.advapi32
+_kernel32 = ctypes.windll.kernel32
+_kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+_kernel32.WaitForSingleObject.restype = wintypes.DWORD
+_kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+_kernel32.TerminateProcess.restype = wintypes.BOOL
+_kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+_kernel32.CloseHandle.restype = wintypes.BOOL
+_kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+_kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+_kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+_advapi32.OpenProcessToken.argtypes = [
+    wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE),
+]
+_advapi32.OpenProcessToken.restype = wintypes.BOOL
+_advapi32.GetTokenInformation.argtypes = [
+    wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+]
+_advapi32.GetTokenInformation.restype = wintypes.BOOL
+
+
+def _detect_elevation() -> bool:
+    """Return ``True`` if the current process is running elevated (admin).
+
+    Uses ``OpenProcessToken`` + ``GetTokenInformation(TokenElevation)`` — the
+    same check the C++ CLI performs.  On non-Windows platforms (or any
+    unexpected failure) returns ``False`` so the caller falls back to the
+    non-elevated path.
+    """
+    try:
+        token = wintypes.HANDLE()
+        if not _advapi32.OpenProcessToken(
+            _kernel32.GetCurrentProcess(),
+            _TOKEN_QUERY,
+            ctypes.byref(token),
+        ):
+            return False
+        try:
+            elevated = wintypes.DWORD()
+            ret_len = wintypes.DWORD()
+            if not _advapi32.GetTokenInformation(
+                token,
+                _TokenElevation,
+                ctypes.byref(elevated),
+                ctypes.sizeof(elevated),
+                ctypes.byref(ret_len),
+            ):
+                return False
+            return bool(elevated.value)
+        finally:
+            _kernel32.CloseHandle(token)
+    except OSError:
+        return False
+
+
+# --- Serve broker lifecycle (ShellExecuteExW runas) -----------------------
+
+# ShellExecuteExW constants.
+_SEE_MASK_NOCLOSEPROCESS = 0x00000040
+_SW_HIDE = 0
+_INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+
+class _SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIcon", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
+_shell32 = ctypes.windll.shell32
+_shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_SHELLEXECUTEINFOW)]
+_shell32.ShellExecuteExW.restype = wintypes.BOOL
+
+
+class _ServeBroker:
+    """Manages the elevated ``tsdev_cli serve`` broker process.
+
+    The broker is started once (via ``ShellExecuteExW`` with ``lpVerb="runas"``,
+    triggering a single UAC prompt) and held open for the lifetime of the
+    owning :class:`TsDevClient` instance.  Operations are sent as framed JSON
+    over a named pipe.
+
+    The broker is **lazy-started** on the first operation (not in the
+    constructor) and shut down via :meth:`shutdown` (registered with
+    :mod:`atexit` as a safety net).
+    """
+
+    def __init__(self, cli_path: Path, ts_path: str | None = None) -> None:
+        self._cli_path = cli_path
+        self._ts_path = ts_path
+        self._process_handle: int | None = None
+        self._pipe_handle: int | None = None
+        self._pid: int | None = None
+        self._started = False
+        self._shutdown_registered = False
+
+    def start(self) -> None:
+        """Start the broker via ``ShellExecuteExW`` (one UAC prompt).
+
+        Steps:
+        1. Create a temp file path for the pipe-name handshake.
+        2. ``ShellExecuteExW`` with ``SEE_MASK_NOCLOSEPROCESS`` + ``runas`` +
+           ``serve --serve-pipe-file <tmp>`` + ``SW_HIDE``.
+        3. Poll the temp file (up to 30 s) for the pipe name line.
+        4. Connect to the pipe via :func:`_pipe.connect`.
+
+        Raises :class:`PermissionError` if the user declines the UAC prompt,
+        :class:`TimeoutError` if the broker does not write the pipe file in
+        time, or :class:`TsDevError` on other failures.
+        """
+        if self._started:
+            return
+        # Validate the CLI path before invoking ShellExecuteExW.  Without this
+        # check, a missing CLI binary would surface as a Windows "cannot find
+        # file" dialog rather than a clean Python FileNotFoundError — the same
+        # validation the subprocess.run path applies in _run_cli/_run_batch.
+        if not self._cli_path.is_file():
+            raise FileNotFoundError(f"tsdev_cli.exe not found at {self._cli_path!s}")
+        # 1. Temp file path for the pipe-name handshake.  We create the file
+        #    so the path is valid on disk, then close it; the broker will
+        #    overwrite it atomically (write to <path>.tmp then MoveFileExW).
+        fd, tmp_path = tempfile.mkstemp(suffix=".pipe", prefix="tsdev_serve_")
+        os.close(fd)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+        # 2. ShellExecuteExW with runas.
+        params = f"serve --serve-pipe-file {tmp_path}"
+        if self._ts_path:
+            params = f"--ts-path {self._ts_path} " + params
+        sei = _SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(sei)
+        sei.fMask = _SEE_MASK_NOCLOSEPROCESS
+        sei.hwnd = None
+        sei.lpVerb = "runas"
+        sei.lpFile = str(self._cli_path)
+        sei.lpParameters = params
+        sei.lpDirectory = None
+        sei.nShow = _SW_HIDE
+        ok = _shell32.ShellExecuteExW(ctypes.byref(sei))
+        if not ok:
+            err = ctypes.windll.kernel32.GetLastError()
+            raise PermissionError(f"UAC declined or ShellExecuteExW failed (err={err})")
+        if sei.hProcess is None or int(sei.hProcess) == 0 or int(sei.hProcess) == _INVALID_HANDLE_VALUE:
+            raise PermissionError("UAC declined: no process handle returned")
+        self._process_handle = int(sei.hProcess)
+
+        # 3. Poll the temp file (up to 30 s) for the pipe name, then connect.
+        #    If anything below fails, terminate the orphaned broker process
+        #    before re-raising so we don't leak an elevated child.
+        try:
+            pipe_name: str | None = None
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                if self._process_exited():
+                    raise TsDevError(message="serve broker exited before writing the pipe file")
+                if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
+                    try:
+                        with open(tmp_path, "r", encoding="utf-8") as f:
+                            pipe_name = f.readline().strip()
+                    except OSError:
+                        pipe_name = None
+                    if pipe_name:
+                        break
+                time.sleep(0.1)
+            # Best-effort cleanup of the handshake file.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            if not pipe_name:
+                raise TimeoutError("serve broker did not write the pipe file within 30s")
+
+            # 4. Connect to the pipe (retry for ~5 s — broker may not have called
+            #    ConnectNamedPipe yet).
+            self._pipe_handle = _pipe.connect(pipe_name, timeout_ms=5000)
+        except Exception:
+            # Terminate the orphaned broker process before re-raising.
+            if self._process_handle:
+                try:
+                    _wait_for_exit(self._process_handle, 5000)
+                except Exception:
+                    pass
+                try:
+                    _kernel32.CloseHandle(self._process_handle)
+                except Exception:
+                    pass
+                self._process_handle = None
+            raise
+        self._started = True
+        # Safety net: ensure the broker is killed if the Python process exits
+        # without an explicit shutdown().
+        atexit.register(self.shutdown)
+
+    def call(self, request: dict) -> dict:
+        """Send a request and receive the response.
+
+        If the pipe handle breaks mid-session (broker restarted), the broker
+        is re-started and the request retried once — unless the broker has
+        crashed (detected via its NT-status exit code), in which case a
+        :class:`TsDevCrashError` is raised immediately.
+        """
+        if not self._started:
+            self.start()
+        try:
+            assert self._pipe_handle is not None
+            _pipe.send_request(self._pipe_handle, request)
+            return _pipe.recv_response(self._pipe_handle)
+        except (_pipe.PipeError, OSError):
+            # Check if the broker crashed (VEH exits with the NT status code).
+            if self._process_handle:
+                exit_code = self._get_exit_code()
+                if exit_code is not None:
+                    is_crash, crash_type = _is_crash_exit(exit_code)
+                    if is_crash:
+                        self._reset_pipe()  # terminates and closes the old broker
+                        raise TsDevCrashError(
+                            message=f"serve broker crashed ({crash_type}, exit code 0x{exit_code & 0xFFFFFFFF:08X}). "
+                            "This indicates a bug in the orlib20 integration.",
+                            exit_code=exit_code,
+                        )
+            # Non-crash broken pipe — reconnect once.
+            self._reset_pipe()
+            self.start()
+            assert self._pipe_handle is not None
+            _pipe.send_request(self._pipe_handle, request)
+            return _pipe.recv_response(self._pipe_handle)
+
+    def shutdown(self) -> None:
+        """Send ``{"op":"quit"}``, wait up to 5 s, terminate if still alive."""
+        if not self._started:
+            self._close_handles()
+            return
+        # Best-effort quit over the pipe.
+        if self._pipe_handle is not None:
+            try:
+                _pipe.send_request(self._pipe_handle, {"op": "quit"})
+            except (_pipe.PipeError, OSError):
+                pass
+        # Close the pipe handle.
+        if self._pipe_handle is not None:
+            _pipe.close(self._pipe_handle)
+            self._pipe_handle = None
+        # Wait for the process to exit, then terminate if needed.
+        if self._process_handle is not None:
+            _wait_for_exit(self._process_handle, timeout_ms=5000)
+            _kernel32.CloseHandle(wintypes.HANDLE(self._process_handle))
+            self._process_handle = None
+        self._started = False
+
+    def __del__(self) -> None:
+        try:
+            self.shutdown()
+        except Exception:
+            pass
+
+    # --- internals ---------------------------------------------------------
+
+    def _reset_pipe(self) -> None:
+        # Close pipe handle.
+        if self._pipe_handle is not None:
+            _pipe.close(self._pipe_handle)
+            self._pipe_handle = None
+        # Terminate and close old broker process so start() doesn't leak it.
+        if self._process_handle is not None:
+            try:
+                _wait_for_exit(self._process_handle, 5000)
+            except Exception:
+                pass
+            try:
+                _kernel32.CloseHandle(self._process_handle)
+            except Exception:
+                pass
+            self._process_handle = None
+        self._started = False
+
+    def _close_handles(self) -> None:
+        if self._pipe_handle is not None:
+            _pipe.close(self._pipe_handle)
+            self._pipe_handle = None
+        if self._process_handle is not None:
+            _kernel32.CloseHandle(wintypes.HANDLE(self._process_handle))
+            self._process_handle = None
+
+    def _process_exited(self) -> bool:
+        if self._process_handle is None:
+            return True
+        return _wait_for_exit(self._process_handle, timeout_ms=0)
+
+    def _get_exit_code(self) -> int | None:
+        """Get the broker process exit code, or ``None`` if still running.
+
+        Uses ``GetExitCodeProcess``: returns ``None`` when the process is
+        still alive (exit code == ``STILL_ACTIVE`` == 259) or when the handle
+        is missing / the call fails.
+        """
+        if not self._process_handle:
+            return None
+        exit_code = wintypes.DWORD()
+        ok = _kernel32.GetExitCodeProcess(wintypes.HANDLE(self._process_handle), ctypes.byref(exit_code))
+        if not ok:
+            return None
+        if exit_code.value == 259:  # STILL_ACTIVE
+            return None
+        return exit_code.value
+
+
+def _wait_for_exit(process_handle: int, timeout_ms: int) -> bool:
+    """Wait for a process handle to exit.
+
+    Returns ``True`` if the process exited within ``timeout_ms`` (or was
+    already dead), ``False`` on timeout.  If the wait times out and
+    ``timeout_ms > 0``, the process is terminated via ``TerminateProcess``.
+    """
+    WAIT_TIMEOUT = 0x00000102
+    WAIT_OBJECT_0 = 0x00000000
+    result = _kernel32.WaitForSingleObject(wintypes.HANDLE(process_handle), wintypes.DWORD(timeout_ms))
+    if result == WAIT_OBJECT_0:
+        return True
+    if result == WAIT_TIMEOUT and timeout_ms > 0:
+        _kernel32.TerminateProcess(wintypes.HANDLE(process_handle), wintypes.UINT(1))
+        _kernel32.WaitForSingleObject(wintypes.HANDLE(process_handle), wintypes.DWORD(1000))
+        return True
+    return False
+
+
 class TsDevClient:
     """High-level Python client driving ``tsdev_cli.exe``.
 
@@ -111,6 +490,18 @@ class TsDevClient:
         ``None`` lets the CLI auto-discover the install.
     timeout:
         Subprocess timeout in seconds.  ``None`` means no timeout.
+    use_serve:
+        When ``True`` (the default) and the Python session is NOT elevated,
+        single-item operations are routed through an elevated ``tsdev_cli
+        serve`` broker (started once via a single UAC prompt) instead of
+        spawning a fresh elevated child per op — so a non-elevated session
+        pays one UAC prompt for the whole process lifetime rather than one
+        per operation.  When already elevated, or when ``use_serve=False``
+        is passed explicitly, the existing ``subprocess.run`` path is used
+        directly (zero overhead, no broker, no extra UAC).  Batch ops are
+        NOT routed through the broker in MVP — they raise
+        :class:`NotImplementedError` when not elevated and ``use_serve`` is
+        active.
     """
 
     def __init__(
@@ -118,6 +509,7 @@ class TsDevClient:
         cli_path: str | os.PathLike | None = None,
         ts_path: str | None = None,
         timeout: float | None = None,
+        use_serve: bool = True,
     ) -> None:
         resolved = _resolve_cli_path(cli_path)
         # Fast-fail only for the auto-discovered default; explicit paths are
@@ -131,6 +523,14 @@ class TsDevClient:
         self.cli_path: Path = resolved
         self.ts_path: str | None = ts_path
         self.timeout: float | None = timeout
+        # Serve-broker integration (TVS-K.5).  When ``use_serve`` is True and
+        # the Python session is NOT elevated, single-item ops are routed
+        # through an elevated serve broker (one UAC prompt) instead of
+        # spawning a fresh elevated child per op.  When already elevated (or
+        # ``use_serve`` is False) the existing ``subprocess.run`` path is used.
+        self._use_serve = use_serve
+        self._is_elevated = _detect_elevation()
+        self._broker: _ServeBroker | None = None  # lazy-init on first op
 
     # -- public API --------------------------------------------------------
 
@@ -178,6 +578,9 @@ class TsDevClient:
         Raises typed exceptions on real errors (unknown_type, usage_error, etc.).
         """
         t = _validate_type(type)
+        # Serve-broker routing for exists.
+        if self._serve_active():
+            return self._call_broker_exists(t, name, case_insensitive)
         sub = _SINGLE_SUBCMD["exists"]
         cmd = self._base_cmd() + ["--json", sub, t, name]
         if case_insensitive:
@@ -208,6 +611,9 @@ class TsDevClient:
         validation).
         """
         t = _validate_type(type)
+        # Serve-broker routing for get-source.
+        if self._serve_active():
+            return self._call_broker_get_source(t, name, output_file)
         sub = _SINGLE_SUBCMD["get-source"]
         cmd = self._base_cmd() + ["--json", sub, t, name]
         if output_file is not None:
@@ -270,8 +676,102 @@ class TsDevClient:
             cmd += ["--ts-path", self.ts_path]
         return cmd
 
+    # -- serve-broker routing ----------------------------------------------
+
+    def _serve_active(self) -> bool:
+        """Return ``True`` when single-item ops should route through the broker.
+
+        The broker path is used ONLY when the Python session is NOT elevated
+        AND ``use_serve`` is True.  When already elevated (the common
+        elevated-session case) the existing ``subprocess.run`` path is used
+        directly (zero overhead, no extra UAC).
+        """
+        return self._use_serve and not self._is_elevated
+
+    def broker_process_handle(self) -> int | None:
+        """Return the broker process handle, or None if no broker is running.
+
+        For serve mode, this is the elevated tsdev_cli.exe broker's process
+        handle. For direct mode, returns None. Used by tests to verify the
+        broker doesn't restart between operations.
+        """
+        if self._broker is None:
+            return None
+        return self._broker._process_handle
+
+    def _ensure_broker(self) -> _ServeBroker:
+        """Lazy-start the serve broker on first use."""
+        if self._broker is None:
+            self._broker = _ServeBroker(self.cli_path, self.ts_path)
+        return self._broker
+
+    def _call_broker_single(self, op: str, type_: str, name: str, source: str | os.PathLike | None) -> TsDevResult:
+        """Route a single-item op (insert/modify/delete/upsert) through the broker.
+
+        The source is read client-side (from a file path or a source string)
+        and sent inline in the request JSON as ``"source"``.
+        """
+        request: dict = {"op": op, "type": type_, "name": name}
+        if source is not None:
+            request["source"] = self._read_source(source)
+        broker = self._ensure_broker()
+        obj = broker.call(request)
+        result = TsDevResult.from_json(obj)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def _call_broker_exists(self, type_: str, name: str, case_insensitive: bool) -> TsDevResult:
+        """Route an ``exists`` query through the broker."""
+        request: dict = {"op": "exists", "type": type_, "name": name}
+        if case_insensitive:
+            request["case_insensitive"] = True
+        broker = self._ensure_broker()
+        obj = broker.call(request)
+        result = TsDevResult.from_json(obj)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def _call_broker_get_source(self, type_: str, name: str, output_file: str | os.PathLike | None) -> TsDevResult:
+        """Route a ``get-source`` request through the broker.
+
+        When ``output_file`` is provided, it is forwarded as
+        ``"output_path"`` so the (elevated) broker writes the source to that
+        file directly.
+        """
+        request: dict = {"op": "get-source", "type": type_, "name": name}
+        if output_file is not None:
+            request["output_path"] = str(output_file)
+        broker = self._ensure_broker()
+        obj = broker.call(request)
+        result = TsDevResult.from_json(obj)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def _read_source(self, source: str | os.PathLike) -> str:
+        """Read EL source from a file path or pass through a source string.
+
+        Mirrors :meth:`_materialize_source`'s path-vs-string detection, but
+        returns the source text directly (for inline transmission over the
+        pipe) instead of writing it to a temp file.
+        """
+        p = Path(source)
+        if p.is_file():
+            return p.read_text(encoding="utf-8", errors="replace")
+        return source if isinstance(source, str) else str(source)
+
     def _single(self, op: str, type_: str, name: str, source: str | os.PathLike | None) -> TsDevResult:
         t = _validate_type(type_)
+        # Serve-broker routing: when not elevated and use_serve is active,
+        # route single-item ops through the elevated broker instead of
+        # spawning a fresh child per op.
+        if self._serve_active():
+            return self._call_broker_single(op, t, name, source)
         sub = _SINGLE_SUBCMD[op]
         cmd = self._base_cmd() + ["--json", sub, t, name]
         cleanup: list[Path] = []
@@ -288,6 +788,15 @@ class TsDevClient:
         return result
 
     def _batch(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
+        # Batch ops are NOT routed through the broker in MVP — they require an
+        # elevated session (subprocess.run from a non-elevated Python won't
+        # inherit the broker's token).  Raise NotImplementedError when serve is
+        # active and the session is not elevated.  Batch-over-serve is deferred.
+        if self._serve_active():
+            raise NotImplementedError(
+                "batch ops require an elevated session; use serve mode for "
+                "single ops or run elevated"
+            )
         needs_source = op in ("insert", "modify", "upsert")
         cleanup: list[Path] = []
         try:
@@ -300,6 +809,12 @@ class TsDevClient:
         return results
 
     def _batch_dir(self, op: str, type_: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None) -> list[TsDevResult]:
+        # Batch-dir ops are NOT routed through the broker in MVP (see _batch).
+        if self._serve_active():
+            raise NotImplementedError(
+                "batch ops require an elevated session; use serve mode for "
+                "single ops or run elevated"
+            )
         t = _validate_type(type_)
         exts = list(extensions) if extensions else []
         for e in exts:
@@ -377,6 +892,15 @@ class TsDevClient:
             )
         except subprocess.TimeoutExpired as e:
             raise TimeoutError(f"tsdev_cli timed out after {self.timeout}s") from e
+        # Check for crash exit codes (VEH catches fatal exceptions and exits
+        # with the NT status code as the process exit code).
+        is_crash, crash_type = _is_crash_exit(cp.returncode)
+        if is_crash:
+            raise TsDevCrashError(
+                message=f"tsdev_cli.exe crashed ({crash_type}, exit code 0x{cp.returncode & 0xFFFFFFFF:08X}). "
+                "This indicates a bug in the orlib20 integration.",
+                exit_code=cp.returncode,
+            )
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
         try:
@@ -405,6 +929,15 @@ class TsDevClient:
             )
         except subprocess.TimeoutExpired as e:
             raise TimeoutError(f"tsdev_cli timed out after {self.timeout}s") from e
+        # Check for crash exit codes (VEH catches fatal exceptions and exits
+        # with the NT status code as the process exit code).
+        is_crash, crash_type = _is_crash_exit(cp.returncode)
+        if is_crash:
+            raise TsDevCrashError(
+                message=f"tsdev_cli.exe crashed ({crash_type}, exit code 0x{cp.returncode & 0xFFFFFFFF:08X}). "
+                "This indicates a bug in the orlib20 integration.",
+                exit_code=cp.returncode,
+            )
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
         # Exit 1 => manifest/usage error: the batch did not run.

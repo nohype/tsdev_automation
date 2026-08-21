@@ -2,9 +2,9 @@
 
 > Historical project log — completed TVS details. For current state, see AGENTS.md. For PM working memory, see docs/PM_WORKING_MEMORY.md.
 
-> NOTE: 'NEXT:' pointers within this file are historical artifacts from when the TVSs were being executed. All work is now complete — see AGENTS.md for current project status.
+> NOTE: 'NEXT:' pointers within this file are historical artifacts from when the TVSs were being executed. Workstreams A–J are complete. Workstream K (Serve mode) K.1–K.6b complete. Crash handling complete. ShowMe (TVS-C.8) complete. See AGENTS.md for current project status.
 
-**Archived:** 2026-08-18 (last updated: 2026-08-20)
+**Archived:** 2026-08-18 (last updated: 2026-08-22)
 
 ## DONE Entries (from AGENTS.md)
 
@@ -632,3 +632,101 @@
 - 2026-08-18: TVS-E.2 (sigtool CLI) COMPLETE & APPROVED. Created standalone developer tool (`src/sigtool.cpp`) for verifying orlib20.dll signatures against a DLL on disk — 5 commands (verify, verify-patch, info, scan, manifest) with exit codes 0/1/2. Vendored nlohmann/json v3.11.3 to `third_party/nlohmann/json.hpp` for the `--signatures <json>` runtime JSON flag. Added public iterator API to OrlibResolver (`getSignatureCount`/`getSignatureByIndex`) — user-approved additive change. TDD red-green: C2039 "not a member" → Cycle 6 (77/77 assertions). sigtool test script 12/12 pass. Full regression: all 10 test executables pass. Adversarial review APPROVED with 4 MINOR non-blocking observations (info exit code spec ambiguity, section header bounds checking, verify-patch test content checks, missing edge case tests). Next: TVS-E.3 (RVA dedup).
 - 2026-08-18: TVS-E.3 (deduplicate test_orlib_resolver.cpp RVAs) COMPLETE & APPROVED. Single-file refactor: replaced all 28+ hardcoded RVA hex literals in `src/test_orlib_resolver.cpp` with generated-header constants (`tsdev::kSignatures[i].rva`, `tsdev::kExports_v9_50_01_3344[i].rva`, `tsdev::kDataGlobals_v9_50_01_3344[i].rva`, patchRva sums). Updated all snprintf diagnostics to format expected values dynamically. Cleaned ~30 comments. TDD green coupling proof PROVEN (bump JSON expectedRva → test fails → restore → all pass). Adversarial review APPROVED (0 CRITICAL/MAJOR/MINOR, independent rebuild + spot-check, 127 CHECK assertions preserved, no scope creep). E2E CLI verification PASS (insert/modify/delete cycle + error cases). Next: TVS-E.4 (evolve test_no_hardcoded_rvas.cpp — Option A §7.4).
 - 2026-08-19: TVS-F.5 (case-insensitive `exists` with stored name + ProgId return) COMPLETE & APPROVED. Two-phase `enumerateRecords` approach: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter from warehouse node at offset +0x1D) for newly created records. Key decision: two-phase (cached + BST fallback) instead of cmd 0x0F + cmd 0x4E cache refresh (simpler, smaller patch surface). New signature `FUN_101cfce0_thread_check_INT3` (cmd 0x0D dispatcher) — 25 total signatures. CLI `--case-insensitive` flag; new output format `exists=N`, `stored_name=...`, `progId=N`. Python `TsDevClient.exists(type, name, *, case_insensitive=False)` + `TsDevResult.stored_name` field. Tests: 8/8 C++ regression suites + 60/60 Python tests. **Workstream F FULLY COMPLETE (F.1–F.6).**
+
+## DONE — TVS-C.8: ShowMe component type (whType 1282) — COMPLETE
+
+- **ShowMe support added:** whType=1282 (0x0502), category 2, sub-type 0x05. Expanded whType = (subType 0x05 << 8) | category 2. Like TradingApp, the orlib20 API functions take category=2 (same as Indicator), with sub-type 0x05 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 1282 (`elmodule_1282_<progId>.ell`).
+- **Ghidra RE confirmed** via GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280. See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`. Canonical subtype 0x05; raw subtypes 0x03 and 0x05 both map to ShowMe.
+- **C++ CLI, Python wrapper, and tests all support ShowMe.** Added `showme` type string to `parseType()`, `ComponentType::ShowMe` enum entry, `getCategory`/`getSubType` helpers.
+- **Bug fix:** Fixed `enumerateRecords` category-2 stack overflow — `typeFilterBuf[3]` was too small for category 2 (which has 7+ subtypes including ShowMe); changed to `typeFilterBuf[16]`.
+- **Files changed:** src/tsdev_lib.cpp, src/tsdev_lib.h, src/tsdev_cli.cpp, src/tsdev_automation/_cli.py, src/tsdev_automation/client.py, tests/test_showme_type.cpp, tests/test_showme_e2e.ps1, docs/TS_COMPONENT_TYPES.md, docs/FEASIBILITY.md.
+- **Kept per user decision** — ShowMe was originally listed as "unconfirmed" but was confirmed via RE and added to the CLI.
+- **CLI now supports 5 component types:** Strategy (0), Indicator (2), Function (4), TradingApp (5122), ShowMe (1282). 3 remain unconfirmed: ActivityBar, PaintBar, ProbabilityMap.
+
+## DONE — Workstream J: Admin Privilege Enforcement — COMPLETE
+
+- **Date:** 2026-08-21
+- **Goal:** Force every executable that accesses the TSDev Library (orlib20.dll / `MyWork\Bin`) to run elevated, so TS library operations always happen with an administrator token.
+- **Mechanism:** CMake option `TSDEV_REQUIRE_ADMIN` (default ON) applies `/MANIFESTUAC:level='requireAdministrator' uiAccess='false'` via `target_link_options` to `tsdev_cli` and all TS-dependent test executables (`TSDEV_ADMIN_TARGETS` list in `CMakeLists.txt`). Windows then refuses to start these executables without an elevated token.
+- **Excluded (asInvoker):** 9 non-TS unit tests (`test_no_hardcoded_rvas`, `test_tradingapp_type`, `test_showme_type`, `test_orlib_resolver`, `test_elevation_guard`, `test_crash_handler`, `test_json_serialize`, `test_serve_dispatch`, `test_serve_framing`) + `sigtool` (static DLL file analysis, no runtime orlib20 access) — all must run in CI under `-NoTs` from a non-elevated runner.
+- **UX:** elevate the parent once (elevated shell / Python wrapper / test runner); child processes inherit the token with NO per-run UAC prompt — one UAC per session.
+- **Dev escape hatch:** `-DTSDEV_REQUIRE_ADMIN=OFF` at configure time (manifests default to `asInvoker`). Documented in `docs/BUILD.md` ("Admin Privileges" section) and `README.md`.
+- **Verification:** `mt.exe` manifest extraction on sample executables (confirm `requireAdministrator` embedded / `asInvoker` for excluded targets) + non-elevated `CreateProcess` → `ERROR_ELEVATION_REQUIRED` + `-NoTs` regression PASS.
+- **Adversarial review:** APPROVED (2 MINOR non-blocking).
+
+## DONE — Workstream K: Serve Mode (K.1–K.6b COMPLETE)
+
+Plan: `docs/workstream_serve_plan.md`. Goal: `--serve` mode for tsdev_cli.exe — elevated named-pipe broker, one UAC per session, no per-call prompts, native speed, no third-party dependency.
+
+### DONE — TVS-K.1: Elevation guard for all subcommands — COMPLETE
+- `isElevated()` helper using `OpenProcessToken` + `GetTokenInformation(TokenElevation)`. Exit code 11 for "not_elevated". `"not_elevated"` error string added to `errorCodeString()`. Guard placed in `main()` after global flag pre-scan but before subcommand dispatch (applies to ALL subcommands including serve). JSON form: `{"success":false,"exit_code":11,"error":{"code":"not_elevated","message":"..."}}`.
+- Test: `tests/test_elevation_guard.cpp` (unit test — asserts `isElevated()` returns bool, `errorCodeString(11)` returns "not_elevated"). Guard is inside `#ifndef TSDEV_CLI_TEST` so unit test verifies the helper, not the guard-in-main path (that's verified by E2E in K.6a).
+- Review APPROVED.
+
+### DONE — TVS-K.2: Extract cliResultToJson() reusable serialization helper — COMPLETE
+- Extracted JSON serialization from `emitOutput()` into standalone `cliResultToJson(const CliResult& r)` returning `ordered_json`. `emitOutput()` and `emitBatchOutput()` refactored to call it. Byte-identical output preserved for all existing paths.
+- Also fixes pre-existing inconsistency where `emitBatchOutput()` omitted `exists`/`stored_name`/`source` fields — now batch results for exists/get-source ops include those fields too (safe: batch subcommands are insert/modify/delete/upsert only, so exists/get-source never appear in batch output).
+- Test: `tests/test_json_serialize.cpp` (unit test — calls `cliResultToJson()` on hand-built `CliResult` for success insert, compile-error, exists-found, get-source; asserts exact JSON key/value structure).
+- Review APPROVED.
+
+### DONE — TVS-K.3: Serve request dispatch — COMPLETE
+- `ServeRequest` struct: `op`, `type`, `typeStr`, `name`, `source`, `caseInsensitive`, `outputPath`.
+- `parseServeRequest(const ordered_json& req, ServeRequest& out)` → validates op/type/name/source/case_insensitive/output_path. Returns usage-error `CliResult` on malformed request (missing op, unknown op, missing type/name, unknown type, etc.).
+- `dispatchServeRequest(TsDevLib& lib, const ServeRequest& req)` → `CliResult`: switches on `req.op`, calls corresponding `do*` function. Calls `lib.closeWarehouse()` after every mutating op (insert/modify/delete/upsert) to ensure persistence. Read-only ops (exists/get-source) do not flush. MVP scope: single-item ops only (batch ops NOT served over pipe).
+- Test: `tests/test_serve_dispatch.cpp` (unit test — tests `parseServeRequest()` with valid and malformed JSON; `dispatchServeRequest()` tested via E2E in K.6a).
+- Review APPROVED.
+
+### DONE — TVS-K.4: Named pipe server — COMPLETE
+- Framing helpers: `writeAll`/`readAll`/`writeFramed`/`readFramed` with 64MB cap. 4-byte little-endian length prefix + UTF-8 JSON payload.
+- `createServePipe`: SDDL `D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)` — owner + admins + system full control, owner read/write, Medium-IL No-Write-Up label (critical for cross-IL pipe access from non-elevated client to elevated broker).
+- `runServe`: 64MB-stack worker thread, one `TsDevLib` for whole session. `ConnectNamedPipe` → `readFramed` loop → `parseServeRequest` → `dispatchServeRequest` → `cliResultToJson` → `writeFramed`. `quit` op sets `g_serveQuit` atomic. Everything (pipe I/O + do* calls) on the worker thread (TsDevLib thread-affinity constraint).
+- `cmdServe`: parses `--serve-pipe-file <path>` (atomic handshake — broker writes pipe name + PID to temp file via `MoveFileExW`), creates pipe, launches `runServe` on 64MB-stack thread, waits.
+- `serve` subcommand in `main()` dispatch (before existing subcommand dispatch, after elevation guard).
+- Test: `tests/test_serve_framing.cpp` (unit test — `writeFramed`/`readFramed` round-trip via `CreatePipe`, length-prefix little-endian, empty payload, oversized rejection).
+- Review APPROVED.
+
+### DONE — TVS-K.5: Python serve-broker — COMPLETE
+- `_pipe.py`: framed-JSON pipe I/O via ctypes (`CreateFileW`, `WriteFile`, `ReadFile`, `struct` for length prefix). `send_request`/`recv_response`/`call` functions. 64MB cap in `recv_response`.
+- `_ServeBroker` class: `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS` + `lpVerb="runas"` + `nShow=SW_HIDE` (one UAC prompt). Lazy start (broker starts on first operation). Reconnect-once (if pipe breaks mid-session, re-starts broker and retries once). Shutdown: sends `{"op":"quit"}`, waits 5s, `TerminateProcess` if still alive, `CloseHandle`. `atexit` registration as safety net.
+- `_detect_elevation()`: `ctypes.windll.advapi32.OpenProcessToken` + `GetTokenInformation(TokenElevation)` — mirrors C++ `isElevated()`. Cached on `TsDevClient` instance.
+- `use_serve=False` param on `TsDevClient` (opt-in, default False for backwards compat; flipped to True in K.6b after validation).
+- Routing logic: elevated → `subprocess.run` (direct, zero overhead); non-elevated + `use_serve=True` → broker; non-elevated + `use_serve=False` → `subprocess.run` (fails — each child triggers UAC or is blocked by manifest); batch ops + serve active → `NotImplementedError` (batch-over-pipe deferred).
+- 115 Python tests pass. Review APPROVED (after fixing 3 MAJOR findings: 64MB cap in `recv_response`, orphaned broker on start failure, reconnect process leak).
+
+### DONE — TVS-K.6a: E2E integration + backwards-compat verification — COMPLETE
+- **Date:** 2026-08-21. All 7 E2E phases passed. Adversarial review APPROVED after fixing 1 CRITICAL + 1 MAJOR + 4 MINOR findings.
+- **Notable bug fixes during K.6a:** client.py `--serve` flag → subcommand; handshake readline fix; `_pipe.py` GetLastError via `_kernel32` (Py3.14 ctypes); dynamic-user-SID pipe SDDL; removed per-op `closeWarehouse()` from `dispatchServeRequest` (`flushPerItem=false` pattern); `doDelete`/`doUpsert` flush params; `refreshCache` NULL-check on `[warehouse+0x5E]` after cmd 0x0F (root cause of orlib20 crash at RVA 0x1CF71B found via Frida); `verifyModule` auto-cleanup uses flush=false.
+- **Tests added:** `tests/test_serve_e2e.py` (2 pytest cases) + `tests/run_serve_e2e.ps1` wired as regression Suite 11 (`-SkipServeE2e` flag; skipped under `-NoTs`).
+- **Commit:** 027e7fe.
+
+### DONE — TVS-K.6b: Documentation + use_serve default flip — COMPLETE
+- **Date:** 2026-08-21. `use_serve` default flipped to `True` in `TsDevClient.__init__`. Critical bug fixed: `_ServeBroker.start()` now validates the CLI path exists before `ShellExecuteExW` (raises `FileNotFoundError` instead of a Windows popup on a non-existent CLI path). Serve-mode docs added to `docs/BUILD.md`, `docs/E2E_TEST_SPEC.md` (Part F), `README.md`. `tests/test_serve_e2e.py` updated to use the default (no explicit `use_serve=True`). E2E: 2/2 serve E2E passed (default-flip path), 12/12 C++ regression suites / 135 cases passed. Adversarial review APPROVED (17 INFO findings).
+
+## DONE — Crash Handling (VEH + TsDevCrashError) — COMPLETE
+
+Added alongside Workstream K to make serve mode safe — a non-elevated Python client cannot kill an elevated TSCrashReport.exe, so crashes must be prevented from spawning the dialog in the first place.
+
+### C++ VEH (Vectored Exception Handler) — COMPLETE
+- `vehCrashHandler()` in anonymous namespace catches: `EXCEPTION_ACCESS_VIOLATION` (0xC0000005), `EXCEPTION_STACK_OVERFLOW` (0xC00000FD), `STATUS_STACK_BUFFER_OVERRUN` (0xC0000409), `0xC0000374` (`STATUS_HEAP_CORRUPTION` — raw hex constant, no `ntstatus.h` include due to `winnt.h` conflicts, no warning suppression per hard rule 5).
+- Calls `TerminateProcess(GetCurrentProcess(), code)` — prevents TSCrashReport.exe from spawning. The process exits immediately with the NT status code as the exit code.
+- Installed as FIRST thing in `main()` via `AddVectoredExceptionHandler(1, ...)` (priority 1 = called before orlib20's unhandled exception filter) + `SetErrorMode(SEM_NOGPFAULTERRORBOX)`.
+- Key finding: VEH runs before orlib20's unhandled exception filter — `AddVectoredExceptionHandler(1, ...)` with priority 1 means our handler is called FIRST. `TerminateProcess` prevents the Windows Error Reporting dialog and TSCrashReport.exe entirely. Works for elevated broker (VEH is in the broker process itself, regardless of elevation level).
+- Hard rule 5 applied: `ntstatus.h` could not be included (conflicts with `winnt.h` redefining `STATUS_SXS_*` macros). Instead of `#pragma warning(disable: 4005)`, the raw hex constant `0xC0000374` was used with a comment `// STATUS_HEAP_CORRUPTION`.
+- Test: `tests/test_crash_handler.cpp` (normal mode: exit 0; `--crash` mode: deliberately triggers access violation, VEH catches + TerminateProcess with 0xC0000005). Also `tests/test_crash_handler.ps1`.
+- Review APPROVED.
+
+### Python TsDevCrashError — COMPLETE
+- New exception `TsDevCrashError(TsDevError)` with `exit_code` attribute (the NT status code).
+- `_is_crash_exit()` helper: checks NT status codes (handles signed/unsigned returncodes — Python's `subprocess.run` can return negative values for NT status codes on some platforms).
+- Crash detection in `_run_cli()`, `_run_batch()`, and `_ServeBroker.call()`.
+- `_ServeBroker._get_exit_code()` via `GetExitCodeProcess` (needed because the broker is a separate process; `subprocess.run` returncode may not be directly available).
+- No taskkill/TSCrashReport killing needed (VEH prevents dialogs from spawning in the first place).
+- 115 Python tests pass. Review APPROVED.
+
+## DONE — CI Workflow: GitHub Actions build + release — COMPLETE
+
+- **Date:** 2026-08-21. `.github/workflows/ci.yml` (commits 8c50793, 70f79bd).
+- **Build job** (windows-latest): checkout@v7 → setup-uv@v10.0.0 → `uv sync --frozen` → Win32 Release CMake build (POST_BUILD auto-creates `artifacts/*.zip`) → `tests/run_regression.ps1 -NoTs` (sigtool + non-TS unit tests only) → `pytest -m "not e2e"` (mocked Python tests) → upload-artifact@v7 of `dist/*` as artifact `tsdev-automation-bundle`.
+- **Release job** (ubuntu-latest, gated on `v*` tags): download-artifact@v8 → re-zip bundle contents as `tsdev_automation_<tag>.zip` → softprops/action-gh-release@v3 attaches it to a GitHub Release.
+- **Side effect:** uv.lock updated in 8c50793 (capstone removal leftover).
+- **Verification:** locally verified equivalent commands pass.

@@ -18,7 +18,7 @@
 //   tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 //
-//   <type>        "strategy", "function", "indicator", or "tradingapp" (case-insensitive)
+//   <type>        "strategy", "function", "indicator", "tradingapp", or "showme" (case-insensitive)
 //   <name>        component name
 //   <source_file> path to a file containing EasyLanguage source (insert/modify)
 //   <manifest_file> path to a line-based manifest (one item per line; '#'
@@ -77,6 +77,8 @@
 #include <filesystem>
 #include <io.h>
 #include <fcntl.h>
+#include <atomic>      // TVS-K.4: std::atomic<bool> for serve quit flag
+#include <sddl.h>      // TVS-K.4: ConvertStringSecurityDescriptorToSecurityDescriptorW
 
 using namespace tsdev;
 using ordered_json = nlohmann::ordered_json;  // preserves insertion order
@@ -101,6 +103,7 @@ bool parseType(const std::string& s, ComponentType& out) {
     if (iequals(s, "function")) { out = ComponentType::Function;  return true; }
     if (iequals(s, "indicator")) { out = ComponentType::Indicator; return true; }
     if (iequals(s, "tradingapp")) { out = ComponentType::TradingApp; return true; }
+    if (iequals(s, "showme")) { out = ComponentType::ShowMe; return true; }
     return false;
 }
 
@@ -120,6 +123,22 @@ bool writeFile(const std::string& path, const std::string& content) {
     if (!f) return false;
     f.write(content.data(), static_cast<std::streamsize>(content.size()));
     return f.good();
+}
+
+// Elevation guard (TVS-K.1): query whether the current process is running
+// with an elevated (administrator) token. Uses the Windows token-API
+// sequence: OpenProcessToken -> GetTokenInformation(TokenElevation). On any
+// API failure, returns false (fail safe: treat as not elevated).
+bool isElevated() {
+    HANDLE hToken = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
+        return false;  // fail safe: treat as not elevated
+    TOKEN_ELEVATION elev = {};
+    DWORD ret = 0;
+    bool ok = GetTokenInformation(hToken, TokenElevation, &elev,
+                                  sizeof(elev), &ret);
+    CloseHandle(hToken);
+    return ok && elev.TokenIsElevated != 0;
 }
 
 void printUsage() {
@@ -144,7 +163,8 @@ void printUsage() {
         "  tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]\n"
         "  tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]\n"
         "  tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
-        "  <type>         strategy | function | indicator | tradingapp (case-insensitive)\n"
+        "  tsdev_cli [--ts-path <directory>] serve [--serve-pipe-file <path>]\n"
+        "  <type>         strategy | function | indicator | tradingapp | showme (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
         "(insert/modify)\n"
@@ -168,6 +188,9 @@ void printUsage() {
         "                 First -t overrides defaults (.el, .txt); subsequent -t flags add.\n"
         "                 Extensions are case-insensitive; dot prefix optional (el == .el).\n"
         "                 File stem (sans last extension) = item name.\n"
+        "  --serve-pipe-file <path>  (serve only) Write the named pipe path and PID to\n"
+        "                 <path> once the pipe is created (atomic: .tmp + rename).\n"
+        "                 If absent, the pipe name is printed to stdout instead.\n"
         "  batch-* always emit a JSON array on stdout (one element per item).\n");
 }
 
@@ -232,35 +255,24 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 8:  return "compile_error";
         case 9:  return "ell_missing";
         case 10: return "thread_failure";
+        case 11: return "not_elevated";
         default: return "unknown_error";
     }
 }
 
-// emitOutput renders a CliResult in either human-readable or JSON form.
+// cliResultToJson serializes a CliResult to an ordered_json object using the
+// EXACT schema shared by emitOutput()'s JSON mode and emitBatchOutput()'s
+// per-result array entries (TVS-K.2). Extracted from emitOutput() so the
+// serve layer (and both emit paths) share a single serialization function.
 //
-// Human mode (jsonMode == false): writes humanStdout to stdout and
-// humanStderr to stderr exactly as captured (byte-identical to the
-// pre-JSON behavior). At most one of the two is non-empty per result.
-//
-// JSON mode (jsonMode == true): emits exactly ONE JSON object on stdout
-// followed by a single newline, and suppresses the human-readable stdout
-// and stderr messages. The library's own stderr diagnostic
-// ("TS install path resolved...") is emitted by tsdev_lib.cpp and is left
-// untouched (it is a diagnostic, not a result). nlohmann/json performs all
-// escaping (backslashes in Windows paths, quotes, newlines) automatically.
-void emitOutput(const CliResult& r, bool jsonMode) {
-    if (!jsonMode) {
-        if (!r.humanStdout.empty()) {
-            std::fwrite(r.humanStdout.c_str(), 1, r.humanStdout.size(), stdout);
-            std::fflush(stdout);
-        }
-        if (!r.humanStderr.empty()) {
-            std::fwrite(r.humanStderr.c_str(), 1, r.humanStderr.size(), stderr);
-            std::fflush(stderr);
-        }
-        return;
-    }
-
+// op/type/name are included only when known (omitted for usage errors that
+// occur before the subcommand/args are resolved). On success, prog_id is
+// emitted only when > 0, ell_path only when non-empty. The "exists" op always
+// emits exists + stored_name; the "get-source" op always emits source. On
+// failure, an error object is emitted with code/message and op-specific
+// fields (existing_prog_id for insert exit 5; prog_id + compile_errors for
+// exit 8).
+nlohmann::ordered_json cliResultToJson(const CliResult& r) {
     ordered_json j;
     // op/type/name are included only when known (omitted for usage errors
     // that occur before the subcommand/args are resolved).
@@ -296,6 +308,35 @@ void emitOutput(const CliResult& r, bool jsonMode) {
         j["error"] = err;
     }
 
+    return j;
+}
+
+// emitOutput renders a CliResult in either human-readable or JSON form.
+//
+// Human mode (jsonMode == false): writes humanStdout to stdout and
+// humanStderr to stderr exactly as captured (byte-identical to the
+// pre-JSON behavior). At most one of the two is non-empty per result.
+//
+// JSON mode (jsonMode == true): emits exactly ONE JSON object on stdout
+// followed by a single newline, and suppresses the human-readable stdout
+// and stderr messages. The library's own stderr diagnostic
+// ("TS install path resolved...") is emitted by tsdev_lib.cpp and is left
+// untouched (it is a diagnostic, not a result). nlohmann/json performs all
+// escaping (backslashes in Windows paths, quotes, newlines) automatically.
+void emitOutput(const CliResult& r, bool jsonMode) {
+    if (!jsonMode) {
+        if (!r.humanStdout.empty()) {
+            std::fwrite(r.humanStdout.c_str(), 1, r.humanStdout.size(), stdout);
+            std::fflush(stdout);
+        }
+        if (!r.humanStderr.empty()) {
+            std::fwrite(r.humanStderr.c_str(), 1, r.humanStderr.size(), stderr);
+            std::fflush(stderr);
+        }
+        return;
+    }
+
+    ordered_json j = cliResultToJson(r);
     const std::string s = j.dump();
     std::fwrite(s.c_str(), 1, s.size(), stdout);
     std::fputc('\n', stdout);
@@ -449,11 +490,16 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     return r;
 }
 
-// doDelete: findExistPos (distinct not-found message) -> deleteEntry. Does
-// not call closeWarehouse (deleteEntry calls it internally as part of its
-// flow; the batch worker's single closeWarehouse at the end is a no-op flush).
+// doDelete: findExistPos (distinct not-found message) -> deleteEntry. When
+// flushPerItem is true (single-item path), deleteEntry calls closeWarehouse()
+// internally as part of its flow. When false (serve/batch path), the
+// closeWarehouse is skipped — the warehouse stays open for the session
+// lifetime, and runServe/runBatch calls closeWarehouse() once at the end.
+// This is critical: closing the warehouse after delete frees the IWHouse
+// interface, causing subsequent enumerateRecords/refreshCache calls to crash.
 CliResult doDelete(TsDevLib& lib, ComponentType type,
-                   const std::string& typeStr, const std::string& name) {
+                   const std::string& typeStr, const std::string& name,
+                   bool flushPerItem = true) {
     CliResult r;
     r.op = "delete";
     r.typeStr = typeStr;
@@ -469,7 +515,7 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    bool deleted = lib.deleteEntry(type, name);
+    bool deleted = lib.deleteEntry(type, name, flushPerItem);
     if (!deleted) {
         r.exitCode = 6;
         r.progId = progId;
@@ -618,9 +664,9 @@ int cmdInsert(const std::string& typeStr,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -731,9 +777,9 @@ int cmdModify(const std::string& typeStr,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -840,9 +886,9 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -931,9 +977,9 @@ int cmdExists(const std::string& typeStr, const std::string& name,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -1025,9 +1071,9 @@ int cmdUpsert(const std::string& typeStr,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -1190,9 +1236,9 @@ int cmdGetSource(const std::string& typeStr, const std::string& name,
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
         r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp)";
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
         r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp)\n";
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -1318,7 +1364,7 @@ void parseManifestLines(const std::string& content, bool needsSource,
             item.result.name = nameTok;
             item.result.exitCode = 2;
             item.result.errorMessage = std::string("unknown type \"") + typeTok
-                + "\" (expected strategy/function/indicator/tradingapp)";
+                + "\" (expected strategy/function/indicator/tradingapp/showme)";
             outItems.push_back(std::move(item));
             continue;
         }
@@ -1455,7 +1501,8 @@ DWORD WINAPI runBatch(LPVOID param) {
             r = doUpsert(*lib, item.type, item.typeStr, item.name,
                          item.source, /*flushPerItem=*/false);
         } else {  // delete
-            r = doDelete(*lib, item.type, item.typeStr, item.name);
+            r = doDelete(*lib, item.type, item.typeStr, item.name,
+                         /*flushPerItem=*/false);
         }
 
         if (!r.success) anyFailed = true;
@@ -1481,30 +1528,7 @@ DWORD WINAPI runBatch(LPVOID param) {
 void emitBatchOutput(const std::vector<CliResult>& results) {
     ordered_json arr = ordered_json::array();
     for (const CliResult& r : results) {
-        ordered_json j;
-        if (!r.op.empty())      j["op"] = r.op;
-        if (!r.typeStr.empty()) j["type"] = r.typeStr;
-        if (!r.name.empty())    j["name"] = r.name;
-        j["success"]    = r.success;
-        j["exit_code"]  = r.exitCode;
-
-        if (r.success) {
-            if (r.progId > 0)       j["prog_id"]  = r.progId;
-            if (!r.ellPath.empty()) j["ell_path"] = r.ellPath;
-        } else {
-            ordered_json err;
-            err["code"]    = errorCodeString(r.exitCode, r.op);
-            err["message"] = r.errorMessage;
-            if (r.exitCode == 5 && r.op == "insert" && r.existingProgId > 0) {
-                err["existing_prog_id"] = r.existingProgId;
-            }
-            if (r.exitCode == 8) {
-                if (r.progId > 0) err["prog_id"] = r.progId;
-                err["compile_errors"] = r.compileErrors;
-            }
-            j["error"] = err;
-        }
-        arr.push_back(std::move(j));
+        arr.push_back(cliResultToJson(r));
     }
 
     const std::string s = arr.dump();
@@ -1698,7 +1722,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
         std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
-                     "(expected strategy/function/indicator/tradingapp)\n",
+                     "(expected strategy/function/indicator/tradingapp/showme)\n",
                      typeStr.c_str());
         return 2;
     }
@@ -1735,10 +1759,585 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
     return runBatchAndEmit(op, items, tsPath);
 }
 
+// --- TVS-K.3: serve request dispatch -----------------------------------------
+//
+// The serve layer takes a parsed JSON request (from the named-pipe broker in
+// TVS-K.4), validates it, and dispatches to the corresponding do* function on
+// a shared TsDevLib. This is the pure logic layer with NO pipe I/O — fully
+// unit-testable (parseServeRequest is pure; dispatchServeRequest needs a real
+// TsDevLib and is validated via E2E in K.6a).
+
+// ServeRequest is the parsed, validated form of a single broker request.
+//   op            insert/modify/delete/exists/upsert/get-source/quit
+//   type          ComponentType (resolved from typeStr)
+//   typeStr       the original type string verbatim (for CliResult)
+//   name          component name
+//   source        raw EasyLanguage source TEXT (not a file path — the Python
+//                 wrapper reads files client-side and sends the text)
+//   caseInsensitive  exists only (optional, default false)
+//   outputPath    get-source only (optional; broker-local file path)
+struct ServeRequest {
+    std::string op;
+    ComponentType type = ComponentType::Strategy;
+    std::string typeStr;
+    std::string name;
+    std::string source;
+    bool caseInsensitive = false;
+    std::string outputPath;
+};
+
+// parseServeRequest validates a JSON request and populates `out`. On success
+// returns a CliResult with success=true, exitCode=0. On a malformed request
+// returns a CliResult with success=false and the appropriate exit code:
+//   exit 1 (usage_error): missing 'op', unknown op, missing type/name/source.
+//   exit 2 (unknown_type): unknown type string.
+// The error messages contain the relevant keyword (op/type/name/source) so
+// callers can surface them directly. See the error-handling table in
+// docs/workstream_serve_plan.md (lines 530-544).
+CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
+    CliResult r;
+
+    // 1. 'op' is required.
+    if (!req.contains("op") || !req["op"].is_string()) {
+        r.success = false;
+        r.exitCode = 1;
+        r.op = "";
+        r.errorMessage = "missing 'op' field";
+        return r;
+    }
+    std::string op = req["op"].get<std::string>();
+
+    // 2. Validate the op against the known set.
+    const std::string knownOps[] = {
+        "insert", "modify", "delete", "exists", "upsert", "get-source", "quit"
+    };
+    bool opKnown = false;
+    for (const std::string& k : knownOps) {
+        if (op == k) { opKnown = true; break; }
+    }
+    if (!opKnown) {
+        r.success = false;
+        r.exitCode = 1;
+        r.op = "";
+        r.errorMessage = "unknown op '" + op + "'";
+        return r;
+    }
+
+    // 3. 'quit' needs no other fields.
+    if (op == "quit") {
+        out.op = "quit";
+        r.success = true;
+        r.exitCode = 0;
+        r.op = "quit";
+        return r;
+    }
+
+    // 4. All other ops require 'type' and 'name'.
+    if (!req.contains("type") || !req["type"].is_string() ||
+        !req.contains("name") || !req["name"].is_string()) {
+        r.success = false;
+        r.exitCode = 1;
+        r.op = op;
+        r.errorMessage = "op '" + op + "' requires 'type' and 'name'";
+        return r;
+    }
+    std::string typeStr = req["type"].get<std::string>();
+    std::string name = req["name"].get<std::string>();
+
+    // 5. Resolve the type string (case-insensitive, same as CLI).
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.success = false;
+        r.exitCode = 2;
+        r.op = op;
+        r.typeStr = typeStr;
+        r.errorMessage = "unknown type '" + typeStr + "'";
+        return r;
+    }
+
+    // 6. insert/modify/upsert require 'source' (raw EL text, not a path).
+    if (op == "insert" || op == "modify" || op == "upsert") {
+        if (!req.contains("source") || !req["source"].is_string()) {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.typeStr = typeStr;
+            r.name = name;
+            r.errorMessage = "op '" + op + "' requires 'source'";
+            return r;
+        }
+    }
+
+    // 7. Populate the output struct.
+    out.op = op;
+    out.type = type;
+    out.typeStr = typeStr;
+    out.name = name;
+    if (op == "insert" || op == "modify" || op == "upsert") {
+        out.source = req["source"].get<std::string>();
+    }
+    if (op == "exists") {
+        if (req.contains("case_insensitive") && req["case_insensitive"].is_boolean()) {
+            out.caseInsensitive = req["case_insensitive"].get<bool>();
+        } else {
+            out.caseInsensitive = false;
+        }
+    }
+    if (op == "get-source") {
+        if (req.contains("output_path") && req["output_path"].is_string()) {
+            out.outputPath = req["output_path"].get<std::string>();
+        } else {
+            out.outputPath.clear();
+        }
+    }
+
+    r.success = true;
+    r.exitCode = 0;
+    r.op = op;
+    r.typeStr = typeStr;
+    r.name = name;
+    return r;
+}
+
+// dispatchServeRequest switches on req.op and calls the corresponding do*
+// function on the shared TsDevLib. Mutating ops use flushPerItem=false (the
+// batch pattern): no per-op closeWarehouse(). The warehouse stays open for
+// the entire serve session, and runServe calls closeWarehouse() once at the
+// end (before destructing TsDevLib). This is critical because closing the
+// warehouse after each op would cause subsequent ops (especially
+// exists/get-source which need the warehouse open) to crash with
+// ACCESS_VIOLATION in orlib20. Persistence is guaranteed by OrlibExit (in
+// the TsDevLib destructor) and the explicit closeWarehouse() in runServe.
+// Read-only ops (exists/get-source) need no flush. "quit" returns a success
+// CliResult with op="quit" (the broker layer in K.4 handles the actual
+// shutdown).
+//
+// NOTE: not unit-tested (needs a real, concrete TsDevLib). Validated via E2E
+// in K.6a.
+CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req) {
+    if (req.op == "insert") {
+        return doInsert(lib, req.type, req.typeStr, req.name,
+                        req.source, /*flushPerItem=*/false);
+    }
+    if (req.op == "modify") {
+        return doModify(lib, req.type, req.typeStr, req.name, req.source);
+    }
+    if (req.op == "delete") {
+        return doDelete(lib, req.type, req.typeStr, req.name,
+                        /*flushPerItem=*/false);
+    }
+    if (req.op == "upsert") {
+        return doUpsert(lib, req.type, req.typeStr, req.name, req.source,
+                        /*flushPerItem=*/false);
+    }
+    if (req.op == "exists") {
+        return doExists(lib, req.type, req.typeStr, req.name, req.caseInsensitive);
+    }
+    if (req.op == "get-source") {
+        return doGetSource(lib, req.type, req.typeStr, req.name, req.outputPath);
+    }
+    if (req.op == "quit") {
+        CliResult r;
+        r.op = "quit";
+        r.success = true;
+        r.exitCode = 0;
+        return r;
+    }
+
+    // Unknown op — should not reach here (parseServeRequest rejects unknown
+    // ops), but defend in depth with a usage error.
+    CliResult r;
+    r.success = false;
+    r.exitCode = 1;
+    r.errorMessage = "unknown op '" + req.op + "'";
+    return r;
+}
+
+// --- TVS-K.4: named pipe server ----------------------------------------------
+//
+// Framing helpers, pipe creation, and the serve loop. The framing layer is
+// unit-tested in tests/test_serve_framing.cpp (this .cpp is #included with
+// TSDEV_CLI_TEST defined, so the helpers in this anonymous namespace are
+// visible to the test). The serve loop + cmdServe are validated via E2E in
+// K.6a (they need a real TsDevLib and an elevated broker).
+
+// 64 MiB cap for framed messages (per protocol spec §2). Messages whose
+// declared length exceeds this are rejected by readFramed without allocating.
+static constexpr size_t kServeFrameCap = 67108864;
+
+// writeAll loops WriteFile until all `len` bytes are written. Returns false on
+// error or a zero-byte write (broken pipe). Handles partial writes, which
+// named pipes can perform even in PIPE_TYPE_BYTE mode.
+bool writeAll(HANDLE h, const void* buf, size_t len) {
+    size_t total = 0;
+    while (total < len) {
+        DWORD wrote = 0;
+        if (!WriteFile(h, static_cast<const char*>(buf) + total,
+                       static_cast<DWORD>(len - total), &wrote, nullptr))
+            return false;
+        if (wrote == 0) return false;  // broken pipe / no progress
+        total += wrote;
+    }
+    return true;
+}
+
+// readAll loops ReadFile until all `len` bytes are read. Returns false on
+// error or EOF (a zero-byte read before completion indicates a closed pipe).
+bool readAll(HANDLE h, void* buf, size_t len) {
+    size_t total = 0;
+    while (total < len) {
+        DWORD got = 0;
+        if (!ReadFile(h, static_cast<char*>(buf) + total,
+                      static_cast<DWORD>(len - total), &got, nullptr))
+            return false;
+        if (got == 0) return false;  // EOF / broken pipe
+        total += got;
+    }
+    return true;
+}
+
+// writeFramed writes a 4-byte little-endian length prefix followed by the
+// UTF-8 payload. Returns true on success, false on a broken pipe / write
+// error (the caller closes the connection).
+bool writeFramed(HANDLE pipe, const std::string& payload) {
+    uint32_t len = static_cast<uint32_t>(payload.size());
+    if (!writeAll(pipe, &len, 4)) return false;
+    if (len > 0 && !writeAll(pipe, payload.data(), len)) return false;
+    return true;
+}
+
+// readFramed reads a 4-byte little-endian length prefix, rejects lengths
+// above the 64 MiB cap, then reads the payload into `out`. Returns true on
+// success, false on a broken pipe / EOF / oversized length / short read.
+bool readFramed(HANDLE pipe, std::string& out) {
+    uint32_t len = 0;
+    if (!readAll(pipe, &len, 4)) return false;
+    if (len > kServeFrameCap) return false;
+    out.resize(len);
+    if (len > 0 && !readAll(pipe, out.data(), len)) return false;
+    return true;
+}
+
+// createServePipe creates the named pipe with the security descriptor from
+// protocol spec §3 (Medium-IL + owner/admins/system DACL). Returns the pipe
+// handle, or INVALID_HANDLE_VALUE on failure. The pipe is a single-instance,
+// duplex, byte-mode, blocking pipe.
+HANDLE createServePipe(const std::string& pipeName) {
+    // SDDL: O:<userSid> sets the owner to the actual user (not Administrators,
+    //   which is the default owner when the broker runs elevated).
+    // D:P = protected DACL (no inherited ACEs).
+    //   (A;;GA;;;BA)           Administrators: full control.
+    //   (A;;GWGR;;;SY)         LOCAL SYSTEM: read/write.
+    //   (A;;GWGR;;;<userSid>)  The current user: read/write.
+    //   S:(ML;;NW;;;ME)        SACL mandatory label: Medium, No-Write-Up.
+    //
+    // Why the user's SID instead of the SDDL "OW" (Owner) well-known SID:
+    // When the broker runs elevated, the default owner of objects it creates is
+    // BUILTIN\Administrators, so "OW" resolves to Administrators. An unelevated
+    // client running as the same user has the Administrators group as "deny
+    // only" in its token and therefore CANNOT match an OW/Administrators ACE,
+    // resulting in ERROR_ACCESS_DENIED (5). Using the user's real SID (and
+    // setting it as the owner via O:) makes the ACE match the unelevated client
+    // regardless of elevation level.
+    std::wstring userSidStr;
+    {
+        HANDLE hToken = nullptr;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+            DWORD bufLen = 0;
+            GetTokenInformation(hToken, TokenUser, nullptr, 0, &bufLen);
+            std::vector<BYTE> buf(bufLen);
+            if (bufLen > 0 && GetTokenInformation(hToken, TokenUser, buf.data(),
+                                                  bufLen, &bufLen)) {
+                const TOKEN_USER* tu =
+                    reinterpret_cast<const TOKEN_USER*>(buf.data());
+                wchar_t* sidStr = nullptr;
+                if (ConvertSidToStringSidW(tu->User.Sid, &sidStr)) {
+                    userSidStr = sidStr;
+                    LocalFree(sidStr);
+                }
+            }
+            CloseHandle(hToken);
+        }
+    }
+
+    std::wstring sddl;
+    if (userSidStr.empty()) {
+        // Fallback: SID retrieval failed — use the old OW-based SDDL.
+        // The unelevated client may fail to connect (OW resolves to
+        // Administrators when elevated, and unelevated tokens have
+        // Administrators as deny-only). Emit a diagnostic so this is
+        // diagnosable if it ever occurs.
+        std::fprintf(stderr, "tsdev_cli: WARNING — failed to retrieve user SID "
+                             "for pipe security descriptor; falling back to OW-based "
+                             "SDDL (unelevated clients may be unable to connect)\n");
+        sddl = L"D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)";
+    } else {
+        sddl = L"O:" + userSidStr +
+               L"D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;" + userSidStr +
+               L")S:(ML;;NW;;;ME)";
+    }
+
+    PSECURITY_DESCRIPTOR pSD = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.c_str(), SDDL_REVISION_1, &pSD, nullptr)) {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+    sa.lpSecurityDescriptor = pSD;
+
+    // Convert the narrow pipe name to wide (UTF-8; pipe names are ASCII here
+    // but UTF-8 is safe and forward-compatible).
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, pipeName.c_str(),
+                                   static_cast<int>(pipeName.size()),
+                                   nullptr, 0);
+    std::wstring wname(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, pipeName.c_str(),
+                        static_cast<int>(pipeName.size()),
+                        &wname[0], wlen);
+
+    HANDLE hPipe = CreateNamedPipeW(
+        wname.c_str(),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,   // nMaxInstances (single instance; MVP is single-broker)
+        0,   // nOutBufferSize (default)
+        0,   // nInBufferSize (default)
+        0,   // nDefaultTimeOut (default)
+        &sa);
+
+    LocalFree(pSD);  // the SD was copied into the pipe; free our copy
+    return hPipe;
+}
+
+// Parameters passed to the serve worker thread.
+struct ServeParams {
+    HANDLE             pipe = INVALID_HANDLE_VALUE;
+    const wchar_t*     tsPathOverride = nullptr;  // nullptr = auto-discover
+    std::atomic<bool>  quit{false};               // set by worker on 'quit' op
+    int                exitCode = 0;              // set by worker
+};
+
+// runServe is the 64MB-stack worker thread entry point. It constructs ONE
+// TsDevLib (lives for the whole serve session, like runBatch), then loops:
+// ConnectNamedPipe -> inner loop (readFramed -> parseServeRequest ->
+// dispatchServeRequest -> cliResultToJson -> writeFramed) ->
+// FlushFileBuffers + DisconnectNamedPipe. The 'quit' op sets the quit flag
+// and breaks both loops. TsDevLib is constructed AND used on this same
+// thread (thread-affine constraint: the hidden EDIT control is thread-local).
+DWORD WINAPI runServe(LPVOID param) {
+    ServeParams* p = static_cast<ServeParams*>(param);
+    HANDLE pipe = p->pipe;
+
+    // Construct ONE TsDevLib instance (all one-time init happens once).
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "tsdev_cli: serve init failed: %s\n", e.what());
+        p->exitCode = 4;
+        return 0;
+    }
+
+    // Outer loop: accept connections until the 'quit' op (or a fatal
+    // ConnectNamedPipe failure).
+    while (!p->quit.load()) {
+        BOOL connected = ConnectNamedPipe(pipe, nullptr);
+        if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+            // ConnectNamedPipe failed unexpectedly — stop the broker.
+            break;
+        }
+
+        // Inner loop: read framed requests, dispatch, write framed responses.
+        while (!p->quit.load()) {
+            std::string reqStr;
+            if (!readFramed(pipe, reqStr)) {
+                break;  // broken pipe / EOF / oversized -> close connection
+            }
+
+            // Parse the JSON request. Malformed JSON -> usage error response.
+            CliResult r;
+            ordered_json reqJson;
+            try {
+                reqJson = ordered_json::parse(reqStr);
+            } catch (const std::exception&) {
+                r.success = false;
+                r.exitCode = 1;
+                r.errorMessage = "malformed JSON request";
+                if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+                continue;
+            }
+
+            // Validate + parse the request into a ServeRequest.
+            ServeRequest req;
+            r = parseServeRequest(reqJson, req);
+            if (!r.success) {
+                if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+                continue;
+            }
+
+            // 'quit' op: respond with the quit success result, then signal
+            // shutdown and break the inner loop.
+            if (req.op == "quit") {
+                CliResult qr = dispatchServeRequest(*lib, req);
+                writeFramed(pipe, cliResultToJson(qr).dump());
+                p->quit.store(true);
+                break;
+            }
+
+            // Dispatch on THIS thread (TsDevLib is thread-affine to this
+            // 64MB-stack worker). Catch unexpected exceptions and respond
+            // with an entry_op_failure result instead of crashing.
+            try {
+                r = dispatchServeRequest(*lib, req);
+            } catch (const std::exception& e) {
+                r = CliResult();
+                r.op = req.op;
+                r.typeStr = req.typeStr;
+                r.name = req.name;
+                r.success = false;
+                r.exitCode = 6;
+                r.errorMessage = e.what();
+            }
+            if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+        }
+
+        // Flush any buffered output, then disconnect so the next client can
+        // connect (the pipe handle is reused across connections).
+        FlushFileBuffers(pipe);
+        DisconnectNamedPipe(pipe);
+    }
+
+    // Flush the warehouse once at the end of the serve session, then destruct
+    // TsDevLib (OrlibExit persists; EDIT control destroyed on this thread).
+    lib->closeWarehouse();
+    delete lib;
+    return 0;
+}
+
+// cmdServe is the 'serve' subcommand handler. It parses --serve-pipe-file
+// (optional), creates the named pipe with the security descriptor, writes
+// the pipe name + PID to the pipe file (atomic: .tmp + MoveFileEx) or prints
+// the pipe name to stdout, launches runServe on a 64MB-stack thread, and
+// waits for it to exit.
+int cmdServe(int argc, char** argv, bool jsonMode,
+             const wchar_t* tsPathOverride) {
+    // Parse --serve-pipe-file <path> (optional; survives the global pre-scan
+    // because it is serve-specific, like --case-insensitive/--output).
+    std::string pipeFile;
+    for (int i = 2; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--serve-pipe-file") {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr,
+                    "tsdev_cli: --serve-pipe-file requires a file path\n");
+                return 1;
+            }
+            pipeFile = argv[i + 1];
+            i++;  // skip the value
+        } else if (a.rfind("--serve-pipe-file=", 0) == 0) {
+            pipeFile = a.substr(std::strlen("--serve-pipe-file="));
+            if (pipeFile.empty()) {
+                std::fprintf(stderr,
+                    "tsdev_cli: --serve-pipe-file requires a non-empty path\n");
+                return 1;
+            }
+        } else {
+            std::fprintf(stderr,
+                "tsdev_cli: unknown serve argument \"%s\"\n", a.c_str());
+            return 1;
+        }
+    }
+
+    // Build the pipe name: \\.\pipe\tsdev_cli_<PID> (PID for uniqueness).
+    DWORD pid = GetCurrentProcessId();
+    std::string pipeName = "\\\\.\\pipe\\tsdev_cli_" + std::to_string(pid);
+
+    HANDLE hPipe = createServePipe(pipeName);
+    if (hPipe == INVALID_HANDLE_VALUE) {
+        std::fprintf(stderr,
+            "tsdev_cli: failed to create named pipe \"%s\" (err=%lu)\n",
+            pipeName.c_str(), GetLastError());
+        return 1;
+    }
+
+    // Publish the pipe name. With --serve-pipe-file: write the full pipe name
+    // (line 1) and the broker PID (line 2) atomically (write to <path>.tmp,
+    // then MoveFileEx with REPLACE_EXISTING). Without it: print the pipe name
+    // to stdout for manual use.
+    if (!pipeFile.empty()) {
+        std::string content = pipeName + "\n" + std::to_string(pid) + "\n";
+        std::string tmp = pipeFile + ".tmp";
+        if (!writeFile(tmp, content) ||
+            !MoveFileExA(tmp.c_str(), pipeFile.c_str(),
+                         MOVEFILE_REPLACE_EXISTING)) {
+            std::fprintf(stderr,
+                "tsdev_cli: failed to write pipe file \"%s\" (err=%lu)\n",
+                pipeFile.c_str(), GetLastError());
+            CloseHandle(hPipe);
+            return 1;
+        }
+    } else {
+        std::fprintf(stdout, "%s\n", pipeName.c_str());
+        std::fflush(stdout);
+    }
+
+    // Launch runServe on a 64MB-stack worker thread (ONE TsDevLib instance,
+    // constructed and used on that thread).
+    ServeParams params;
+    params.pipe = hPipe;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runServe, &params, 0, nullptr);
+    if (!hThread) {
+        std::fprintf(stderr, "tsdev_cli: CreateThread failed: %lu\n",
+                     GetLastError());
+        CloseHandle(hPipe);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+    CloseHandle(hPipe);
+    return params.exitCode;
+}
+
+// Vectored Exception Handler — catches fatal exceptions (access violations,
+// stack overflows, heap corruption) BEFORE orlib20's unhandled exception
+// filter can spawn TSCrashReport.exe. Calls TerminateProcess with the
+// exception code so the process exits cleanly with a known exit code
+// and NO crash dialog. This is critical for serve mode: when the elevated
+// broker crashes, TSCrashReport.exe would run elevated and a non-elevated
+// Python client cannot kill it.
+LONG WINAPI vehCrashHandler(PEXCEPTION_POINTERS ep) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    // Only handle truly fatal exceptions — don't intercept normal C++ exceptions
+    // (which use a different mechanism) or debug breakpoints.
+    if (code == EXCEPTION_ACCESS_VIOLATION ||       // 0xC0000005
+        code == EXCEPTION_STACK_OVERFLOW ||          // 0xC00000FD
+        code == STATUS_STACK_BUFFER_OVERRUN ||       // 0xC0000409
+        code == 0xC0000374) {                        // STATUS_HEAP_CORRUPTION (ntstatus.h not included due to winnt.h conflicts)
+        TerminateProcess(GetCurrentProcess(), code);
+        // TerminateProcess doesn't return, but just in case:
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 } // namespace
 
 #ifndef TSDEV_CLI_TEST
 int main(int argc, char** argv) {
+    // Install VEH crash handler — must be before any orlib20 calls.
+    // Catches fatal exceptions and terminates cleanly instead of spawning
+    // TSCrashReport.exe (which runs elevated and can't be killed by non-elevated clients).
+    AddVectoredExceptionHandler(1, vehCrashHandler);
+    // Also suppress WerFault.exe as belt-and-suspenders (won't suppress TSCrashReport
+    // but prevents the standard Windows crash dialog too).
+    SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
+
     // --- Global flag pre-scan: --ts-path and --json ---
     // Scan argv[1..argc-1] for the optional global flags and remove them
     // (and, for --ts-path, their value) from the argv array. The resulting
@@ -1834,6 +2433,38 @@ int main(int argc, char** argv) {
             static_cast<int>(std::strlen(tsPathOverride)),
             &tsPathWide[0], wlen);
         tsPathWidePtr = tsPathWide.c_str();
+    }
+
+    // Elevation guard (TVS-K.1): all subcommands require administrator
+    // privileges. Placed AFTER the global flag pre-scan (so --json/--ts-path
+    // are honored and the error can be emitted in JSON form) but BEFORE
+    // subcommand dispatch. Excluded under TSDEV_CLI_TEST (unit tests include
+    // this .cpp and define their own main()).
+    if (!isElevated()) {
+        if (jsonMode) {
+            nlohmann::ordered_json j;
+            j["success"] = false;
+            j["exit_code"] = 11;
+            j["error"]["code"] = "not_elevated";
+            j["error"]["message"] = "this tool requires administrator privileges. "
+                                    "Run from an elevated terminal (or let the Python wrapper auto-elevate).";
+            std::string s = j.dump();
+            std::fwrite(s.c_str(), 1, s.size(), stdout);
+            std::fputc('\n', stdout);
+        } else {
+            std::fprintf(stderr, "tsdev_cli: ERROR — this tool requires administrator privileges. "
+                                 "Run from an elevated terminal (or let the Python wrapper auto-elevate).\n");
+        }
+        return 11;
+    }
+
+    // --- TVS-K.4: serve subcommand ---
+    // serve runs a long-lived named-pipe broker: it creates the pipe, launches
+    // runServe on a 64MB-stack worker thread, and waits. It takes an optional
+    // --serve-pipe-file <path> (parsed inside cmdServe). Placed before the
+    // other subcommands so it is dispatched first.
+    if (iequals(subcommand, "serve")) {
+        return cmdServe(reducedArgc, reducedArgvPtr, jsonMode, tsPathWidePtr);
     }
 
     if (iequals(subcommand, "insert")) {
@@ -2086,7 +2717,7 @@ int main(int argc, char** argv) {
         ComponentType ctype;
         if (!parseType(typeStr, ctype)) {
             std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
-                         "(expected strategy/function/indicator/tradingapp)\n",
+                         "(expected strategy/function/indicator/tradingapp/showme)\n",
                          typeStr.c_str());
             return 2;
         }

@@ -120,6 +120,110 @@ add_dependencies(test_no_hardcoded_rvas siggen)
 add_executable(test_tradingapp_type tests/test_tradingapp_type.cpp)
 target_link_libraries(test_tradingapp_type tsdev_lib)
 
+# --- ShowMe ComponentType + decomposition unit test (TVS-C.8) -----------------
+# Pure unit test for the ShowMe enum entry and getCategory/getSubType helpers.
+# No orlib20 dependency; runs on a 64 MB-stack worker thread to match the
+# project's test harness convention.
+add_executable(test_showme_type tests/test_showme_type.cpp)
+target_link_libraries(test_showme_type tsdev_lib)
+
+# --- Elevation guard unit test (TVS-K.1, TDD RED) -----------------------------
+# Pure unit test for the isElevated() helper and the errorCodeString(11) entry
+# that the elevation guard in main() will rely on. isElevated() and
+# errorCodeString() live inside an anonymous namespace in src/tsdev_cli.cpp
+# (internal linkage), so the test #includes the .cpp directly (same TU) to
+# reach them. This pulls in tsdev_cli.cpp's main(); the test #defines
+# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+# NOTE: isElevated() and case 11 in errorCodeString() do NOT exist yet — this
+# is the TDD RED step and will FAIL TO COMPILE until the Green step adds them.
+add_executable(test_elevation_guard tests/test_elevation_guard.cpp)
+target_include_directories(test_elevation_guard PRIVATE third_party)
+target_link_libraries(test_elevation_guard tsdev_lib)
+add_dependencies(test_elevation_guard siggen)
+
+# --- VEH crash handler unit test (TDD GREEN) ----------------------------------
+# Pure unit test for the vehCrashHandler() helper added to src/tsdev_cli.cpp.
+# vehCrashHandler() lives inside an anonymous namespace in src/tsdev_cli.cpp
+# (internal linkage), so the test #includes the .cpp directly (same TU) to
+# reach it. This pulls in tsdev_cli.cpp's main(); the test #defines
+# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+#
+# The test has TWO modes: normal mode (no args, pure unit test wired into the
+# regular test runners) and crash mode (--crash arg, deliberate access
+# violation). The crash mode is NOT run by the unit test runners — it is run
+# by the standalone PowerShell wrapper tests/test_crash_handler.ps1, which
+# also verifies that no TSCrashReport.exe / WerFault.exe spawns.
+add_executable(test_crash_handler tests/test_crash_handler.cpp)
+target_include_directories(test_crash_handler PRIVATE third_party)
+target_link_libraries(test_crash_handler tsdev_lib)
+add_dependencies(test_crash_handler siggen)
+
+# --- JSON serialize unit test (TVS-K.2, TDD RED) ------------------------------
+# Pure unit test for the cliResultToJson() helper extracted from emitOutput()'s
+# JSON branch. cliResultToJson() will live inside an anonymous namespace in
+# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp directly
+# (same TU) to reach it. This pulls in tsdev_cli.cpp's main(); the test #defines
+# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+# NOTE: cliResultToJson() does NOT exist yet — this is the TDD RED step and
+# will FAIL TO COMPILE until the Green step extracts it from emitOutput().
+add_executable(test_json_serialize tests/test_json_serialize.cpp)
+target_include_directories(test_json_serialize PRIVATE third_party)
+target_link_libraries(test_json_serialize tsdev_lib)
+add_dependencies(test_json_serialize siggen)
+
+# --- Serve request dispatch unit test (TVS-K.3, TDD RED) ----------------------
+# Pure unit test for parseServeRequest() — the JSON request -> ServeRequest
+# parser used by the serve/broker layer. parseServeRequest() and the
+# ServeRequest struct will live inside an anonymous namespace in
+# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp directly
+# (same TU) to reach it. This pulls in tsdev_cli.cpp's main(); the test #defines
+# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access, no TsDevLib construction — parseServeRequest is pure logic), so it is
+# NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs. dispatchServeRequest() is
+# NOT unit-tested here (it needs a real TsDevLib; validated via K.5/K.6a E2E).
+# NOTE: parseServeRequest() and ServeRequest do NOT exist yet — this is the TDD
+# RED step and will FAIL TO COMPILE until the Green step adds them.
+add_executable(test_serve_dispatch tests/test_serve_dispatch.cpp)
+target_include_directories(test_serve_dispatch PRIVATE third_party)
+target_link_libraries(test_serve_dispatch tsdev_lib)
+add_dependencies(test_serve_dispatch siggen)
+
+# --- Serve framing helpers unit test (TVS-K.4, TDD RED) -----------------------
+# Pure unit test for writeFramed()/readFramed() — the length-prefixed framing
+# I/O helpers used by the serve/broker layer. writeFramed() and readFramed()
+# will live inside an anonymous namespace in src/tsdev_cli.cpp (internal
+# linkage), so the test #includes the .cpp directly (same TU) to reach them.
+# This pulls in tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to
+# exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST). The test needs the
+# third_party include dir (nlohmann/json) because the included tsdev_cli.cpp
+# uses it, and links tsdev_lib for the TsDevLib symbols referenced by the
+# included CLI code. It is a PURE UNIT TEST (no orlib20 access, no TsDevLib
+# construction — the framing helpers are pure Windows pipe I/O), so it is NOT
+# in TSDEV_ADMIN_TARGETS and runs under -NoTs. The framing helpers use Windows
+# HANDLEs (from CreatePipe), not FILE* or std::istream. The full pipe server
+# (cmdServe/runServe) is validated via E2E in K.6a, NOT here.
+# NOTE: writeFramed() and readFramed() do NOT exist yet — this is the TDD RED
+# step and will FAIL TO COMPILE until the Green step adds them.
+add_executable(test_serve_framing tests/test_serve_framing.cpp)
+target_include_directories(test_serve_framing PRIVATE third_party)
+target_link_libraries(test_serve_framing tsdev_lib)
+add_dependencies(test_serve_framing siggen)
+
 # --- TradingApp INSERT integration test (TVS-C.4) ----------------------------
 # End-to-end TDD test for the TradingApp INSERT flow: createEntry, saveSource,
 # verifyModule, .ell persistence + RNAM magic check, and self-cleaning delete.
@@ -232,6 +336,59 @@ add_executable(tsdev_cli src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli PRIVATE third_party)
 target_link_libraries(tsdev_cli tsdev_lib)
 
+# --- Admin-privilege manifest for TS-accessing executables -------------------
+# When ON, every executable that accesses the TradeStation TSDev Library (which
+# requires admin privileges, because TSDev.exe and TradeStation Desktop always
+# run elevated) embeds requestedExecutionLevel="requireAdministrator" in its
+# application manifest. Windows then refuses to start these executables without
+# an elevated (administrator) token. When the PARENT process is already elevated
+# (elevated Python wrapper / test runner / shell), child processes inherit that
+# token silently with NO per-run UAC prompt — one UAC prompt per session.
+# When OFF, manifests default to asInvoker (no elevation requirement).
+#
+# CI builds with the default ON; this is safe because CI tests never invoke
+# tsdev_cli.exe or any TS-dependent test executable (the -NoTs suites use only
+# non-TS unit tests + sigtool; non-e2e Python tests mock subprocess.run).
+# Developers who need a non-elevated build pass -DTSDEV_REQUIRE_ADMIN=OFF.
+option(TSDEV_REQUIRE_ADMIN
+    "Embed requireAdministrator execution level in TS-accessing executables" ON)
+
+# All executables that access the TSDev Library / orlib20.dll at runtime and
+# therefore require admin privileges. Excludes: sigtool (static DLL file
+# analysis, no runtime orlib20 access), test_no_hardcoded_rvas / test_tradingapp_type
+# / test_showme_type / test_orlib_resolver / test_elevation_guard
+# / test_crash_handler / test_json_serialize / test_serve_dispatch
+# / test_serve_framing (pure unit tests, no TSDev Library access, run in CI
+# under -NoTs from a non-elevated runner).
+set(TSDEV_ADMIN_TARGETS
+    tsdev_cli
+    test_insert
+    test_delete
+    test_delete_tradingapp
+    test_delete_check
+    test_delete_diag
+    test_path_discovery
+    test_modify
+    test_persistence_validation
+    test_insert_tradingapp
+    test_modify_tradingapp
+    test_exists
+    test_enumerate
+    test_upsert
+    test_batch_upsert
+    test_directory_batch
+    test_get_source
+    test_auto_cleanup
+    test_stress_batch
+)
+
+if(TSDEV_REQUIRE_ADMIN)
+    foreach(tgt ${TSDEV_ADMIN_TARGETS})
+        target_link_options(${tgt} PRIVATE
+            "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'")
+    endforeach()
+endif()
+
 # --- Workstream G (TVS-G.1): POST_BUILD bundle assembly ----------------------
 # Glob the Python wrapper sources with CONFIGURE_DEPENDS so newly added .py
 # files trigger a re-configure automatically.
@@ -305,7 +462,7 @@ target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
 #   cmake --build build --config Release --target test_regression
 # The actual regression test execution is performed by the PowerShell
 # orchestrator script tests/run_regression.ps1 (which runs sigtool verify,
-# all 14 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
+# all 26 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
 # build commands of its own - it merely aggregates the dependencies.
 add_custom_target(test_regression)
 add_dependencies(test_regression
@@ -319,6 +476,12 @@ add_dependencies(test_regression
     test_persistence_validation
     test_no_hardcoded_rvas
     test_tradingapp_type
+    test_showme_type
+    test_elevation_guard
+    test_crash_handler
+    test_json_serialize
+    test_serve_dispatch
+    test_serve_framing
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists

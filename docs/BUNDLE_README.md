@@ -14,6 +14,11 @@ Library without the TSDev UI. It contains:
   DLLs) from the TradeStation install directory at runtime. Nothing is bundled.
 - **Python 3.14+ 64-bit** (only if you use the Python wrapper). The wrapper is
   stdlib-only — no third-party packages required.
+- **Administrator privileges.** `tsdev_cli.exe` requires an elevated token
+  (TradeStation's TSDev Library is only accessible to elevated processes). Run
+  your terminal or Python session as Administrator — **one UAC prompt per
+  session**, then all CLI invocations are silent (subprocesses inherit the
+  elevated token).
 
 ## CLI usage
 

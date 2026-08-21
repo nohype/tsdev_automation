@@ -11,6 +11,9 @@ Item source text, comments, naming conventions inside source code, etc. are ARBI
 **CRITICAL RULE — Emulate TSDev.exe:**
 We are replacing TSDev.exe for automated TS library management. Our code should get as close as possible to imitating what the TSDev app does. If TSDev refreshes its cache after insert/modify/delete, we should do the same. If TSDev uses a specific API or sequence to enumerate items, we should use the same. Do not invent workarounds when TSDev has a proper mechanism — reverse engineer and replicate TSDev's behavior.
 
+**CRITICAL RULE — No hacks (hard rule 5, see `docs/PM_WORKING_MEMORY.md`):**
+Never suppress compiler errors/warnings or use workarounds that mask real issues. If code produces warnings or errors, fix the root cause or find a clean, production-worthy alternative. If no clean approach exists, use the most explicit/raw form (e.g. a numeric constant with a comment naming the intended symbol) rather than suppressing the warning. Example: `ntstatus.h` redefines some `STATUS_SXS_*` macros from `winnt.h` — instead of `#pragma warning(disable: 4005)`, use the raw hex constant `0xC0000374` with a comment `// STATUS_HEAP_CORRUPTION`.
+
 ## Functions
 6 interactions with the TSDev Libray:
 
@@ -75,10 +78,10 @@ If you are *not a subagent:* You are the Product Manager (PM).
    - One *minimal Thin Vertical Slice* (TVS) at a time
    - Each new team determines the project state and determines the best next TVS towards (highest ROI) towards our acceptance criteria, then the team executes and updates all relevant docs
    - We follow TDD (red-green method)
-- **End-to-end CLI verification (MANDATORY after every TVS):** After any TVS implementation is successfully completed and approved, run an end-to-end test with the real production CLI (`tsdev_cli insert/delete/modify`) using the latest state of the codebase at that point in time. This ensures the most important artifact — the production CLI that satisfies the primary acceptance criteria — remains operational after every change. This is in addition to (not a replacement for) the unit/regression test suite. The e2e CLI test must PASS before the TVS is considered fully done. For the comprehensive E2E test procedure covering all 4 component types (Strategy, Indicator, Function, TradingApp) with type-specific semantic error cases, see `docs/E2E_TEST_SPEC.md`. Agents or subagents performing E2E CLI verification should read that document for the full test specification.
+- **End-to-end CLI verification (MANDATORY after every TVS):** After any TVS implementation is successfully completed and approved, run an end-to-end test with the real production CLI (`tsdev_cli insert/delete/modify`) using the latest state of the codebase at that point in time. This ensures the most important artifact — the production CLI that satisfies the primary acceptance criteria — remains operational after every change. This is in addition to (not a replacement for) the unit/regression test suite. The e2e CLI test must PASS before the TVS is considered fully done. For the comprehensive E2E test procedure covering all 5 supported component types (Strategy, Indicator, Function, TradingApp, ShowMe) with type-specific semantic error cases, see `docs/E2E_TEST_SPEC.md`. Agents or subagents performing E2E CLI verification should read that document for the full test specification.
 
 ## TradeStation component types
-TradeStation supports 8 EasyLanguage component types: **ActivityBar, Function, Indicator, PaintBar, ProbabilityMap, ShowMe, Strategy, TradingApp**. Each has different purposes and constraints (e.g., Strategies cannot use Plot statements; only Indicators can plot). See `docs/TS_COMPONENT_TYPES.md` for the full mapping to orlib20 warehouse types.
+TradeStation supports 8 EasyLanguage component types: **ActivityBar, Function, Indicator, PaintBar, ProbabilityMap, ShowMe, Strategy, TradingApp**. Each has different purposes and constraints (e.g., Strategies cannot use Plot statements; only Indicators, ShowMe, and PaintBar can plot). See `docs/TS_COMPONENT_TYPES.md` for the full mapping to orlib20 warehouse types. The CLI currently supports 5 confirmed types: **Strategy** (whType 0), **Indicator** (whType 2), **Function** (whType 4), **TradingApp** (whType 5122), and **ShowMe** (whType 1282). The remaining 3 (ActivityBar, PaintBar, ProbabilityMap) have unconfirmed warehouse types.
 
 ## Relevant directories and paths
 These TradeStation (TS) installation paths are *READ-ONLY* and *MUST NEVER BE MODIFIED*! We cannot break the existing installation.
@@ -94,11 +97,12 @@ Read `AGENTS.md` (this file) first — it contains always-on rules and project o
 
 **Operational reference (read when doing the relevant task):**
 - `docs/BUILD.md` — Build & test instructions. Read when building, running tests, or updating the baseline DLL.
-- `docs/E2E_TEST_SPEC.md` — End-to-end CLI test specification (all 4 component types, all subcommands). Read when running or extending E2E tests.
+- `docs/E2E_TEST_SPEC.md` — End-to-end CLI test specification (all 5 supported component types, all subcommands). Read when running or extending E2E tests.
 - `docs/SIGNATURE_CATALOG.md` — Authoritative human-readable catalog of all 25 orlib20.dll signatures, 10 exports, 3 data globals, 12 patch sites. Read when working with signatures, patches, or the OrlibResolver.
 - `docs/VERSION_DETECTION.md` — orlib20.dll version detection strategy (3-tier multi-factor method). Read when working on version detection or the version manifest.
 - `docs/TS_COMPONENT_TYPES.md` — TradeStation component types and orlib20 warehouse type mappings. Read when working with component types or adding new types.
 - `docs/FEASIBILITY.md` — Reverse-engineering feasibility study (orlib20 primitives, parameter orders, INSERT/MODIFY/DELETE pseudocode). Read when understanding the RE foundation.
+- `docs/workstream_serve_plan.md` — Plan for Workstream K (Serve mode; K.1–K.6b COMPLETE — Workstream K fully complete). Read when working on serve mode.
 
 **Python integration:**
 - `docs/INTEGRATION_APPROACH_EVALUATION.md` — Decision document for 64-bit Python ↔ 32-bit orlib20.dll integration (Option A+ chosen: batch CLI + JSON I/O). Read when working on the Python wrapper.
@@ -119,7 +123,7 @@ Update this list to reflect the current state and the next best steps as the pro
 
 ### Completed Work Summary
 
-All workstreams A, B, C, D, E, F, G, I are COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G, I, J are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
 
 | TVS | Result | Status |
 |-----|--------|--------|
@@ -138,7 +142,7 @@ All workstreams A, B, C, D, E, F, G, I are COMPLETE. Detailed per-TVS logs are a
 | TVS-B.4 | OrlibResolver .cpp implementation | COMPLETE |
 | TVS-B.4.5 | resolveErrorHinstRva instruction-offset extraction | COMPLETE |
 | TVS-B.5 | OrlibResolver integration with TsDevLib | COMPLETE |
-| TVS-B.6 | Automated regression test suite (initial 60 tests, now 113 across 10 sub-suites) | COMPLETE |
+| TVS-B.6 | Automated regression test suite (initial 60 tests, now 135 across 12 sub-suites) | COMPLETE |
 | TVS-B.6.5 | Baseline DLL committed to tests/fixtures/ | COMPLETE |
 | TVS-B.6.6 | Interactive baseline DLL prompting in test runners | COMPLETE |
 | TVS-B.7 | TS install path discovery + --ts-path CLI override | COMPLETE |
@@ -166,18 +170,28 @@ All workstreams A, B, C, D, E, F, G, I are COMPLETE. Detailed per-TVS logs are a
 | TVS-I.1 | batch-upsert (C++ CLI — manifest file + stdin modes) | COMPLETE |
 | TVS-I.2 | Directory batch mode (C++ CLI — all 4 ops: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir) | COMPLETE |
 | TVS-I.3 | Python wrapper — batch_upsert + directory batch + _cli.py subcommands | COMPLETE |
+| TVS-C.8 | ShowMe component type (whType 1282) | COMPLETE |
+| TVS-K.1 | Elevation guard for all subcommands (exit 11, isElevated()) | COMPLETE |
+| TVS-K.2 | Extract cliResultToJson() reusable serialization helper | COMPLETE |
+| TVS-K.3 | Serve request dispatch (ServeRequest, parseServeRequest, dispatchServeRequest) | COMPLETE |
+| TVS-K.4 | Named pipe server (framing, createServePipe, runServe, cmdServe, serve subcommand) | COMPLETE |
+| TVS-K.5 | Python serve-broker (_pipe.py, _ServeBroker, elevation detection, routing) | COMPLETE |
+| TVS-K.6a | E2E integration + backwards-compat verification | COMPLETE |
+| TVS-K.6b | Documentation + use_serve default flip | COMPLETE |
+| Crash Handling | C++ VEH crash handler + Python TsDevCrashError | COMPLETE |
+| CI | GitHub Actions build+release workflow (`.github/workflows/ci.yml`: Win32 build + `-NoTs` regression + mocked pytest on every push/PR; bundle zip attached to GitHub Releases on `v*` tags) | COMPLETE |
 
 **Key architectural facts:**
 - Signature data: `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) — 25 signatures total, 12 patch sites
 - OrlibResolver: signature-based RVA resolution, no hardcoded RVAs in production code
-- CLI supports 4 component types: Strategy (0), Indicator (2), Function (4), TradingApp (5122)
-- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (10 C++ regression suites / 113 cases: sigtool + unit + E2E + exists + batch-stdin + upsert + get-source + exists-ci + batch-upsert + directory-batch). Python: 83 tests. All passing.
+- CLI supports 5 component types: Strategy (0), Indicator (2), Function (4), TradingApp (5122), ShowMe (1282)
+- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9)). Per-suite skip flags include `-SkipServeE2e` and `-SkipShowMeE2e`; under `-NoTs` only the sigtool suite + 9 non-TS unit tests run. C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: 116 tests (15 deselected E2E). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
 - Fresh clone builds without `tmp/` dependencies (Workstream E fixed this)
 - Case-insensitive `exists` uses two-phase `enumerateRecords`: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter, returns char* from warehouse node at offset +0x1D). The stored name comes from the WAREHOUSE, not from source text. Key decision: two-phase instead of cmd 0x0F + cmd 0x4E cache refresh.
 
 ### Project Status
 
-ALL workstreams (A, B, C, D, E, F, G, I) are COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. Directory batch operations (insert/modify/delete/upsert) are now available via both the C++ CLI and the Python wrapper. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build.
+ALL workstreams (A, B, C, D, E, F, G, I, J) are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. Directory batch operations (insert/modify/delete/upsert) are now available via both the C++ CLI and the Python wrapper. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build. The CLI supports 5 component types (Strategy, Indicator, Function, TradingApp, ShowMe). Serve mode infrastructure (elevation guard, JSON serialization, serve dispatch, named pipe server, Python serve-broker) is complete, E2E-verified, and enabled by default (`use_serve=True`, flipped in K.6b).
 
 ### Completed Workstream: G — Distributable Bundle
 
@@ -190,7 +204,7 @@ ALL workstreams (A, B, C, D, E, F, G, I) are COMPLETE. The primary acceptance cr
 | TVS-G.4 | (optional) Remove stale capstone runtime dep from pyproject.toml | COMPLETE |
 
 ### Candidate Future Work
-1. **4 unconfirmed warehouse-type mappings** (ActivityBar, PaintBar, ProbabilityMap, ShowMe) — feature gap, requires Ghidra/Frida RE work per type. See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. Currently no user need. Defer.
+1. **3 unconfirmed warehouse-type mappings** (ActivityBar, PaintBar, ProbabilityMap) — feature gap, requires Ghidra/Frida RE work per type. See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. Currently no user need. Defer. (ShowMe was previously in this list but is now CONFIRMED — whType=1282, TVS-C.8.)
 2. **SEH protection on error array reads** — `readErrorsFromArray` reads raw memory without SEH guards. Low likelihood (array populated by compiler in normal flow). Defer.
 
 ### Workstream I — Directory Batch Operations (COMPLETE)
@@ -211,7 +225,7 @@ Plan: `docs/archive/WORKSTREAM_I_PLAN.md` (3 TVSs: I.1 COMPLETE, I.2 COMPLETE, I
 | TVS-I.3 | Python wrapper — batch_upsert + directory batch + _cli.py subcommands | COMPLETE |
 
 ### REMAINING FOLLOW-UPS
-- **4 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap, ShowMe whType codes are NOT confirmed. Code restricts to 4 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff. Currently no user need. Defer.
+- **3 unresolved warehouse-type mappings:** ActivityBar, PaintBar, ProbabilityMap whType codes are NOT confirmed. Code restricts to 5 confirmed types: Strategy (0), Indicator (2), Function (4), TradingApp (5122), ShowMe (1282). See `docs/TS_COMPONENT_TYPES.md` and `docs/FEASIBILITY.md` §5.2/§5.5. These require Ghidra/Frida RE work per type and are not yet scoped in a handoff. Currently no user need. Defer.
 - **Partial warehouse entry on compile failure (TD-001):** When `insert` fails compilation, `createEntry` has already allocated a ProgId and created a warehouse entry. The CLI now auto-cleans up this partial entry (fixed in this cleanup pass). See `tests/test_auto_cleanup.cpp`.
 
 ### Resolved follow-ups (closed)
@@ -223,7 +237,7 @@ Plan: `docs/archive/WORKSTREAM_I_PLAN.md` (3 TVSs: I.1 COMPLETE, I.2 COMPLETE, I
 - ~~Partial-construction patch restoration gap (TD-002)~~ — FIXED. `m_patchesApplied` now set after each individual patch; destructor guards restoration by cached RVA.
 
 ## Workstream G progress
-- **TVS-G.1: CMake POST_BUILD bundle assembly + .gitignore** — COMPLETE. CMake POST_BUILD copies `tsdev_cli.exe` + 6 `.py` files (`__init__.py`, `client.py`, `exceptions.py`, `results.py`, `__main__.py`, `py.typed`) to `dist/` on every build via `copy_if_different`. `dist/.gitignore` removed; root `.gitignore` updated with `/dist/` and `/artifacts/` entries. Adversarial review APPROVED.
+- **TVS-G.1: CMake POST_BUILD bundle assembly + .gitignore** — COMPLETE. CMake POST_BUILD copies `tsdev_cli.exe` + all wrapper `.py` files via `file(GLOB src/tsdev_automation/*.py CONFIGURE_DEPENDS)` (currently 7: `__init__.py`, `client.py`, `exceptions.py`, `results.py`, `__main__.py`, `_cli.py`, `_pipe.py`; no `py.typed` exists in the package) to `dist/` on every build via `copy_if_different`. `dist/.gitignore` removed; root `.gitignore` updated with `/dist/` and `/artifacts/` entries. Adversarial review APPROVED.
 - **TVS-G.2: Python wrapper bundle-layout auto-discovery** — COMPLETE. New step 3 in `_resolve_cli_path()` (`src/tsdev_automation/client.py`): checks `<package_parent>/tsdev_cli.exe` before the CMakeLists.txt walk-up, so the wrapper auto-discovers the CLI when imported from the `dist/` bundle layout. 2 unit tests added (62 Python tests total). Adversarial review APPROVED.
 - **TVS-G.3: Bundle README** — COMPLETE. `docs/BUNDLE_README.md` → `dist/README.md` via CMake POST_BUILD `copy_if_different`. Root `README.md` "Distribution / Bundle" section added. `docs/BUILD.md` "### 5. Bundle output" subsection added. Adversarial review APPROVED.
 - **TVS-G.5: Automatic timestamped zip in artifacts/** — COMPLETE. `tools/create_bundle_zip.ps1` with `$ErrorActionPreference='Stop'` (fail-loudly). CMake POST_BUILD invokes it. Zip pattern: `tsdev_automation_<yymmdd><HHMM>.zip`. Selective contents: exe + `tsdev_automation/` + `README.md` only. Adversarial review APPROVED.

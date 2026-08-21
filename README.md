@@ -51,6 +51,34 @@ tsdev_cli [--ts-path <dir>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 
 See [docs/BUILD.md](docs/BUILD.md) for build prerequisites, CMake commands, and test instructions.
 
+## Admin privileges
+
+The CLI and TS-dependent test executables require administrator privileges —
+TradeStation's TSDev Library (`orlib20.dll`) is only accessible to elevated
+processes. Run your terminal or Python session as Administrator; you get **one
+UAC prompt per session**, and all CLI invocations thereafter are silent
+(subprocesses inherit the elevated token). To build a non-elevated development
+variant:
+
+```cmd
+cmake -S . -B build -A Win32 -DTSDEV_REQUIRE_ADMIN=OFF
+```
+
+See [docs/BUILD.md](docs/BUILD.md#admin-privileges-tsdev_require_admin) for
+full details on the `TSDEV_REQUIRE_ADMIN` CMake option.
+
+### Serve mode (one-UAC UX from a non-elevated Python session)
+
+When using the Python wrapper from a **non-elevated** session, `TsDevClient`
+(the default `use_serve=True`) auto-starts an elevated broker process via a
+single `ShellExecuteExW` `"runas"` call (**one UAC prompt**) and routes all
+single-item ops (`insert`/`modify`/`delete`/`exists`/`get_source`/`upsert`)
+through a Windows named pipe to that broker — no per-call prompts. When the
+Python session is **already elevated**, the direct `subprocess.run` path is
+used with zero overhead (no broker is started). See
+[docs/BUILD.md](docs/BUILD.md#serve-mode---serve--use_serve) for the full
+serve-mode documentation (broker protocol, `use_serve` flag, E2E test).
+
 ## Distribution / Bundle
 
 Running `cmake --build build --config Release` automatically produces a

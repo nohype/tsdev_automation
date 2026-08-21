@@ -93,6 +93,25 @@ class ThreadFailure(TsDevError):
     """Worker-thread creation failure (exit 10)."""
 
 
+class TsDevCrashError(TsDevError):
+    """tsdev_cli.exe crashed (access violation or other fatal exception).
+
+    This indicates a bug in the orlib20 integration, not a user error.
+    The VEH (Vectored Exception Handler) in the CLI catches the crash and
+    terminates the process cleanly with the NT status code as the exit code.
+    No crash dialog (TSCrashReport.exe) is spawned.
+    """
+
+    def __init__(self, message: str | None = None, exit_code: int | None = None) -> None:
+        self.exit_code = exit_code
+        if message is None:
+            if exit_code is not None:
+                message = f"tsdev_cli.exe crashed (exit code 0x{exit_code & 0xFFFFFFFF:08X})"
+            else:
+                message = "tsdev_cli.exe crashed unexpectedly"
+        super().__init__(message=message)
+
+
 # error.code -> exception class
 ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "usage_error": UsageError,
@@ -115,3 +134,23 @@ def exception_for(result: TsDevResult) -> TsDevError:
     assert result.error is not None
     cls = ERROR_CODE_MAP.get(result.error.code, TsDevError)
     return cls(result)
+
+
+__all__ = [
+    "TsDevError",
+    "UsageError",
+    "UnknownTypeError",
+    "SourceFileError",
+    "OutputWriteError",
+    "InitFailure",
+    "NotFoundError",
+    "AlreadyExistsError",
+    "EntryOpError",
+    "SaveSourceError",
+    "CompileError",
+    "EllMissingError",
+    "ThreadFailure",
+    "TsDevCrashError",
+    "ERROR_CODE_MAP",
+    "exception_for",
+]
