@@ -99,9 +99,9 @@ However, these fields are **NOT populated at creation time**. They are **lazily 
 
 ### Method A: `FUN_101c36d0` (RVA `0x1c36d0`) — Verbatim Name Getter
 
-**Signature (thiscall):**
+**Signature (fastcall):**
 ```cpp
-char* __thiscall FUN_101c36d0(CELProgram* this);  // ECX = data node
+char* __fastcall FUN_101c36d0(CELProgram* this);  // ECX = data node
 ```
 
 **Behavior:**

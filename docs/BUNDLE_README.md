@@ -42,7 +42,7 @@ tsdev_cli upsert       strategy MyStrat my_strategy.el
   at the default location (`C:\Program Files (x86)\TradeStation 9.5`) or not
   discoverable via the registry.
 
-`<type>` is one of `strategy`, `function`, `indicator`, `tradingapp`
+`<type>` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme`
 (case-insensitive). Run `tsdev_cli` with no arguments to see the full usage
 reference (note: the CLI has no `--help` flag; it prints usage on any
 unrecognized invocation).

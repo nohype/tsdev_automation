@@ -13,7 +13,7 @@ Automated management of the TradeStation Development Environment (TSDev) Library
 | ActivityBar | — | Unconfirmed |
 | PaintBar | — | Unconfirmed |
 | ProbabilityMap | — | Unconfirmed |
-| ShowMe | — | Unconfirmed |
+| ShowMe | 1282 (0x0502) | Supported |
 
 ## CLI usage
 
@@ -45,7 +45,7 @@ tsdev_cli [--ts-path <dir>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 - `--json` — Emit structured JSON output (single object for single-item ops; batch ops always emit a JSON array).
 - `--ts-path <dir>` — Override the TradeStation install directory (default: auto-discovered from registry).
 
-`<type>` is one of `strategy`, `function`, `indicator`, `tradingapp` (case-insensitive).
+`<type>` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme` (case-insensitive).
 
 ## Build
 
@@ -87,7 +87,7 @@ Running `cmake --build build --config Release` automatically produces a
 ```
 dist/
 ├── tsdev_cli.exe        # the C++ CLI (static, self-contained)
-├── tsdev_automation/    # the Python wrapper package (6 .py files)
+├── tsdev_automation/    # the Python wrapper package (7 .py files)
 └── README.md            # bundle quick-start guide
 ```
 
@@ -183,7 +183,7 @@ client = TsDevClient(
 | `batch_delete_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
 | `batch_upsert_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
 
-`type` is one of `strategy`, `function`, `indicator`, `tradingapp`. `source`
+`type` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme`. `source`
 may be a path to an existing `.el` file (used directly) or an inline
 EasyLanguage source string (written to a temp file and cleaned up
 automatically). Batch methods take a list of `BatchItem(type, name, source)`
@@ -197,7 +197,10 @@ source) and return one `TsDevResult` per file.
 
 All CLI-reported failures raise a subclass of `TsDevError` (the base
 exception). Each carries the originating `TsDevResult` on `.result` for
-inspection:
+inspection. The one exception is `TsDevCrashError`, raised when the CLI
+process itself crashes (a fatal exception caught by the CLI's VEH handler,
+which exits with the NT status code as the process exit code); it exposes
+that code on `.exit_code` and has no `TsDevResult`:
 
 ```
 TsDevError                      # base
@@ -212,7 +215,8 @@ TsDevError                      # base
 ├── SaveSourceError             # exit 7  — saveSource failure
 ├── CompileError                # exit 8  — EasyLanguage compile failure
 ├── EllMissingError             # exit 9  — .ell not produced after compile
-└── ThreadFailure               # exit 10 — worker-thread creation failure
+├── ThreadFailure               # exit 10 — worker-thread creation failure
+└── TsDevCrashError             # crash  — CLI process crash (exit code = NT status)
 ```
 
 ### Code example
@@ -278,4 +282,4 @@ Run `tsdev-automation --help` for full usage.
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 ```
 
-Runs 93 test cases across 8 sub-suites: sigtool (12) + C++ unit (18) + E2E CLI (34) + exists (5) + batch-stdin (8) + upsert (5) + get-source (6) + exists-ci (5).
+Runs 135 test cases across 12 sub-suites: sigtool (12) + C++ unit (26) + E2E CLI (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9).

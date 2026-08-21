@@ -169,7 +169,7 @@ The following describes how the CLI proceeds at startup (to be implemented in th
    b. MISMATCH → report "orlib20.dll version X — known version, byte-differs from
       tested build; signatures may not match; proceeding at your own risk."
    → Proceed to signature resolution in all cases.
-6. Run signature resolution (all 12 targets from SIGNATURE_CATALOG.md).
+6. Run signature resolution (all 25 signatures from SIGNATURE_CATALOG.md: 13 call-target + 12 patch-site).
    If any signature fails to resolve (scan count != 1) → throw std::runtime_error
    with the signature name, expected RVA, and match count.
 ```
@@ -201,7 +201,7 @@ The CLI does **not** abort at this stage — the signatures may still match (a m
 
 ### 5.2 Implication: signature stability across versions is UNVERIFIED
 
-The 12 signatures in `docs/SIGNATURE_CATALOG.md` were derived from and verified against exactly one `orlib20.dll` build. Whether these signatures remain unique and correctly anchored in other versions is **unknown**. The design must therefore be **conservative**:
+The 25 signatures in `docs/SIGNATURE_CATALOG.md` (12 from TVS-B.1 + 13 from Workstreams F.4 and F.5) were derived from and verified against exactly one `orlib20.dll` build. Whether these signatures remain unique and correctly anchored in other versions is **unknown**. The design must therefore be **conservative**:
 
 - Any version not in the manifest is treated as "untested — proceed at your own risk" (§4.3).
 - Signature resolution failure is a hard error (§4.2, step 6).
@@ -386,7 +386,7 @@ The `OrlibResolver` (designed in TVS-B.3, implemented in TVS-B.4) uses the manif
 5. **Compare Tier 3 indicator** (SHA-256) against the entry — computed only if Tier 2 matched. If mismatch → known-but-byte-differs warning. If match → known & verified.
 6. **Select the signature set** indicated by `entry.signatureSet` (e.g., `SIGSET_V9_50_01_3344`). The resolver then scans the .text section using the signatures from that set (referencing `docs/SIGNATURE_CATALOG.md`).
 
-The manifest entry's `signatureSet` field is the link between version detection and signature-based resolution: each version maps to exactly one signature set, and each signature set is a complete collection of the 12 RVA-target signatures + 4 patch-site original-byte patterns from `docs/SIGNATURE_CATALOG.md`.
+The manifest entry's `signatureSet` field is the link between version detection and signature-based resolution: each version maps to exactly one signature set, and each signature set is a complete collection of the 25 signatures from `docs/SIGNATURE_CATALOG.md` — 13 call-target signatures (`targetType=call_target`) + 12 patch-site signatures (`targetType=patch_site`, each carrying its original-byte pattern).
 
 ---
 
@@ -402,7 +402,7 @@ This section notes handoff points only — it does not design the `OrlibResolver
 | **TVS-B.6 (regression suite)** | The regression suite's `test_orlib_resolver` component validates version detection against a copied DLL in `tmp/`. When a new version appears (§5.4), the suite is the gate for adding a manifest entry. |
 | **TVS-B.7 (path/constant externalization)** | The manifest's `signatureSet` field may eventually also carry structural constants (CELCompiler size, field offsets) per version. TVS-B.7 externalizes those constants; this document's manifest struct provides the per-version container. The `OrlibVersionManifestEntry` can be extended with a nested struct for structural constants in TVS-B.7 without breaking TVS-B.4. |
 
-**Signature catalog reference:** Each manifest entry's `signatureSet` points to a set of signatures documented in `docs/SIGNATURE_CATALOG.md` (12 code-section RVA targets + 4 patch-site original-byte patterns + 7 export names). For now, only one version exists, so only one signature set (`SIGSET_V9_50_01_3344`) exists. When a new version is added (§5.4), either the same signature set is reused (if signatures still match) or a new `SignatureSetId` is created with new/updated signatures, and `docs/SIGNATURE_CATALOG.md` gains a per-version section.
+**Signature catalog reference:** Each manifest entry's `signatureSet` points to a set of signatures documented in `docs/SIGNATURE_CATALOG.md` (25 code-section signatures — 13 call-target + 12 patch-site original-byte patterns — plus 10 export names). For now, only one version exists, so only one signature set (`SIGSET_V9_50_01_3344`) exists. When a new version is added (§5.4), either the same signature set is reused (if signatures still match) or a new `SignatureSetId` is created with new/updated signatures, and `docs/SIGNATURE_CATALOG.md` gains a per-version section.
 
 ---
 

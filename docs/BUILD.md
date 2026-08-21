@@ -67,13 +67,14 @@ tsdev_automation/
 │   ├── orlib_resolver.cpp / orlib_resolver.h   signature-scan resolver layer
 │   ├── tsdev_cli.cpp                     production CLI (insert/modify/delete/exists/get-source/upsert/batch-insert/batch-modify/batch-delete/batch-upsert/batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir)
 │   └── sigtool.cpp                       signature-verification CLI
-├── tests/          Test files (26 .cpp + 12 .ps1 + 1 .py + 1 .psm1)
+├── tests/          Test files (27 .cpp + 16 .ps1 + 2 .py + 1 .psm1)
 ├── archive/        Archived experimental probes (27 files, NOT built)
 ├── signatures/     JSON signature data — the single source of truth
 │   ├── v9.50.01.3344.json                per-version signatures + patch sites
 │   └── version_manifest.json             version manifest (lists known builds)
 ├── tools/          Build-time tooling
-│   └── sigcodegen.py                     generates signatures.gen.h from JSON
+│   ├── sigcodegen.py                     generates signatures.gen.h from JSON
+│   └── create_bundle_zip.ps1             assembles the artifacts/*.zip bundle zip (invoked by CMake POST_BUILD)
 ├── third_party/    Vendored libraries
 │   └── nlohmann/                         nlohmann/json (used by sigtool)
 ├── docs/           Documentation
@@ -142,7 +143,7 @@ assembles a distributable bundle via a POST_BUILD custom command on the
 ```
 dist/
 ├── tsdev_cli.exe        # copied from build\Release\tsdev_cli.exe
-├── tsdev_automation/    # copied from src\tsdev_automation\*.py (6 files)
+├── tsdev_automation/    # copied from src\tsdev_automation\*.py (7 files)
 └── README.md            # copied from docs\BUNDLE_README.md (quick-start guide)
 ```
 
@@ -259,7 +260,7 @@ independently.
 
 #### `tests/run_regression.ps1` — master regression runner
 
-The single-command regression runner orchestrates **all 10 sub-suites** (113
+The single-command regression runner orchestrates **all 12 sub-suites** (135
 test cases total) in the order required by the B.6 acceptance criteria:
 
 1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
@@ -272,12 +273,14 @@ test cases total) in the order required by the B.6 acceptance criteria:
 5. **batch-stdin tests** (`tests/test_batch_stdin.ps1`) — 8 inline batch test
    cases via stdin pipe.
 6. **upsert tests** (`tests/test_upsert.ps1`) — 9 upsert CLI test cases.
-7. **get-source tests** (`tests/test_get_source.ps1`) — 6 get-source CLI test
+7. **get-source tests** (`tests/test_get_source.ps1`) — 7 get-source CLI test
    cases.
-8. **exists-ci tests** (`tests/test_exists_ci.ps1`) — 5 case-insensitive exists
+8. **exists-ci tests** (`tests/test_exists_ci.ps1`) — 9 case-insensitive exists
    CLI test cases.
 9. **batch-upsert tests** (`tests/test_batch_upsert.ps1`) — 5 batch-upsert CLI test cases (manifest file + --batch-stdin modes, mixed insert/modify paths, ProgId preservation, compile-error, empty manifest, no-args).
 10. **directory-batch tests** (`tests/test_directory_batch.ps1`) — 9 directory-batch CLI test cases (DB1–DB9: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir with ProgId preservation, `-t` extension override, empty dir, unknown type, non-existent dir, missing `-t` arg). Requires live TS; skipped under `-NoTs` or `-SkipDirectoryBatch`.
+11. **serve E2E tests** (`tests/run_serve_e2e.ps1` → `tests/test_serve_e2e.py`) — 2 serve-mode end-to-end pytest cases. Requires live TS AND an elevated parent shell; skipped under `-NoTs` or `-SkipServeE2e`.
+12. **ShowMe E2E tests** (`tests/test_showme_e2e.ps1`) — 9 ShowMe-component E2E test cases (SM1–SM9). Requires live TS; skipped under `-NoTs` or `-SkipShowMeE2e`.
 
 Each sub-suite runs in its own child PowerShell process so a crash or hang in
 one suite cannot affect the others. After all suites run, a grand summary table
@@ -287,11 +290,19 @@ is printed and a single aggregated exit code is returned.
 |-----------------|---------|------------------|--------------------------------------------------------------------------|
 | `$BuildDir`     | string  | `build\Release`  | Directory containing the built executables; passed to `run_unit_tests`. |
 | `$TsPath`       | string  | (none)           | TradeStation install dir; passed to E2E runner as `-TsPath`.            |
-| `-NoTs`         | switch  | —                | Skip E2E; pass `-NoTs` to unit tests (3 non-TS tests only); still run sigtool. |
+| `-NoTs`         | switch  | —                | Skip all TS-dependent suites (3–12); pass `-NoTs` to unit tests (9 non-TS tests only); still run sigtool. |
 | `-SkipSigtool`  | switch  | —                | Skip the sigtool verify gate suite.                                      |
 | `-SkipUnit`     | switch  | —                | Skip the C++ unit test suite.                                            |
 | `-SkipE2e`      | switch  | —                | Skip the E2E CLI test suite.                                             |
+| `-SkipExists`   | switch  | —                | Skip the exists E2E test suite.                                          |
+| `-SkipBatchStdin` | switch | —               | Skip the batch-stdin E2E test suite.                                     |
+| `-SkipUpsert`   | switch  | —                | Skip the upsert E2E test suite.                                          |
+| `-SkipGetSource` | switch | —                | Skip the get-source E2E test suite.                                      |
+| `-SkipExistsCi` | switch  | —                | Skip the exists-ci E2E test suite.                                       |
+| `-SkipBatchUpsert` | switch | —              | Skip the batch-upsert E2E test suite.                                    |
 | `-SkipDirectoryBatch` | switch | —           | Skip the directory-batch E2E test suite.                                 |
+| `-SkipServeE2e` | switch  | —                | Skip the serve E2E test suite.                                           |
+| `-SkipShowMeE2e` | switch | —                | Skip the ShowMe E2E test suite.                                          |
 | `-Verbose`      | switch  | —                | Passed through to all sub-scripts (full output for every test).         |
 
 Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
@@ -301,7 +312,8 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
 - All executables built. The dedicated CMake target builds every test
   executable plus `tsdev_cli` and `sigtool` in one step:
   `cmake --build build --config Release --target test_regression`
-- TradeStation 9.5 installed (for the E2E suite, unless `-NoTs`/`-SkipE2e`).
+- TradeStation 9.5 installed (for the TS-dependent suites 3–12, unless
+  `-NoTs` or the matching `-Skip*` flag is used).
 - Baseline DLL at `tests/fixtures/orlib20_baseline.dll` (for the sigtool
   suite and `test_orlib_resolver`). This file is **committed to the repo**,
   so it is available immediately after clone/checkout — no copy needed. If
@@ -310,21 +322,21 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
   [Interactive baseline DLL prompting](#interactive-baseline-dll-prompting)
   below). See [Updating the baseline DLL](#updating-the-baseline-dll) below
   for how to replace it when a new TradeStation version is released.
-- No TradeStation processes/services running (for the E2E suite).
+- No TradeStation processes/services running (for the TS-dependent suites 3–12).
 
 ```powershell
-# Full run — all 10 suites (113 test cases: sigtool 12 + 20 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 6 get-source + 5 exists-ci + 5 batch-upsert + 9 directory-batch):
+# Full run — all 12 suites (135 test cases: sigtool 12 + 26 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 7 get-source + 9 exists-ci + 5 batch-upsert + 9 directory-batch + 2 serve E2E + 9 ShowMe E2E):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
-# No-TradeStation run — sigtool + 3 non-TS unit tests; skips E2E:
+# No-TradeStation run — sigtool + 9 non-TS unit tests; skips all TS-dependent suites:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 
 # Non-default TradeStation install path:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -TsPath "D:\TradeStation 9.5"
 
 # Selective runs:
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 20 unit tests
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E only
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 26 unit tests + sub-suites 4–12
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E + sub-suites 4–12 (no C++ unit tests)
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # full output for every test
 ```
 
@@ -357,10 +369,14 @@ powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
 #### `tests/run_e2e_tests.ps1` — E2E CLI test runner
 
 Implements the 34-test-case E2E CLI test specification in
-`docs/E2E_TEST_SPEC.md`, covering all 5 supported component types (Strategy,
-Indicator, Function, TradingApp, ShowMe) across three parts: Part A (16 tests,
+`docs/E2E_TEST_SPEC.md`, covering 4 of the 5 supported component types
+(Strategy, Indicator, Function, TradingApp) across three parts: Part A (16 tests,
 insert/modify/delete lifecycle), Part B (8 tests, type-specific semantic
-errors), Part C (10 tests, general errors). Each test writes ASCII-encoded
+errors), Part C (10 tests, general errors). This runner contains **no ShowMe
+cases** — ShowMe end-to-end coverage lives in the separate
+`tests/test_showme_e2e.ps1` script (cases SM1–SM9), which the master
+regression runner (`tests/run_regression.ps1`) executes as Suite 12. Each test
+writes ASCII-encoded
 EasyLanguage source to a temp file, invokes `tsdev_cli.exe`, and verifies the
 exit code and key output substrings. A markdown report is written to
 `tmp/re_artifacts/e2e_all_types_<runId>.md`. Robust try/finally cleanup
@@ -500,6 +516,7 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `test_serve_framing`            | exec     | Serve framing unit test — writeFramed/readFramed helpers (no TS dependency). |
 | `test_crash_handler`            | exec     | VEH crash handler test — normal mode (exit 0) + --crash mode (deliberate access violation, VEH catches + TerminateProcess). No TS dependency. Run --crash mode in isolation. |
 | `test_showme_type`              | exec     | ShowMe ComponentType unit test — enum entry, getCategory/getSubType helpers (no TS dependency). |
+| `test_stress_batch`             | exec     | Opt-in batch feasibility stress test (TVS-D.1) — N sequential insert+compile+verify ops then delete all N on ONE TsDevLib instance/worker thread (`STRESS_BATCH_N` env var, default 600). Not run by `run_regression.ps1`; build/run explicitly via `--target test_stress_batch`. Requires TS + admin. |
 
 ## Verification (confirm the binary is 32-bit)
 
@@ -716,13 +733,17 @@ and on version tag pushes (`v*`).
   (Release).
 - Runs the regression suite in `-NoTs` mode (sigtool + 9 non-TradeStation
   unit tests).
-- Runs non-e2e Python tests (`pytest -m "not e2e"`, 100 mocked tests).
-- Uploads the bundle zip (`artifacts/*.zip`) as a workflow artifact.
+- Runs non-e2e Python tests (`pytest -m "not e2e"`; pytest collects 130 tests,
+  of which the 15 e2e-marked tests are deselected without a live TradeStation
+  install, so 115 mocked tests run).
+- Uploads the assembled `dist/` bundle contents as a workflow artifact named
+  `tsdev-automation-bundle` (`actions/upload-artifact` zips them once).
 
 **Release job** (`ubuntu-latest`, tag pushes only):
 
-- Runs only on tag pushes (`v*`). Downloads the bundle artifact and creates a
-  GitHub Release with the zip attached. The release version is the tag name;
+- Runs only on tag pushes (`v*`). Downloads the `tsdev-automation-bundle`
+  artifact, re-zips its contents as `tsdev_automation_<tag>.zip`, and attaches
+  that zip to a GitHub Release. The release version is the tag name;
   release notes are auto-generated from commits since the last tag.
 
 **TradeStation dependency:** Most C++ regression suites and all e2e Python

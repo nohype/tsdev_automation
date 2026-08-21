@@ -1,5 +1,13 @@
 # RE Findings: F5 Name-Getter Thread-Check INT3 Patch Analysis
 
+> ## ERRATUM — NAME-GETTER CONCLUSIONS BELOW ARE DISPROVEN (SUPERSEDED)
+>
+> **This analysis concluded that `FUN_101c2e90` (called here the "verbatim name getter, non-server variant") and `FUN_101a42d0` yield the verbatim stored item name, and recommends calling `FUN_101a42d0` directly so that "the result is the name pointer". This was DISPROVEN by runtime tracing (Frida, 2026-08-20): in non-server mode both functions return the ProgId, not the verbatim name.** `FUN_101c2e90` is a **ProgId getter**, and `FUN_101a42d0`'s non-server path returns that ProgId — it cannot yield the verbatim name.
+>
+> **Correct, implemented-and-verified approach:** call `FUN_101d05e0` (BST search, `__thiscall`, ECX=warehouse, stack=(typeFilter, name, *outNode), RET 0xC, returns bool + node pointer), then call `FUN_101c36d0` (verbatim-name getter, `__fastcall`, ECX=node, returns `char*` to the verbatim name stored at warehouse node offset +0x1D), with the thread-check INT3 inside `FUN_101c36d0` at offset 0x6A (RVA `0x1C373A`) NOP'd. Authoritative details: `docs\RE\RE_F5_bst_node_structure.md` and `docs\SIGNATURE_CATALOG.md` (signatures 23–25).
+>
+> **Readers: treat the body's name-getter conclusions and its §8 recommendations as SUPERSEDED/historical. Do NOT implement them.** The body text below is intentionally left unmodified as a historical record of the incorrect static-analysis reasoning.
+
 **Date:** 2026-08-19
 **Analyst:** RE subagent (Ghidra MCP)
 **Target:** orlib20.dll v9.50.01.3344 (SHA-256 `318DB24A...`, PE timestamp `0x5C01735E`)

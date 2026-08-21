@@ -61,7 +61,7 @@ FindExistPos takes `(name, warehouseType)` where warehouseType is the **category
 ### Type converter (from static analysis of orlib20.dll RVA 0x1D43A0)
 - Type 0: {type=0, subtype=0x200, extra=-1}
 - Type 1: {type=1, subtype=-1}
-- Type 2: {type=2, subtypes=[0x502, 0x402, 0x602, 0x802, 0xA02, 0xC02, 0xE02]} (7 subtypes — Indicator/PaintBar/ShowMe/ActivityBar). **0x502 = ShowMe CONFIRMED** (Ghidra RE, TVS-K.1). **0x402 = PaintBar CONFIRMED** (Ghidra RE — the §5.2 subtype table in FEASIBILITY.md previously had PaintBar/ShowMe subtypes SWAPPED; corrected: subtypes 2,4 = PaintBar, subtypes 3,5 = ShowMe).
+- Type 2: {type=2, subtypes=[0x502, 0x402, 0x602, 0x802, 0xA02, 0xC02, 0xE02]} (7 subtypes — Indicator/PaintBar/ShowMe/ActivityBar). **0x502 = ShowMe CONFIRMED** (Ghidra RE, TVS-C.8). **0x402 = PaintBar CONFIRMED** (Ghidra RE — the §5.2 subtype table in FEASIBILITY.md previously had PaintBar/ShowMe subtypes SWAPPED; corrected: subtypes 2,4 = PaintBar, subtypes 3,5 = ShowMe).
 - Type 3: {type=3, subtype=-1}
 - Type 4: {type=4, subtype=-1}
 
@@ -70,8 +70,8 @@ FindExistPos takes `(name, warehouseType)` where warehouseType is the **category
 - **WHType for Functions:** WHType=4 (category 4). CONFIRMED — insert/delete/modify/exists all work.
 - **WHType for Indicators:** WHType=2 (category 2). CONFIRMED — insert/delete/modify/exists all work.
 - **WHType for TradingApp:** WHType=5122 (0x1402 = category 2 | sub-type 0x14). CONFIRMED — Workstream C.
-- **WHType for ShowMe:** WHType=1282 (0x0502 = category 2 | sub-type 0x05). CONFIRMED — TVS-K.1. Ghidra RE confirmed via GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280. See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`.
+- **WHType for ShowMe:** WHType=1282 (0x0502 = category 2 | sub-type 0x05). CONFIRMED — TVS-C.8. Ghidra RE confirmed via GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280. See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`.
 - **CreateEntryEX WHType vs FindExistPos type:** Same numbering — both use the category (low 8 bits of the expanded whType encoding).
 
 ## Open questions
-- **3 unconfirmed types:** ActivityBar, PaintBar, ProbabilityMap. These require Ghidra/Frida RE work to determine their WHType values. See `docs/FEASIBILITY.md` §5.2/§5.5. (ShowMe was previously in this list but is now CONFIRMED — see TVS-K.1 above.)
+- **3 unconfirmed types:** ActivityBar, PaintBar, ProbabilityMap. These require Ghidra/Frida RE work to determine their WHType values. See `docs/FEASIBILITY.md` §5.2/§5.5. (ShowMe was previously in this list but is now CONFIRMED — see TVS-C.8 above.)
