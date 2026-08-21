@@ -145,14 +145,16 @@ All workstreams A, B, C, D, E, F, G, I complete. Detailed per-TVS logs archived 
 ## CI (GitHub Actions) — COMPLETE (2026-08-21)
 - **Workflow:** `.github/workflows/ci.yml` — single workflow, 2 jobs.
 - **Triggers:** push (all branches + `v*` tags), pull_request (main only).
-- **Build job** (windows-latest): checkout@v7 → setup-uv@v8 → `uv sync --frozen` → `cmake -S . -B build -A Win32` → `cmake --build build --config Release` → `run_regression.ps1 -NoTs` → `uv run pytest -m "not e2e"` → upload-artifact@v7 (`artifacts/*.zip`, `if-no-files-found: error`).
+- **Build job** (windows-latest): checkout@v7 → setup-uv@v10.0.0 → `uv sync --frozen` → `cmake -S . -B build -A Win32` → `cmake --build build --config Release` → `run_regression.ps1 -NoTs` → `uv run pytest -m "not e2e"` → upload-artifact@v7 (`artifacts/*.zip`, `if-no-files-found: error`).
 - **Release job** (ubuntu-latest, `needs: build`, `if: startsWith(github.ref, 'refs/tags/')`, `permissions: contents: write`): download-artifact@v8 → softprops/action-gh-release@v3 (`files: artifacts/*.zip`, `tag_name: ${{ github.ref_name }}`, `generate_release_notes: true`).
 - **Manual release trigger:** push a tag (`git tag v0.1.0 && git push origin v0.1.0`). No workflow_dispatch.
-- **Action versions:** checkout@v7, upload-artifact@v7, download-artifact@v8, setup-uv@v8 (NOT v10 — released <24h ago, supply chain risk), action-gh-release@v3.
+- **Action versions:** checkout@v7, upload-artifact@v7, download-artifact@v8, setup-uv@v10.0.0 (pinned full semver — bare major tags don't exist for this action), action-gh-release@v3.
 - **Side effect:** `uv.lock` updated to remove stale `capstone` entry (leftover from TVS-G.4 which removed capstone from pyproject.toml but never re-locked). Necessary for `uv sync --frozen` to succeed in CI.
 - **Docs:** `docs/BUILD.md` — new `## CI (GitHub Actions)` section added at end.
 - **Adversarial review:** APPROVED, zero findings.
 - **Verification:** All CI-equivalent commands verified locally (build ~46s, regression -NoTs 2/2 suites PASS, pytest 68/68 non-e2e PASS, zip artifact created).
+- **CI VERIFIED GREEN (2026-08-21):** Pushed commit `8c50793` to origin/main. GitHub Actions run `32449304024` PASSED in 1m37s — build job all 11 steps green, `tsdev-automation-bundle` artifact uploaded. Release job correctly skipped (branch push, not tag). Previous run `32448316226` (unauthorized subagent commit `e1d4fbe` with invalid `@v8`) failed in 6s — superseded by force-push of amended commit. Release job NOT yet verified end-to-end (requires tag push — user said no tags this session).
+- **LESSON:** `astral-sh/setup-uv` does NOT publish bare major-version tags (`v8`, `v9`, `v10`). Only full semver tags exist (`v8.0.0`, `v10.0.0`, etc.). Always verify action tags exist via GitHub API before using them. GitHub first-party actions (`actions/*`) DO publish moving major tags; third-party actions may not.
 
 ## Reminders to self
 - Re-read this file every turn / after context compaction.
