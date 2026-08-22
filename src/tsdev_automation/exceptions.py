@@ -70,7 +70,7 @@ class AlreadyExistsError(TsDevError):
 
 
 class EntryOpError(TsDevError):
-    """Warehouse entry operation failure (exit 6)."""
+    """Warehouse entry operation failure (code: entry_op_failure)."""
 
 
 class SaveSourceError(TsDevError):
@@ -109,6 +109,35 @@ class TsDevCrashError(TsDevError):
                 message = f"tsdev_cli.exe crashed (exit code 0x{exit_code & 0xFFFFFFFF:08X})"
             else:
                 message = "tsdev_cli.exe crashed unexpectedly"
+        super().__init__(message=message)
+
+
+class ElevationRequiredError(TsDevError):
+    """Process is not elevated and ``use_serve=False`` (exit 12).
+
+    The ``tsdev_cli.exe`` binary has a ``requireAdministrator`` manifest, so
+    launching it from a non-elevated Python process via ``subprocess.run``
+    fails with ``ERROR_ELEVATION_REQUIRED`` (Windows error 740) — a confusing
+    non-zero exit code with no actionable message.  This error is raised
+    *before* the subprocess call (in the ``use_serve=False`` / non-elevated
+    code path) so the user gets a clear, actionable message instead.
+
+    This is a client-side error (no ``TsDevResult``); it is NOT produced by
+    the C++ CLI and is therefore intentionally absent from
+    :data:`ERROR_CODE_MAP`.  ``error.code`` is exposed as the class attribute
+    :attr:`code` for symmetry with the CLI error-code strings.
+    """
+
+    code = "elevation_required"
+
+    def __init__(self, message: str | None = None) -> None:
+        self.exit_code = 12
+        if message is None:
+            message = (
+                "Process is not elevated. Either run Python as administrator, "
+                "or enable use_serve=True (the default) to use the serve-mode "
+                "broker which handles elevation via a single UAC prompt."
+            )
         super().__init__(message=message)
 
 
@@ -151,6 +180,7 @@ __all__ = [
     "EllMissingError",
     "ThreadFailure",
     "TsDevCrashError",
+    "ElevationRequiredError",
     "ERROR_CODE_MAP",
     "exception_for",
 ]

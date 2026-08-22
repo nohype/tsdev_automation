@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import _pipe
-from .exceptions import TsDevCrashError, TsDevError, exception_for
+from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, exception_for
 from .results import TsDevResult
 
 # The component types confirmed in tsdev_cli.cpp (parseType).
@@ -604,7 +604,7 @@ class TsDevClient:
         to that file.
 
         Raises :class:`~tsdev_automation.exceptions.NotFoundError` if the item is
-        not found or is password-protected.
+        not found.
         Raises :class:`~tsdev_automation.exceptions.OutputWriteError` if writing
         to ``output_file`` fails.
         Raises :class:`ValueError` for an unknown component type (client-side
@@ -879,6 +879,16 @@ class TsDevClient:
         return text
 
     def _run_cli(self, cmd: list[str]) -> TsDevResult:
+        # Elevation guard: when use_serve=False and the Python session is NOT
+        # elevated, the CLI (which has a requireAdministrator manifest) cannot
+        # be launched via subprocess.run — it fails with
+        # ERROR_ELEVATION_REQUIRED (Windows error 740).  Raise a clear,
+        # actionable error BEFORE attempting the subprocess call.  When the
+        # session IS elevated this guard is a no-op (direct subprocess calls
+        # work fine).  When use_serve=True and not elevated, this method is
+        # never reached (the serve-broker path is taken instead).
+        if not self._use_serve and not self._is_elevated:
+            raise ElevationRequiredError()
         if not self.cli_path.is_file():
             raise FileNotFoundError(f"tsdev_cli.exe not found at {self.cli_path!s}")
         try:
@@ -915,6 +925,14 @@ class TsDevClient:
         return TsDevResult.from_json(obj, stdout=stdout, stderr=stderr)
 
     def _run_batch(self, cmd: list[str], input: str) -> list[TsDevResult]:
+        # Elevation guard: same rationale as _run_cli — when use_serve=False
+        # and the session is not elevated, the batch CLI (requireAdministrator
+        # manifest) cannot be launched via subprocess.run.  Raise a clear,
+        # actionable error BEFORE attempting the subprocess call.  When
+        # use_serve=True and not elevated, batch ops already raise
+        # NotImplementedError in _batch/_batch_dir before reaching here.
+        if not self._use_serve and not self._is_elevated:
+            raise ElevationRequiredError()
         if not self.cli_path.is_file():
             raise FileNotFoundError(f"tsdev_cli.exe not found at {self.cli_path!s}")
         try:

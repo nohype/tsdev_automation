@@ -22,6 +22,7 @@ from .client import BatchItem, TsDevClient
 from .exceptions import (
     AlreadyExistsError,
     CompileError,
+    ElevationRequiredError,
     EllMissingError,
     EntryOpError,
     InitFailure,
@@ -52,6 +53,7 @@ __all__ = [
     "OutputWriteError",
     "AlreadyExistsError",
     "EntryOpError",
+    "ElevationRequiredError",
     "SaveSourceError",
     "CompileError",
     "EllMissingError",

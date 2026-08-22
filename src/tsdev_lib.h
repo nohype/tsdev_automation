@@ -95,8 +95,9 @@ public:
     bool saveSource(ComponentType type, int progId, const std::string& source);
 
     // Retrieves EasyLanguage source text for an existing item by name + type.
+    // Internally encrypted items are decrypted automatically, matching TSDev.
     // Returns the source text as a string. Returns empty string on failure
-    // (not found, password-protected, or internal error).
+    // (not found or internal error).
     std::string getSource(ComponentType type, const std::string& name);
 
     // Case-insensitive existence query. Uses a two-phase approach:

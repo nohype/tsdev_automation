@@ -3,6 +3,82 @@
 > **READ THIS FILE FIRST at the start of every turn / after any context compaction.**
 > This is the PM's outsourced memory. Keep it updated; re-read it regularly.
 
+## CRITICAL CORRECTION (2026-08-22) — "PASSWORD PROTECTION" HYPOTHESIS IS WRONG
+
+### What was wrong
+The previous "password-protection fix" (section below) was based on a WRONG interpretation. The user has clarified:
+- **There is NO password protection for items in the library.** Password protection only exists for exported .ELD files.
+- TSDev may internally encrypt data on disk, but this is entirely hidden from the user.
+- The user ALWAYS sees plain text EL code in the TSDev UI, as if raw text was stored.
+
+### What the verified data actually shows
+- `_LoadTextFileEX@16` with NULL password returns encrypted binary for certain items (BTA_PROTEGE-SmartCode-JW3, Average, Volume).
+- The data has a 10-byte header `21 E0 71 9B 25 EE 1C 07 01 EB 00` followed by high-entropy bytes.
+- Bit 10 (0x400) of USHORT at 0x7B correlates with encrypted storage — but this is NOT "password protection," it's "internally encrypted storage."
+- TSDev decrypts this automatically. Our CLI does NOT. That's the bug.
+
+### Ghidra found THREE paths in FUN_101a0f90
+1. **Auto-decrypt path**: `0xD8 & 2` AND `0xCC == 0xCABECABE` → decrypts with internal hardcoded key
+2. **Standard + NULL password**: raw byte copy (NO decryption) ← this is what we do, WRONG
+3. **Standard + password**: decrypts with provided password
+
+We took path 2 (raw copy) and got encrypted bytes. TSDev must take path 1 or 3, or use a different function entirely.
+
+### Fix implemented and verified (2026-08-22)
+- **Root cause:** `_LoadTextFileEX@16` with NULL password returns raw encrypted bytes for items with 0x400 flag set. TSDev passes a non-NULL zeroed 64-byte buffer (FUN_10108630: `memset(pw, 0, 0x40)`) which triggers Branch C decryption — the password parameter is an OUTPUT buffer that receives extracted password metadata from the data header. Any non-NULL pointer works.
+- **Fix:** `getSource()` now checks 0x400 flag. If set, passes a zeroed 64-byte buffer → triggers decryption → returns plain text. If clear, passes NULL → raw copy (unchanged). If `_GetMasterRecByType` fails, falls back to NULL (graceful degradation).
+- **Removed:** `PasswordProtectedError` (Python), exit code 6 / `password_protected` for get-source (C++), `isPasswordProtected` out-parameter from `getSource()`. Exit 6 is now only `entry_op_failure` (insert/modify/delete).
+- **Kept:** dump() replace handler (safety net), ElevationRequiredError (correct, unrelated).
+- **E2E verified:** BTA_PROTEGE-SmartCode-JW3 → success, full decrypted source. Average (built-in function) → success, full decrypted source. Nonexistent → exit 5 / not_found.
+- **Python tests:** 120 passed, 15 deselected. Adversarial review: APPROVE.
+- **Distribution updated:** D:\Nesnidalian (both layouts), dist/, artifacts/tsdev_automation_2608221310.zip
+
+### Frida lesson: TSDev attach crash (2026-08-22)
+A Frida subagent attached to TSDev.exe and hooked `_LoadTextFileEX@16` / `_GetMasterRecByType@16`. TSDev crashed after Frida detached. The likely cause was hook cleanup corrupting function bytes. Frida CAN and SHOULD be used to trace calls in TSDev — but the subagent should use care with attach/detach and prefer `Interceptor.attach` with proper cleanup, or use `Stalker` for non-invasive tracing where possible.
+
+### Encoding facts (verified)
+- Source is stored as raw bytes in OLE stream `M_%d_%d_Source` inside .ell files. No encoding conversion in the read path.
+- Save path uses `lstrlenA()` — source is effectively ANSI or UTF-8 (no embedded nulls). UTF-16 cannot be saved correctly.
+- No encoding field in master record. Encoding is implicit in the raw bytes.
+- For non-encrypted items: plain ANSI/ASCII with CRLF, null-terminated. No BOM, no UTF-16.
+- For encrypted items: encrypted binary with 10-byte header `21 E0 71 9B 25 EE 1C 07 01 EB 00`. After decryption: plain ANSI text.
+- The dump() replace handler handles any edge cases with non-UTF-8 bytes in JSON serialization.
+
+---
+
+## GET-SOURCE CRASH + PASSWORD-PROTECTION FIX (2026-08-22) — SUPERSEDED (see correction above)
+
+### Bug 1: get-source --json crash (0xE06D7363)
+- **Root cause:** nlohmann::json `dump()` uses default `error_handler_t::strict`, which THROWS `type_error` (C++ exception 0xE06D7363) on invalid UTF-8 bytes in source text. Exception on main thread in `emitOutput()`, no try/catch, VEH doesn't catch 0xE06D7363 → TSCrashReport.exe.
+- **Fix:** All 7 `dump()` calls replaced with `j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)` (replaces invalid UTF-8 with U+FFFD). `emitOutput()` and serve-mode `runServe()` inner loop wrapped in try/catch as belt-and-suspenders.
+
+### Bug 2: get-source returns binary data for password-protected items
+- **Root cause:** `getSource()` passes `password=NULL` to `_LoadTextFileEX@16`. For password-protected items, this does a plain `memcpy` of encrypted data (not decrypted source).
+- **RE findings (Ghidra + Frida cross-verified):** Password-protection flag = **bit 10 (mask 0x400) of USHORT at byte offset 0x7B in the 266-byte master record**. NOT `rec[0x74] & 1` (that's a "source loaded" cache flag, not password). `_GetMasterRecByType@16` (already resolved, patched, SEH wrapper existed but was never called) retrieves the master record.
+- **Fix:** `getSource()` gained `bool* isPasswordProtected` out-parameter. Before calling `_LoadTextFileEX`, calls `_GetMasterRecByType@16` and checks `*(ushort*)(rec+0x7B) & 0x400`. If set, returns exit 6 / `password_protected`. If `_GetMasterRecByType` fails, falls through to `_LoadTextFileEX` (graceful degradation — dump() fix handles binary data).
+- **New exit code 6** for get-source (overloaded with `entry_op_failure` for insert/modify/delete; disambiguated by op in `errorCodeString()`).
+- **New Python exception:** `PasswordProtectedError` (code="password_protected", exit 6).
+
+### Bug 3: No elevation check for use_serve=False
+- **Root cause:** When `use_serve=False` and Python not elevated, CLI (requireAdministrator manifest) fails with ERROR_ELEVATION_REQUIRED (740) — confusing error.
+- **Fix (per user decision: "Hard error"):** `ElevationRequiredError` raised in `_run_cli()` and `_run_batch()` when `not self._use_serve and not self._is_elevated`. Message tells user to run as admin OR enable `use_serve=True` (default).
+- **New Python exception:** `ElevationRequiredError` (code="elevation_required", exit 12).
+
+### Adversarial review: APPROVE (1 MAJOR + 4 MINOR, all fixed)
+- MAJOR: serve-mode catch block used exit 6 for unexpected exceptions → misclassified as password_protected for get-source. Fixed: use exit 1 / internal_error.
+- MINOR: redundant exit-code check in get_source → removed, use exception_for. EntryOpError docstring fixed. ElevationRequiredError added to subclass test. Serve-mode password-protected test added.
+- Additional fix: `ElevationRequiredError` and `PasswordProtectedError` exported from `__init__.py`.
+
+### Verification
+- C++ build: SUCCESS (VS 2022 Community, Win32/Release)
+- E2E: get-source on password-protected item → exit 6, no crash. get-source on non-protected item → readable EL source. exists/insert/delete/modify all work.
+- Python: 122 passed, 15 deselected.
+- User's distribution updated (D:\Nesnidalian + D:\Nesnidalian\tsdev-automation).
+- Distribution zip: D:\tsdev_automation\artifacts\tsdev_automation_2608221120.zip
+
+### Key RE lesson
+- The RE_F4 doc's claim that `param_6[0x74] & 1` is the password-protection flag was WRONG. It's a "source loaded" cache flag. The actual password flag is at `0x7B` bit 10. This was discovered by Frida dynamic verification (comparing protected vs non-protected items) and confirmed by Ghidra (FUN_101788d0 checks `*(ushort*)(param_1+0x7b) & 0x400` before decryption).
+
 ## K.6a COMPLETE (2026-08-21)
 
 All 7 phases passed. Adversarial review APPROVED (all findings fixed: 1 CRITICAL, 1 MAJOR, 4 MINOR).

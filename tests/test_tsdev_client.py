@@ -57,7 +57,12 @@ def fake_cli(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(fake_cli: Path) -> TsDevClient:
-    return TsDevClient(cli_path=str(fake_cli), use_serve=False)
+    c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+    # Force elevated so the direct-subprocess path is exercised without
+    # tripping the use_serve=False / non-elevated elevation guard.  These
+    # tests mock subprocess.run and are not concerned with real elevation.
+    c._is_elevated = True
+    return c
 
 
 def _success_json(op: str, type_: str, name: str, prog_id: int = 42, ell: str = "C:/x.ell") -> str:
@@ -210,6 +215,7 @@ class TestSingleItem:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
+        c._is_elevated = True
         c.delete("strategy", "X")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -285,6 +291,7 @@ class TestUpsert:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
+        c._is_elevated = True
         c.upsert("strategy", "MyStrat", "input(close, 1);")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -347,6 +354,7 @@ class TestExists:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
+        c._is_elevated = True
         c.exists("strategy", "MyStrat")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -479,7 +487,7 @@ class TestGetSource:
                     "strategy",
                     "Nope",
                     "not_found",
-                    "'Nope' not found or source unavailable (may be password-protected).",
+                    "'Nope' not found or source unavailable.",
                     exit_code=5,
                 )
             ),
@@ -531,6 +539,7 @@ class TestGetSource:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         c = TsDevClient(cli_path=str(fake_cli), ts_path="C:/TS", use_serve=False)
+        c._is_elevated = True
         c.get_source("strategy", "MyStrat")
         assert "--ts-path" in seen["cmd"]
         assert "C:/TS" in seen["cmd"]
@@ -1324,6 +1333,7 @@ class TestExceptionHierarchy:
             "EllMissingError",
             "ThreadFailure",
             "TsDevCrashError",
+            "ElevationRequiredError",
         ]:
             cls = getattr(exc, name)
             assert issubclass(cls, TsDevError)
@@ -1578,10 +1588,12 @@ class TestServeRouting:
     """Unit tests for :class:`TsDevClient` serve-broker routing decisions."""
 
     def test_uses_subprocess_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
-        """When ``use_serve=False`` is passed explicitly, the subprocess.run path is used."""
+        """When ``use_serve=False`` is passed explicitly (and elevated), the
+        subprocess.run path is used directly — no broker."""
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
-        # Force _is_elevated to False so the only thing preventing serve is use_serve.
-        c._is_elevated = False
+        # Force _is_elevated to True: use_serve=False means no broker, and when
+        # elevated the direct subprocess path works without the elevation guard.
+        c._is_elevated = True
         assert c._serve_active() is False
 
         called: dict = {}
@@ -1789,13 +1801,102 @@ class TestServeBatchNotImplemented:
         assert len(results) == 1 and results[0].success
 
     def test_batch_works_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
-        """When use_serve=False, batch ops use subprocess.run regardless of elevation."""
+        """When use_serve=False (and elevated), batch ops use subprocess.run."""
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
-        c._is_elevated = False
+        # Elevated so the use_serve=False elevation guard does not fire.
+        c._is_elevated = True
         arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
         results = c.batch_delete([BatchItem("strategy", "A")])
         assert len(results) == 1 and results[0].success
+
+
+class TestElevationGuard:
+    """Tests for the ``use_serve=False`` / non-elevated hard-error guard.
+
+    When ``use_serve=False`` and the Python session is NOT elevated, the CLI
+    (``requireAdministrator`` manifest) cannot be launched via
+    ``subprocess.run`` — it would fail with ``ERROR_ELEVATION_REQUIRED``
+    (Windows error 740).  The wrapper raises
+    :class:`ElevationRequiredError` *before* attempting the subprocess call.
+    """
+
+    def test_single_op_raises_when_not_elevated_and_use_serve_false(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """A single-item op raises ElevationRequiredError before subprocess.run."""
+        # Mock _detect_elevation to report a non-elevated session.
+        monkeypatch.setattr(
+            "tsdev_automation.client._detect_elevation", lambda: False
+        )
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        assert c._is_elevated is False
+        assert c._use_serve is False
+
+        # subprocess.run must never be called — fail loudly if it is.
+        def _no_run(*a, **k):
+            raise AssertionError("subprocess.run must not be called when not elevated")
+
+        monkeypatch.setattr(subprocess, "run", _no_run)
+
+        with pytest.raises(exc.ElevationRequiredError) as ei:
+            c.insert("strategy", "X", "x;")
+        # Actionable message and stable error code / exit code.
+        assert "use_serve=True" in str(ei.value)
+        assert ei.value.code == "elevation_required"
+        assert ei.value.exit_code == 12
+
+    def test_batch_op_raises_when_not_elevated_and_use_serve_false(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """A batch op also raises ElevationRequiredError before subprocess.run."""
+        monkeypatch.setattr(
+            "tsdev_automation.client._detect_elevation", lambda: False
+        )
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+
+        def _no_run(*a, **k):
+            raise AssertionError("subprocess.run must not be called when not elevated")
+
+        monkeypatch.setattr(subprocess, "run", _no_run)
+
+        with pytest.raises(exc.ElevationRequiredError):
+            c.batch_delete([BatchItem("strategy", "A")])
+
+    def test_no_raise_when_elevated_and_use_serve_false(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """When elevated, use_serve=False does NOT trip the guard (subprocess works)."""
+        monkeypatch.setattr(
+            "tsdev_automation.client._detect_elevation", lambda: True
+        )
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        assert c._is_elevated is True
+
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed(_success_json("delete", "strategy", "X"))
+        )
+        r = c.delete("strategy", "X")
+        assert r.success
+
+    def test_no_raise_when_use_serve_true_and_not_elevated(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """When use_serve=True (default) and not elevated, the broker path is
+        taken — the elevation guard in _run_cli is never reached."""
+        monkeypatch.setattr(
+            "tsdev_automation.client._detect_elevation", lambda: False
+        )
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        assert c._serve_active() is True
+
+        # Inject a fake broker so no real UAC / pipe is touched.
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_success_json("insert", "strategy", "X"))
+        c._broker = fake_broker
+
+        r = c.insert("strategy", "X", "input(close,1);")
+        assert r.success
 
 
 class TestDetectElevation:

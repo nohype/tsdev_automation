@@ -961,7 +961,54 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
     int progId = findExistPos(name, type);
     if (progId <= 0) return "";  // not found
 
-    // 2. Call _LoadTextFileEX@16 with NULL password (standard items only),
+    // 1b. Check the internal-encryption flag BEFORE calling _LoadTextFileEX.
+    //     _GetMasterRecByType@16 retrieves the 266-byte (0x10A) master record
+    //     for this item. Bit 10 (mask 0x400) of the USHORT at byte offset
+    //     0x7B indicates "internally encrypted on disk" (this is NOT a
+    //     password-protection feature). When this bit is set, _LoadTextFileEX
+    //     requires a non-NULL password buffer to trigger the internal
+    //     decryption path (Branch C in FUN_101a0f90). TSDev passes a zeroed
+    //     64-byte buffer (FUN_10108630), and any non-NULL pointer works.
+    //     If _GetMasterRecByType fails (SEH exception or returns 0), we
+    //     gracefully fall back to _LoadTextFileEX with NULL (the plain-text
+    //     path) as before.
+    unsigned char masterRec[0x10A] = {};
+    GetMasterRecByTypeSehResult mrSeh;
+    if (callGetMasterRecByType(m_getMasterRecByType, getCategory(type),
+                               getSubType(type), progId, masterRec,
+                               &mrSeh)) {
+        if (mrSeh.result) {
+            unsigned short flags = *(unsigned short*)(masterRec + 0x7B);
+            if (flags & 0x400) {
+                // Source is internally encrypted on disk. Passing a non-NULL
+                // password buffer triggers Branch C in FUN_101a0f90, which
+                // extracts the embedded password from the data header and
+                // decrypts the source body. TSDev does the same (FUN_10108630
+                // uses a zeroed 64-byte buffer). The buffer content doesn't
+                // matter — any non-NULL pointer triggers the decrypt path.
+                char decryptBuffer[64] = {};
+                LoadTextFileExSehResult decryptSeh;
+                if (!callLoadTextFileEx(m_loadTextFileEx, nullptr,
+                                        getCategory(type), progId,
+                                        decryptBuffer, &decryptSeh)) {
+                    return "";  // SEH exception in orlib20
+                }
+                HGLOBAL decryptHMem = decryptSeh.result;
+                if (decryptHMem == NULL) return "";  // failure (encrypted or error)
+
+                char* decryptText = (char*)GlobalLock(decryptHMem);
+                std::string decryptResult;
+                if (decryptText) {
+                    decryptResult = std::string(decryptText);
+                    GlobalUnlock(decryptHMem);
+                }
+                GlobalFree(decryptHMem);
+                return decryptResult;
+            }
+        }
+    }
+
+    // 2. Call _LoadTextFileEX@16 with NULL password (plain text items),
     //    SEH-protected via the POD-only callLoadTextFileEx helper. getSource
     //    itself holds std::string objects (with destructors), so __try cannot
     //    appear directly in this function (MSVC C2712); the helper contains
@@ -972,7 +1019,7 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
         return "";  // SEH exception in orlib20
     }
     HGLOBAL hMem = seh.result;
-    if (hMem == NULL) return "";  // failure (password-protected or error)
+    if (hMem == NULL) return "";  // failure (not found or error)
 
     // 3. Lock, copy, free. GlobalLock returns a pointer to the ANSI source
     //    text; GlobalFree releases the HGLOBAL allocated by orlib20.

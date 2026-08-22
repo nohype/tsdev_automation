@@ -47,8 +47,9 @@
 //
 // Exit codes: 0=success, 1=usage/arg error, 2=unknown type, 3=source file
 // error, 4=init failure, 5=not-found (modify/delete) OR already-exists
-// (insert), 6=entry op failure, 7=saveSource failure, 8=compile error,
-// 9=.ell missing, 10=CreateThread failure.
+// (insert), 6=entry op failure (insert/modify/delete), 7=saveSource failure,
+// 8=compile error, 9=.ell missing,
+// 10=CreateThread failure.
 //
 // Batch subcommands (batch-insert/batch-modify/batch-delete) use a separate
 // exit-code scheme (they are distinct subcommands, so no conflict):
@@ -67,6 +68,7 @@
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -180,8 +182,8 @@ void printUsage() {
         "(default: auto-discovered from registry)\n"
         "  --output <file>  (get-source only) Write the retrieved EasyLanguage "
         "source to <file>\n"
-        "                   instead of stdout. Standard (non-password-protected) "
-        "items only.\n"
+        "                   instead of stdout. Internally encrypted items are "
+        "decrypted automatically.\n"
         "  --case-insensitive  (exists only) Match the name case-insensitively.\n"
         "                      Without this flag, the name must match exactly.\n"
         "  -t <ext>       (batch-*-dir only) Filter files by extension. Repeatable.\n"
@@ -324,6 +326,7 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
 // untouched (it is a diagnostic, not a result). nlohmann/json performs all
 // escaping (backslashes in Windows paths, quotes, newlines) automatically.
 void emitOutput(const CliResult& r, bool jsonMode) {
+    try {
     if (!jsonMode) {
         if (!r.humanStdout.empty()) {
             std::fwrite(r.humanStdout.c_str(), 1, r.humanStdout.size(), stdout);
@@ -337,10 +340,23 @@ void emitOutput(const CliResult& r, bool jsonMode) {
     }
 
     ordered_json j = cliResultToJson(r);
-    const std::string s = j.dump();
+    const std::string s = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     std::fwrite(s.c_str(), 1, s.size(), stdout);
     std::fputc('\n', stdout);
     std::fflush(stdout);
+    } catch (...) {
+        // Belt-and-suspenders: even with the replace error handler on dump(),
+        // a future code path could throw during output serialization. Emit a
+        // JSON error and exit cleanly instead of crashing (which would launch
+        // TSCrashReport.exe via the unhandled-exception filter).
+        const char* errMsg =
+            "{\"op\":\"unknown\",\"success\":false,\"exit_code\":1,"
+            "\"error\":{\"code\":\"internal_error\","
+            "\"message\":\"internal error during output serialization\"}}\n";
+        std::fwrite(errMsg, 1, std::strlen(errMsg), stdout);
+        std::fflush(stdout);
+        std::exit(1);
+    }
 }
 
 // --- TVS-D.3: reusable per-op logic (shared by single-item + batch) --------
@@ -1135,11 +1151,11 @@ int cmdUpsert(const std::string& typeStr,
 
 // doGetSource: retrieve the EasyLanguage source text for an existing item by
 // name + type. getSource returns the source string; an EMPTY string means the
-// item was not found OR the source is unavailable (e.g. password-protected).
-// We cannot distinguish these cases from the empty string, so all failures
-// map to exit 5 / not_found. When an --output file is requested, the source
-// is written to that file (on the worker thread); a write failure maps to
-// exit 3 / output_write_error.
+// item was not found OR the source is unavailable (internal error). Otherwise
+// the source is returned. Internally encrypted items are decrypted
+// automatically. When an --output file is requested, the source is written to
+// that file (on the worker thread); a write failure maps to exit 3 /
+// output_write_error.
 CliResult doGetSource(TsDevLib& lib, ComponentType type,
                       const std::string& typeStr, const std::string& name,
                       const std::string& outputPath) {
@@ -1152,11 +1168,9 @@ CliResult doGetSource(TsDevLib& lib, ComponentType type,
     if (source.empty()) {
         r.exitCode = 5;
         r.errorMessage = typeStr + " \"" + name
-                         + "\" not found or source unavailable "
-                           "(may be password-protected).";
+                         + "\" not found or source unavailable.";
         r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
-                        + name + "\" not found or source unavailable "
-                          "(may be password-protected).\n";
+                        + name + "\" not found or source unavailable.\n";
         return r;
     }
 
@@ -1531,7 +1545,7 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
         arr.push_back(cliResultToJson(r));
     }
 
-    const std::string s = arr.dump();
+    const std::string s = arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     std::fwrite(s.c_str(), 1, s.size(), stdout);
     std::fputc('\n', stdout);
     std::fflush(stdout);
@@ -2157,6 +2171,7 @@ DWORD WINAPI runServe(LPVOID param) {
                 break;  // broken pipe / EOF / oversized -> close connection
             }
 
+            try {
             // Parse the JSON request. Malformed JSON -> usage error response.
             CliResult r;
             ordered_json reqJson;
@@ -2166,7 +2181,7 @@ DWORD WINAPI runServe(LPVOID param) {
                 r.success = false;
                 r.exitCode = 1;
                 r.errorMessage = "malformed JSON request";
-                if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+                if (!writeFramed(pipe, cliResultToJson(r).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace))) break;
                 continue;
             }
 
@@ -2174,7 +2189,7 @@ DWORD WINAPI runServe(LPVOID param) {
             ServeRequest req;
             r = parseServeRequest(reqJson, req);
             if (!r.success) {
-                if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+                if (!writeFramed(pipe, cliResultToJson(r).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace))) break;
                 continue;
             }
 
@@ -2182,14 +2197,18 @@ DWORD WINAPI runServe(LPVOID param) {
             // shutdown and break the inner loop.
             if (req.op == "quit") {
                 CliResult qr = dispatchServeRequest(*lib, req);
-                writeFramed(pipe, cliResultToJson(qr).dump());
+                writeFramed(pipe, cliResultToJson(qr).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
                 p->quit.store(true);
                 break;
             }
 
             // Dispatch on THIS thread (TsDevLib is thread-affine to this
             // 64MB-stack worker). Catch unexpected exceptions and respond
-            // with an entry_op_failure result instead of crashing.
+            // with an internal_error result (exit 1) instead of crashing.
+            // NOTE: do NOT use exit 6 here — exit 6 is only used for
+            // entry_op_failure (insert/modify/delete/upsert), so an unexpected
+            // exception would be misclassified. Exit 1 / internal_error is
+            // unambiguous.
             try {
                 r = dispatchServeRequest(*lib, req);
             } catch (const std::exception& e) {
@@ -2198,10 +2217,22 @@ DWORD WINAPI runServe(LPVOID param) {
                 r.typeStr = req.typeStr;
                 r.name = req.name;
                 r.success = false;
-                r.exitCode = 6;
-                r.errorMessage = e.what();
+                r.exitCode = 1;
+                r.errorMessage = std::string("internal error: ") + e.what();
             }
-            if (!writeFramed(pipe, cliResultToJson(r).dump())) break;
+            if (!writeFramed(pipe, cliResultToJson(r).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace))) break;
+            } catch (...) {
+                // Belt-and-suspenders: if any exception escapes the inner
+                // processing (including dump() serialization), write a JSON
+                // error frame to the pipe instead of crashing (which would
+                // launch TSCrashReport.exe via the unhandled-exception filter).
+                const char* errFrame =
+                    "{\"op\":\"unknown\",\"success\":false,\"exit_code\":1,"
+                    "\"error\":{\"code\":\"internal_error\","
+                    "\"message\":\"internal error during output serialization\"}}";
+                writeFramed(pipe, std::string(errFrame));
+                continue;
+            }
         }
 
         // Flush any buffered output, then disconnect so the next client can
@@ -2448,7 +2479,7 @@ int main(int argc, char** argv) {
             j["error"]["code"] = "not_elevated";
             j["error"]["message"] = "this tool requires administrator privileges. "
                                     "Run from an elevated terminal (or let the Python wrapper auto-elevate).";
-            std::string s = j.dump();
+            std::string s = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
             std::fwrite(s.c_str(), 1, s.size(), stdout);
             std::fputc('\n', stdout);
         } else {
