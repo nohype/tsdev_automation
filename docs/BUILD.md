@@ -258,6 +258,20 @@ invokes all sub-suites in a single command; the individual runners are
 documented below for developers who want to run a single sub-suite
 independently.
 
+> **Current-status caveat (2026-08-23, Workstream L):** The regression and E2E
+> suites below verify **CLI/library behavior** (process exit codes, warehouse
+> persistence, `.ell` file write, ProgId preservation, compile-error surfacing)
+> — they do **not** verify **Desktop runtime linkability.** The known Unknown
+> link defect means a passing run is **not** production-runtime acceptance:
+> CLI-produced strategies still fail in TradeStation Desktop with "Unknown link
+> error occurred" despite TSDev reporting them VERIFIED. A future runtime gate
+> will be added by **Workstream L** (Runtime-Link Root-Cause Fix), planned but
+> not implemented — see
+> [`docs/workstream_unknown_link_fix_plan.md`](workstream_unknown_link_fix_plan.md)
+> and the E2E spec at
+> [`docs/E2E_TEST_SPEC.md`](E2E_TEST_SPEC.md). Until Workstream L lands, treat a
+> green regression/E2E run as library/CLI acceptance only.
+
 #### `tests/run_regression.ps1` — master regression runner
 
 The single-command regression runner orchestrates **all 12 sub-suites** (135
@@ -681,12 +695,15 @@ that controls routing:
   **zero overhead** (no broker is started, no pipe I/O). This preserves the
   pre-serve behavior for elevated sessions.
 - **Batch ops:** batch methods (`batch_insert`/`batch_modify`/`batch_delete`/
-  `batch_upsert` and the `batch_*_dir` variants) are **not** routed through
-  the broker in the MVP. When the session is not elevated and serve is
-  active, batch ops raise `NotImplementedError("batch ops require an
-  elevated session; use serve mode for single ops or run elevated")`.
-  Batch-over-serve is deferred (see
-  [`docs/workstream_serve_plan.md`](workstream_serve_plan.md) §6).
+  `batch_upsert` and the `batch_*_dir` variants) are routed through the broker
+  by looping over individual single-item requests. The broker's long-lived
+  `TsDevLib` (`flushPerItem=false`) makes this as efficient as the C++ batch
+  path — no per-op process spawn, no per-op warehouse flush. Per-item failures
+  are collected into the returned list (NOT raised), matching non-serve batch
+  semantics. Broker-level failures (crash, broken pipe) propagate as
+  exceptions. For `batch_*_dir`, the Python wrapper replicates the C++ CLI's
+  `parseDirectory` logic client-side (extension filtering, stem-as-name,
+  no recursion, sorted by name).
 
 ### One-UAC UX
 
@@ -733,9 +750,9 @@ and on version tag pushes (`v*`).
   (Release).
 - Runs the regression suite in `-NoTs` mode (sigtool + 9 non-TradeStation
   unit tests).
-- Runs non-e2e Python tests (`pytest -m "not e2e"`; pytest collects 130 tests,
+- Runs non-e2e Python tests (`pytest -m "not e2e"`; pytest collects 154 tests,
   of which the 15 e2e-marked tests are deselected without a live TradeStation
-  install, so 115 mocked tests run).
+  install, so 139 mocked tests run).
 - Uploads the assembled `dist/` bundle contents as a workflow artifact named
   `tsdev-automation-bundle` (`actions/upload-artifact` zips them once).
 

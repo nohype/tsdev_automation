@@ -9,6 +9,8 @@
 
 > **ADDENDUM (2026-08-21):** Workstream K subsequently added an opt-in persistent elevated serve broker — a `serve` subcommand in `tsdev_cli.exe` plus a Python `_ServeBroker` communicating over a named pipe. This is architecturally adjacent to the rejected Option B, but its motivation is UAC/elevation UX (one elevation prompt per session rather than per CLI invocation), not performance. The core Option A+ architecture (batch CLI subprocess + JSON I/O) is unchanged; `use_serve` now defaults to `True` (flipped in TVS-K.6b, 2026-08-21).
 
+> **SUPERSESSION NOTE (2026-08-23):** The pytest counts in the 2026-08-21 DECISION block above (131 collected / 116 non-E2E / 15 E2E deselected) are a **historical snapshot** and are NOT current. Verified ground truth as of 2026-08-23: pytest collects **154** tests; with `-m "not e2e"`, **139** are selected and **15** e2e tests are deselected (the e2e count is unchanged; the non-e2e suite has grown). For the current authoritative test/build status, see `docs/BUILD.md` and `AGENTS.md` (Completed Work Summary). The 2026-08-21 figures are retained above unchanged for historical traceability of the Option A+ decision.
+
 ---
 
 ## 1. Problem Statement & Hard Constraints

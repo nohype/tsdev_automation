@@ -2,6 +2,28 @@
 
 Automated management of the TradeStation Development Environment (TSDev) Library without using the TSDev UI (TSDev.exe). Insert, delete, modify, query, and retrieve EasyLanguage strategies, indicators, functions, and trading apps via a standalone CLI and a Python wrapper.
 
+## Known Critical Issue — Current Status
+
+**Strategies inserted/modified/upserted by the production `tsdev_cli` /
+`TsDevClient` may appear VERIFIED in TSDev but fail at runtime in TradeStation
+Desktop with "Unknown link error occurred."** A full Desktop restart does not
+repair a broken CLI Strategy. Other supported component types use the common
+compile/finalization path and are included in Workstream L validation, but an
+equivalent runtime failure has not been claimed without type-specific evidence.
+
+The only known workaround is to open the item in TSDev, make a harmless edit,
+and re-Verify — this re-runs the original finalization path. **This is a
+workaround only and is not an acceptable fix for an automated tool.**
+
+This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
+It is not a general breakage of the other operations
+(insert/modify/delete/exists/get-source/upsert/batch), which remain functional
+at the CLI/library level. **Workstream L** is planned to fix the root cause and
+add a Desktop runtime-execution regression test; it is **not yet implemented**.
+
+- Workstream L plan: [`docs/workstream_unknown_link_fix_plan.md`](docs/workstream_unknown_link_fix_plan.md)
+- Durable root-cause record: [`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
+
 ## Supported component types
 
 | Type | WHType | Status |
@@ -38,12 +60,18 @@ tsdev_cli [--ts-path <dir>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 - `modify` — Replace source code of an existing component and recompile. Preserves ProgId.
 - `delete` — Delete an existing component. Notifies if it doesn't exist (exit 5).
 - `exists` — Query whether a component exists by name. Returns `exists=true/false`, the verbatim stored name, and ProgId. Use `--case-insensitive` for case-insensitive name matching. Exit 0 for both found and not-found.
-- `get-source` — Retrieve the EasyLanguage source of a component. Prints to stdout by default; `--output <file>` writes to a file. Standard (non-password-protected) items only.
+- `get-source` — Retrieve EasyLanguage source. Prints to stdout by default; `--output <file>` writes to a file. Internally encrypted library storage is decrypted automatically, matching TSDev; library items do not expose user password protection.
 - `upsert` — Insert if the component doesn't exist, otherwise modify. Preserves ProgId on the modify path.
 - `batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert` — Batch operations from a line-based manifest file or stdin (`--batch-stdin`). Always emit a JSON array (one result per item).
 - `batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir` — Batch operations on all files in a directory. File stem = item name; file content = EL source. `-t <ext>` filters by extension (default `.el`+`.txt`; first `-t` overrides defaults; repeatable). Always emit a JSON array.
 - `--json` — Emit structured JSON output (single object for single-item ops; batch ops always emit a JSON array).
 - `--ts-path <dir>` — Override the TradeStation install directory (default: auto-discovered from registry).
+
+> **`serve` is an internal broker-mode subcommand.** It is not intended for
+> direct invocation — it is spawned automatically by the Python wrapper's
+> serve broker (see [Serve mode](#serve-mode-one-uac-ux-from-a-non-elevated-python-session)
+> and [docs/BUILD.md](docs/BUILD.md#serve-mode---serve--use_serve)). Do not
+> run `tsdev_cli serve` manually; use the Python `TsDevClient` API instead.
 
 `<type>` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme` (case-insensitive).
 
@@ -197,10 +225,10 @@ source) and return one `TsDevResult` per file.
 
 All CLI-reported failures raise a subclass of `TsDevError` (the base
 exception). Each carries the originating `TsDevResult` on `.result` for
-inspection. The one exception is `TsDevCrashError`, raised when the CLI
-process itself crashes (a fatal exception caught by the CLI's VEH handler,
-which exits with the NT status code as the process exit code); it exposes
-that code on `.exit_code` and has no `TsDevResult`:
+inspection. Two client-side/process failures have no `TsDevResult`:
+`TsDevCrashError` exposes the fatal NT process exit code, and
+`ElevationRequiredError` is raised before subprocess launch when
+`use_serve=False` is used from a non-elevated Python process.
 
 ```
 TsDevError                      # base
@@ -216,6 +244,7 @@ TsDevError                      # base
 ├── CompileError                # exit 8  — EasyLanguage compile failure
 ├── EllMissingError             # exit 9  — .ell not produced after compile
 ├── ThreadFailure               # exit 10 — worker-thread creation failure
+├── ElevationRequiredError      # client exit 12 — use_serve=False without elevation
 └── TsDevCrashError             # crash  — CLI process crash (exit code = NT status)
 ```
 

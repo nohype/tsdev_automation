@@ -3,6 +3,74 @@
 > **READ THIS FILE FIRST at the start of every turn / after any context compaction.**
 > This is the PM's outsourced memory. Keep it updated; re-read it regularly.
 
+## CRITICAL IN-FLIGHT: CLI strategies fail at runtime with "Unknown link error occurred" (2026-08-22)
+
+### User-observed production failure
+- Strategies inserted by our tool appear VERIFIED in TSDev, but TradeStation Desktop fails to execute them with "Unknown link error occurred".
+- User workaround: open each strategy, change a character, and re-verify in TSDev. This is unacceptable and invalidates the core product until fixed.
+- Current task is research/root-cause/fix planning only — NO implementation yet.
+
+### Controlled UI/Frida evidence
+- PM directly operated TSDev UI after subagent UI failures. Exact workflow confirmed: File > New > **Strategy** > actual name > OK > source > Build > Verify (F3).
+- Frida trace armed on TSDev PID 38384 with 630 hooks; raw transient/provenance log `tmp/frida_trace_verify.log` (durable conclusions are in `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`).
+- Build > Verify command: WM_COMMAND ID 0x296A; application handler `FUN_0047b0e0` -> `FUN_00451800` -> `FUN_004d9480` -> `FUN_004d91e0` -> `_VerifyModule_New@20`.
+- UI Verify flow: save source (`_SaveModule_New@20` with non-NULL flags and internal metadata/encryption buffer) -> allocate/configure 0x58-byte CELCompiler -> StartCompilingProcess -> `_VerifyModule_New@20` -> dependent-program handling -> EndCompilingProcess -> success event 0x40A -> properties/view refresh -> compiler destruction.
+- CLI-inserted `TS_AUTO_CLI_LINK_REPRO_01` ProgId 6687 was opened, harmlessly edited, and successfully re-verified. `.ell` stayed 5105 bytes but SHA-256 changed from `749bb1fb...3074` to `29cf357c...a973`.
+- Pure artifact control `TS_AUTO_CLI_ARTIFACT_01` ProgId 6688: pre/post source bytes identical (space then backspace only to set modified flag); `.ell` stayed 5101 bytes but SHA-256 changed from `eddb5fc2...238a` to `044d099e...c063`. Pre/post copies: `tmp/artifact_before_ui_verify.ell`, `tmp/artifact_after_ui_verify.ell`.
+- TSDev disables Verify for an unmodified CLI-inserted item even though it is runtime-broken; this explains why users must change a character first.
+
+### Root-cause investigation status (initial compiler-ProgId hypothesis DISPROVED)
+- TSDev configures CELCompiler fields: +0x08=category, +0x0C=subtype, +0x10=current ProgId, +0x18=notification HWND; clears +0/+4 before compilation.
+- Our code diverges: +0x10 hardcoded `0xA02`, omits +0x08/+0x0C, and writes 6 at +0x28. These should be corrected for exact TSDev emulation, but static data-flow analysis proves they do NOT cause wrong compiled identity in our current direct `_VerifyModule_New` call:
+  - `_VerifyModule_New` uses its explicit ProgId argument (which our code passes correctly) throughout warehouse lookup, CompileText, token writer, metadata, and persistence.
+  - compiler +0x10 is read by TSDev's outer recursive wrapper only for root bookkeeping/primary-flag selection; our code bypasses that wrapper and explicitly passes primary flag 1.
+  - +0x28 is inside an empty inline `std::wstring` buffer; size remains zero and compile path does not read it. Unnecessary but not proven causal.
+- Controlled pre/post `.ell` analysis: RNAM container semantic table bodies, `%Strings`, `%csStrings`, `%Signatures` are byte-identical. Changes are regenerated timestamp/GUID blob values plus unused table-name padding. `CompileText` calls `CoCreateGuid` every compile, explaining hash change. No byte evidence of 0xA02 -> real ProgId replacement.
+- User confirmed a full TradeStation Desktop restart does **NOT** fix a CLI-inserted strategy. Therefore missing event 0x40A/live-cache invalidation is NOT the sole root cause (though it remains required for exact live-client refresh parity).
+- DECISIVE artifact discovery: CLI insert of ProgId 6688 created ONLY `elmodule_0_6688.ell`. TSDev UI Verify created `elmodule_0_6688.xml` (1135 bytes, SHA-256 `edd17e92...ecc9`) at the same timestamp as rewritten ELL. Copy preserved at `tmp/artifact_after_ui_verify.xml`.
+- Our code intentionally patches original `FUN_10011230` to `MOV EAX,1; RET 0x0C`, bypassing the SymWriter/XmlDocument save path. The prior assumption that XML was optional was based only on existence of some unpaired ELLs, not proof that executable strategies work without XML.
+- **ROOT CAUSE CONFIRMED end-to-end:** current `FUN_10011230` patch skips `FUN_1008E640` (conservatively: compiler/link-finalization behavior), offset adjustment, and symbol/XML generation, then falsely returns success so CompileText persists output and marks the item verified even though Desktop cannot link it. The compared ELL table bodies were structurally similar; the exact persistent mismatch is unisolated and must not be described as proven missing native tables or a structurally incomplete ELL. The patch is also ABI-invalid (`RET 0x0C` while caller performs `ADD ESP,0x0C`).
+- Why patch existed: original `SymWriter::Save` uses ECL's MSXML COM wrapper. TSDev calls `CoInitialize(NULL)` (STA) on the actual verify thread before `_OrlibInit`; our 64 MiB CLI/serve/batch worker threads never initialize COM. Unpatched standalone path therefore threw native C++ exception `0xE06D7363`. The old "partially initialized CLR" explanation was unproven/wrong.
+- Dynamic proof: temporary x86 probe initialized STA COM on its 64 MiB worker, constructed TsDevLib, restored original `FUN_10011230` bytes process-locally, and inserted `TS_AUTO_COM_NOPATCH_01` ProgId 6689 exactly once. Result: no crash, ELL+XML generated, GUIDs matched, source round-tripped, probe exit 0.
+- User runtime proof: `TS_AUTO_COM_NOPATCH_01` ran successfully in TradeStation Desktop WITHOUT opening/re-verifying in TSDev. This confirms root cause and fix direction.
+- XML itself is debugger/source-map data and not consumed by the runtime linker. XML absence is a visible marker that the original finalization/symbol path was bypassed; the combined bypass is causally proven, while the exact persistent mismatch remains unisolated. Runtime loads ELL and checks ELL GUID against the caller-supplied expected GUID.
+- Required fix direction: initialize STA COM (`CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)`) on every actual operation worker thread before TsDevLib/orlib initialization; accept S_OK/S_FALSE, fail on RPC_E_CHANGED_MODE/other errors; balance CoUninitialize at worker lifetime end; completely remove persistence patch; require full real link stage and ELL persistence. Add artifact/runtime regression checks.
+- Additional TSDev parity work: correct compiler object setup/use ordinal 66/67; explicit SaveModule flags/CELProperties metadata; post-success event 0x40A; reverse-dependent revalidation. These are not the immediate root cause and must be separately scoped/prioritized.
+- Missing dependency reverify wrapper is ruled out for root Strategy linkability: it propagates contract changes to reverse dependents/callers.
+- The non-NULL password-shaped/internal metadata argument controls source encryption/protection, not linking, and is not a user password feature. Post-success 0x40A is live-only (no durable queue).
+- Research/synthesis COMPLETE. Authoritative report/plan: `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`; authoritative static appendix: `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. The prior `tmp/unknown_link_root_cause_and_plan.md` and `tmp/unknown_link_ghidra_evidence.md` are retained only as provenance/raw artifacts, never durable. Independent adversarial review Round 1 DISAPPROVED (6 findings); all corrected; Round 2 APPROVED. No production implementation made.
+
+### Safety/state
+- Test strategies currently retained for research/runtime evidence: `TS_AUTO_VERIFY_TRACE_01` (6686), `TS_AUTO_CLI_LINK_REPRO_01` (6687), `TS_AUTO_CLI_ARTIFACT_01` (6688), and runtime-success control `TS_AUTO_COM_NOPATCH_01` (6689). Deleting them is destructive and requires explicit confirmation.
+- TSDev remained responsive throughout controlled traces.
+
+---
+
+## BATCH OPS IN SERVE MODE (2026-08-22) — COMPLETE
+
+### Problem
+Users wanted `batch_upsert` (and all batch ops) to work with `use_serve=True` (non-elevated Python, one UAC prompt). Previously these raised `NotImplementedError("batch ops require an elevated session; use serve mode for single ops or run elevated")`.
+
+### Solution (Python-only, no C++ changes)
+The serve broker already supports all single-item ops with `flushPerItem=false` (long-lived TsDevLib). Batch ops are now routed through the broker by looping over individual single-item requests on the Python side:
+- `_batch_serve`: pre-validates all items, then loops `broker.call()` per item. Per-item failures collected (not raised). Broker-level failures propagate. Empty items → returns `[]` without starting broker.
+- `_batch_dir_serve`: replicates C++ `parseDirectory` client-side (non-recursive, default `.el`+`.txt`, dot-prefix optional, case-insensitive, stem-as-name, sorted by name). Non-existent/empty dir → `TsDevError`. Source-read failures → `source_file_error` (exit 3) collected results.
+
+### Efficiency
+No per-op process spawn (broker already running), shared long-lived TsDevLib, no per-op warehouse flush. Only overhead is N pipe round-trips (negligible vs. orlib20 work). Broker process handle stable across all batch ops (verified in E2E).
+
+### Files changed
+- `src/tsdev_automation/client.py`: `_batch_serve`, `_batch_dir_serve` methods; `_batch`/`_batch_dir` route to them when `_serve_active()`. Imported `TsDevErrorInfo`.
+- `tests/test_tsdev_client.py`: `TestServeBatchRouting` (11 tests) + `TestServeBatchDirRouting` (12 tests) replace old `TestServeBatchNotImplemented`.
+- Docs: `BUILD.md`, `workstream_serve_plan.md`, `PROJECT_HISTORY.md` updated.
+
+### Verification
+- Unit tests: 139 passed, 15 deselected (non-e2e).
+- E2E (real CLI + TradeStation): batch_upsert (insert+modify), batch_delete, batch_insert_dir/modify_dir/upsert_dir/delete_dir, per-item compile failure collected, broker handle stable, empty/nonexistent dir raises TsDevError. ALL PASSED.
+- Adversarial review: APPROVE (2 MAJOR + 9 MINOR findings, all fixed: missing tests for source-read failure + broker crash propagation, redundant sort, empty-items broker guard, message format, docstring accuracy, case-insensitive/dot-prefix/multi-dot-stem tests, source-as-file-path test).
+
+---
+
 ## CRITICAL CORRECTION (2026-08-22) — "PASSWORD PROTECTION" HYPOTHESIS IS WRONG
 
 ### What was wrong
@@ -31,7 +99,7 @@ We took path 2 (raw copy) and got encrypted bytes. TSDev must take path 1 or 3, 
 - **Kept:** dump() replace handler (safety net), ElevationRequiredError (correct, unrelated).
 - **E2E verified:** BTA_PROTEGE-SmartCode-JW3 → success, full decrypted source. Average (built-in function) → success, full decrypted source. Nonexistent → exit 5 / not_found.
 - **Python tests:** 120 passed, 15 deselected. Adversarial review: APPROVE.
-- **Distribution updated:** D:\Nesnidalian (both layouts), dist/, artifacts/tsdev_automation_2608221310.zip
+- **Distribution updated:** dist/, artifacts/tsdev_automation_2608221310.zip (in-tree only)
 
 ### Frida lesson: TSDev attach crash (2026-08-22)
 A Frida subagent attached to TSDev.exe and hooked `_LoadTextFileEX@16` / `_GetMasterRecByType@16`. TSDev crashed after Frida detached. The likely cause was hook cleanup corrupting function bytes. Frida CAN and SHOULD be used to trace calls in TSDev — but the subagent should use care with attach/detach and prefer `Interceptor.attach` with proper cleanup, or use `Stalker` for non-invasive tracing where possible.
@@ -73,8 +141,7 @@ A Frida subagent attached to TSDev.exe and hooked `_LoadTextFileEX@16` / `_GetMa
 - C++ build: SUCCESS (VS 2022 Community, Win32/Release)
 - E2E: get-source on password-protected item → exit 6, no crash. get-source on non-protected item → readable EL source. exists/insert/delete/modify all work.
 - Python: 122 passed, 15 deselected.
-- User's distribution updated (D:\Nesnidalian + D:\Nesnidalian\tsdev-automation).
-- Distribution zip: D:\tsdev_automation\artifacts\tsdev_automation_2608221120.zip
+- Distribution zip: artifacts/tsdev_automation_2608221120.zip
 
 ### Key RE lesson
 - The RE_F4 doc's claim that `param_6[0x74] & 1` is the password-protection flag was WRONG. It's a "source loaded" cache flag. The actual password flag is at `0x7B` bit 10. This was discovered by Frida dynamic verification (comparing protected vs non-protected items) and confirmed by Ghidra (FUN_101788d0 checks `*(ushort*)(param_1+0x7b) & 0x400` before decryption).
@@ -146,6 +213,9 @@ All 7 phases passed. Adversarial review APPROVED (all findings fixed: 1 CRITICAL
 5. **No hacks: never suppress compiler errors/warnings or use workarounds that mask real issues.** If code produces warnings or errors, fix the root cause or find a clean, production-worthy alternative. If no clean approach exists, use the most explicit/raw form (e.g. a numeric constant with a comment naming the intended symbol) rather than suppressing the warning. Example: 
 tstatus.h redefines some STATUS_SXS_* macros from winnt.h — instead of #pragma warning(disable: 4005) around the include, use the raw hex constant  xC0000374 with a comment // STATUS_HEAP_CORRUPTION.
 
+6. **NEVER touch external paths.** NEVER copy to, modify, create, or delete any file or directory OUTSIDE this project's working tree/root directory without EXPLICIT user instruction. This includes "distribution" or "deployment" locations, user home directories, other drives, etc. All build artifacts stay in-tree (`dist/`, `artifacts/`, `build/`). If a previous working-memory entry referenced an external path, it was WRONG — scrub it. The project is self-contained.
+7. **NEVER reference the project directory by absolute path.** This is a git-hosted project; any developer or user may clone it to an arbitrary local path. NEVER hardcode the project's absolute path in tracked files (docs, code, configs, working memory). Use relative paths (from the repo root) or neutral placeholders (e.g. `<repo-root>`, `$PSScriptRoot`). The ONLY absolute paths allowed in tracked files are genuinely external system paths that the project must reference (e.g. the TradeStation install directory `C:\Program Files (x86)\TradeStation 9.5`, Visual Studio toolchain paths).
+
 ## TVS-F.5 CRITICAL FINDINGS (Frida trace 2026-08-20) — RESOLVED
 
 ### Root cause: FUN_101a42d0 non-server mode returns ProgId, NOT verbatim name
@@ -173,25 +243,40 @@ tstatus.h redefines some STATUS_SXS_* macros from winnt.h — instead of #pragma
 
 **Hard rules, subagent profiles, work orchestration, and acceptance criteria are in `AGENTS.md` — do not duplicate them here. This file contains ONLY PM-specific operational memory: crash-safety procedures, Frida tips, current task/state, and reminders.**
 
-## Project state (as of 2026-08-22)
-- **Doc-sync pass COMPLETE + VERIFIED (2026-08-22):** Full documentation audit found ~20 discrepancies (2 CRITICAL: README ShowMe "Unconfirmed", RE_F5 wrong name-getter claims without erratum; plus MAJOR stale test counts everywhere, false BUILD.md CI/E2E claims, PROJECT_HISTORY/serve_plan marking K.6a PENDING, missing J/CI history entries, re-introduced username leaks). ALL FIXED across 15 files; adversarial review APPROVED. Ground truth now: **12 suites / 135 cases** (Suite 11 serve E2E wired earlier; Suite 12 ShowMe E2E SM1-SM9 wired by this pass w/ `-SkipShowMeE2e`), pytest collects 130 (115 non-e2e). VERIFIED: full elevated regression rc=0 ("ALL SUITES PASSED", run_regression.ps1 exits 0 ONLY on line 808 after that banner); `-NoTs` 2/2 PASS with new structure; pytest 115 passed / 15 deselected.
-- **Elevated-run lessons:** (1) `cmake` NOT on PATH — use full path `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` (documented in BUILD.md); build does NOT need elevation. (2) Child powershell Write-Host output does NOT flow through stdout pipes in PS 5.1 — capture elevated runs via exit code or Start-Transcript inside the child. (3) Mixing elevated/non-elevated runs POISONS pytest dirs (`.pytest_cache`, `$env:TEMP\pytest-of-user`) with admin ACLs → non-elevated pytest gets 88 setup PermissionErrors; fix = delete both dirs from an elevated process (non-elevated deletion is denied). Driver script kept at tmp\elevated_verify.ps1 (untracked).
+## _TOKEN_QUERY bug fix (2026-08-22) — COMPLETE
+- **Bug:** `TsDevClient(use_serve=False)` ALWAYS raised `ElevationRequiredError`, even in an elevated shell.
+- **Root cause:** `client.py` line 131 had `_TOKEN_QUERY = 0x0020` — but `0x0020` is `TOKEN_ADJUST_PRIVILEGES`, NOT `TOKEN_QUERY`. Correct value is `0x0008`. `OpenProcessToken` with `0x0020` succeeded (opened handle with only ADJUST_PRIVILEGES access), but `GetTokenInformation(TokenElevation)` requires `TOKEN_QUERY` access → failed with `ERROR_ACCESS_DENIED` (5) → `_detect_elevation()` always returned `False` → `_is_elevated` always `False` → raise site always triggered.
+- **Fix:** One-line constant correction `_TOKEN_QUERY = 0x0008` (+ comment). Regression test `test_token_query_constant_is_correct` added to `TestDetectElevation` in `tests/test_tsdev_client.py`.
+- **Why `use_serve=True` worked:** serve mode bypasses `_is_elevated` entirely (routes through `_ServeBroker` with `ShellExecuteExW` runas → UAC prompt).
+- **Verification:** Adversarial review APPROVED (2 non-blocking style findings). E2E: elevated shell → repro succeeds (EXISTS=True, SOURCE_LEN=72650); non-elevated (Task Scheduler /RL LIMITED) → correctly raises `ElevationRequiredError`. Non-e2e pytest: 121 passed / 15 deselected.
+- **Lesson:** Existing elevation tests all mocked `_detect_elevation` or set `_is_elevated` directly, so none exercised the real constant — that's why this slipped through. The new constant-assertion test guards against recurrence.
+
+## Project state (as of 2026-08-23)
+- **Doc-sync pass COMPLETE + VERIFIED (2026-08-22) — SUPERSEDED SNAPSHOT (Python counts stale; see current-state entry below):** Full documentation audit found ~20 discrepancies (2 CRITICAL: README ShowMe "Unconfirmed", RE_F5 wrong name-getter claims without erratum; plus MAJOR stale test counts everywhere, false BUILD.md CI/E2E claims, PROJECT_HISTORY/serve_plan marking K.6a PENDING, missing J/CI history entries, re-introduced username leaks). ALL FIXED across 15 files; adversarial review APPROVED. Ground truth AT THAT TIME: **12 suites / 135 cases** (Suite 11 serve E2E wired earlier; Suite 12 ShowMe E2E SM1-SM9 wired by this pass w/ `-SkipShowMeE2e`), pytest collected 130 (115 non-e2e). VERIFIED: full elevated regression rc=0 ("ALL SUITES PASSED", run_regression.ps1 exits 0 ONLY on line 808 after that banner); `-NoTs` 2/2 PASS with new structure; pytest 115 passed / 15 deselected. **NOTE (2026-08-23):** the 130/115 Python counts in this entry are a historical snapshot from the 2026-08-22 doc-sync pass and have since been superseded — current Python ground truth is 154 collected / 139 non-e2e / 15 e2e (see "Project state (as of 2026-08-23)" below). C++ counts (12 suites / 135 cases) remain current.
+- **Elevated-run lessons:** (1) `cmake` NOT on PATH — use full path `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` (documented in BUILD.md); build does NOT need elevation. (2) Child powershell Write-Host output does NOT flow through stdout pipes in PS 5.1 — capture elevated runs via exit code or Start-Transcript inside the child. (3) Mixing elevated/non-elevated runs POISONS pytest dirs (`.pytest_cache`, `$env:TEMP\pytest-of-<username>`) with admin ACLs → non-elevated pytest gets 88 setup PermissionErrors; fix = delete both dirs from an elevated process (non-elevated deletion is denied). Driver script kept at tmp\elevated_verify.ps1 (untracked).
 - **Doc-sync hygiene reminder:** NEVER write personal usernames or absolute C:\Users\<name> paths into tracked files — Workstream H scrubbed history once already; leaks were re-introduced into PM_WORKING_MEMORY.md and had to be re-scrubbed. Use neutral placeholders (`<username>`, `$env:USERPROFILE`).
-- **Workstreams A, B, C, D, E, F, G, I, J COMPLETE.** Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe component type (TVS-C.8) COMPLETE. Primary acceptance criteria SATISFIED at library + CLI + Python wrapper level.
+- **Workstreams A, B, C, D, E, F, G, H, I, J COMPLETE.** Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe component type (TVS-C.8) COMPLETE. Library/CLI/Python-wrapper operations exist for all 6 functions, BUT primary acceptance criteria are TEMPORARILY NOT SATISFIED at production runtime (2026-08-23): inserted Strategies fail Desktop execution with "Unknown link error occurred" due to the `FUN_10011230` persistence patch (see "CRITICAL IN-FLIGHT" section above and `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`). Workstream L (fix) is PLANNED, highest priority, not implemented; Workstream M (parity) is PLANNED after L, not implemented.
 - **ShowMe support (TVS-C.8):** whType=1282 (0x0502), category 2, sub-type 0x05. Added to C++ CLI, Python wrapper, and tests. Fixed `enumerateRecords` category-2 stack overflow (typeFilterBuf[3] → [16]). Files: src/tsdev_lib.cpp, src/tsdev_lib.h, src/tsdev_cli.cpp, src/tsdev_automation/_cli.py, src/tsdev_automation/client.py, tests/test_showme_type.cpp, tests/test_showme_e2e.ps1.
 - **CLI supports 5 component types:** Strategy (0), Indicator (2), Function (4), TradingApp (5122, category 2, sub-type 0x14), ShowMe (1282, category 2, sub-type 0x05). 3 unconfirmed: ActivityBar, PaintBar, ProbabilityMap.
 - **WORKSTREAM I — Directory Batch Operations — COMPLETE (I.1–I.3).** TVS-I.1 (`batch-upsert` C++ CLI manifest+stdin), TVS-I.2 (directory batch all 4 ops, C++ CLI), and TVS-I.3 (Python wrapper `batch_upsert` + directory batch + `_cli.py` subcommands) are ALL COMPLETE. Directory batch operations (insert/modify/delete/upsert) now work via BOTH the C++ CLI AND the Python wrapper (`TsDevClient`).
 - **WORKSTREAM (F) New Operations & Inline Batch — COMPLETE (F.1–F.6, including F.5).** TVS-F.1 (`exists`, C++ CLI), TVS-F.2 (inline batch stdin, C++ CLI), TVS-F.3 (`upsert`, C++ CLI), TVS-F.4 (`get-source`, C++ CLI, RE-based), TVS-F.5 (case-insensitive `exists` with stored name + ProgId return, C++ CLI + Python), and TVS-F.6 (Python wrapper for all F ops) are ALL COMPLETE. All 6 functions now work via BOTH the C++ CLI AND the Python wrapper (`TsDevClient`). Workstreams A, B, C, D, E, F ALL COMPLETE.
 - **Tech debt cleanup pass (2026-08-18):** Documentation consolidated (AGENTS.md/PM_WORKING_MEMORY.md condensed, historical detail archived to `docs/PROJECT_HISTORY.md`, 4 completed handoffs archived to `docs/archive/`). Code fixes: TD-001 (auto-cleanup partial entry on compile failure), TD-002 (per-patch restoration gap). Stale comments cleaned. Stray files removed.
-- **Regression suite:** `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26 exes) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9); skip flags include `-SkipServeE2e`, `-SkipShowMeE2e`; under `-NoTs` only sigtool + 9 non-TS unit tests run). C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: pytest collects 131 tests (116 non-e2e; 15 e2e deselected without live TS). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
+- **Regression suite:** `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26 exes) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9); skip flags include `-SkipServeE2e`, `-SkipShowMeE2e`; under `-NoTs` only sigtool + 9 non-TS unit tests run). C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: pytest collects 154 tests (139 non-e2e; 15 e2e deselected without live TS). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
 - **Architecture:** `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) → `src/orlib_resolver.cpp`. No runtime JSON dep in production CLI. `src/sigtool.cpp` = standalone signature verification tool.
 - **Detailed TVS history:** See `docs/PROJECT_HISTORY.md`.
 - **Workstream F (New Operations & Inline Batch):** COMPLETE (F.1–F.6, including F.5). TVS-F.1 (`exists` exact-match, C++ CLI), TVS-F.2 (inline batch via stdin, C++ CLI), TVS-F.3 (`upsert` subcommand, C++ CLI), TVS-F.4 (`get-source` subcommand, C++ CLI, RE-based), TVS-F.5 (case-insensitive `exists` with stored name + ProgId return, C++ CLI + Python), and TVS-F.6 (Python wrapper for all F ops) ALL COMPLETE. Approved plan at `docs/archive/WORKSTREAM_F_PLAN.md` (6 TVSs: F.1 [DONE], F.2 [DONE], F.3 [DONE], F.4 [DONE], F.5 [DONE], F.6 [DONE]). See AGENTS.md `### NEXT WORKSTREAMS` item 2.
 
 ## NEXT WORKSTREAM
-**Workstream K — Serve Mode — FULLY COMPLETE (K.1–K.6b, 2026-08-21).** Plan at `docs/workstream_serve_plan.md`.
+**Workstream L — Unknown Link Defect Fix — PLANNED, highest priority, not implemented (2026-08-23).** Plan at `docs/workstream_unknown_link_fix_plan.md`. Workstream M (TSDev parity) is PLANNED after L, not implemented; plan at `docs/workstream_tsdev_parity_plan.md`.
 
-All planned workstreams (A–K) are now COMPLETE. The project's primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Serve mode is enabled by default (`use_serve=True`). No further workstreams are currently planned.
+Workstreams A–K are complete at the library/CLI/Python-wrapper level, but acceptance criteria are TEMPORARILY NOT SATISFIED at production runtime: Strategies inserted by our tool fail to execute in TradeStation Desktop with "Unknown link error occurred", even though library/CLI/Python operations exist and report success. The confirmed causal bypass is the `FUN_10011230` persistence patch, which skips compiler/link-finalization behavior (`FUN_1008E640`), offset adjustment, and symbol/XML generation, then falsely returns success. Bypass-produced Strategy output is runtime-unlinkable; the exact persistent mismatch remains unisolated. Workstream L initializes STA COM on each owning operation worker and removes the bypass. Workstream M covers separate parity items (compiler object setup/use ordinal 66/67, explicit SaveModule flags/CELProperties metadata, post-success event 0x40A, reverse-dependent revalidation) after L.
+
+### Plan review and approval (2026-08-23)
+- `docs/workstream_unknown_link_fix_plan.md` — Workstream L plan, independent review loops APPROVED and final hands-on adversarial PM review APPROVED (2026-08-23).
+- `docs/workstream_tsdev_parity_plan.md` — Workstream M plan, independent review loops APPROVED and final hands-on adversarial PM review APPROVED (2026-08-23).
+- Durable RE evidence is persisted at `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` (root-cause analysis) and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` (Ghidra static appendix). These supersede the prior `tmp/` research documents; remaining `tmp/` files are provenance/raw experiment artifacts only.
+- Final PM review personally rechecked evidence, plans, status/user/technical docs, and repository diff. Corrections included: keep mainline green during L.1/L.2 RED capture; fix all plan section references; require a Strategy runtime smoke at L.3; replace hardcoded-RVA finalization inspection with behavior tests; prohibit invented file-level rollback; bound failure claims to Strategies; correct M evidence-gate ownership, encryption fixtures, actual `0x40A` receivers, synthetic cycle safety, TSDev.exe coupling, export-vs-signature classification, closure gating, and universal-profile orchestration; correct stale get-source password terminology.
+- No production implementation has been made for L or M.
 
 ### K.6a — E2E integration + backwards-compat verification (COMPLETE — 2026-08-21)
 All 7 phases passed. Adversarial review APPROVED (1 CRITICAL, 1 MAJOR, 4 MINOR — all fixed). See "K.6a COMPLETE" section at top of this file for full details (bugs fixed, Frida findings, test counts).
@@ -210,7 +295,7 @@ Scrubbed the two personal usernames (leaked via USERPROFILE- and USERNAME-derive
 - **TVS-H.2 (history analysis):** 57 commits → 9 condensed per-workstream commits. Plan adversarially reviewed (DISAPPROVED first pass — 4 critical findings: hash invalidation, missing --force, wrong verification, read-tree stale files; all fixed).
 - **TVS-H.3 (history rewrite):** Committed H.1 → condensed 57→9 via orphan branch + `git read-tree --reset -u` → `git filter-repo --replace-text` (regex:`<username>`==>user) for text blobs → `--invert-paths` stripped binary artifacts (build/, build_probe/, ghidra_project/, *.obj/exe/lib/pdb/pyc/gbf/grf/ps/bin, __pycache__) → first adversarial review found CRITICAL uppercase variants of the username in .tlog files + proprietary TradeStation files in history → FIX: `--invert-paths --path tmp/` (stripped ALL of tmp/ including ~10,000 proprietary .xml/.ell files + 4 .dlls + .tlog files containing the username) + case-insensitive scrub `regex:(?i)<username>==>user` → force-pushed to origin. Final adversarial review APPROVED (all 10 checks pass: zero username hits in any text or binary blob across all 9 commits, H.1 relative paths preserved in HEAD, 129 files, key files intact, monotonic trees, .gitignore covers future contamination).
 - **Build + regression verification:** 8/8 C++ suites (93 cases) + 62/62 Python tests PASS. No regressions. (Historical — now 10/10 suites / 113 cases after TVS-I.1 + TVS-I.2.)
-- **Backup:** `$env:USERPROFILE\tsdev_automation_backup_pre_rewrite.bundle` (2.04 MB) — full pre-rewrite history for rollback.
+- **Backup:** a full pre-rewrite history bundle (2.04 MB) was stored in the user's home directory for rollback (path not tracked — external to the repo).
 - **Key lesson:** filter-repo `--replace-text` regex is CASE-SENSITIVE by default — always use `(?i)` for username scrubs. MSVC .tlog files uppercase paths. Binary blobs need `--invert-paths` stripping, not just `--replace-text`.
 - **Key lesson (2026-08-21): `git filter-repo` strips the upstream tracking config.** filter-repo deliberately removes the `origin` remote after rewriting history (safety mechanism to prevent accidental pushes of rewritten history). Re-adding the remote (`git remote add origin <url>`) restores only the `[remote "origin"]` config section — it does NOT restore the `[branch "main"]` tracking section (`branch.main.remote` + `branch.main.merge`). This went unnoticed for 3 commits (TVS-I.1/I.2/I.3) because agents don't push unless explicitly asked. The user discovered it when a bare `git push` failed with "no upstream branch." **FIX after any `git filter-repo` run:** always use `git push -u origin main` (the `-u` flag restores tracking) — NOT just `git push --force origin main` (which works without tracking but doesn't set it). Verify with `git config --get branch.main.remote` (should print `origin`) and `git status -sb` (should show `## main...origin/main`).
 
@@ -262,7 +347,7 @@ Added alongside Workstream K to make serve mode safe — a non-elevated Python c
 
 ## Completed Work Summary
 
-All workstreams A, B, C, D, E, F, G, I, J complete. Workstream K (Serve mode) K.1–K.6b complete. Crash handling complete. ShowMe (TVS-C.8) complete. Detailed per-TVS logs archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G, H, I, J complete. Workstream K (Serve mode) K.1–K.6b complete. Crash handling complete. ShowMe (TVS-C.8) complete. Detailed per-TVS logs archived in `docs/PROJECT_HISTORY.md`. NOTE (2026-08-23): these workstreams are complete at the library/CLI/Python-wrapper level, but production-runtime acceptance is temporarily NOT satisfied due to the unknown link defect; Workstream L (fix, PLANNED, highest priority, not implemented) and Workstream M (parity, PLANNED after L, not implemented) remain. See `## NEXT WORKSTREAM` above.
 
 | Workstream | TVSs | Result |
 |------------|------|--------|
@@ -273,6 +358,7 @@ All workstreams A, B, C, D, E, F, G, I, J complete. Workstream K (Serve mode) K.
 | E (Architecture) | E.1–E.7 | JSON signature source of truth + build-time codegen, sigtool CLI, probe archival, test relocation, RVA dedup |
 | F (New Operations & Inline Batch) | F.1–F.6 | exists, get-source, upsert, inline batch stdin, case-insensitive exists, Python wrapper for F ops |
 | G (Distributable bundle) | G.1, G.2, G.3, G.5 | dist/ bundle (exe + Python package + README) via CMake POST_BUILD + timestamped zip in artifacts/ |
+| H (Username Scrubbing) | H.1–H.3 | Scrubbed personal usernames from working tree + git history (filter-repo case-insensitive rewrite, binary-artifact stripping) for public release |
 | I (Directory Batch Operations) | I.1–I.3 | batch-upsert (manifest+stdin), directory batch all 4 ops, Python wrapper for batch_upsert + directory batch |
 | J (Admin Privilege Enforcement) | J.1 | requireAdministrator manifest on all TS-accessing executables |
 | K (Serve Mode) | K.1–K.6b COMPLETE | Elevation guard, cliResultToJson, serve dispatch, named pipe server, Python serve-broker, E2E integration verified, documentation + default flip (use_serve=True). |
@@ -335,12 +421,12 @@ All workstreams A, B, C, D, E, F, G, I, J complete. Workstream K (Serve mode) K.
 - Do NOT accept sub-par quality from subagents. Production-grade only.
 - Adversarial review is mandatory for every substantive result.
 - Update AGENTS.md TODO section after each TVS completes.
-- Use `subagent_general` for non-trivial work (NOT `subagent_explore`).
+- Use `universal` by default for every narrow, clearly defined subtask; it has full tool access. Fall back to `subagent_general` only when `universal` fails. Use `subagent_explore` only for trivial lookups per AGENTS.md.
 - **ATOMIC SUBTASKS ONLY.** One subagent = one narrowly focused task. No multi-stage/complex tasks.
 - **Git commits on PowerShell — NO HEREDOC:** PowerShell does NOT support `$(cat <<'EOF' ... EOF)`. Write commit message to `tmp\commit_msg.txt` then `git commit -F tmp\commit_msg.txt`. Also: PowerShell uses `;` not `&&`; use `&` for executables with spaces in path. This is now a Standing Note in AGENTS.md so all agents are aware.
 
-## CRITICAL LESSON � UAC prompt storm (2026-08-21)
-**NEVER run test suites (run_unit_tests.ps1, run_regression.ps1 WITHOUT -NoTs) from a non-elevated process.** Workstream J added `requireAdministrator` manifests to all TS-accessing test executables. Spawning them from a non-elevated parent triggers a UAC prompt PER EXECUTABLE (dozens of prompts). The user had to confirm dozens of prompts manually � unacceptable.
+## CRITICAL LESSON — UAC prompt storm (2026-08-21)
+**NEVER run test suites (run_unit_tests.ps1, run_regression.ps1 WITHOUT -NoTs) from a non-elevated process.** Workstream J added `requireAdministrator` manifests to all TS-accessing test executables. Spawning them from a non-elevated parent triggers a UAC prompt PER EXECUTABLE (dozens of prompts). The user had to confirm dozens of prompts manually — unacceptable.
 
 **Correct approaches for running TS-dependent tests:**
 1. **Non-TS tests only (NO UAC):** Run only the `asInvoker` executables individually (test_no_hardcoded_rvas, test_tradingapp_type, test_showme_type, test_orlib_resolver, sigtool). Use `run_regression.ps1 -NoTs`.

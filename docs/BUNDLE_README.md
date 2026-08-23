@@ -8,6 +8,26 @@ Library without the TSDev UI. It contains:
 - **`tsdev_automation/`** — a stdlib-only Python wrapper package that drives
   `tsdev_cli.exe` as a subprocess from 64-bit Python.
 
+## Known Critical Issue — Current Status
+
+**Strategies inserted/modified/upserted by `tsdev_cli.exe` / the Python wrapper
+may appear VERIFIED in TSDev but fail at runtime in TradeStation Desktop with
+"Unknown link error occurred."** A full Desktop restart does not repair a
+broken CLI Strategy. Other supported component types use the common
+compile/finalization path and are included in Workstream L validation, but an
+equivalent runtime failure has not been claimed without type-specific evidence.
+
+The only known workaround is to open the item in TSDev, make a harmless edit,
+and re-Verify — this re-runs the original finalization path. **This is a
+workaround only and is not an acceptable fix for an automated tool.**
+
+This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
+The other operations (insert/modify/delete/exists/get-source/upsert/batch)
+remain functional at the CLI/library level. A fix is planned as **Workstream L**
+but is **not yet implemented**. For details, see the project repository's
+`docs/workstream_unknown_link_fix_plan.md` (Workstream L plan) and
+`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` (durable root-cause record).
+
 ## Prerequisites
 
 - **TradeStation 9.5 installed.** The CLI loads `orlib20.dll` (and support

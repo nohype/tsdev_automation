@@ -5,6 +5,12 @@ This project enables *automated management* of the *TradeStation Development Env
 **IMPORTANT**:
 The rules and guidelines below are *MANDATORY* unless *explicitly* overridden by user instructions.
 
+**CRITICAL RULE - Effective communication:**
+NEVER use flattery or affirmation to please the user. Be sober, factual, objective.
+For example:
+Do not tell the user it's a good question; instead, just answer it.
+Do not tell the user he is right; instead, only state the objective statement you want to make.
+
 **CRITICAL RULE — Never rely on mutable item internals for correctness:**
 Item source text, comments, naming conventions inside source code, etc. are ARBITRARY user-controlled content. We can NEVER assume specific comments are present (e.g. `{ name }` blocks), that they match the stored name, or that they exist at all. Any implementation that parses source text to extract metadata (names, types, etc.) is INVALID. Metadata (stored names, ProgIds, types) must come from orlib20 warehouse records or APIs, never from item source content.
 
@@ -56,9 +62,9 @@ If you are *not a subagent:* You are the Product Manager (PM).
 - You are leading the team, so you are ultimately responsible for the *correctness* and *production quality* of all results
 
 ### Subagent profile selection (HARD RULE)
-- Use the **`subagent_explore`** profile ONLY for trivial lookups (e.g. "read file X and quote section Y verbatim"). It has very limited capabilities and tool access (read-only: grep, glob, read, web_search).
-- For **research, analysis, any task that needs MCP tools (e.g. Ghidra), or any non-trivial work**, use the **`subagent_general`** profile. This is a HARD RULE.
-- When an `explore` subagent fails (e.g. due to lacking tool access) or produces unsatisfactory output/results, retry the same task with the `general` subagent profile.
+- Use the **`universal`** profile by default for every narrow, clearly defined subtask, including research, analysis, MCP work, implementation, tests, and documentation. It has full tool access.
+- Fall back to **`subagent_general`** only when a `universal` subagent fails or cannot use a required capability.
+- Use **`subagent_explore`** only for trivial read-only lookups (for example, reading one file and quoting a section). If it fails or is insufficient, retry with `universal` first, then `subagent_general` only if `universal` fails.
 
 ### Working memory (HARD RULE)
 - The PM maintains a markdown working-memory document at `docs/PM_WORKING_MEMORY.md`.
@@ -103,12 +109,16 @@ Read `AGENTS.md` (this file) first — it contains always-on rules and project o
 - `docs/TS_COMPONENT_TYPES.md` — TradeStation component types and orlib20 warehouse type mappings. Read when working with component types or adding new types.
 - `docs/FEASIBILITY.md` — Reverse-engineering feasibility study (orlib20 primitives, parameter orders, INSERT/MODIFY/DELETE pseudocode). Read when understanding the RE foundation.
 - `docs/workstream_serve_plan.md` — Plan for Workstream K (Serve mode; K.1–K.6b COMPLETE — Workstream K fully complete). Read when working on serve mode.
+- `docs/workstream_unknown_link_fix_plan.md` — Plan for Workstream L (Unknown link runtime defect fix; PLANNED, highest priority, not implemented). Read when working on the unknown link defect.
+- `docs/workstream_tsdev_parity_plan.md` — Plan for Workstream M (TSDev parity; PLANNED after L, not implemented). Read when working on TSDev parity work.
 
 **Python integration:**
 - `docs/INTEGRATION_APPROACH_EVALUATION.md` — Decision document for 64-bit Python ↔ 32-bit orlib20.dll integration (Option A+ chosen: batch CLI + JSON I/O). Read when working on the Python wrapper.
 
 **Reverse-engineering reference (read when doing RE work on orlib20.dll):**
 - `docs/RE/` — Durable RE findings for TVS-F.4 (get-source) and TVS-F.5 (case-insensitive exists). Contains ABI documentation, patch-site analysis, BST node structure, and warehouse COM interface analysis. Read when investigating orlib20 internals.
+- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` — Durable root-cause analysis for the unknown link runtime defect (Workstream L foundation). Read when investigating the unknown link failure.
+- `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` — Durable Ghidra static evidence appendix for the unknown link defect. Read when investigating orlib20 link-stage internals.
 - `docs/RE/archive/` — Historical RE process artifacts (superseded approaches, adversarial reviews of rejected approaches). Historical context only.
 
 **Historical reference (read for context, not operational guidance):**
@@ -123,7 +133,9 @@ Update this list to reflect the current state and the next best steps as the pro
 
 ### Completed Work Summary
 
-All workstreams A, B, C, D, E, F, G, I, J are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
+All workstreams A, B, C, D, E, F, G, H, I, J are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. Detailed per-TVS logs are archived in `docs/PROJECT_HISTORY.md`.
+
+**Next planned work (not implemented):** Workstream L (Unknown link defect fix) — PLANNED, highest priority, not implemented; plan at `docs/workstream_unknown_link_fix_plan.md`. Workstream M (TSDev parity) — PLANNED after L, not implemented; plan at `docs/workstream_tsdev_parity_plan.md`. Acceptance criteria are temporarily not satisfied at production runtime because inserted Strategies fail Desktop execution, despite library/CLI/Python operations existing. See `### Planned Workstreams (not implemented)` below for details.
 
 | TVS | Result | Status |
 |-----|--------|--------|
@@ -185,13 +197,22 @@ All workstreams A, B, C, D, E, F, G, I, J are COMPLETE. Workstream K (Serve mode
 - Signature data: `signatures/*.json` (authoritative) → `tools/sigcodegen.py` → `signatures.gen.h` (build-time codegen) — 25 signatures total, 12 patch sites
 - OrlibResolver: signature-based RVA resolution, no hardcoded RVAs in production code
 - CLI supports 5 component types: Strategy (0), Indicator (2), Function (4), TradingApp (5122), ShowMe (1282)
-- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9)). Per-suite skip flags include `-SkipServeE2e` and `-SkipShowMeE2e`; under `-NoTs` only the sigtool suite + 9 non-TS unit tests run. C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: 116 tests (15 deselected E2E). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
+- Regression suite: `powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1` (12 C++ regression suites / 135 cases: sigtool (12) + unit (26) + E2E (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9)). Per-suite skip flags include `-SkipServeE2e` and `-SkipShowMeE2e`; under `-NoTs` only the sigtool suite + 9 non-TS unit tests run. C++ unit tests: 26 (including test_elevation_guard, test_json_serialize, test_serve_dispatch, test_serve_framing, test_crash_handler, test_showme_type). Python: 154 tests collected (139 selected by `-m "not e2e"`; 15 e2e deselected without live TradeStation). Non-TS C++ tests: 9 (all pass without TradeStation). All passing.
 - Fresh clone builds without `tmp/` dependencies (Workstream E fixed this)
 - Case-insensitive `exists` uses two-phase `enumerateRecords`: Phase 1 = `_LoadMasterRecsEX@16` (cached, `_stricmp` search, two-pass without/with refreshCache); Phase 2 = `FUN_101d05e0` (BST search, returns node pointer) + `FUN_101c36d0` (verbatim name getter, returns char* from warehouse node at offset +0x1D). The stored name comes from the WAREHOUSE, not from source text. Key decision: two-phase instead of cmd 0x0F + cmd 0x4E cache refresh.
 
 ### Project Status
 
-ALL workstreams (A, B, C, D, E, F, G, I, J) are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. The primary acceptance criteria are fully satisfied: all 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) work via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`). Inline batch via stdin works in both. Case-insensitive exists with stored name + ProgId return is implemented. Directory batch operations (insert/modify/delete/upsert) are now available via both the C++ CLI and the Python wrapper. A distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build. The CLI supports 5 component types (Strategy, Indicator, Function, TradingApp, ShowMe). Serve mode infrastructure (elevation guard, JSON serialization, serve dispatch, named pipe server, Python serve-broker) is complete, E2E-verified, and enabled by default (`use_serve=True`, flipped in K.6b).
+Workstreams A, B, C, D, E, F, G, H, I, J are COMPLETE. Workstream K (Serve mode) K.1–K.6b COMPLETE. Crash handling (VEH + TsDevCrashError) COMPLETE. ShowMe (TVS-C.8) COMPLETE. All 6 functions (INSERT, DELETE, MODIFY, exists, get-source, upsert) operate via both the C++ CLI (`tsdev_cli`) and the Python wrapper (`TsDevClient`); inline batch via stdin, case-insensitive exists with stored name + ProgId return, and directory batch operations are available via both; a distributable bundle (`dist/` + timestamped zip in `artifacts/`) is assembled automatically by CMake POST_BUILD on every build; the CLI supports 5 component types (Strategy, Indicator, Function, TradingApp, ShowMe); serve mode infrastructure is complete, E2E-verified, and enabled by default (`use_serve=True`, flipped in K.6b).
+
+**Acceptance criteria are TEMPORARILY NOT SATISFIED at production runtime (2026-08-23).** A confirmed defect — the "Unknown link error occurred" runtime failure — means Strategies inserted by our tool fail to execute in TradeStation Desktop, even though library-level, CLI, and Python wrapper operations exist and report success. The causal bypass is the `FUN_10011230` persistence patch: it skips compiler/link-finalization behavior (`FUN_1008E640`), offset adjustment, and symbol/XML generation, then falsely returns success. Bypass-produced Strategy artifacts are not runtime-linkable; the exact persistent mismatch is unisolated and no missing native tables are claimed. This invalidates the core product until Workstream L is implemented. See `docs/workstream_unknown_link_fix_plan.md` and `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`.
+
+### Planned Workstreams (not implemented)
+
+| Workstream | Scope | Status |
+|------------|-------|--------|
+| L (Unknown link defect fix) | Remove `FUN_10011230` persistence patch; initialize STA COM on every operation worker thread before orlib init; require full real link stage and ELL persistence; add artifact/runtime regression checks. Highest priority — blocks production runtime acceptance. | PLANNED, not implemented. Plan: `docs/workstream_unknown_link_fix_plan.md` |
+| M (TSDev parity) | Correct compiler object setup/use ordinal 66/67; explicit SaveModule flags/CELProperties metadata; post-success event 0x40A; reverse-dependent revalidation. Scoped after L; not the immediate root cause. | PLANNED after L, not implemented. Plan: `docs/workstream_tsdev_parity_plan.md` |
 
 ### Completed Workstream: G — Distributable Bundle
 

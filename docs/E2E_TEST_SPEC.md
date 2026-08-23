@@ -6,6 +6,60 @@
 
 ---
 
+## 0. Known Critical Runtime Defect — Scope Limitation of This Suite
+
+**This E2E suite verifies CLI/library-level behavior only** (exit codes,
+ProgId preservation, `.ell` file creation/removal, compiler error text,
+warehouse cleanup). **It does NOT verify that components produced by the CLI
+are runtime-linkable in TradeStation Desktop.**
+
+A known critical defect exists: Strategies inserted/modified/upserted by the
+production `tsdev_cli` appear **VERIFIED in TSDev** but fail at runtime in
+TradeStation Desktop with "Unknown link error occurred." A full Desktop restart
+does not repair a broken CLI Strategy. Other supported component types use the
+common compile/finalization path and therefore belong in Workstream L's
+validation matrix, but equivalent runtime failure is not asserted without
+type-specific evidence. The user workaround (open the Strategy in TSDev, make
+a harmless edit, re-Verify) re-runs the original finalization path and is a
+workaround only — it is **not an acceptable fix** for an automated tool.
+
+**Passing the existing CLI/library tests in this specification (Parts A–G)
+does NOT establish runtime linkability.** Those tests confirm the CLI and
+Python wrapper behave correctly at the library/warehouse level; they do not
+exercise the TradeStation Desktop runtime linker, which is where this defect
+manifests. A PASS verdict must be read as "CLI/library behavior is correct" —
+not as "components are runtime-linkable in Desktop."
+
+### 0.1 Implemented tests vs. the missing Desktop runtime-execution test
+
+The currently implemented and passing suites are CLI/library-level only:
+- `tests/run_e2e_tests.ps1` (Parts A–C, 34 cases) — exit codes, ProgId
+  preservation, `.ell` create/remove, compiler error text, cleanup.
+- `tests/test_showme_e2e.ps1` (Suite 12, SM1–SM9) — ShowMe lifecycle.
+- `tests/run_serve_e2e.ps1` / `tests/test_serve_e2e.py` (Suite 11) — serve
+  broker lifecycle and compile-failure recovery.
+- Workstream F / I suites (exists, get-source, upsert, batch, directory
+  batch) — CLI/library behavior.
+
+**No Desktop runtime-execution test exists in the current suite.** Such a
+test — compile via CLI, then load and execute the component in TradeStation
+Desktop and assert a successful runtime link — is required to gate the
+runtime-linkability property. It is part of the future Workstream L
+requirement below, not a test that exists today.
+
+### 0.2 Workstream L (planned — not implemented)
+
+**Workstream L** is a future, planned workstream to fix the runtime-link
+root cause and add the missing Desktop runtime-execution regression test. It
+is **not yet started**; no production implementation has been made, and no
+Desktop runtime-execution test exists today. This is a requirement for a
+future TVS — not a claim that such a test currently exists.
+
+- Workstream L plan: [`workstream_unknown_link_fix_plan.md`](workstream_unknown_link_fix_plan.md)
+- Durable root-cause record: [`RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
+
+---
+
 ## 1. Purpose & Scope
 
 This document is the **definitive end-to-end (E2E) CLI test specification** for the `tsdev_cli` production CLI. It defines a comprehensive, repeatable test procedure that any agent or subagent can follow to verify the CLI is fully operational.
@@ -31,6 +85,7 @@ This document is the **definitive end-to-end (E2E) CLI test specification** for 
 - Performance or stress testing
 - **Serve mode E2E** — implemented and passing as regression Suite 11; the detailed operator procedure is documented in Part F below (TVS-K.6b)
 - **Crash handling E2E** — VEH crash handler + TsDevCrashError (see Part G below for the planned test procedure)
+- **Desktop runtime-execution / runtime-linkability** — NOT covered. The known critical runtime defect and the missing Desktop runtime-execution test are documented in §0 above (Workstream L, planned). Passing this suite does not establish runtime linkability.
 
 ---
 
@@ -143,7 +198,7 @@ tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>.
 |------------|-------------|
 | `insert` / `modify` / `delete` | Single-item CRUD (case-insensitive subcommand). |
 | `exists` | Query item existence by `<type>` + `<name>`. Returns `exists=N`, `stored_name=...`, `progId=N`. `--case-insensitive` enables case-insensitive matching. |
-| `get-source` | Retrieve EasyLanguage source for `<type>` + `<name>` to stdout, or to a file via `--output <file>`. Standard (non-password-protected) items only. |
+| `get-source` | Retrieve EasyLanguage source for `<type>` + `<name>` to stdout, or to a file via `--output <file>`. Internally encrypted storage is decrypted automatically; library items have no user password-protection feature. |
 | `upsert` | Insert-or-modify: if the item exists, perform a modify (ProgId preserved); otherwise perform an insert. |
 | `batch-insert` / `batch-modify` / `batch-delete` | Batch operations driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. |
 | `batch-upsert` | Batch insert-or-modify driven by a line-based manifest file, or by manifest content piped via stdin with `--batch-stdin`. Each line: `<type> <name> <source_file>`. If the item exists → modify (ProgId preserved); otherwise → insert. |
@@ -483,16 +538,17 @@ Workstream F added 4 new operations and inline batch via stdin. All are implemen
 - D1.2: exists with unknown type → exit 2 (unknown_type)
 - D1.3a/b: exists with empty name / bad args → exit 1/2
 
-### D.2: exists (case-insensitive) — tests/test_exists_ci.ps1 (5 cases)
-- CI.1-CI.5: case-insensitive matching returns verbatim stored name + ProgId
+### D.2: exists (case-insensitive) — tests/test_exists_ci.ps1 (9 invocations across CI.1-CI.5)
+- CI.1-CI.5: case-insensitive matching returns verbatim stored name + ProgId. Each CI case that requires a probe item pairs an `insert` setup invocation with the `exists --case-insensitive` query invocation, plus a standalone nonexistent-item query (CI.3) — 9 CLI invocations total across CI.1-CI.5.
 
-### D.3: get-source — tests/test_get_source.ps1 (6 cases)
-- GS1-GS6: retrieve EL source to stdout, to file (--output), not-found, password-protected, unknown type
+### D.3: get-source — tests/test_get_source.ps1 (7 invocations across GS1-GS6)
+- GS1-GS6: retrieve EL source as raw stdout, JSON, and `--output` file; verify not-found, usage-error, and unknown-type handling. GS1 includes a paired `insert` setup invocation for the probe strategy; GS2-GS6 are direct `get-source` invocations (the GS3 output-file content check is a file assertion, not a CLI invocation) — 7 CLI invocations total across GS1-GS6. Internal-encryption retrieval is not part of this PowerShell sub-suite; add it to this inventory only when an actual registered invocation exists.
 
-### D.4: upsert — tests/test_upsert.ps1 (5 cases)
+### D.4: upsert — tests/test_upsert.ps1 (9 invocations across U1-U5)
 - U1: insert-path (new item)
 - U2: modify-path (existing item, ProgId preserved)
 - U3-U5: unknown type, compile error, function-type insert
+- U1/U2/U5 each pair the `upsert` invocation with a follow-up `exists` verification invocation; U2 additionally includes a paired `insert` setup invocation for the existing item — 9 CLI invocations total across U1-U5.
 
 ### D.5: Inline batch via stdin — tests/test_batch_stdin.ps1 (8 cases)
 - S1-S8: insert/delete/modify mixed via stdin, comments/blanks, empty stdin, backward-compat file-path, no-args rejected, stdin≡file equivalence

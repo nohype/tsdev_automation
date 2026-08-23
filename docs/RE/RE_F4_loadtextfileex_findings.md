@@ -5,7 +5,9 @@
 **Binary:** `orlib20.dll` (image base `0x10000000`, file version 9.50.01.3344, SHA-256 `318DB24A...`)
 **Scope:** Confirm parameter order, return-value semantics, and calling convention of the named export `_LoadTextFileEX@16` (the source-text retrieval primitive, counterpart to `_SaveTextEX@16`).
 
-**Verdict:** All three investigation questions are **CONFIRMED** with high confidence via Ghidra decompilation + an authoritative internal caller that invokes *both* the load and save primitives side-by-side.
+> **CORRECTION — 2026-08-23:** The ABI/parameter-order findings remain useful, but this document's interpretation of argument 4 and "password-protected items" is superseded. Library items do not expose user password protection. Some source is internally encrypted on disk (master-record flag `0x400`). TSDev passes a non-NULL zeroed 64-byte metadata buffer for those items, which triggers decryption and is populated from the data header; NULL takes the raw-copy path. Production `getSource()` now follows this behavior and returns plaintext. Treat every later "password-protected" statement in this file as historical terminology, not current guidance. See `docs/PM_WORKING_MEMORY.md` section `CRITICAL CORRECTION — "PASSWORD PROTECTION" HYPOTHESIS IS WRONG` and `docs/FEASIBILITY.md` §5.1 corrected note.
+
+**Verdict:** Parameter order, return-handle ownership, and calling convention are confirmed; password semantics are corrected by the banner above.
 
 ---
 
@@ -144,9 +146,9 @@ The load call passes `(hinst, local_8, 0=whType, param_3=progId, pw=password)` �
 | 1 | `unused` | `void*` | Unused in the load path; only forwarded to the error-report helper. Pass `NULL`. | Thunk forwards to FUN P2 (`[EBP+0xc]`); body uses P2 only at error sites; caller `FUN_10108630` passes `local_8` here with no effect on the result. |
 | 2 | `whType` | `int` | Warehouse type code (0=Strategy, 2=Indicator, 4=Function, 5122=TradingApp). | FUN P3 → `FUN_101d43a0` TypeConvert switch; caller passes `0`. |
 | 3 | `progId` | `int` | The item's ProgId (positive integer from `FindExistPos`). | FUN P4 → `FUN_101cff60` module lookup + `FUN_101d0e80` command-0x11 dispatch (stored at `obj+0x12`); caller passes `param_3`. |
-| 4 | `password` | `void*` | Password buffer for password-protected items. **`NULL`** = standard (non-protected) item → plain `memcpy` of source text. Non-NULL → decryption path. | FUN P5 → `TEST ECX,ECX; JZ plain_copy` at `0x101A1097`; caller passes `pw` (NULL when `param_5==0`). |
+| 4 | `metadataBuffer` | `void*` | Corrected semantics: `NULL` selects raw copy for flag-clear storage; a writable non-NULL zeroed 64-byte buffer selects TSDev's internal decryption/metadata path for storage flagged `0x400`. This is not user password protection. | FUN P5 → `TEST ECX,ECX; JZ plain_copy` at `0x101A1097`; later dynamic/static correction established TSDev's zeroed-buffer use. |
 
-**This CONFIRMS the FEASIBILITY.md §5.1 provisional hypothesis exactly:** `param_1 unused/NULL, param_2 = whType, param_3 = progId, param_4 = password (NULL for standard items).`
+**Corrected summary:** `param_1 = unused/NULL`, `param_2 = whType`, `param_3 = progId`, and `param_4 = optional writable metadata/decryption buffer`; select the buffer path from warehouse encryption metadata as described above.
 
 ---
 
@@ -182,7 +184,7 @@ The caller treats the return as an `HGLOBAL` and releases it with `GlobalFree`. 
 
 ### 3.4 NULL = failure
 
-All failure paths (warehouse not initialised, module not found, `GlobalAlloc` returns NULL, password-protected item too short for decryption) converge on `return (HGLOBAL)0x0`. **A `NULL` return unambiguously means failure.**
+All failure paths (warehouse not initialized, module not found, `GlobalAlloc` failure, or malformed/too-short internally encrypted data) converge on `return (HGLOBAL)0x0`. **A `NULL` return unambiguously means failure.**
 
 ---
 
@@ -256,31 +258,35 @@ undefined4 __fastcall FUN_101a08b0(undefined4 wh_this,    // ECX = warehouse
 //   param_2 (whType) : warehouse type code (0=Strategy, 2=Indicator,
 //                      4=Function, 5122=TradingApp)
 //   param_3 (progId) : positive ProgId from FindExistPos
-//   param_4 (password): pass nullptr for standard (non-password-protected)
-//                      items; non-null triggers the decryption path
-// Returns: HGLOBAL containing the ANSI source text (GlobalAlloc'd with
-//          GMEM_ZEROINIT). Use GlobalLock to obtain the text pointer,
-//          GlobalUnlock/GlobalFree to release. NULL return = failure.
+//   param_4 (metadata/decryption buffer): nullptr for flag-clear raw storage;
+//                      for internally encrypted storage (master flag 0x400),
+//                      pass a zeroed writable 64-byte buffer as TSDev does
+// Returns: HGLOBAL containing ANSI plaintext after the appropriate path
+//          (GlobalAlloc'd with GMEM_ZEROINIT). Use GlobalLock to obtain the
+//          text pointer, GlobalUnlock/GlobalFree to release. NULL = failure.
 typedef HGLOBAL (__stdcall *LoadTextFileExFn)(void* /*unused*/,
                                              int   /*whType*/,
                                              int   /*progId*/,
-                                             void* /*password*/);
+                                             void* /*metadataBuffer*/);
 ```
 
 **Usage pattern (mirrors the existing `saveSource` SEH guard in `tsdev_lib.cpp`):**
 ```cpp
+std::array<unsigned char, 64> metadata{};
+// Obtain this from the warehouse master record/API, never from source text.
+void* metadataBuffer = (masterFlags & 0x0400) ? metadata.data() : nullptr;
+
 HGLOBAL hMem = nullptr;
 __try {
-    hMem = m_pLoadTextFileEx(nullptr, getCategory(type), progId, nullptr);
+    hMem = m_pLoadTextFileEx(nullptr, getCategory(type), progId, metadataBuffer);
 } __except (EXCEPTION_EXECUTE_HANDLER) {
     hMem = nullptr;
 }
 if (hMem == nullptr) {
-    // failure: not found, or password-protected item with NULL password
     return "";
 }
 LPCSTR text = static_cast<LPCSTR>(GlobalLock(hMem));
-std::string source(text ? text : "");   // ANSI source text
+std::string source(text ? text : "");
 GlobalUnlock(hMem);
 GlobalFree(hMem);
 return source;
@@ -290,7 +296,7 @@ return source;
 
 ## 7. Caveats / uncertainties
 
-1. **Password-protected items (param_4 != NULL):** When a non-NULL password buffer is supplied, the function enters a decryption path that reads a password-scheme field (`rec[0xde] >> 0xd`) and calls `_GetPasswordSalt_8`, `_DoEncryption2_16`, etc. If the source is too short for the scheme's minimum (`local_8 <= local_10` where `local_10` is 10 or 0x3C depending on scheme), it reports error `0x7550` and returns NULL. **For the `get-source` feature, pass `NULL` and restrict to standard (non-password-protected) items** — password-protected items are out of scope (per WORKSTREAM_F_PLAN.md TVS-F.4).
+1. **Corrected argument-4 semantics:** A non-NULL writable buffer selects the decryption/metadata path; for internally encrypted storage TSDev passes a zeroed 64-byte buffer, and the loader populates metadata from the source header while returning plaintext. NULL selects the raw-copy path and is correct only for flag-clear storage. This is internal storage behavior, not user password protection. Select the path from warehouse master-record metadata (`0x400` flag), never from source text.
 
 2. **No GUI dialog in the load path:** Unlike some orlib20 functions that pop a GUI dialog (e.g. password prompts), the decompiled `FUN_101a0f90` contains **no `MessageBox`/`DialogBox` calls** — the password is taken from the caller-supplied buffer, not prompted. With `password=NULL` the path is a pure warehouse read + `GlobalAlloc` + `memcpy`. **This is safe for headless mode** (no hang risk from a modal dialog on the load path). The only blocking primitive is the warehouse command-0x11 event wait (`WaitForSingleObject` in `FUN_101d0e80`), which is satisfied by the warehouse worker thread — the same mechanism already used by the 3 existing thread-check-INT3 patches.
 

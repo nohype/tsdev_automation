@@ -4,9 +4,68 @@
 **Date:** 2026-08-15
 **Scope:** Determine how a standalone C++ CLI can implement three TSDev Library operations (insert / delete / modify, each followed by compile/verify) without using the TSDev.exe GUI, with least custom implementation and least complexity.
 
+> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation)**
+>
+> Confirmed Unknown-link findings have invalidated several core claims in this
+> document. **Production runtime acceptance is currently BROKEN.** Strategies
+> inserted/modified/upserted by the production `tsdev_cli` appear VERIFIED in
+> TSDev but fail at runtime in TradeStation Desktop with "Unknown link error
+> occurred." A full Desktop restart does not repair a broken CLI Strategy, so
+> the failure is durable, not a live-cache artifact. Other supported component
+> types share the compile/finalization path and must be validated by Workstream
+> L, but equivalent runtime failure is not claimed without type-specific
+> evidence. The library-level "IMPLEMENTED and APPROVED" statements below
+> remain accurate *only* for the warehouse/compile-persistence layer; they do
+> **not** constitute runtime-link acceptance.
+>
+> **Workstream L (Runtime-Link Root-Cause Fix) is PLANNED but NOT implemented.**
+> The approved plan is `docs/workstream_unknown_link_fix_plan.md`
+> (TVS-L.1 through TVS-L.5). Durable static evidence:
+> `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. Approved research plan:
+> `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. Dynamic A/B proof artifacts:
+> `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`, `tmp/com_nopatch_6689.xml`.
+>
+> **Claims in this document now SUPERSEDED** (corrections applied in-line at
+> each affected section; historical text preserved with correction rather than
+> destructive rewriting):
+> 1. The "partially initialized CLR" explanation for the `FUN_10011230` patch
+>    (§5.6 root cause) is **wrong/unproven**. The real prerequisite is
+>    **per-thread STA COM** for the MSXML wrapper used by `SymWriter::Save`.
+> 2. The "XML not written is acceptable" claim (§5.6 consequence) is
+>    **superseded**. XML itself is debugger/source-map data and is not consumed
+>    by the runtime linker, but its **absence is a visible marker of the
+>    bypass**; the causal defect is the bypassed original
+>    compiler/link-finalization path (`FUN_1008E640` → `SymInfo::AdjustOffsets`
+>    → `SymWriter::Save`), which produces runtime-unlinkable output.
+> 3. The patch-as-fix narrative (§5.6 fix) and the ABI justification
+>    "`__fastcall` with 5 parameters ... hence `RET 0x0C`" are **superseded**.
+>    Durable Ghidra evidence (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the
+>    original callee ends in **plain `RET`** (`0x10011454`) and the caller
+>    executes **`ADD ESP,0x0C`** (`0x1001E0C1`): the original ABI is
+>    fastcall-like register passing with **caller cleanup** for the 12 stack
+>    bytes. The patch's `RET 0x0C` changes that cleanup contract — a static ABI
+>    hazard, not a correct ABI match.
+>
+> The patch is still present in production code and is slated for **complete
+> removal** in TVS-L.3 (after TVS-L.2 establishes the STA COM prerequisite that
+> makes the unpatched path safe to run). No implementation has been performed.
+
 ---
 
 ## 1. Executive Summary
+
+> **EXECUTIVE STATUS CORRECTION — 2026-08-23:** The "All three core functions
+> (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED — the primary
+> acceptance criteria ... is satisfied at the library level" statement below
+> is **accurate only at the library/warehouse-persistence layer**. It is
+> **NOT** a runtime-link acceptance statement. Confirmed Unknown-link findings
+> show that CLI-produced strategies fail in TradeStation Desktop with "Unknown
+> link error occurred" despite TSDev reporting them VERIFIED. **Production
+> runtime acceptance is currently BROKEN.** Workstream L
+> (`docs/workstream_unknown_link_fix_plan.md`) is **PLANNED but NOT
+> implemented**. The `FUN_10011230` patch referenced below is the bypass that
+> causes the runtime-unlinkable output; see the top-of-file supersession banner
+> and §5.6 for the corrected root cause.
 
 We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete). Parameter orders for the key primitives are now **CONFIRMED**, and standalone INSERT persistence (compile + `.ell` file write) has been **demonstrated** without TSDev.exe and without Frida, via an in-process patch to `FUN_10011230` in orlib20.dll (see §5.6). **DELETE is IMPLEMENTED and APPROVED** — the orchestrator-based approach calling `FUN_101a8360` (RVA `0x1A8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.3 DELETE and §5.7). **MODIFY is IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` timestamp updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.3 MODIFY and §5.8). The headless `_OrlibInit` smoke test has **PASSED**. **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is satisfied at the library level. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. Remaining unknowns are narrow: three warehouse-type mappings remain unresolved (ActivityBar/PaintBar/ProbabilityMap), while five component types are confirmed (Strategy 0, Indicator 2, Function 4, TradingApp 5122, ShowMe 1282); minor unmapped fields (see §5.5).
 
@@ -107,7 +166,7 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Set source text (non-GUI) | `void* _SaveTextEX@16(void* p1, const char* sourceTextAnsi, const char* name, void* p4)` | MED | `evidence_C2b_orlib20_build.md` §9 (`_SaveTextEX@16` disasm). p2 = source text (HIGH; lstrlenA'd -> warehouse.SetSource). p3 = name (MED). p1 nonzero-checked + lstrlenA'd (uncertain). p4 unused in visible path (uncertain). |
 | Start compile | `void StartCompilingProcess(void)` (cdecl, 0 params) | CONFIRMED | `evidence_C2b_orlib20_build.md` §1; `orlib_param_orders.md` §9. Resets error array `[0x1023cea0]` + count `[0x1023cea4]`; record stride 0x129 (297); allocs compiler state `[0x1023ceb0]`. **Required before `VerifyModule_New`.** |
 | End compile | `void EndCompilingProcess(int arg)` (__fastcall, 1 arg; pass `0`) | CONFIRMED | `evidence_C2b_orlib20_build.md` §2; `orlib_param_orders.md` §9. Tears down compiler state. **Required after `VerifyModule_New`**; call with `0`. |
-| Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. |
+| Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. **CAVEAT (2026-08-23):** Under the current `FUN_10011230` production patch, the persisted `.ell` output is **runtime-unlinkable** — the patch bypasses `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save`, so the module is marked VERIFIED despite incomplete link-finalization and fails in TradeStation Desktop with "Unknown link error occurred." This row describes the primitive's nominal contract only; see §5.6 supersession for the broken-patch root cause and the Workstream L remediation plan. |
 | Verify by name (wrapper) | `BOOL VerifyATechnique(const char* name, int WHType) -> BOOL` | HIGH | `evidence_C2b_orlib20_build.md` §5 (`VerifyATechnique` wrapper disasm). Looks up module internally; preferred for CLI. |
 | Get errors | `std::string _GetCompilingErrors@4(std::string* hiddenRetPtr)` | CONFIRMED | `evidence_C2b_orlib20_build.md` §7; `orlib_param_orders.md` §10. Builds concatenated "name: msg\n..." across all error records; if array empty, reads `VERIFY.ERR`. An empty buffer = success. **CORRECTED (TVS-A.2/A.4):** The actual ABI is `std::vector<ErrorOutputRecord>*` (3 pointers, 12 bytes), NOT `std::string` return-by-value. The singular `GetCompilingError` (not plural) DOES use std::string hidden return ptr. The production code bypasses GetCompilingErrors entirely and reads the global error array directly. See AGENTS.md DONE entries for TVS-A.2 and TVS-A.4. |
 | Get error level | `int _GetErrorLevel@4(int idx) -> int` | HIGH | `evidence_C2b_orlib20_build.md` §8 (`_GetErrorLevel@4` disasm). 1 if record[0]==0x7775 sentinel (error), 0 = warning/none. Error count = global `[0x1023cea4]`. No single "overall level"; caller checks count>0 + per-record levels. |
@@ -124,7 +183,7 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Direct save (alt) | `MDVault::SaveModule(ModuleInfo*, std::wstring&...)` (ELMDCore.dll, mangled) | LOW (unconfirmed) | `evidence_C2b_orlib20_build.md` §6 (mangled import symbol referenced in `_SaveModule_New` semantics). Bypasses the GUI-bound `_SaveModule_New`. |
 | Get source text | `HGLOBAL __stdcall _LoadTextFileEX@16(void* unused, int whType, int progId, void* passwordBuffer)` — returns a global memory handle containing the source text (caller must `GlobalLock`/`GlobalFree`); returns NULL on failure. | CONFIRMED (TVS-F.4) | Named export confirmed via Ghidra (addr 0x101081A0, xref EXTERNAL). Parameter order confirmed via Ghidra static analysis in TVS-F.4 (thunk + authoritative mirror caller FUN_10108630; Frida NOT needed). Implemented in the `get-source` subcommand. Counterpart to `_SaveTextEX@16` (which sets source text). See note below. |
 
-> **Note (`_LoadTextFileEX@16`):** Source text is stored in the warehouse (`MWRKArea.wrk`), NOT in the `.ell` files (which are compiled+encrypted bytecode, magic `RNAM`). Inner logic (`FUN_101a0f90`): GetWarehouse → TypeConvert(whType) → module lookup by type+progId → command 0x11 dispatch (`FUN_101d0e80`) → GlobalAlloc + decryption. The command-0x11 dispatcher contains a thread-check INT3 (`swi(3)`) that must be NOP-patched (same technique as existing patches for commands 0x0F/0x1E/0x17 — see SIGNATURE_CATALOG.md §4.10-4.12). Pass NULL for `passwordBuffer` to retrieve standard (non-password-protected) items; password-protected items are out of scope for the current `get-source` requirement.
+> **Corrected note (`_LoadTextFileEX@16`, 2026-08-23):** Source text is stored in the warehouse (`MWRKArea.wrk`), not in `.ell` files (compiled RNAM modules). Inner logic (`FUN_101a0f90`) performs warehouse lookup, command `0x11`, allocation, and optional decryption; the command dispatcher requires the validated thread-check patch. The earlier "standard/password-protected" interpretation was wrong: library items do not expose user password protection. For internally encrypted storage (master-record flag `0x400`), TSDev passes a non-NULL zeroed 64-byte buffer; the loader fills metadata and returns decrypted plaintext. Production `getSource()` now matches that behavior. See `docs/PM_WORKING_MEMORY.md` "PASSWORD PROTECTION HYPOTHESIS IS WRONG" and the dated correction required in `docs/RE/RE_F4_loadtextfileex_findings.md`.
 
 ### 5.2 WHType enum
 
@@ -172,6 +231,14 @@ LoadLibraryW(L"ELDebugger.dll");
 
 // 4. Patch FUN_10011230 at orlib20_base+0x11230 (SymWriter bypass — see §5.6)
 //    8 bytes: B8 01 00 00 00 C2 0C 00   (MOV EAX,1; RET 0x0C)
+//
+//    SUPERSEDED 2026-08-23 (Workstream L): This patch is the bypass that
+//    produces runtime-unlinkable output. It is still present in production
+//    code but is slated for COMPLETE REMOVAL in TVS-L.3, after TVS-L.2
+//    establishes per-thread STA COM (the real prerequisite, not "partially
+//    initialized CLR"). The `RET 0x0C` is also ABI-invalid: the original
+//    callee ends in plain `RET` and the caller performs `ADD ESP,0x0C`
+//    (caller cleanup). See §5.6 and docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md.
 patch_memory((BYTE*)orlib + 0x11230, "\xB8\x01\x00\x00\x00\xC2\x0C\x00", 8);
 
 // 5. Init
@@ -304,6 +371,14 @@ OrlibExit();
 
 ### 5.4 SaveModule_New — source text only (no file persistence)
 
+> **SUPERSESSION NOTE — 2026-08-23:** The phrase "with the `FUN_10011230`
+> patch applied" below references the bypass that produces runtime-unlinkable
+> output. The persistence claim (`.ell` is written) is accurate at the
+> warehouse/compile-persistence layer, but the resulting `.ell` is
+> **runtime-unlinkable** because the patch skips the original
+> compiler/link-finalization path. See §5.6 supersession banner and
+> `docs/workstream_unknown_link_fix_plan.md`.
+
 `_SaveModule_New@20` is GUI-bound in its source-retrieval path: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide→UTF-8, and sets the warehouse source text. **It does NOT persist `.ell`/`.xml` files** — it saves source text into the warehouse entry only (see §5.1 primitive table). Persistence of the compiled `.ell` file is performed by `VerifyModule_New` (with the `FUN_10011230` patch applied — see §5.6), which compiles the source and calls `ELMeta::MDVault::SaveModule` to write `elmodule_<X>_<N>.ell` to disk.
 
 **Hidden-EDIT workaround (CONFIRMED, low complexity):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. This workaround has been demonstrated working in the standalone INSERT flow (see §5.3 and §5.6).
@@ -311,6 +386,12 @@ OrlibExit();
 > **NOTE:** An earlier version of this section stated that `_SaveModule_New` "calls `MDVault::SaveModule` (which writes `elmodule_<X>_<N>.ell/.xml`)." That was incorrect — `_SaveModule_New` sets warehouse source text only. File persistence is via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (see §5.6).
 
 ### 5.5 Remaining unknowns / blockers
+
+> **SUPERSESSION NOTE — 2026-08-23:** The "Resolved items" sentence below
+> lists "the GUI-save persistence path (resolved via the `FUN_10011230`
+> patch — see §5.6)" as a resolved item. That resolution is **superseded**
+> for runtime-link acceptance: the patch produces runtime-unlinkable output.
+> See §5.6 supersession banner and `docs/workstream_unknown_link_fix_plan.md`.
 
 > **Resolved items:** The following were previously listed as unknowns and are now **CONFIRMED** — see §5.1 (primitive table) and §5.6 (persistence fix): `_CreateEntryEX` params 2-5, `_VerifyModule_New` p3/p4/p5, `_SaveModule_New` GUI dependency (hidden-EDIT workaround confirmed), `_SaveTextEX` persistence semantics (SaveModule_New saves source only; VerifyModule_New persists `.ell`), `_GetCompilingErrors` formatting, `contextId` valid values (contextId=1), and the GUI-save persistence path (resolved via the `FUN_10011230` patch — see §5.6).
 
@@ -322,15 +403,79 @@ OrlibExit();
 4. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.
 5. **WHType 0x32 special case** — meaning unknown; may affect verify/save.
 
-### 5.6 Persistence fix — SymWriter bypass (CONFIRMED, breakthrough)
+### 5.6 Persistence fix — SymWriter bypass (CONFIRMED, breakthrough) — SUPERSEDED, see banner
+
+> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
+> The narrative in this section is **superseded** in three places (corrections
+> applied in-line below; historical text preserved with correction rather than
+> destructive rewriting):
+>
+> 1. **Root cause ("partially initialized CLR") — SUPERSEDED / WRONG.** The
+>    real prerequisite is **per-thread STA COM** for the MSXML COM wrapper used
+>    by `SymWriter::Save`. TSDev's UI/main initialization thread statically
+>    calls `CoInitialize(NULL)` (STA) before `_OrlibInit(NULL,1)` on the same
+>    synchronous path; the CLI's 64 MiB worker threads never initialize COM, so
+>    the unpatched standalone path raised native C++ exception `0xE06D7363`.
+>    The "partially initialized CLR" explanation was unproven and is wrong.
+> 2. **Fix ("patch-as-fix") — SUPERSEDED.** The patch is not a fix; it is the
+>    **bypass that causes the runtime-unlinkable output.** Durable Ghidra
+>    evidence (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) proves the original
+>    function's ordered work includes a call to `FUN_1008E640`
+>    (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
+>    `SymWriter::Save`. The patch skips all of that and forces `EAX=1`, so
+>    `CompileText` proceeds to `ModuleInfo::SetGuid` / `MDVault::SaveModule`
+>    and marks the item verified despite an incomplete finalization. A
+>    controlled dynamic A/B (`tmp/com_unpatched_probe/`,
+>    `tmp/com_nopatch_6689.ell`, `tmp/com_nopatch_6689.xml`) proved the
+>    combined fix: STA COM on the worker + restored original `FUN_10011230`
+>    bytes produced a paired ELL/XML with matching embedded version GUID, and
+>    the user confirmed the strategy ran in Desktop without opening/re-verifying
+>    in TSDev.
+> 3. **ABI claim ("`__fastcall` with 5 parameters ... hence `RET 0x0C`") —
+>    SUPERSEDED.** Durable Ghidra evidence shows the original callee ends in
+>    **plain `RET`** at `0x10011454` and the caller executes **`ADD ESP,0x0C`**
+>    at `0x1001E0C1`. The original ABI is fastcall-like register passing with
+>    **caller cleanup** for the 12 stack bytes. The patch's `RET 0x0C` changes
+>    that cleanup contract to callee cleanup — a static ABI hazard, not a
+>    correct ABI match. No claim is made that an observed historical crash was
+>    caused by it.
+>
+> The patch is still present in production code and is slated for **complete
+> removal** in TVS-L.3 (`docs/workstream_unknown_link_fix_plan.md`), after
+> TVS-L.2 establishes the STA COM prerequisite that makes the unpatched path
+> safe to run. No implementation has been performed.
 
 > **Evidence:** `orlib_param_orders.md` §12. This is the critical fix that enables standalone disk persistence of `.ell` files without TSDev.exe and without Frida.
+>
+> **SUPERSEDED 2026-08-23 (Workstream L):** The "critical fix" referenced here is
+> **only historical persistence evidence** — it demonstrated that `.ell` files
+> could be written standalone — and is **not the production fix.** As detailed in
+> the section banner above, the patch is the bypass that produces
+> runtime-unlinkable output (Desktop "Unknown link error occurred"); the real
+> production remediation is Workstream L
+> (`docs/workstream_unknown_link_fix_plan.md`), which is **PLANNED but NOT
+> implemented**. Treat this Evidence preamble as a historical artifact, not a
+> runtime-acceptance statement.
 
 **Root cause:** `SymWriter::Save` in **`ELDebugger.dll`** (at RVA `0x120a0`) calls `XmlDocument.Save` — a .NET managed method — via a virtual call at vtable offset `0xd8`. In a standalone native process, the CLR is only **partially** initialized: the mixed-mode C++/CLI support DLLs load, but they do not fully boot the runtime, so the JIT-compiled target address is invalid. The virtual call therefore causes an access violation.
+
+> **SUPERSEDED 2026-08-23:** The "partially initialized CLR" explanation above
+> is **wrong/unproven**. The real prerequisite is **per-thread STA COM** for
+> the MSXML COM wrapper used by `SymWriter::Save`. See the section banner and
+> `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
 
 That exception is caught by the SEH handler of `FUN_10011230` in **orlib20.dll**. When the handler runs, `CompileText` skips `ELMeta::MDVault::SaveModule` — the function that actually writes the `.ell` file. As a result, the source compiles but **nothing is persisted to disk**.
 
 **Fix:** Patch `FUN_10011230` in orlib20.dll (at RVA `0x11230`) to **return 1 immediately**. This bypasses the `SymWriter` crash entirely. `CompileText` then proceeds normally to call `ELMeta::MDVault::SaveModule`, which writes the `.ell` file (compiled module, magic `RNAM`).
+
+> **SUPERSEDED 2026-08-23:** The "Fix" above is not a fix; it is the **bypass
+> that causes the runtime-unlinkable output.** The patch skips
+> `FUN_1008E640` (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
+> `SymWriter::Save`, then forces `EAX=1` so `CompileText` proceeds to
+> `ModuleInfo::SetGuid` / `MDVault::SaveModule` and marks the item verified
+> despite an incomplete finalization. The real fix is per-thread STA COM
+> (TVS-L.2) + complete patch removal (TVS-L.3). See the section banner and
+> `docs/workstream_unknown_link_fix_plan.md`.
 
 **Patch bytes (8 bytes at `orlib20_base + 0x11230`):**
 ```
@@ -339,9 +484,37 @@ C2 0C 00          RET 0x0C
 ```
 `FUN_10011230` is `__fastcall` with 5 parameters (`ECX`, `EDX`, and 3 stack args = 12 bytes), hence `RET 0x0C`. The patch is applied **in-process to the loaded orlib20.dll image in the standalone CLI's own address space** (memory only); the on-disk `orlib20.dll` is never modified (READ-ONLY install preserved).
 
+> **SUPERSEDED 2026-08-23 (ABI claim):** The "hence `RET 0x0C`" justification
+> above is **wrong**. Durable Ghidra evidence
+> (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee ends in
+> **plain `RET`** at `0x10011454` and the caller executes **`ADD ESP,0x0C`** at
+> `0x1001E0C1`: the original ABI is fastcall-like register passing with
+> **caller cleanup** for the 12 stack bytes. The patch's `RET 0x0C` changes
+> that cleanup contract to callee cleanup — a static ABI hazard, not a correct
+> ABI match. No claim is made that an observed historical crash was caused by
+> it. The in-process-only / READ-ONLY-install statement remains accurate.
+
 **Consequence:** The `.xml` file (debug symbols) is **NOT** written. This is acceptable — 7 existing `.ell` files in `MyWork\Bin` already operate without paired `.xml` files. The `.ell` file is the compiled module that TradeStation actually uses.
 
+> **SUPERSEDED 2026-08-23:** The "XML not written is acceptable" claim above
+> is **superseded**. XML itself is debugger/source-map data and is **not
+> consumed by the runtime linker**, so XML absence is not *directly* the link
+> failure. However, XML absence is a **visible marker of the bypass**: the
+> causal defect is the bypassed original compiler/link-finalization path
+> (`FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save`) producing
+> runtime-unlinkable output. The "7 existing unpaired `.ell` files" observation
+> was existence-only and did not prove executable strategies work without XML.
+> See the section banner and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
+
 **Evidence:** Standalone probe `elevated_test20.exe` with the in-process patch produces `elmodule_0_2572.ell` (5091 bytes, magic `RNAM`) with **no Frida attached**. Compilation error buffer is empty. `VerifyModule_New = 1`.
+
+> **SUPERSEDED 2026-08-23:** The probe evidence above demonstrates
+> *warehouse/compile-persistence only*; it does **not** demonstrate
+> runtime-link acceptance. Confirmed Unknown-link findings show CLI-produced
+> strategies fail in TradeStation Desktop with "Unknown link error occurred"
+> despite this probe succeeding. The dynamic A/B in
+> `tmp/com_unpatched_probe/` is the durable proof of the corrected
+> root cause and fix direction.
 
 ### 5.7 DELETE — orchestrator approach (IMPLEMENTED & APPROVED)
 
@@ -395,6 +568,15 @@ The only difference from INSERT is that `CreateEntryEX` is skipped — the exist
 
 ## 6. Comparison & Recommendation
 
+> **SUPERSESSION NOTE — 2026-08-23:** The Recommendation below characterizes
+> the `FUN_10011230` patch as "persistence ... demonstrated" and "LOW risk."
+> That characterization is **superseded**: the patch is the bypass that
+> produces runtime-unlinkable output, and production runtime acceptance is
+> currently **BROKEN**. The Approach 2 recommendation (orlib20.dll direct)
+> remains the correct architectural choice; the patch is the implementation
+> defect to be removed by Workstream L
+> (`docs/workstream_unknown_link_fix_plan.md`). See §5.6 supersession banner.
+
 | Criterion | Approach 1 (ELIS.exe COM) | Approach 2 (orlib20.dll direct) |
 |-----------|---------------------------|---------------------------------|
 | Name -> (WHType, ProgId) resolution | NOT exposed; must scan XML out-of-band | `FindExistPos` / `_GetMasterRecByName` (HIGH conf) |
@@ -417,6 +599,14 @@ Both de-risking gates have **PASSED**: (a) orlib20 parameter orders are **CONFIR
 ---
 
 ## 7. Next Steps (TVS-2 Proposal)
+
+> **SUPERSESSION NOTE — 2026-08-23:** The status updates below mark the
+> `FUN_10011230` patch path as "COMPLETED" / "DONE." That is accurate for
+> warehouse/compile-persistence only and is **NOT** runtime-link acceptance.
+> Production runtime acceptance is currently **BROKEN**; the patch is the
+> bypass to be removed by Workstream L
+> (`docs/workstream_unknown_link_fix_plan.md`, TVS-L.1 through TVS-L.5,
+> PLANNED but NOT implemented). See §5.6 supersession banner.
 
 > **Status update:** Items (a), (b), and (c) below are all **COMPLETED**. Parameter orders are CONFIRMED (see §5.1, `orlib_param_orders.md`), the headless init smoke test PASSED (see `headless_init_smoke_test.md`), standalone INSERT persistence has been demonstrated (see §5.6), DELETE is IMPLEMENTED & APPROVED (see §5.7), and MODIFY is IMPLEMENTED & APPROVED (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining work is follow-ups only (see §5.5 and §8).
 
@@ -442,6 +632,14 @@ Each function gets a red-green TDD cycle against a disposable test library copy 
 ---
 
 ## 8. Open Questions / Risks
+
+> **SUPERSESSION NOTE — 2026-08-23:** Resolved items #5, #6, and #11 below
+> mark the `FUN_10011230` patch path as "RESOLVED." That resolution is
+> **superseded** for runtime-link acceptance: the patch produces
+> runtime-unlinkable output. The real prerequisite is per-thread STA COM
+> (not "partially initialized CLR"), and the patch is slated for complete
+> removal in TVS-L.3. See §5.6 supersession banner and
+> `docs/workstream_unknown_link_fix_plan.md`.
 
 > **Resolved since initial study:** Items #1 (headless `CreateRte` — smoke test PASSED), #2 (`contextId` — CONFIRMED as 1), #3 (`_CreateEntryEX` params — CONFIRMED, see §5.1), #5 (`_SaveModule_New` GUI binding — hidden-EDIT workaround CONFIRMED, persistence via `VerifyModule_New` + §5.6 patch), #6 (`MDVault::SaveModule` direct — no longer needed; persistence achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule`), #8 (`_GetCompilingErrors` formatting — CONFIRMED, see §5.1), #11 (`_SaveTextEX` persistence — RESOLVED; `SaveModule_New` saves source only, `VerifyModule_New` persists `.ell`), and #13 (Frida live RE — enabled via Python frida MCP, Frida 17.17.0).
 

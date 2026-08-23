@@ -32,7 +32,7 @@ from typing import Sequence
 
 from . import _pipe
 from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, exception_for
-from .results import TsDevResult
+from .results import TsDevErrorInfo, TsDevResult
 
 # The component types confirmed in tsdev_cli.cpp (parseType).
 _VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp", "showme"})
@@ -128,7 +128,7 @@ def _resolve_cli_path(cli_path: str | os.PathLike | None) -> Path:
 
 # --- Elevation detection (Windows) ----------------------------------------
 
-_TOKEN_QUERY = 0x0020
+_TOKEN_QUERY = 0x0008  # TOKEN_QUERY from winnt.h (was 0x0020 = TOKEN_ADJUST_PRIVILEGES)
 _TokenElevation = 20
 
 _advapi32 = ctypes.windll.advapi32
@@ -499,9 +499,11 @@ class TsDevClient:
         per operation.  When already elevated, or when ``use_serve=False``
         is passed explicitly, the existing ``subprocess.run`` path is used
         directly (zero overhead, no broker, no extra UAC).  Batch ops are
-        NOT routed through the broker in MVP — they raise
-        :class:`NotImplementedError` when not elevated and ``use_serve`` is
-        active.
+        routed through the broker by looping over individual
+        items — the broker's long-lived TsDevLib (flushPerItem=false) makes
+        this as efficient as the C++ batch path (no per-op process spawn, no
+        per-op warehouse flush).  Per-item failures are collected into the
+        returned list (NOT raised), matching the non-serve batch semantics.
     """
 
     def __init__(
@@ -788,15 +790,8 @@ class TsDevClient:
         return result
 
     def _batch(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
-        # Batch ops are NOT routed through the broker in MVP — they require an
-        # elevated session (subprocess.run from a non-elevated Python won't
-        # inherit the broker's token).  Raise NotImplementedError when serve is
-        # active and the session is not elevated.  Batch-over-serve is deferred.
         if self._serve_active():
-            raise NotImplementedError(
-                "batch ops require an elevated session; use serve mode for "
-                "single ops or run elevated"
-            )
+            return self._batch_serve(op, items)
         needs_source = op in ("insert", "modify", "upsert")
         cleanup: list[Path] = []
         try:
@@ -808,13 +803,40 @@ class TsDevClient:
             self._cleanup(cleanup)
         return results
 
+    def _batch_serve(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
+        """Route a batch op through the serve broker by looping over items.
+
+        The broker's TsDevLib is long-lived (flushPerItem=false), so this is
+        as efficient as the C++ batch path — no per-op process spawn, no
+        per-op warehouse flush.  Per-item failures are collected into the
+        returned list (NOT raised), matching non-serve batch semantics.
+        Broker-level failures (crash, broken pipe) propagate as exceptions.
+        """
+        needs_source = op in ("insert", "modify", "upsert")
+        # Pre-validate all items upfront (matches _build_manifest_string).
+        validated: list[tuple[str, BatchItem]] = []
+        for it in items:
+            t = _validate_type(it.type)
+            if needs_source and it.source is None:
+                raise ValueError(
+                    f"batch {it.type}/{it.name}: source is required for {op}"
+                )
+            validated.append((t, it))
+        if not validated:
+            return []
+        broker = self._ensure_broker()
+        results: list[TsDevResult] = []
+        for t, it in validated:
+            request: dict = {"op": op, "type": t, "name": it.name}
+            if needs_source:
+                request["source"] = self._read_source(it.source)
+            obj = broker.call(request)
+            results.append(TsDevResult.from_json(obj))
+        return results
+
     def _batch_dir(self, op: str, type_: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None) -> list[TsDevResult]:
-        # Batch-dir ops are NOT routed through the broker in MVP (see _batch).
         if self._serve_active():
-            raise NotImplementedError(
-                "batch ops require an elevated session; use serve mode for "
-                "single ops or run elevated"
-            )
+            return self._batch_dir_serve(op, type_, dir_path, extensions)
         t = _validate_type(type_)
         exts = list(extensions) if extensions else []
         for e in exts:
@@ -824,6 +846,106 @@ class TsDevClient:
         for e in exts:
             cmd += ["-t", e]
         return self._run_batch(cmd, input="")
+
+    def _batch_dir_serve(
+        self,
+        op: str,
+        type_: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None,
+    ) -> list[TsDevResult]:
+        """Route a directory batch op through the serve broker.
+
+        Replicates the C++ CLI's ``parseDirectory`` logic client-side:
+        enumerates regular files (no recursion), filters by extension
+        (default ``.el`` + ``.txt``; dot-prefix optional; case-insensitive;
+        note: empty-string extensions are rejected, diverging from C++ which
+        uses them to match extensionless files — this matches the non-serve
+        ``_batch_dir`` path's existing validation),
+        uses the file stem as the item name, and reads file content as EL
+        source for insert/modify/upsert.  Items are sorted by name for
+        deterministic ordering (matching the C++ path).
+
+        Non-existent directory and empty/no-matching-files both raise
+        :class:`TsDevError` (matching the C++ exit-1 behavior).  Per-item
+        source-read failures are collected as failure results with
+        ``source_file_error`` (exit 3), matching the C++ path.  Per-item
+        operation failures are collected (NOT raised).  Broker-level
+        failures (crash, broken pipe) propagate as exceptions.
+        """
+        t = _validate_type(type_)
+        # Normalize extensions (matches C++ parseDirectory).
+        if extensions:
+            exts: list[str] = []
+            for e in extensions:
+                if not isinstance(e, str) or not e:
+                    raise ValueError(
+                        f"invalid extension {e!r}: must be a non-empty string"
+                    )
+                ext = e.lower()
+                if ext and not ext.startswith("."):
+                    ext = "." + ext
+                exts.append(ext)
+        else:
+            exts = [".el", ".txt"]
+
+        dir_p = Path(dir_path)
+        if not dir_p.is_dir():
+            raise TsDevError(
+                message=f'failed to open directory "{dir_path}"'
+            )
+
+        needs_source = op in ("insert", "modify", "upsert")
+        # (name, file_path, source_or_None) — source is None when read failed.
+        entries: list[tuple[str, str, str | None]] = []
+        for entry in dir_p.iterdir():
+            if not entry.is_file():
+                continue
+            ext = entry.suffix.lower()
+            if ext not in exts:
+                continue
+            name = entry.stem
+            source: str | None = None
+            if needs_source:
+                try:
+                    source = entry.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    source = None  # will become a source_file_error result
+            entries.append((name, str(entry), source))
+
+        if not entries:
+            ext_desc = ", ".join(exts)
+            raise TsDevError(
+                message=f"no files matching {ext_desc} found in {dir_path}"
+            )
+
+        # Sort by name for deterministic ordering (matches C++ parseDirectory).
+        entries.sort(key=lambda x: x[0])
+
+        broker = self._ensure_broker()
+        results: list[TsDevResult] = []
+        for name, file_path, source in entries:
+            if needs_source and source is None:
+                results.append(
+                    TsDevResult(
+                        op=op,
+                        type=t,
+                        name=name,
+                        success=False,
+                        exit_code=3,
+                        error=TsDevErrorInfo(
+                            code="source_file_error",
+                            message=f'failed to read source file "{file_path}"',
+                        ),
+                    )
+                )
+                continue
+            request: dict = {"op": op, "type": t, "name": name}
+            if needs_source:
+                request["source"] = source
+            obj = broker.call(request)
+            results.append(TsDevResult.from_json(obj))
+        return results
 
     def _materialize_source(self, source: str | os.PathLike, cleanup: list[Path]) -> Path:
         """Return a path to a source file.
@@ -929,8 +1051,9 @@ class TsDevClient:
         # and the session is not elevated, the batch CLI (requireAdministrator
         # manifest) cannot be launched via subprocess.run.  Raise a clear,
         # actionable error BEFORE attempting the subprocess call.  When
-        # use_serve=True and not elevated, batch ops already raise
-        # NotImplementedError in _batch/_batch_dir before reaching here.
+        # use_serve=True and not elevated, batch ops are routed
+        # through the broker in _batch_serve/_batch_dir_serve before
+        # reaching here.
         if not self._use_serve and not self._is_elevated:
             raise ElevationRequiredError()
         if not self.cli_path.is_file():

@@ -1,5 +1,57 @@
 # Signature Catalog — orlib20.dll Code-Section RVA Targets
 
+> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
+>
+> Confirmed Unknown-link findings have invalidated the **calling-convention
+> narrative** for the `FUN_10011230_persistence_patch` entry (target #9,
+> §3 row 9, §4.9). The signature/patch *facts* below (counts, RVAs, original
+> bytes, replacement bytes, scan results) are **retained as-is** because the
+> production code still carries the patch until TVS-L.3 removes it; the
+> catalog must not prematurely drop counts or entries. The following
+> narrative claims are **stale/superseded**:
+>
+> - The `__fastcall` (ECX=arg1, EDX=arg2) "with 12 bytes stack args
+>   (RET 0x0C)" / "the patch's `RET 0x0C` cleans 12 bytes" framing in
+>   §3 row 9, §4.9 calling-convention field, and §4.9 structural assumptions
+>   is **stale**. Durable Ghidra evidence
+>   (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee ends in
+>   **plain `RET`** at `0x10011454` and the caller executes **`ADD ESP,0x0C`**
+>   at `0x1001E0C1`: the original ABI is fastcall-like register passing with
+>   **caller cleanup** for the 12 stack bytes. The patch's `RET 0x0C` changes
+>   that cleanup contract to callee cleanup — a static ABI hazard, not a
+>   correct ABI match. No claim is made that an observed historical crash was
+>   caused by it.
+> - The §4.9 "Patch details" framing that the patch "makes `SymWriter::Save`
+>   return success so the `.ell` file is written" and "bypasses a .NET
+>   `XmlDocument.Save` crash in `ELDebugger.dll`" is **stale**. The patch is
+>   the **bypass that produces runtime-unlinkable output**: it skips
+>   `FUN_1008E640` (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
+>   `SymWriter::Save`, then forces `EAX=1` so `CompileText` proceeds to
+>   `ModuleInfo::SetGuid` / `MDVault::SaveModule` and marks the item verified
+>   despite an incomplete finalization. The real prerequisite is **per-thread
+>   STA COM** for the MSXML wrapper used by `SymWriter::Save` (not "partially
+>   initialized CLR").
+>
+> **Patch slated for removal:** The `FUN_10011230_persistence_patch` entry
+> (target #9) is slated for **complete removal** in TVS-L.3
+> (`docs/workstream_unknown_link_fix_plan.md`), after TVS-L.2 establishes the
+> STA COM prerequisite that makes the unpatched path safe to run. When L.3
+> ships, the catalog totals change from **25 signatures / 12 patch sites** to
+> **24 signatures / 11 patch sites** (3 data globals, 10 exports unchanged),
+> and `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` drops from 25 to 24.
+> **Until L.3 ships, the current 25/12 counts and the target #9 entry must
+> remain in this catalog and in `signatures/v9.50.01.3344.json`** — the
+> production code still applies this patch.
+>
+> **Production runtime acceptance is currently BROKEN.** CLI-produced
+> strategies fail in TradeStation Desktop with "Unknown link error occurred"
+> despite TSDev reporting them VERIFIED. Workstream L is **PLANNED but NOT
+> implemented**. Durable evidence: `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`;
+> approved plan: `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`; L plan:
+> `docs/workstream_unknown_link_fix_plan.md`; dynamic A/B proof:
+> `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
+> `tmp/com_nopatch_6689.xml`.
+
 | Field | Value |
 |---|---|
 | **TVS Identifier** | TVS-B.1 + Workstreams F.4, F.5 |
@@ -103,7 +155,7 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 | 6 | DeleteFromTree | 0x1E4030 | `__thiscall` (ecx=globalLookup; stack: whType, progId, flag); RET 12 | 66 | Yes (1/1) | No |
 | 7 | GetWarehouse | 0x1A9650 | `__cdecl`, 1 arg (path; 0=default) | 45 | Yes (1/1) | No |
 | 8 | FUN_101a8360_delete_orchestrator | 0x1A8360 | `__fastcall` (ECX=whType, EDX=progId, no stack args) | 64 | Yes (1/1) | No |
-| 9 | FUN_10011230_persistence_patch | 0x11230 | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C) | 72 | Yes (1/1) | Yes |
+| 9 | FUN_10011230_persistence_patch | 0x11230 | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C in patch) — **CALLING-CONVENTION NARRATIVE STALE 2026-08-23: original callee ends in plain `RET` (`0x10011454`); caller performs `ADD ESP,0x0C` (`0x1001E0C1`); original ABI is caller-cleanup, patch's `RET 0x0C` is callee-cleanup (ABI hazard). See top-of-file banner and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. Entry retained until TVS-L.3.** | 72 | Yes (1/1) | Yes |
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | `__thiscall` (ecx=this) | 36 | Yes (1/1) | Yes |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | `__thiscall` (ecx=this) | 37 | Yes (1/1) | Yes |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | `__thiscall` (ecx=this) | 57 | Yes (1/1) | Yes |
@@ -125,7 +177,7 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 
 | # | Name | Patch-Site RVA | Sig Match RVA (containing fn) | Patch Offset | Original Bytes | Replacement Bytes |
 |---|---|---|---|---|---|---|
-| 9 | FUN_10011230_persistence_patch | 0x11230 | 0x11230 | 0x00 (0) | `55 8B EC 6A FF 68 CD D3` | `B8 01 00 00 00 C2 0C 00` |
+| 9 | FUN_10011230_persistence_patch | 0x11230 | 0x11230 | 0x00 (0) | `55 8B EC 6A FF 68 CD D3` | `B8 01 00 00 00 C2 0C 00` — **STALE (2026-08-23): replacement bytes encode callee-cleanup `RET 0x0C` (`C2 0C 00`), an ABI hazard against the original caller-cleanup contract; see §4.9 banner. Entry retained until TVS-L.3.** |
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | 0x1D0950 | 0x43 (67) | `CC` | `90` |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | 0x1CF5B0 | 0x24 (36) | `CC` | `90` |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | 0x1D1FA0 | 0x28 (40) | `CC` | `90` |
@@ -372,18 +424,51 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 
 ### 4.9 Target 9: FUN_10011230 persistence patch (RVA 0x11230)
 
+> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
+> The signature/patch *facts* in this section (RVA, original bytes, replacement
+> bytes, signature hex, scan result) are **retained as-is** because production
+> code still applies this patch. The entry is slated for **complete removal**
+> in TVS-L.3 (`docs/workstream_unknown_link_fix_plan.md`); until L.3 ships, the
+> 25-signature / 12-patch-site totals and this entry must remain. The following
+> narrative claims are **stale/superseded** (corrections applied in-line
+> below; historical text preserved with correction rather than destructive
+> rewriting):
+>
+> - **Calling-convention field and "RET 0x0C cleans 12 bytes" structural
+>   assumption — STALE.** Durable Ghidra evidence
+>   (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee ends in
+>   **plain `RET`** at `0x10011454` and the caller executes **`ADD ESP,0x0C`**
+>   at `0x1001E0C1`: the original ABI is fastcall-like register passing with
+>   **caller cleanup** for the 12 stack bytes. The patch's `RET 0x0C` changes
+>   that cleanup contract to callee cleanup — a static ABI hazard, not a
+>   correct ABI match. No claim is made that an observed historical crash was
+>   caused by it.
+> - **"Patch details" framing (makes `SymWriter::Save` return success so the
+>   `.ell` is written; bypasses a .NET `XmlDocument.Save` crash in
+>   `ELDebugger.dll`) — STALE.** The patch is the **bypass that produces
+>   runtime-unlinkable output**: it skips `FUN_1008E640`
+>   (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
+>   `SymWriter::Save`, then forces `EAX=1` so `CompileText` proceeds to
+>   `ModuleInfo::SetGuid` / `MDVault::SaveModule` and marks the item verified
+>   despite an incomplete finalization. The real prerequisite is **per-thread
+>   STA COM** for the MSXML wrapper used by `SymWriter::Save` (not "partially
+>   initialized CLR"). Production runtime acceptance is currently **BROKEN**;
+>   Workstream L is PLANNED but NOT implemented. Dynamic A/B proof:
+>   `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
+>   `tmp/com_nopatch_6689.xml`.
+
 | Field | Value |
 |---|---|
 | **RVA (patch site)** | 0x11230 |
 | **VA (patch site)** | 0x10011230 |
 | **Name** | FUN_10011230_persistence_patch |
-| **Calling convention** | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C in patch) |
+| **Calling convention** | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C in patch) — **STALE 2026-08-23: original callee ends in plain `RET` (`0x10011454`); caller performs `ADD ESP,0x0C` (`0x1001E0C1`); original ABI is caller-cleanup, patch's `RET 0x0C` is callee-cleanup (ABI hazard). See section banner.** |
 | **Signature length** | 72 bytes |
-| **Patch site?** | Yes |
+| **Patch site?** | Yes — **slated for complete removal in TVS-L.3** |
 | **Sig match RVA** | 0x11230 (patch at function entry, offset 0) |
 | **Patch offset** | 0x00 (0) from function entry |
 | **Original bytes at patch site** | `55 8B EC 6A FF 68 CD D3` (8 bytes) |
-| **Replacement bytes** | `B8 01 00 00 00 C2 0C 00` (8 bytes = `MOV EAX,1; RET 0x0C`) |
+| **Replacement bytes** | `B8 01 00 00 00 C2 0C 00` (8 bytes = `MOV EAX,1; RET 0x0C`) — **STALE 2026-08-23: `RET 0x0C` is callee-cleanup; original ABI is caller-cleanup (plain `RET` + caller `ADD ESP,0x0C`). See section banner.** |
 | **Exported?** | No (internal function, resolved by RVA) |
 
 **Signature (matches ORIGINAL unpatched bytes):**
@@ -399,12 +484,32 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 - Original first 8 bytes: `55 8B EC 6A FF 68 CD D3` (PUSH EBP; MOV EBP,ESP; PUSH -1; PUSH 0x101ED3CD).
 - **RESOLVED (TVS-B.1.5):** The production code now validates original bytes before patching via `validatePersistencePatchBytes()`. See AGENTS.md DONE entry for TVS-B.1.5.
 
+> **STALE 2026-08-23 (Patch details):** The first bullet's framing ("makes
+> `SymWriter::Save` return success so the `.ell` file is written; bypasses a
+> .NET `XmlDocument.Save` crash in `ELDebugger.dll`") is **superseded**. The
+> patch is the bypass that produces runtime-unlinkable output; it skips
+> `FUN_1008E640` (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
+> `SymWriter::Save`, then forces `EAX=1`. The real prerequisite is per-thread
+> STA COM for the MSXML wrapper (not "partially initialized CLR"). The
+> byte-validation (TVS-B.1.5) and signature-match facts remain accurate. See
+> the section banner and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
+
 **Structural assumptions:**
 - Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 6–9 wildcarded; actual handler = 0x101ED3CD).
 - Assumes `__fastcall` convention (ECX=arg1, EDX=arg2) with 12 bytes of stack args (the patch's `RET 0x0C` cleans 12 bytes).
 - Assumes a 0x168 (360) byte stack frame (`81 EC 68 01 00 00`).
 - Assumes error record size 0xB1 = 177 (`68 B1 00 00 00` = PUSH 0xB1) — embedded in the signature as a fixed structural immediate.
 - Distinctive feature: `81 EC 68 01 00 00` (SUB ESP,0x168) + `8B FA` (MOV EDI,EDX — fastcall 2nd arg) + `68 B1 00 00 00` (PUSH 0xB1 = 177 — error record size, very distinctive).
+
+> **STALE 2026-08-23 (Structural assumptions):** The second bullet's claim
+> "the patch's `RET 0x0C` cleans 12 bytes" is **superseded**. Durable Ghidra
+> evidence (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee
+> ends in **plain `RET`** at `0x10011454` and the caller executes
+> **`ADD ESP,0x0C`** at `0x1001E0C1`: the original ABI is fastcall-like
+> register passing with **caller cleanup** for the 12 stack bytes. The patch's
+> `RET 0x0C` changes that cleanup contract to callee cleanup — a static ABI
+> hazard, not a correct ABI match. The SEH-prologue, stack-frame, and
+> error-record-size assumptions remain accurate. See the section banner.
 
 ---
 

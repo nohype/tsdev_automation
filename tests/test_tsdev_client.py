@@ -1752,63 +1752,462 @@ class TestServeRouting:
         assert ei.value.result.error.existing_prog_id == 7
 
 
-class TestServeBatchNotImplemented:
-    """Batch ops raise ``NotImplementedError`` when serve is active and not elevated."""
+class TestServeBatchRouting:
+    """Batch ops route through the serve broker when _serve_active()."""
 
-    def test_batch_insert_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_insert_serve_routes_through_broker(self, monkeypatch, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError, match="batch ops require an elevated session"):
-            c.batch_insert([BatchItem("strategy", "A", "a;")])
+        fake_broker = MagicMock()
+        # Two items: one success, one failure (already_exists).
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 100},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 5,
+             "error": {"code": "already_exists", "message": "B exists"}},
+        ]
+        c._broker = fake_broker
+        items = [
+            BatchItem(type="strategy", name="A", source="// EL source A"),
+            BatchItem(type="strategy", name="B", source="// EL source B"),
+        ]
+        results = c.batch_insert(items)
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[0].name == "A"
+        assert results[1].success is False
+        assert results[1].error is not None
+        assert results[1].error.code == "already_exists"
+        # Verify broker was called twice with correct requests.
+        assert fake_broker.call.call_count == 2
+        req0 = fake_broker.call.call_args_list[0][0][0]
+        assert req0 == {"op": "insert", "type": "strategy", "name": "A", "source": "// EL source A"}
+        req1 = fake_broker.call.call_args_list[1][0][0]
+        assert req1 == {"op": "insert", "type": "strategy", "name": "B", "source": "// EL source B"}
 
-    def test_batch_delete_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_upsert_serve_routes_through_broker(self, monkeypatch, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError):
-            c.batch_delete([BatchItem("strategy", "A")])
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "upsert", "type": "function", "name": "F", "success": True, "exit_code": 0, "prog_id": 200}
+        c._broker = fake_broker
+        results = c.batch_upsert([BatchItem(type="function", name="F", source="// EL")])
+        assert len(results) == 1
+        assert results[0].success is True
+        req = fake_broker.call.call_args[0][0]
+        assert req["op"] == "upsert"
 
-    def test_batch_upsert_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_delete_serve_routes_through_broker(self, monkeypatch, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError):
-            c.batch_upsert([BatchItem("strategy", "A", "a;")])
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "delete", "type": "strategy", "name": "X", "success": True, "exit_code": 0}
+        c._broker = fake_broker
+        results = c.batch_delete([BatchItem(type="strategy", name="X")])
+        assert len(results) == 1
+        assert results[0].success is True
+        req = fake_broker.call.call_args[0][0]
+        assert req == {"op": "delete", "type": "strategy", "name": "X"}
 
-    def test_batch_modify_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_modify_serve_routes_through_broker(self, monkeypatch, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError):
-            c.batch_modify([BatchItem("strategy", "A", "a;")])
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "modify", "type": "indicator", "name": "I", "success": True, "exit_code": 0, "prog_id": 300}
+        c._broker = fake_broker
+        results = c.batch_modify([BatchItem(type="indicator", name="I", source="// EL")])
+        assert len(results) == 1
+        assert results[0].success is True
+        req = fake_broker.call.call_args[0][0]
+        assert req["op"] == "modify"
+        assert "source" in req
 
-    def test_batch_insert_dir_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_serve_source_none_raises_valueerror(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError):
-            c.batch_insert_dir("strategy", "C:/mydir")
+        c._broker = MagicMock()
+        with pytest.raises(ValueError, match="source is required"):
+            c.batch_insert([BatchItem(type="strategy", name="A", source=None)])
 
-    def test_batch_delete_dir_raises_when_serve_active(self, fake_cli: Path) -> None:
+    def test_batch_serve_per_item_failure_not_raised(self, tmp_path):
+        """Per-item failures are collected, not raised (matching non-serve batch)."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = False
-        with pytest.raises(NotImplementedError):
-            c.batch_delete_dir("strategy", "C:/mydir")
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 8,
+             "error": {"code": "compile_error", "message": "bad code"}},
+        ]
+        c._broker = fake_broker
+        results = c.batch_insert([
+            BatchItem(type="strategy", name="A", source="// ok"),
+            BatchItem(type="strategy", name="B", source="// bad"),
+        ])
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[1].success is False
+        assert results[1].error.code == "compile_error"
 
-    def test_batch_works_when_elevated_even_with_use_serve(self, fake_cli: Path, monkeypatch) -> None:
-        """When elevated, batch ops use subprocess.run even if use_serve=True."""
+    def test_batch_serve_validates_type_upfront(self, tmp_path):
+        """Unknown type raises ValueError before any broker call."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        c._broker = fake_broker
+        with pytest.raises(ValueError, match="unknown component type"):
+            c.batch_insert([BatchItem(type="bogus", name="A", source="// EL")])
+        fake_broker.call.assert_not_called()
+
+    def test_batch_works_when_elevated_even_with_use_serve(self, monkeypatch, tmp_path):
+        """Elevated + use_serve=True -> subprocess.run path (no broker)."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c._is_elevated = True
-        arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
-        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
-        results = c.batch_insert([BatchItem("strategy", "A", "a;")])
-        assert len(results) == 1 and results[0].success
+        fake_run = MagicMock(return_value=_make_completed(
+            '[{"op":"insert","type":"strategy","name":"A","success":true,"exit_code":0,"prog_id":1}]'
+        ))
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = c.batch_insert([BatchItem(type="strategy", name="A", source="// EL")])
+        assert len(results) == 1
+        assert results[0].success is True
+        fake_run.assert_called_once()
 
-    def test_batch_works_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
-        """When use_serve=False (and elevated), batch ops use subprocess.run."""
+    def test_batch_works_when_use_serve_false(self, monkeypatch, tmp_path):
+        """use_serve=False + elevated -> subprocess.run path."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
-        # Elevated so the use_serve=False elevation guard does not fire.
         c._is_elevated = True
-        arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
-        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
-        results = c.batch_delete([BatchItem("strategy", "A")])
-        assert len(results) == 1 and results[0].success
+        fake_run = MagicMock(return_value=_make_completed(
+            '[{"op":"delete","type":"strategy","name":"X","success":true,"exit_code":0}]'
+        ))
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = c.batch_delete([BatchItem(type="strategy", name="X")])
+        assert len(results) == 1
+        assert results[0].success is True
+        fake_run.assert_called_once()
+
+
+    def test_batch_serve_broker_crash_propagates(self, tmp_path):
+        """Broker crash during batch propagates as TsDevCrashError, not collected."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = TsDevCrashError(message="broker crashed", exit_code=0xC0000005)
+        c._broker = fake_broker
+        with pytest.raises(TsDevCrashError, match="broker crashed"):
+            c.batch_insert([BatchItem(type="strategy", name="A", source="// EL")])
+
+    def test_batch_serve_source_as_file_path(self, tmp_path):
+        """BatchItem.source as a file path is read via _read_source."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        # Create a real .el file to use as source.
+        src_file = tmp_path / "my_strategy.el"
+        src_file.write_text("// real file source")
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "test", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        results = c.batch_insert([BatchItem(type="strategy", name="test", source=str(src_file))])
+        assert len(results) == 1
+        assert results[0].success is True
+        req = fake_broker.call.call_args[0][0]
+        assert req["source"] == "// real file source"
+
+
+class TestServeBatchDirRouting:
+    """batch_*_dir ops route through the serve broker when _serve_active()."""
+
+    def test_batch_insert_dir_serve_enumerates_files(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        # Create a temp dir with .el files.
+        d = tmp_path / "el_dir"
+        d.mkdir()
+        (d / "alpha.el").write_text("// alpha source")
+        (d / "beta.el").write_text("// beta source")
+        (d / "readme.md").write_text("not EL")  # should be skipped
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "beta", "success": True, "exit_code": 0, "prog_id": 2},
+        ]
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 2
+        assert results[0].name == "alpha"
+        assert results[1].name == "beta"
+        assert fake_broker.call.call_count == 2
+        req0 = fake_broker.call.call_args_list[0][0][0]
+        assert req0 == {"op": "insert", "type": "strategy", "name": "alpha", "source": "// alpha source"}
+        req1 = fake_broker.call.call_args_list[1][0][0]
+        assert req1 == {"op": "insert", "type": "strategy", "name": "beta", "source": "// beta source"}
+
+    def test_batch_delete_dir_serve_no_source_read(self, tmp_path):
+        """batch_delete_dir in serve mode does not read file content."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "del_dir"
+        d.mkdir()
+        (d / "gamma.el").write_text("content ignored")
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "delete", "type": "strategy", "name": "gamma", "success": True, "exit_code": 0}
+        c._broker = fake_broker
+        results = c.batch_delete_dir("strategy", str(d))
+        assert len(results) == 1
+        assert results[0].success is True
+        req = fake_broker.call.call_args[0][0]
+        assert req == {"op": "delete", "type": "strategy", "name": "gamma"}
+        assert "source" not in req
+
+    def test_batch_dir_serve_extension_filtering(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "ext_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a")
+        (d / "b.txt").write_text("// b")
+        (d / "c.md").write_text("// c")
+        # Default extensions: .el + .txt -> a and b, not c.
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "b", "success": True, "exit_code": 0, "prog_id": 2},
+        ]
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 2
+        names = [r.name for r in results]
+        assert "a" in names
+        assert "b" in names
+        assert "c" not in names
+
+    def test_batch_dir_serve_t_override(self, tmp_path):
+        """Custom -t extension overrides defaults."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "override_dir"
+        d.mkdir()
+        (d / "x.el").write_text("// x")
+        (d / "y.eld").write_text("// y")
+        # Only .eld files.
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "y", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d), extensions=["eld"])
+        assert len(results) == 1
+        assert results[0].name == "y"
+
+    def test_batch_dir_serve_nonexistent_dir_raises(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        c._broker = MagicMock()
+        with pytest.raises(TsDevError, match="failed to open directory"):
+            c.batch_insert_dir("strategy", str(tmp_path / "nonexistent"))
+
+    def test_batch_dir_serve_empty_dir_raises(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "empty_dir"
+        d.mkdir()
+        c._broker = MagicMock()
+        with pytest.raises(TsDevError, match="no files matching"):
+            c.batch_insert_dir("strategy", str(d))
+
+    def test_batch_dir_serve_unknown_type_raises(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        c._broker = MagicMock()
+        with pytest.raises(ValueError, match="unknown component type"):
+            c.batch_insert_dir("bogus", str(tmp_path))
+
+    def test_batch_dir_serve_invalid_extension_raises(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        c._broker = MagicMock()
+        d = tmp_path / "ext_err_dir"
+        d.mkdir()
+        with pytest.raises(ValueError, match="invalid extension"):
+            c.batch_insert_dir("strategy", str(d), extensions=[""])
+
+    def test_batch_dir_serve_subdirs_skipped(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "subdir_dir"
+        d.mkdir()
+        (d / "real.el").write_text("// real")
+        sub = d / "subdir.el"
+        sub.mkdir()  # a directory named .el — should be skipped
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "real", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 1
+        assert results[0].name == "real"
+
+    def test_batch_dir_serve_items_sorted_by_name(self, tmp_path):
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "sort_dir"
+        d.mkdir()
+        (d / "zebra.el").write_text("// z")
+        (d / "alpha.el").write_text("// a")
+        (d / "mango.el").write_text("// m")
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "mango", "success": True, "exit_code": 0, "prog_id": 2},
+            {"op": "insert", "type": "strategy", "name": "zebra", "success": True, "exit_code": 0, "prog_id": 3},
+        ]
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert [r.name for r in results] == ["alpha", "mango", "zebra"]
+
+
+    def test_batch_dir_serve_source_read_failure_collected(self, monkeypatch, tmp_path):
+        """Source-read failure produces source_file_error result, not raised."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "src_err_dir"
+        d.mkdir()
+        good = d / "good.el"
+        good.write_text("// good source")
+        bad = d / "bad.el"
+        bad.write_text("// bad source")
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "good", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        # Make read_text raise OSError only for bad.el.
+        real_read_text = Path.read_text
+        def fake_read_text(self, *args, **kwargs):
+            if self.name == "bad.el":
+                raise OSError("permission denied")
+            return real_read_text(self, *args, **kwargs)
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 2
+        # bad.el comes before good.el alphabetically.
+        assert results[0].name == "bad"
+        assert results[0].success is False
+        assert results[0].exit_code == 3
+        assert results[0].error is not None
+        assert results[0].error.code == "source_file_error"
+        assert results[1].name == "good"
+        assert results[1].success is True
+        # Broker was only called for the good file.
+        assert fake_broker.call.call_count == 1
+
+    def test_batch_dir_serve_broker_crash_propagates(self, tmp_path):
+        """Broker crash during batch_dir propagates as exception, not collected."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "crash_dir"
+        d.mkdir()
+        (d / "x.el").write_text("// x")
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = TsDevCrashError(message="broker crashed", exit_code=0xC0000005)
+        c._broker = fake_broker
+        with pytest.raises(TsDevCrashError, match="broker crashed"):
+            c.batch_insert_dir("strategy", str(d))
+
+    def test_batch_dir_serve_case_insensitive_extension(self, tmp_path):
+        """File extension matching is case-insensitive."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "ci_dir"
+        d.mkdir()
+        (d / "upper.EL").write_text("// upper")
+        (d / "lower.el").write_text("// lower")
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            {"op": "insert", "type": "strategy", "name": "lower", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "upper", "success": True, "exit_code": 0, "prog_id": 2},
+        ]
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 2
+        names = [r.name for r in results]
+        assert "upper" in names
+        assert "lower" in names
+
+    def test_batch_dir_serve_dot_prefix_optional(self, tmp_path):
+        """Extension without dot prefix matches same as with dot."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "dot_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a")
+        (d / "b.txt").write_text("// b")
+        # "el" (no dot) should match .el files only (overrides defaults).
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d), extensions=["el"])
+        assert len(results) == 1
+        assert results[0].name == "a"
+
+    def test_batch_dir_serve_multi_dot_stem(self, tmp_path):
+        """path.stem() strips only the last extension."""
+        fake_cli = tmp_path / "fake_cli.exe"
+        fake_cli.write_text("")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        d = tmp_path / "multi_dot_dir"
+        d.mkdir()
+        (d / "my.strategy.el").write_text("// ms")
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "my.strategy", "success": True, "exit_code": 0, "prog_id": 1}
+        c._broker = fake_broker
+        results = c.batch_insert_dir("strategy", str(d))
+        assert len(results) == 1
+        assert results[0].name == "my.strategy"
 
 
 class TestElevationGuard:
@@ -1922,6 +2321,13 @@ class TestDetectElevation:
         """
         c = TsDevClient(cli_path=str(fake_cli))
         assert c._use_serve is True
+
+    def test_token_query_constant_is_correct(self):
+        # Regression guard: 0x0020 is TOKEN_ADJUST_PRIVILEGES, not TOKEN_QUERY.
+        # A wrong value here makes _detect_elevation() always return False,
+        # which makes TsDevClient(use_serve=False) always raise ElevationRequiredError.
+        from tsdev_automation.client import _TOKEN_QUERY
+        assert _TOKEN_QUERY == 0x0008
 
 
 # ---------------------------------------------------------------------------

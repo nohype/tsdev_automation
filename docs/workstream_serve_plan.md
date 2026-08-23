@@ -384,13 +384,14 @@ the common elevated-session case).
     JSON `{"op":..., "type":..., "name":..., "source":...}` (source read
     client-side from the file/string), `broker.call()`, parse the response
     via `TsDevResult.from_json()`.
-  - Batch ops (`_batch`/`_batch_dir`): NOT routed through the broker in
-    MVP — they continue to use `subprocess.run` (which works because the
-    broker's elevation is inherited by... no, `subprocess.run` from a
-    non-elevated Python won't inherit the broker's token). **MVP decision:**
-    batch ops raise `NotImplementedError("batch ops require an elevated
-    session; use serve mode for single ops or run elevated")` when not
-    elevated and serve is active. Batch-over-serve is deferred (§6).
+  - Batch ops (`_batch`/`_batch_dir`): routed through the broker by looping
+    over individual single-item requests (`_batch_serve`/`_batch_dir_serve`).
+    The broker's long-lived `TsDevLib` (`flushPerItem=false`) makes this as
+    efficient as the C++ batch path — no per-op process spawn, no per-op
+    warehouse flush. Per-item failures are collected into the returned list
+    (NOT raised), matching non-serve batch semantics. For `batch_*_dir`, the
+    Python wrapper replicates the C++ `parseDirectory` logic client-side.
+    **Implemented 2026-08-22** (supersedes the original MVP deferral).
 - **Lifecycle:** `_ServeBroker.__del__` sends `{"op":"quit"}` and waits for
   `hProcess` to exit (or `TerminateProcess(hProcess, 1)` after a 5s
   timeout). `atexit` registration as a safety net.
