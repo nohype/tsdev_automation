@@ -153,29 +153,6 @@
       }
     },
     {
-      "name": "FUN_10011230_persistence_patch",
-      "targetType": "patch_site",
-      "callingConvention": "fastcall",
-      "expectedRva": "0x11230",
-      "hexPattern": "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 81 EC 68 01 00 00 56 57 8D 45 EC 89 4D E8 8B FA C7 45 EC 00 00 00 00 50 57 8D 8D 8C FE FF FF E8 ?? ?? ?? ?? C7 45 FC 00 00 00 00 68 B1 00 00 00",
-      "length": 72,
-      "expectedMatchCount": 1,
-      "patch": {
-        "offset": 0,
-        "originalBytes": "55 8B EC 6A FF 68 CD D3",
-        "replacementBytes": "B8 01 00 00 00 C2 0C 00",
-        "originalBytesMask": "FF FF FF FF FF FF 00 00",
-        "description": "Patch FUN_10011230 to MOV EAX,1; RET 0x0C — bypasses XmlDocument.Save crash"
-      },
-      "containingFunction": "FUN_10011230",
-      "provenance": {
-        "author": "TVS-2.2",
-        "date": "2026-08-17",
-        "source": "Ghidra + Frida validation",
-        "reference": "docs/SIGNATURE_CATALOG.md §4.9"
-      }
-    },
-    {
       "name": "FUN_101d0950_thread_check_INT3",
       "targetType": "patch_site",
       "callingConvention": "thiscall",

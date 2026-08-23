@@ -102,6 +102,22 @@ static std::string findDllPath() {
     return std::string(kDllCandidates[0]);
 }
 
+// ---------------------------------------------------------------------------
+// findSignatureByName — look up a signature in the generated kSignatures[]
+// catalog by NAME rather than by positional index. Returns nullptr if no
+// signature with the given name exists. Prefer this over kSignatures[N] so
+// the test is robust against future catalog edits (insertions/deletions that
+// silently shift positional indices).
+// ---------------------------------------------------------------------------
+static const tsdev::SignatureDef* findSignatureByName(const char* name) {
+    for (int i = 0; i < tsdev::kSignatureCount; ++i) {
+        if (std::strcmp(tsdev::kSignatures[i].name, name) == 0) {
+            return &tsdev::kSignatures[i];
+        }
+    }
+    return nullptr;
+}
+
 // ===========================================================================
 // main — Cycle 1 assertions.
 //
@@ -191,8 +207,12 @@ int main() {
     // baseAddress() == 0x10000000 (passed to the test ctor).
     const uintptr_t kBase = resolver->baseAddress();
 
-    // --- Target 1: StartCompilingProcess (kSignatures[0], __cdecl) ---
+    // --- Target 1: StartCompilingProcess (__cdecl) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("StartCompilingProcess");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'StartCompilingProcess'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -206,17 +226,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveStartCompilingProcess threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveStartCompilingProcess RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[0].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[0].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 2: EndCompilingProcess (kSignatures[1], __fastcall) ---
+    // --- Target 2: EndCompilingProcess (__fastcall) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("EndCompilingProcess");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'EndCompilingProcess'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -230,17 +254,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveEndCompilingProcess threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveEndCompilingProcess RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[1].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[1].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 3: CELCompiler constructor (kSignatures[2], __fastcall) ---
+    // --- Target 3: CELCompiler constructor (__fastcall) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("CELCompiler_ctor");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'CELCompiler_ctor'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -254,17 +282,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveCELCompilerCtor threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveCELCompilerCtor RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[2].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[2].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 4: CELCompiler destructor (kSignatures[3], __fastcall) ---
+    // --- Target 4: CELCompiler destructor (__fastcall) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("CELCompiler_dtor");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'CELCompiler_dtor'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -278,17 +310,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveCELCompilerDtor threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveCELCompilerDtor RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[3].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[3].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 5: InitGlobalLookup (kSignatures[4], __cdecl) ---
+    // --- Target 5: InitGlobalLookup (__cdecl) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("InitGlobalLookup");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'InitGlobalLookup'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -302,17 +338,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveInitGlobalLookup threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveInitGlobalLookup RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[4].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[4].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 6: DeleteFromTree (kSignatures[5], __thiscall → void*) ---
+    // --- Target 6: DeleteFromTree (__thiscall → void*) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("DeleteFromTree");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'DeleteFromTree'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -326,17 +366,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveDeleteFromTree threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveDeleteFromTree RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[5].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[5].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 7: GetWarehouse (kSignatures[6], __cdecl) ---
+    // --- Target 7: GetWarehouse (__cdecl) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("GetWarehouse");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'GetWarehouse'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -350,17 +394,21 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveGetWarehouse threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveGetWarehouse RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[6].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[6].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
-    // --- Target 8: FUN_101a8360 delete orchestrator (kSignatures[7], __fastcall → void*) ---
+    // --- Target 8: FUN_101a8360 delete orchestrator (__fastcall → void*) ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("FUN_101a8360_delete_orchestrator");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'FUN_101a8360_delete_orchestrator'");
         bool threw = false;
         std::string errMsg;
         uintptr_t rva = 0;
@@ -374,12 +422,12 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveDeleteOrchestrator threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
+        } else if (sig) {
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveDeleteOrchestrator RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, tsdev::kSignatures[7].rva);
-            CHECK(rva == (uintptr_t)tsdev::kSignatures[7].rva, buf);
+                          (unsigned long long)rva, sig->rva);
+            CHECK(rva == (uintptr_t)sig->rva, buf);
         }
     }
 
@@ -1134,12 +1182,10 @@ int main() {
     //
     // This is the final implementation cycle (TVS-B.4 TDD red-green).
     // It covers:
-    //   Part A — 4 patch-site resolvers (resolvePatchSite by name).
-    //   Part B — 4 validatePatchSite(descriptor) tests.
-    //   Part C — 4 convenience methods (resolvePersistencePatch /
-    //            resolveThreadCheck1/2/3).
-    //   Part D — applyPatch (test mode = validate-only no-op).
-    //   Part E — 3 data-global RVA resolvers.
+    //   Part A — 3 patch-site resolvers (resolvePatchSite by name).
+    //   Part B — 3 validatePatchSite(descriptor) tests.
+    //   Part C — 3 convenience methods (resolveThreadCheck1/2/3).
+    //   Part D — 3 data-global RVA resolvers.
     //
     // Against the current stubs (RED phase), resolvePatchSite and the
     // data-global methods throw OrlibResolverError("not implemented") →
@@ -1147,10 +1193,11 @@ int main() {
     // (GREEN phase, later subagent), each resolver returns a populated
     // PatchSiteDescriptor / RVA at the expected value → PASS.
     //
-    // Expected values are taken from signatures.gen.h
-    // (the kSignatures[] entries for targets 9-12), cross-checked against
-    // docs/SIGNATURE_CATALOG.md §3 (patch-site metadata) and §6 (data-
-    // section RVA targets: kDataGlobals_v9_50_01_3344[0..2]).
+    // Expected values are looked up by NAME from signatures.gen.h
+    // (kSignatures[] entries for the thread-check patch sites),
+    // cross-checked against docs/SIGNATURE_CATALOG.md §3 (patch-site
+    // metadata) and §6 (data-section RVA targets:
+    // kDataGlobals_v9_50_01_3344[0..2]).
     //
     // patchRva = sigMatchRva + patchOffset for each patch site.
     // ===================================================================
@@ -1195,20 +1242,26 @@ int main() {
     };
 
     // -------------------------------------------------------------------
-    // Part A — 4 patch-site resolution tests (resolvePatchSite by name).
+    // Part A — 3 patch-site resolution tests (resolvePatchSite by name).
     //
-    // For each of the 4 patch sites, call resolvePatchSite(name) inside
-    // try/catch. Assert the returned PatchSiteDescriptor fields:
+    // For each of the 3 thread-check patch sites, call resolvePatchSite(name)
+    // inside try/catch. Assert the returned PatchSiteDescriptor fields:
     //   patchRva, sigMatchRva, patchOffset, originalBytes,
     //   replacementBytes, name, containingFunction.
     //
+    // Expected values are looked up by NAME from kSignatures[] (via
+    // findSignatureByName) so the test is robust against catalog edits
+    // that shift positional indices.
+    //
     // Against stubs → catch fires → CHECK(false) → FAIL (RED).
     // -------------------------------------------------------------------
-    std::printf("\n--- Cycle 5 Part A: 4 patch-site resolvers ---\n");
+    std::printf("\n--- Cycle 5 Part A: 3 patch-site resolvers ---\n");
 
-    // Patch-site expected values (from signatures.gen.h targets 9-12).
+    // Patch-site expected values. sigMatchRva / patchOffset / patchRva are
+    // resolved by NAME from the generated catalog (not positional index).
     struct PatchSiteExpect {
         const char* name;
+        const char* sigName;       // catalog name to look up via findSignatureByName
         uintptr_t   sigMatchRva;
         int         patchOffset;
         uintptr_t   patchRva;
@@ -1216,34 +1269,42 @@ int main() {
         const char* replacementHex;
         const char* containingFunction;
     };
-    static const PatchSiteExpect kPatchSites[] = {
-        { "FUN_10011230_persistence_patch",
-          (uintptr_t)tsdev::kSignatures[8].rva, tsdev::kSignatures[8].patchOffset,
-          ((uintptr_t)tsdev::kSignatures[8].rva + tsdev::kSignatures[8].patchOffset),
-          "55 8B EC 6A FF 68 CD D3",
-          "B8 01 00 00 00 C2 0C 00",
-          "FUN_10011230" },
-        { "FUN_101d0950_thread_check_INT3",
-          (uintptr_t)tsdev::kSignatures[9].rva, tsdev::kSignatures[9].patchOffset,
-          ((uintptr_t)tsdev::kSignatures[9].rva + tsdev::kSignatures[9].patchOffset),
+    static PatchSiteExpect kPatchSites[] = {
+        { "FUN_101d0950_thread_check_INT3", "FUN_101d0950_thread_check_INT3",
+          0, 0, 0,
           "CC",
           "90",
           "FUN_101d0950" },
-        { "FUN_101cf5b0_thread_check_INT3",
-          (uintptr_t)tsdev::kSignatures[10].rva, tsdev::kSignatures[10].patchOffset,
-          ((uintptr_t)tsdev::kSignatures[10].rva + tsdev::kSignatures[10].patchOffset),
+        { "FUN_101cf5b0_thread_check_INT3", "FUN_101cf5b0_thread_check_INT3",
+          0, 0, 0,
           "CC",
           "90",
           "FUN_101cf5b0" },
-        { "FUN_101d1fa0_thread_check_INT3",
-          (uintptr_t)tsdev::kSignatures[11].rva, tsdev::kSignatures[11].patchOffset,
-          ((uintptr_t)tsdev::kSignatures[11].rva + tsdev::kSignatures[11].patchOffset),
+        { "FUN_101d1fa0_thread_check_INT3", "FUN_101d1fa0_thread_check_INT3",
+          0, 0, 0,
           "CC",
           "90",
           "FUN_101d1fa0" },
     };
     const int kPatchSiteCount =
         static_cast<int>(sizeof(kPatchSites) / sizeof(kPatchSites[0]));
+
+    // Resolve sigMatchRva / patchOffset / patchRva by name from the catalog.
+    for (int i = 0; i < kPatchSiteCount; ++i) {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName(kPatchSites[i].sigName);
+        char lookupMsg[160];
+        std::snprintf(lookupMsg, sizeof(lookupMsg),
+                      "catalog contains patch-site signature '%s'",
+                      kPatchSites[i].sigName);
+        CHECK(sig != nullptr && sig->isPatchSite, lookupMsg);
+        if (sig) {
+            kPatchSites[i].sigMatchRva = (uintptr_t)sig->rva;
+            kPatchSites[i].patchOffset = sig->patchOffset;
+            kPatchSites[i].patchRva =
+                (uintptr_t)sig->rva + (uintptr_t)sig->patchOffset;
+        }
+    }
 
     // Resolved descriptors from Part A are reused in Part B. Store them
     // here (only valid when the corresponding resolve succeeded).
@@ -1323,7 +1384,7 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part B — 4 validatePatchSite(descriptor) tests.
+    // Part B — 3 validatePatchSite(descriptor) tests.
     //
     // For each patch site, first resolve the descriptor (Part A). If the
     // resolve threw (RED), we CANNOT validate (no descriptor) → skip the
@@ -1334,7 +1395,7 @@ int main() {
     // assert it returns true (the baseline DLL is unpatched — original
     // bytes are present at the patch site).
     // -------------------------------------------------------------------
-    std::printf("\n--- Cycle 5 Part B: 4 validatePatchSite tests ---\n");
+    std::printf("\n--- Cycle 5 Part B: 3 validatePatchSite tests ---\n");
 
     for (int i = 0; i < kPatchSiteCount; ++i) {
         const PatchSiteExpect& e = kPatchSites[i];
@@ -1381,45 +1442,22 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part C — 4 convenience method tests.
+    // Part C — 3 convenience method tests.
     //
-    // resolvePersistencePatch(), resolveThreadCheck1/2/3() each return a
-    // PatchSiteDescriptor. Assert the returned descriptor's patchRva
-    // matches the expected patch RVA.
+    // resolveThreadCheck1/2/3() each return a PatchSiteDescriptor. Assert
+    // the returned descriptor's patchRva matches the expected patch RVA,
+    // looked up by NAME from the catalog (not positional index).
     //
     // Against stubs → throws → FAIL (RED).
     // -------------------------------------------------------------------
-    std::printf("\n--- Cycle 5 Part C: 4 convenience methods ---\n");
+    std::printf("\n--- Cycle 5 Part C: 3 convenience methods ---\n");
 
-    // --- resolvePersistencePatch() → patchRva kSignatures[8].rva+offset ---
+    // --- resolveThreadCheck1() → patchRva FUN_101d0950_thread_check_INT3 ---
     {
-        bool threw = false;
-        std::string errMsg;
-        tsdev::PatchSiteDescriptor desc;
-        try {
-            desc = resolver->resolvePersistencePatch();
-        } catch (const tsdev::OrlibResolverError& ex) {
-            threw = true;
-            errMsg = ex.what();
-        } catch (const std::exception& ex) {
-            threw = true;
-            errMsg = std::string("wrong exception type: ") + ex.what();
-        }
-        if (threw) {
-            std::string msg = std::string("resolvePersistencePatch threw: ") + errMsg;
-            CHECK(false, msg.c_str());
-        } else {
-            uintptr_t expectedPatchRva = (uintptr_t)tsdev::kSignatures[8].rva + tsdev::kSignatures[8].patchOffset;
-            char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                          "resolvePersistencePatch patchRva==0x%llX (expected 0x%llX)",
-                          (unsigned long long)desc.patchRva, (unsigned long long)expectedPatchRva);
-            CHECK(desc.patchRva == expectedPatchRva, buf);
-        }
-    }
-
-    // --- resolveThreadCheck1() → patchRva kSignatures[9].rva+offset ---
-    {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("FUN_101d0950_thread_check_INT3");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'FUN_101d0950_thread_check_INT3'");
         bool threw = false;
         std::string errMsg;
         tsdev::PatchSiteDescriptor desc;
@@ -1435,8 +1473,8 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveThreadCheck1 threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
-            uintptr_t expectedPatchRva = (uintptr_t)tsdev::kSignatures[9].rva + tsdev::kSignatures[9].patchOffset;
+        } else if (sig) {
+            uintptr_t expectedPatchRva = (uintptr_t)sig->rva + (uintptr_t)sig->patchOffset;
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveThreadCheck1 patchRva==0x%llX (expected 0x%llX)",
@@ -1445,8 +1483,12 @@ int main() {
         }
     }
 
-    // --- resolveThreadCheck2() → patchRva kSignatures[10].rva+offset ---
+    // --- resolveThreadCheck2() → patchRva FUN_101cf5b0_thread_check_INT3 ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("FUN_101cf5b0_thread_check_INT3");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'FUN_101cf5b0_thread_check_INT3'");
         bool threw = false;
         std::string errMsg;
         tsdev::PatchSiteDescriptor desc;
@@ -1462,8 +1504,8 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveThreadCheck2 threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
-            uintptr_t expectedPatchRva = (uintptr_t)tsdev::kSignatures[10].rva + tsdev::kSignatures[10].patchOffset;
+        } else if (sig) {
+            uintptr_t expectedPatchRva = (uintptr_t)sig->rva + (uintptr_t)sig->patchOffset;
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveThreadCheck2 patchRva==0x%llX (expected 0x%llX)",
@@ -1472,8 +1514,12 @@ int main() {
         }
     }
 
-    // --- resolveThreadCheck3() → patchRva kSignatures[11].rva+offset ---
+    // --- resolveThreadCheck3() → patchRva FUN_101d1fa0_thread_check_INT3 ---
     {
+        const tsdev::SignatureDef* sig =
+            findSignatureByName("FUN_101d1fa0_thread_check_INT3");
+        CHECK(sig != nullptr,
+              "catalog contains signature 'FUN_101d1fa0_thread_check_INT3'");
         bool threw = false;
         std::string errMsg;
         tsdev::PatchSiteDescriptor desc;
@@ -1489,8 +1535,8 @@ int main() {
         if (threw) {
             std::string msg = std::string("resolveThreadCheck3 threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else {
-            uintptr_t expectedPatchRva = (uintptr_t)tsdev::kSignatures[11].rva + tsdev::kSignatures[11].patchOffset;
+        } else if (sig) {
+            uintptr_t expectedPatchRva = (uintptr_t)sig->rva + (uintptr_t)sig->patchOffset;
             char buf[128];
             std::snprintf(buf, sizeof(buf),
                           "resolveThreadCheck3 patchRva==0x%llX (expected 0x%llX)",
@@ -1500,47 +1546,7 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part D — applyPatch test (test mode = validate-only no-op).
-    //
-    // Call applyPatch("FUN_10011230_persistence_patch") inside try/catch.
-    // In test mode, applyPatch validates the original bytes then skips
-    // the actual write (the in-memory buffer is read-only) → returns
-    // true. It must NOT modify the buffer.
-    //
-    // Against stubs → throws → FAIL (RED).
-    // -------------------------------------------------------------------
-    std::printf("\n--- Cycle 5 Part D: applyPatch (test mode no-op) ---\n");
-
-    {
-        bool threw = false;
-        std::string errMsg;
-        bool result = false;
-        std::vector<uint8_t> bufferBeforeApply = buffer;
-        try {
-            result = resolver->applyPatch("FUN_10011230_persistence_patch");
-        } catch (const tsdev::OrlibResolverError& ex) {
-            threw = true;
-            errMsg = ex.what();
-        } catch (const std::exception& ex) {
-            threw = true;
-            errMsg = std::string("wrong exception type: ") + ex.what();
-        }
-        if (threw) {
-            std::string msg = std::string("applyPatch(\"FUN_10011230_persistence_patch\") threw: ") + errMsg;
-            CHECK(false, msg.c_str());
-        } else {
-            char buf[160];
-            std::snprintf(buf, sizeof(buf),
-                          "applyPatch(persistence)==true in test mode (got %d)",
-                          (int)result);
-            CHECK(result == true, buf);
-            CHECK(std::memcmp(buffer.data(), bufferBeforeApply.data(), buffer.size()) == 0,
-                  "applyPatch did not modify buffer (test mode no-op)");
-        }
-    }
-
-    // -------------------------------------------------------------------
-    // Part E — 3 data-global RVA tests.
+    // Part D — 3 data-global RVA tests.
     //
     // resolveErrorArrayPtrRva() → kDataGlobals_v9_50_01_3344[0] (DAT_1023cea0, error-record
     //   array pointer).
@@ -1551,7 +1557,7 @@ int main() {
     //
     // Against stubs → throws → FAIL (RED).
     // -------------------------------------------------------------------
-    std::printf("\n--- Cycle 5 Part E: 3 data-global RVA resolvers ---\n");
+    std::printf("\n--- Cycle 5 Part D: 3 data-global RVA resolvers ---\n");
 
     // --- resolveErrorArrayPtrRva() → kDataGlobals_v9_50_01_3344[0] ---
     {
@@ -1649,7 +1655,7 @@ int main() {
     //
     // Against the current stubs (RED phase), these methods do not exist
     // → the test fails to compile. After implementation (GREEN phase),
-    // getSignatureCount() returns kSignatureCount (currently 13) and
+    // getSignatureCount() returns kSignatureCount (currently 24) and
     // getSignatureByIndex(i) returns a const reference to the
     // OrlibSignatureDef at that index, throwing std::out_of_range for
     // index >= count.

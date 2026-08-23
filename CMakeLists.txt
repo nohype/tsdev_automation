@@ -65,9 +65,35 @@ add_custom_target(siggen DEPENDS ${GEN_INCLUDE_DIR}/signatures.gen.h)
 # --- Shared orlib20 wrapper library -----------------------------------------
 # Reusable engine for the CLI and tests. Encapsulates the confirmed orlib20
 # operation set (init, lookup, create, save, compile/verify, close).
-add_library(tsdev_lib STATIC src/tsdev_lib.cpp)
+# TVS-L.2: com_apartment_guard.cpp implements the RAII STA COM apartment
+# guard that TsDevLib constructs as its first effective action. Ole32 is
+# linked PRIVATELY for the real CoInitializeEx / CoUninitialize referenced
+# by the default ComApi in com_apartment_guard.cpp.
+# TVS-L.9: src/persistence_integrity.cpp implements the SHARED
+# persistence-integrity validator (validatePersistenceIntegrity) used by the
+# CLI's doInsert/doModify post-verify check and by the
+# test_persistence_integrity unit test. bcrypt (for its SHA-256 of the
+# .ell/.xml artifacts) reaches it transitively via the PUBLIC
+# orlib_resolver -> bcrypt chain.
+# TVS-L.10: src/create_path_cleanup.cpp implements the pure
+# requiresCreatePathCleanup() ownership decision used by the CLI's doInsert
+# (the SINGLE create-path partial-entry cleanup owner) and by the
+# test_create_path_cleanup unit test. It is side-effect free (no orlib20 /
+# warehouse / filesystem access), so it adds no link dependencies.
+# TVS-L.12: src/delete_disk_cleanup.cpp implements the pure
+# deleteDiskCleanupErrorFailsResult() decision used by TsDevLib::deleteEntry
+# (step 5, after each DeleteFileA on the .ell/.xml artifacts) and by the
+# test_delete_disk_cleanup unit test. It is side-effect free (no orlib20 /
+# warehouse / filesystem access), so it adds no link dependencies.
+add_library(tsdev_lib STATIC
+    src/tsdev_lib.cpp
+    src/com_apartment_guard.cpp
+    src/persistence_integrity.cpp
+    src/create_path_cleanup.cpp
+    src/delete_disk_cleanup.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
+target_link_libraries(tsdev_lib PRIVATE Ole32)
 
 # --- INSERT integration test (TDD red-green) --------------------------------
 add_executable(test_insert tests/test_insert.cpp)
@@ -99,9 +125,18 @@ target_link_libraries(test_path_discovery tsdev_lib)
 add_executable(test_modify tests/test_modify.cpp)
 target_link_libraries(test_modify tsdev_lib)
 
-# --- Persistence patch byte validation test (TVS-B.1.5) ---------------------
-add_executable(test_persistence_validation tests/test_persistence_validation.cpp)
-target_link_libraries(test_persistence_validation tsdev_lib)
+# --- Finalization lifecycle regression test (TVS-L.3) -----------------------
+# Repurposed from test_persistence_validation.cpp (TVS-B.1.5). The persistence
+# patch (applyPersistencePatch / validatePersistencePatchBytes / FUN_10011230)
+# was removed in TVS-L.3, so the old byte-validation test is obsolete. This
+# behavior-based regression verifies the TsDevLib constructor/destructor
+# lifecycle runs cleanly without the persistence patch (constructor succeeds ->
+# 11 thread-check patches applied + OrlibInit; destructor restores patches +
+# OrlibExit + CoUninitialize), and that the apply/restore cycle is repeatable.
+# It does NOT call any removed persistence API, resolve FUN_10011230 by RVA,
+# or duplicate a private test-only signature. Requires TS (orlib20.dll).
+add_executable(test_finalization_lifecycle tests/test_finalization_lifecycle.cpp)
+target_link_libraries(test_finalization_lifecycle tsdev_lib)
 
 # --- No hardcoded RVA constants test (AC1 TDD red-green) ---------------------
 # Verifies that tsdev_lib.cpp contains zero hardcoded RVA hex constants.
@@ -165,6 +200,169 @@ add_executable(test_crash_handler tests/test_crash_handler.cpp)
 target_include_directories(test_crash_handler PRIVATE third_party)
 target_link_libraries(test_crash_handler tsdev_lib)
 add_dependencies(test_crash_handler siggen)
+
+# --- COM apartment guard unit test (TVS-L.2, TDD GREEN) -----------------------
+# Pure unit test for the ComApartmentGuard RAII STA COM apartment guard declared
+# in src/com_apartment_guard.h. The guard is exercised exclusively through its
+# injectable ComApi seam (mock CoInitializeEx / CoUninitialize function
+# pointers), so the test NEVER calls the real COM functions and does NOT touch
+# the test process's real COM apartment state. It is a PURE UNIT TEST (no
+# orlib20 access, no TsDevLib construction), so it is NOT in TSDEV_ADMIN_TARGETS
+# and runs under -NoTs.
+#
+# Sources: tests/test_com_apartment_guard.cpp + src/com_apartment_guard.cpp.
+# Ole32 is linked because com_apartment_guard.cpp's default ComApi takes the
+# address of the real CoInitializeEx / CoUninitialize, which creates symbol
+# references the linker must satisfy even though the test never calls them
+# (it injects mock function pointers). The mock path is what executes at
+# runtime; Ole32 is only needed to resolve the address-of references.
+add_executable(test_com_apartment_guard
+    tests/test_com_apartment_guard.cpp
+    src/com_apartment_guard.cpp)
+target_include_directories(test_com_apartment_guard PRIVATE src)
+target_link_libraries(test_com_apartment_guard PRIVATE Ole32)
+
+# --- TsDevLib COM-init injection seam unit test (TVS-L.13, TDD GREEN) ----------
+# Pure unit test for the PRIVATE/test-only construction seam that lets a unit
+# test drive TsDevLib initialization with injected COM HRESULTs (S_OK,
+# S_FALSE, RPC_E_CHANGED_MODE, generic E_FAIL, and a simulated later-ctor
+# exception after COM success) WITHOUT leaking COM configuration into the
+# public user API.
+#
+# Seam surface (IMPLEMENTED — GREEN):
+#   - src/tsdev_lib.h forward-declares `struct TsDevLibTestConfig;` and adds a
+#     PRIVATE ctor TsDevLib::TsDevLib(const wchar_t*, const TsDevLibTestConfig&)
+#     + a friend declaration for the test-only factory. No ComApi / <objbase.h>
+#     is included by the public header, so no COM config leaks into the public
+#     user API.
+#   - src/tsdev_lib_test_hooks.h (INTERNAL, test-only, NOT a public header)
+#     defines TsDevLibTestConfig { ComApi comApi; bool throwAfterCom; } and
+#     declares tsdev::makeTsDevLibForTest(...).
+#   - The private ctor and the factory ARE defined in src/tsdev_lib.cpp
+#     (GREEN). The test references makeTsDevLibForTest and links cleanly
+#     against tsdev_lib, so the test executable builds, links, and runs the
+#     assertions — the GREEN signal.
+#
+# The test injects mock CoInitializeEx / CoUninitialize function pointers
+# (the real COM functions are NEVER called by this test), never loads
+# orlib20.dll, and never touches the TradeStation installation. It is a PURE
+# UNIT TEST (no TSDev Library access at runtime), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+#
+# It links tsdev_lib so the factory + private ctor (defined in
+# src/tsdev_lib.cpp) resolve with no CMake change. The static-archive linker
+# pulls in tsdev_lib.cpp because the test references makeTsDevLibForTest
+# (defined there); the other tsdev_lib object files are discarded because the
+# test references no symbols from them, so no orlib20 / bcrypt dependency is
+# dragged into this pure unit test. Ole32 is linked because
+# com_apartment_guard.h's default ComApi takes the address of the real
+# CoInitializeEx / CoUninitialize, creating symbol references the linker must
+# satisfy even though the test injects mocks and never calls the real
+# functions.
+add_executable(test_tsdev_com_init_seam
+    tests/test_tsdev_com_init_seam.cpp)
+target_include_directories(test_tsdev_com_init_seam PRIVATE src)
+target_link_libraries(test_tsdev_com_init_seam PRIVATE tsdev_lib Ole32)
+
+# --- Persistence-integrity validator unit test (TVS-L.9, TDD RED) -------------
+# Pure unit test for the SHARED persistence-integrity validator that classifies
+# the cross-store (.ell vs .xml) consistency of a modify/upsert operation. The
+# validator is DECLARED in src/persistence_integrity.h but has NO implementation
+# yet (no src/persistence_integrity.cpp). This is the TDD RED step: the test
+# includes the header and calls tsdev::validatePersistenceIntegrity(), so the
+# test executable FAILS TO LINK (unresolved external) until a later (GREEN) TVS
+# provides the implementation.
+#
+# The test does NOT load orlib20.dll, does NOT touch the TradeStation
+# installation, does NOT construct TsDevLib, and does NOT need a 64 MB stack.
+# It builds in-memory fixture bytes for the .ell and .xml artifacts, writes them
+# to temp files under %TEMP%, and calls the validator. Three fixture scenarios:
+#   (a) VerifiedRefresh  — new GUID present once (mixed-endian) in ELL, ELL+XML
+#                          hashes changed.
+#   (b) FaultA_StaleEll  — stale ELL (hash unchanged, new GUID absent) + XML
+#                          GUID changed (Fault A from RE_L8_STALE_WRITE_FAULT_A).
+#   (c) NoOpAllowed      — source-equal proven first; unchanged ELL+XML hashes
+#                          accepted as a no-op, NOT a verified refresh.
+# bcrypt is linked for the test's own SHA-256 of fixture bytes (pre-op hashes);
+# tsdev_lib supplies the validatePersistenceIntegrity() definition (via
+# src/persistence_integrity.cpp compiled into the static library). Because
+# tsdev_lib is a static archive, the linker pulls in ONLY the
+# persistence_integrity.cpp object file (the only one defining a symbol the
+# test references) — tsdev_lib.cpp / com_apartment_guard.cpp are NOT pulled
+# in, so the test stays a pure unit test with no orlib20 / TsDevLib
+# dependency at runtime. bcrypt is also transitive via tsdev_lib ->
+# orlib_resolver -> bcrypt, but kept explicit for the test's own helper.
+# This is a PURE UNIT TEST (no TSDev Library access), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_persistence_integrity tests/test_persistence_integrity.cpp)
+target_include_directories(test_persistence_integrity PRIVATE src)
+target_link_libraries(test_persistence_integrity PRIVATE bcrypt tsdev_lib)
+
+# --- Create-path cleanup ownership unit test (TVS-L.10, TDD RED->GREEN) -------
+# Pure unit test for the SINGLE ownership decision that covers create-path
+# partial-entry cleanup after a successful createEntry for EVERY failure stage
+# (saveSource failure AND verifyModule early-return / SEH / OOM / compile
+# errors). The owner is DECLARED in src/create_path_cleanup.h and IMPLEMENTED
+# in src/create_path_cleanup.cpp (TVS-L.10 GREEN: requiresCreatePathCleanup
+# is a pure function of (progId, stage) — true for every stage when progId >
+# 0, false for every stage when progId <= 0).
+#
+# Why this test exists (the defect it targets):
+#   Before TVS-L.10, after createEntry succeeded (ProgId > 0, partial
+#   warehouse entry in the in-memory BST), cleanup was NOT owned by one
+#   local path:
+#     * saveSource failure (doInsert exit 7): NO cleanup — partial entry
+#       orphaned.
+#     * verifyModule early-return / SEH / OOM: cleanup only incidentally via
+#       the !errors.empty() branch INSIDE verifyModule (written for the
+#       compile-error case, TD-001), not at the create-path level.
+#   The single owner implemented here is the fix: for progId > 0 it MUST
+#   require cleanup for all six stages; for progId <= 0 it MUST NOT (no
+#   partial entry was created). The decision is a pure function of
+#   (progId, stage) with no orlib20 / warehouse / filesystem access, so this
+#   is a PURE UNIT TEST (no TSDev Library access). It is NOT in
+#   TSDEV_ADMIN_TARGETS and runs under -NoTs.
+#
+# The test links tsdev_lib so the linker pulls in create_path_cleanup.cpp
+# (the only object defining requiresCreatePathCleanup). The static-library
+# linker discards the other tsdev_lib object files (tsdev_lib.cpp /
+# com_apartment_guard.cpp / persistence_integrity.cpp) because the test
+# references no symbols from them, so no orlib20 / Ole32 / bcrypt dependency
+# is dragged into this pure unit test.
+add_executable(test_create_path_cleanup tests/test_create_path_cleanup.cpp)
+target_include_directories(test_create_path_cleanup PRIVATE src)
+target_link_libraries(test_create_path_cleanup PRIVATE tsdev_lib)
+
+# --- Delete-path disk-cleanup failure decision unit test (TVS-L.12, GREEN) ---
+# Pure unit test for the SINGLE decision that classifies whether a DeleteFileA
+# failure on a delete-path disk artifact (.ell / .xml) must FAIL the overall
+# deleteEntry Result, instead of the prior behavior where every non-
+# ERROR_FILE_NOT_FOUND DeleteFileA failure was silently demoted to a stderr
+# WARNING while deleteEntry returned true (success). The decision is DECLARED
+# in src/delete_disk_cleanup.h and IMPLEMENTED in src/delete_disk_cleanup.cpp
+# (TVS-L.12 GREEN).
+#
+# Why this test exists (the defect it targets):
+#   deleteEntry step 5 deletes elmodule_<whType>_<progId>.ell and .xml via
+#   DeleteFileA. On failure it only emitted a stderr WARNING for any error
+#   other than ERROR_FILE_NOT_FOUND, then returned true UNCONDITIONALLY. So a
+#   real removal failure (e.g. ERROR_ACCESS_DENIED = 5) was treated as success
+#   and a stale .ell/.xml was left on disk. The decision implemented in the
+#   GREEN step is the fix: ERROR_FILE_NOT_FOUND (and ERROR_SUCCESS) MUST NOT
+#   fail the delete Result; ERROR_ACCESS_DENIED (and any other nonzero error)
+#   MUST fail it - for BOTH the .ell and the .xml artifact. The decision is a
+#   pure function of (lastError, kind) with no orlib20 / warehouse / filesystem
+#   access, so this is a PURE UNIT TEST (no TSDev Library access). It is NOT
+#   in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+#
+# TDD: the RED step declared deleteDiskCleanupErrorFailsResult() in the header
+# with no .cpp, so the test executable FAILED TO LINK (unresolved external) —
+# that link failure was the RED signal. The GREEN step adds
+# src/delete_disk_cleanup.cpp to tsdev_lib (above), so the symbol now resolves
+# and the test links and runs; the assertions below pin the contract.
+add_executable(test_delete_disk_cleanup tests/test_delete_disk_cleanup.cpp)
+target_include_directories(test_delete_disk_cleanup PRIVATE src)
+target_link_libraries(test_delete_disk_cleanup PRIVATE tsdev_lib)
 
 # --- JSON serialize unit test (TVS-K.2, TDD RED) ------------------------------
 # Pure unit test for the cliResultToJson() helper extracted from emitOutput()'s
@@ -326,7 +524,12 @@ target_link_libraries(test_auto_cleanup tsdev_lib)
 #   $env:STRESS_BATCH_N=5;   .\build\Release\test_stress_batch.exe   # smoke
 #   $env:STRESS_BATCH_N=600; .\build\Release\test_stress_batch.exe   # full
 add_executable(test_stress_batch tests/test_stress_batch.cpp)
-target_link_libraries(test_stress_batch tsdev_lib)
+# TVS-L.15: test_stress_batch samples process resource usage via read-only
+# Win32 query APIs (GetProcessHandleCount, GetGuiResources, EnumWindows,
+# GetProcessMemoryInfo). psapi provides GetProcessMemoryInfo; user32 provides
+# GetGuiResources/EnumWindows. These are test-local measurement hooks only —
+# no production COM debug counters are added to tsdev_lib.
+target_link_libraries(test_stress_batch tsdev_lib psapi user32)
 
 # --- Production CLI ---------------------------------------------------------
 # TVS-D.2: tsdev_cli includes nlohmann/json.hpp (vendored under third_party/)
@@ -358,8 +561,9 @@ option(TSDEV_REQUIRE_ADMIN
 # analysis, no runtime orlib20 access), test_no_hardcoded_rvas / test_tradingapp_type
 # / test_showme_type / test_orlib_resolver / test_elevation_guard
 # / test_crash_handler / test_json_serialize / test_serve_dispatch
-# / test_serve_framing (pure unit tests, no TSDev Library access, run in CI
-# under -NoTs from a non-elevated runner).
+# / test_serve_framing / test_com_apartment_guard / test_tsdev_com_init_seam
+# (pure unit tests, no TSDev Library access, run in CI under -NoTs from a
+# non-elevated runner).
 set(TSDEV_ADMIN_TARGETS
     tsdev_cli
     test_insert
@@ -369,7 +573,7 @@ set(TSDEV_ADMIN_TARGETS
     test_delete_diag
     test_path_discovery
     test_modify
-    test_persistence_validation
+    test_finalization_lifecycle
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
@@ -462,7 +666,7 @@ target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
 #   cmake --build build --config Release --target test_regression
 # The actual regression test execution is performed by the PowerShell
 # orchestrator script tests/run_regression.ps1 (which runs sigtool verify,
-# all 26 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
+# all 27 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
 # build commands of its own - it merely aggregates the dependencies.
 add_custom_target(test_regression)
 add_dependencies(test_regression
@@ -473,7 +677,7 @@ add_dependencies(test_regression
     test_delete_diag
     test_path_discovery
     test_modify
-    test_persistence_validation
+    test_finalization_lifecycle
     test_no_hardcoded_rvas
     test_tradingapp_type
     test_showme_type
@@ -482,6 +686,10 @@ add_dependencies(test_regression
     test_json_serialize
     test_serve_dispatch
     test_serve_framing
+    test_com_apartment_guard
+    test_persistence_integrity
+    test_create_path_cleanup
+    test_delete_disk_cleanup
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists

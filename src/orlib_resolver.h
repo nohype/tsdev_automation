@@ -149,8 +149,8 @@
 //
 //   The resolver is an INTERNAL refactor. TsDevLib's public API
 //   (findExistPos, createEntry, saveSource, verifyModule, closeWarehouse,
-//   deleteEntry, modifyEntry, ellFileExists, getEllPath, getXmlPath,
-//   validatePersistencePatchBytes) is UNCHANGED. The integration
+//   deleteEntry, modifyEntry, ellFileExists, getEllPath, getXmlPath)
+//   is UNCHANGED. The integration
 //   (TVS-B.5) replaces the constructor's hardcoded RVA arithmetic and
 //   GetProcAddress calls with OrlibResolver calls:
 //
@@ -159,13 +159,13 @@
 //       m_orlibBase = (DWORD_PTR)m_orlib;
 //       m_pStartCompiling = (StartCompilingProcess_t)(m_orlibBase + <RVA>);
 //       m_pOrlibInit = resolveOrThrow<OrlibInit_t>("_OrlibInit@8");
-//       applyPersistencePatch();  // uses kRvaPersistencePatch
+//       applyThreadCheckPatches();  // uses hardcoded RVAs
 //
 //     After (TVS-B.5):
 //       OrlibResolver resolver(L"orlib20.dll");
 //       m_pStartCompiling = resolver.resolveStartCompilingProcess();
 //       m_pOrlibInit      = resolver.resolveOrlibInit();
-//       resolver.applyPatch("FUN_10011230_persistence_patch");
+//       resolver.applyPatch("FUN_101d0950_thread_check_INT3");
 //
 //   The resolver owns the HMODULE and base address; TsDevLib holds a resolver
 //   instance (or pointer) and queries it. No public method signature on
@@ -325,7 +325,7 @@ struct VersionDescriptor {
 
 /// \brief Describes a resolved patch site (address + expected/original bytes).
 struct PatchSiteDescriptor {
-    std::string         name;             ///< Patch-site name (e.g. "FUN_10011230_persistence_patch").
+    std::string         name;             ///< Patch-site name (e.g. "FUN_101d0950_thread_check_INT3").
     uintptr_t           patchRva;         ///< RVA of the patch site (where bytes are written).
     uintptr_t           sigMatchRva;      ///< RVA where the signature matched (containing function entry).
     int                 patchOffset;      ///< Offset from sig match to patch site.
@@ -768,7 +768,7 @@ public:
     ///
     /// Does NOT validate original bytes yet — call validatePatchSite() next.
     ///
-    /// \param name Patch-site name (e.g. "FUN_10011230_persistence_patch").
+    /// \param name Patch-site name (e.g. "FUN_101d0950_thread_check_INT3").
     /// \return PatchSiteDescriptor with all patch metadata.
     /// \throws OrlibResolverError if the containing-function signature does
     ///         not match uniquely.
@@ -784,10 +784,10 @@ public:
     /// a different build than expected).
     ///
     /// Wildcard handling: bytes in `expectedBytes` that correspond to a 0x00
-    /// entry in `mask` are skipped (treated as ??). This matches the existing
-    /// TsDevLib::validatePersistencePatchBytes logic for the persistence
-    /// patch (bytes 6-7 are the low 2 bytes of the SEH handler address,
-    /// wildcarded because they are image-base-relative).
+    /// entry in `mask` are skipped (treated as ??). This accommodates
+    /// address-dependent bytes (e.g. the low 2 bytes of an SEH handler
+    /// address, which are image-base-relative and ASLR-dependent) when a
+    /// patch-site signature requires wildcarding them.
     ///
     /// \param name          Patch-site name (for diagnostics).
     /// \param rva           Patch-site RVA (where the bytes live).
@@ -807,10 +807,9 @@ public:
     /// \brief Validate a patch site using its resolved descriptor.
     ///
     /// Convenience overload: calls validatePatchSite with the original bytes
-    /// and a wildcard mask derived from the signature definition. For the
-    /// persistence patch (Target 9), bytes 6-7 are wildcarded (SEH handler
-    /// address low bytes). For the INT3 patches (Targets 10-13), no
-    /// wildcards are needed (single byte 0xCC).
+    /// and a wildcard mask derived from the signature definition. The
+    /// thread-check INT3 patches are single-byte (0xCC) and require no
+    /// wildcards; the descriptor-supplied original bytes are checked in full.
     ///
     /// \param desc PatchSiteDescriptor from resolvePatchSite().
     /// \return true if the patch site contains the expected original bytes.
@@ -832,23 +831,13 @@ public:
     /// read-only); only validation is performed. This lets tests verify that
     /// patch sites contain expected bytes without actually patching.
     ///
-    /// \param name Patch-site name (e.g. "FUN_10011230_persistence_patch").
+    /// \param name Patch-site name (e.g. "FUN_101d0950_thread_check_INT3").
     /// \return true if the patch was applied (or was already applied).
     /// \throws OrlibResolverError if the signature doesn't match, the
     ///         original bytes don't match, or VirtualProtect fails.
     bool applyPatch(const std::string& name);
 
     // --- Specific patch-site convenience methods ---------------------------
-
-    /// \brief Resolve & validate Target 9: FUN_10011230 persistence patch.
-    ///
-    /// Patch-site is at the function entry (offset 0). Original 8 bytes:
-    /// `55 8B EC 6A FF 68 CD D3` (bytes 6-7 wildcarded — SEH handler low
-    /// bytes). Replacement 8 bytes: `B8 01 00 00 00 C2 0C 00`
-    /// (MOV EAX,1; RET 0x0C). Bypasses SymWriter::Save .NET crash.
-    /// See signatures/v9.50.01.3344.json for the patch-site RVA.
-    /// \return PatchSiteDescriptor for the persistence patch.
-    PatchSiteDescriptor resolvePersistencePatch();
 
     /// \brief Resolve & validate Target 10: FUN_101d0950 thread-check INT3.
     ///

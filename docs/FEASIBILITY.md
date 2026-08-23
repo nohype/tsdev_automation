@@ -4,6 +4,8 @@
 **Date:** 2026-08-15
 **Scope:** Determine how a standalone C++ CLI can implement three TSDev Library operations (insert / delete / modify, each followed by compile/verify) without using the TSDev.exe GUI, with least custom implementation and least complexity.
 
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
 > **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation)**
 >
 > Confirmed Unknown-link findings have invalidated several core claims in this
@@ -18,12 +20,22 @@
 > remain accurate *only* for the warehouse/compile-persistence layer; they do
 > **not** constitute runtime-link acceptance.
 >
-> **Workstream L (Runtime-Link Root-Cause Fix) is PLANNED but NOT implemented.**
-> The approved plan is `docs/workstream_unknown_link_fix_plan.md`
-> (TVS-L.1 through TVS-L.5). Durable static evidence:
+> **Workstream L (Runtime-Link Root-Cause Fix) is NOT YET CLOSED.** The
+> approved plan is `docs/workstream_unknown_link_fix_plan.md`. TVS-L.1 (RED
+> harness), TVS-L.2 (STA COM lifecycle guard), and TVS-L.3 (the `FUN_10011230`
+> persistence bypass is removed; the real finalization path now runs) are
+> COMPLETE. The TVS-L.4/L.5 completion claim was **FALSIFIED by persistence
+> and deletion fault injection** and is **superseded by the L.6–L.15
+> recovery**, which is **implemented on branch `workstream-L-recovery`** (L.8
+> BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
+> modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks
+> are necessary but not sufficient). **No new Desktop runtime re-gate is
+> claimed without an L.17 result.** Workstream M remains BLOCKED until L.17
+> independent final verification. Durable static evidence:
 > `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. Approved research plan:
 > `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. Dynamic A/B proof artifacts:
-> `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`, `tmp/com_nopatch_6689.xml`.
+> `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
+> `tmp/com_nopatch_6689.xml`.
 >
 > **Claims in this document now SUPERSEDED** (corrections applied in-line at
 > each affected section; historical text preserved with correction rather than
@@ -46,26 +58,53 @@
 >    bytes. The patch's `RET 0x0C` changes that cleanup contract — a static ABI
 >    hazard, not a correct ABI match.
 >
-> The patch is still present in production code and is slated for **complete
-> removal** in TVS-L.3 (after TVS-L.2 establishes the STA COM prerequisite that
-> makes the unpatched path safe to run). No implementation has been performed.
+> **TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
+> `FUN_10011230` persistence patch has been **completely removed** from
+> production code in TVS-L.3. The real finalization path
+> (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
+> `SymWriter::Save`, then `ModuleInfo::SetGuid` / `MDVault::SaveModule`) now
+> runs end-to-end under the per-thread STA COM prerequisite established in
+> TVS-L.2. The earlier "still present ... slated for complete removal ... No
+> implementation has been performed" statement below is **superseded** by this
+> completion note (historical text preserved rather than destructively
+> rewritten). Signature/catalog counts are now **24 signatures / 11 patch
+> sites** (the former `FUN_10011230_persistence_patch` entry and its patch site
+> are gone); see `docs/SIGNATURE_CATALOG.md`.
+>
+> The historical text immediately below (preserved) read: "The patch is still
+> present in production code and is slated for **complete removal** in TVS-L.3
+> (after TVS-L.2 establishes the STA COM prerequisite that makes the unpatched
+> path safe to run). No implementation has been performed."
 
 ---
 
 ## 1. Executive Summary
 
-> **EXECUTIVE STATUS CORRECTION — 2026-08-23:** The "All three core functions
+> **EXECUTIVE STATUS CORRECTION — 2026-08-23 (updated TVS-L.3 — patch
+> removed; Workstream L NOT YET CLOSED):** The "All three core functions
 > (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED — the primary
 > acceptance criteria ... is satisfied at the library level" statement below
 > is **accurate only at the library/warehouse-persistence layer**. It is
-> **NOT** a runtime-link acceptance statement. Confirmed Unknown-link findings
-> show that CLI-produced strategies fail in TradeStation Desktop with "Unknown
-> link error occurred" despite TSDev reporting them VERIFIED. **Production
-> runtime acceptance is currently BROKEN.** Workstream L
-> (`docs/workstream_unknown_link_fix_plan.md`) is **PLANNED but NOT
-> implemented**. The `FUN_10011230` patch referenced below is the bypass that
-> causes the runtime-unlinkable output; see the top-of-file supersession banner
-> and §5.6 for the corrected root cause.
+> **NOT** a runtime-link acceptance statement. Confirmed Unknown-link
+> findings showed that CLI-produced strategies failed in TradeStation Desktop
+> with "Unknown link error occurred" despite TSDev reporting them VERIFIED.
+> **Production runtime acceptance was BROKEN** while the `FUN_10011230`
+> persistence patch was present. Workstream L
+> (`docs/workstream_unknown_link_fix_plan.md`) is **NOT YET CLOSED**:
+> TVS-L.1 (RED harness), TVS-L.2 (STA COM lifecycle guard), and TVS-L.3 (the
+> `FUN_10011230` persistence bypass is removed; the real finalization path
+> now runs under the per-thread STA COM prerequisite) are COMPLETE. The
+> TVS-L.4/L.5 completion claim was **FALSIFIED by persistence and deletion
+> fault injection** and is **superseded by the L.6–L.15 recovery**, which is
+> **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no
+> invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12
+> detect-and-report orphan-ELL delete; existence checks are necessary but
+> not sufficient). **No new Desktop runtime re-gate is claimed without an
+> L.17 result.** Workstream M remains BLOCKED until L.17 independent final
+> verification. The `FUN_10011230` patch referenced below was the bypass
+> that caused the runtime-unlinkable output; it is no longer present in
+> production code. See the top-of-file supersession banner and §5.6 for the
+> corrected root cause.
 
 We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete). Parameter orders for the key primitives are now **CONFIRMED**, and standalone INSERT persistence (compile + `.ell` file write) has been **demonstrated** without TSDev.exe and without Frida, via an in-process patch to `FUN_10011230` in orlib20.dll (see §5.6). **DELETE is IMPLEMENTED and APPROVED** — the orchestrator-based approach calling `FUN_101a8360` (RVA `0x1A8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.3 DELETE and §5.7). **MODIFY is IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` timestamp updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.3 MODIFY and §5.8). The headless `_OrlibInit` smoke test has **PASSED**. **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is satisfied at the library level. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. Remaining unknowns are narrow: three warehouse-type mappings remain unresolved (ActivityBar/PaintBar/ProbabilityMap), while five component types are confirmed (Strategy 0, Indicator 2, Function 4, TradingApp 5122, ShowMe 1282); minor unmapped fields (see §5.5).
 
@@ -166,7 +205,7 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Set source text (non-GUI) | `void* _SaveTextEX@16(void* p1, const char* sourceTextAnsi, const char* name, void* p4)` | MED | `evidence_C2b_orlib20_build.md` §9 (`_SaveTextEX@16` disasm). p2 = source text (HIGH; lstrlenA'd -> warehouse.SetSource). p3 = name (MED). p1 nonzero-checked + lstrlenA'd (uncertain). p4 unused in visible path (uncertain). |
 | Start compile | `void StartCompilingProcess(void)` (cdecl, 0 params) | CONFIRMED | `evidence_C2b_orlib20_build.md` §1; `orlib_param_orders.md` §9. Resets error array `[0x1023cea0]` + count `[0x1023cea4]`; record stride 0x129 (297); allocs compiler state `[0x1023ceb0]`. **Required before `VerifyModule_New`.** |
 | End compile | `void EndCompilingProcess(int arg)` (__fastcall, 1 arg; pass `0`) | CONFIRMED | `evidence_C2b_orlib20_build.md` §2; `orlib_param_orders.md` §9. Tears down compiler state. **Required after `VerifyModule_New`**; call with `0`. |
-| Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. **CAVEAT (2026-08-23):** Under the current `FUN_10011230` production patch, the persisted `.ell` output is **runtime-unlinkable** — the patch bypasses `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save`, so the module is marked VERIFIED despite incomplete link-finalization and fails in TradeStation Desktop with "Unknown link error occurred." This row describes the primitive's nominal contract only; see §5.6 supersession for the broken-patch root cause and the Workstream L remediation plan. |
+| Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. **CAVEAT (2026-08-23, updated TVS-L.3):** Under the now-**removed** `FUN_10011230` production patch, the persisted `.ell` output was **runtime-unlinkable** — the patch bypassed `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save`, so the module was marked VERIFIED despite incomplete link-finalization and failed in TradeStation Desktop with "Unknown link error occurred." The patch has been **completely removed in TVS-L.3**; the real finalization path now runs under the per-thread STA COM prerequisite from TVS-L.2. This row describes the primitive's nominal contract; see §5.6 supersession for the historical broken-patch root cause and the Workstream L remediation. |
 | Verify by name (wrapper) | `BOOL VerifyATechnique(const char* name, int WHType) -> BOOL` | HIGH | `evidence_C2b_orlib20_build.md` §5 (`VerifyATechnique` wrapper disasm). Looks up module internally; preferred for CLI. |
 | Get errors | `std::string _GetCompilingErrors@4(std::string* hiddenRetPtr)` | CONFIRMED | `evidence_C2b_orlib20_build.md` §7; `orlib_param_orders.md` §10. Builds concatenated "name: msg\n..." across all error records; if array empty, reads `VERIFY.ERR`. An empty buffer = success. **CORRECTED (TVS-A.2/A.4):** The actual ABI is `std::vector<ErrorOutputRecord>*` (3 pointers, 12 bytes), NOT `std::string` return-by-value. The singular `GetCompilingError` (not plural) DOES use std::string hidden return ptr. The production code bypasses GetCompilingErrors entirely and reads the global error array directly. See AGENTS.md DONE entries for TVS-A.2 and TVS-A.4. |
 | Get error level | `int _GetErrorLevel@4(int idx) -> int` | HIGH | `evidence_C2b_orlib20_build.md` §8 (`_GetErrorLevel@4` disasm). 1 if record[0]==0x7775 sentinel (error), 0 = warning/none. Error count = global `[0x1023cea4]`. No single "overall level"; caller checks count>0 + per-record levels. |
@@ -232,13 +271,18 @@ LoadLibraryW(L"ELDebugger.dll");
 // 4. Patch FUN_10011230 at orlib20_base+0x11230 (SymWriter bypass — see §5.6)
 //    8 bytes: B8 01 00 00 00 C2 0C 00   (MOV EAX,1; RET 0x0C)
 //
-//    SUPERSEDED 2026-08-23 (Workstream L): This patch is the bypass that
-//    produces runtime-unlinkable output. It is still present in production
-//    code but is slated for COMPLETE REMOVAL in TVS-L.3, after TVS-L.2
-//    establishes per-thread STA COM (the real prerequisite, not "partially
-//    initialized CLR"). The `RET 0x0C` is also ABI-invalid: the original
+//    SUPERSEDED 2026-08-23 (Workstream L) / REMOVED in TVS-L.3: This patch
+//    step is the bypass that produces runtime-unlinkable output. It has been
+//    COMPLETELY REMOVED from production code in TVS-L.3 — the constructor no
+//    longer calls applyPersistencePatch(), and the patch byte constants /
+//    validation helpers / cached RVA / restoration branch are gone. The real
+//    finalization path (FUN_10011230 → FUN_1008E640 → SymInfo::AdjustOffsets
+//    → SymWriter::Save) now runs under the per-thread STA COM prerequisite
+//    established in TVS-L.2. The `RET 0x0C` is also ABI-invalid: the original
 //    callee ends in plain `RET` and the caller performs `ADD ESP,0x0C`
 //    (caller cleanup). See §5.6 and docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md.
+//    The pseudocode line below is retained as a historical artifact only and
+//    is NOT executed by the current production CLI.
 patch_memory((BYTE*)orlib + 0x11230, "\xB8\x01\x00\x00\x00\xC2\x0C\x00", 8);
 
 // 5. Init
@@ -371,15 +415,17 @@ OrlibExit();
 
 ### 5.4 SaveModule_New — source text only (no file persistence)
 
-> **SUPERSESSION NOTE — 2026-08-23:** The phrase "with the `FUN_10011230`
-> patch applied" below references the bypass that produces runtime-unlinkable
-> output. The persistence claim (`.ell` is written) is accurate at the
-> warehouse/compile-persistence layer, but the resulting `.ell` is
-> **runtime-unlinkable** because the patch skips the original
-> compiler/link-finalization path. See §5.6 supersession banner and
-> `docs/workstream_unknown_link_fix_plan.md`.
+> **SUPERSESSION NOTE — 2026-08-23 (updated TVS-L.3 — patch removed):** The
+> phrase "with the `FUN_10011230` patch applied" below references the bypass
+> that produced runtime-unlinkable output. The persistence claim (`.ell` is
+> written) is accurate at the warehouse/compile-persistence layer, but the
+> resulting `.ell` was **runtime-unlinkable** because the patch skipped the
+> original compiler/link-finalization path. The patch has been **completely
+> removed in TVS-L.3**; the real finalization path now runs under the
+> per-thread STA COM prerequisite from TVS-L.2. See §5.6 supersession banner
+> and `docs/workstream_unknown_link_fix_plan.md`.
 
-`_SaveModule_New@20` is GUI-bound in its source-retrieval path: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide→UTF-8, and sets the warehouse source text. **It does NOT persist `.ell`/`.xml` files** — it saves source text into the warehouse entry only (see §5.1 primitive table). Persistence of the compiled `.ell` file is performed by `VerifyModule_New` (with the `FUN_10011230` patch applied — see §5.6), which compiles the source and calls `ELMeta::MDVault::SaveModule` to write `elmodule_<X>_<N>.ell` to disk.
+`_SaveModule_New@20` is GUI-bound in its source-retrieval path: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide→UTF-8, and sets the warehouse source text. **It does NOT persist `.ell`/`.xml` files** — it saves source text into the warehouse entry only (see §5.1 primitive table). Persistence of the compiled `.ell` file is performed by `VerifyModule_New` (historically "with the `FUN_10011230` patch applied — see §5.6"; that patch has been **completely removed in TVS-L.3**, and `VerifyModule_New` now drives the real finalization path `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save` → `ModuleInfo::SetGuid` / `MDVault::SaveModule` under the per-thread STA COM prerequisite from TVS-L.2), which compiles the source and calls `ELMeta::MDVault::SaveModule` to write `elmodule_<X>_<N>.ell` to disk.
 
 **Hidden-EDIT workaround (CONFIRMED, low complexity):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. This workaround has been demonstrated working in the standalone INSERT flow (see §5.3 and §5.6).
 
@@ -387,10 +433,11 @@ OrlibExit();
 
 ### 5.5 Remaining unknowns / blockers
 
-> **SUPERSESSION NOTE — 2026-08-23:** The "Resolved items" sentence below
-> lists "the GUI-save persistence path (resolved via the `FUN_10011230`
-> patch — see §5.6)" as a resolved item. That resolution is **superseded**
-> for runtime-link acceptance: the patch produces runtime-unlinkable output.
+> **SUPERSESSION NOTE — 2026-08-23 (updated TVS-L.3 — patch removed):** The
+> "Resolved items" sentence below lists "the GUI-save persistence path
+> (resolved via the `FUN_10011230` patch — see §5.6)" as a resolved item. That
+> resolution was **superseded** for runtime-link acceptance: the patch produced
+> runtime-unlinkable output, and has now been **completely removed in TVS-L.3**.
 > See §5.6 supersession banner and `docs/workstream_unknown_link_fix_plan.md`.
 
 > **Resolved items:** The following were previously listed as unknowns and are now **CONFIRMED** — see §5.1 (primitive table) and §5.6 (persistence fix): `_CreateEntryEX` params 2-5, `_VerifyModule_New` p3/p4/p5, `_SaveModule_New` GUI dependency (hidden-EDIT workaround confirmed), `_SaveTextEX` persistence semantics (SaveModule_New saves source only; VerifyModule_New persists `.ell`), `_GetCompilingErrors` formatting, `contextId` valid values (contextId=1), and the GUI-save persistence path (resolved via the `FUN_10011230` patch — see §5.6).
@@ -440,22 +487,39 @@ OrlibExit();
 >    correct ABI match. No claim is made that an observed historical crash was
 >    caused by it.
 >
-> The patch is still present in production code and is slated for **complete
-> removal** in TVS-L.3 (`docs/workstream_unknown_link_fix_plan.md`), after
-> TVS-L.2 establishes the STA COM prerequisite that makes the unpatched path
-> safe to run. No implementation has been performed.
+> **TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
+> `FUN_10011230` persistence patch has been **completely removed** from
+> production code in TVS-L.3. The real finalization path
+> (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
+> `SymWriter::Save`, then `ModuleInfo::SetGuid` / `MDVault::SaveModule`) now
+> runs end-to-end under the per-thread STA COM prerequisite established in
+> TVS-L.2. The historical "still present in production code and is slated for
+> complete removal in TVS-L.3 ... No implementation has been performed"
+> statement immediately below is **superseded** by this completion note
+> (historical text preserved rather than destructively rewritten). The former
+> `FUN_10011230_persistence_patch` signature entry and its patch site are gone;
+> current counts are **24 signatures / 11 patch sites** (see
+> `docs/SIGNATURE_CATALOG.md`).
+>
+> The historical text immediately below (preserved) read: "The patch is still
+> present in production code and is slated for **complete removal** in TVS-L.3
+> (`docs/workstream_unknown_link_fix_plan.md`), after TVS-L.2 establishes the
+> STA COM prerequisite that makes the unpatched path safe to run. No
+> implementation has been performed."
 
 > **Evidence:** `orlib_param_orders.md` §12. This is the critical fix that enables standalone disk persistence of `.ell` files without TSDev.exe and without Frida.
 >
-> **SUPERSEDED 2026-08-23 (Workstream L):** The "critical fix" referenced here is
-> **only historical persistence evidence** — it demonstrated that `.ell` files
-> could be written standalone — and is **not the production fix.** As detailed in
-> the section banner above, the patch is the bypass that produces
-> runtime-unlinkable output (Desktop "Unknown link error occurred"); the real
-> production remediation is Workstream L
-> (`docs/workstream_unknown_link_fix_plan.md`), which is **PLANNED but NOT
-> implemented**. Treat this Evidence preamble as a historical artifact, not a
-> runtime-acceptance statement.
+> **SUPERSEDED 2026-08-23 (Workstream L, updated TVS-L.3 — patch removed):**
+> The "critical fix" referenced here is **only historical persistence
+> evidence** — it demonstrated that `.ell` files could be written standalone —
+> and is **not the production fix.** As detailed in the section banner above,
+> the patch was the bypass that produced runtime-unlinkable output (Desktop
+> "Unknown link error occurred"); the real production remediation is
+> Workstream L (`docs/workstream_unknown_link_fix_plan.md`). TVS-L.1 and
+> TVS-L.2 are COMPLETE, and TVS-L.3 has **completely removed** the patch from
+> production code so the real finalization path now runs under the per-thread
+> STA COM prerequisite. Treat this Evidence preamble as a historical artifact,
+> not a runtime-acceptance statement.
 
 **Root cause:** `SymWriter::Save` in **`ELDebugger.dll`** (at RVA `0x120a0`) calls `XmlDocument.Save` — a .NET managed method — via a virtual call at vtable offset `0xd8`. In a standalone native process, the CLR is only **partially** initialized: the mixed-mode C++/CLI support DLLs load, but they do not fully boot the runtime, so the JIT-compiled target address is invalid. The virtual call therefore causes an access violation.
 
@@ -468,13 +532,16 @@ That exception is caught by the SEH handler of `FUN_10011230` in **orlib20.dll**
 
 **Fix:** Patch `FUN_10011230` in orlib20.dll (at RVA `0x11230`) to **return 1 immediately**. This bypasses the `SymWriter` crash entirely. `CompileText` then proceeds normally to call `ELMeta::MDVault::SaveModule`, which writes the `.ell` file (compiled module, magic `RNAM`).
 
-> **SUPERSEDED 2026-08-23:** The "Fix" above is not a fix; it is the **bypass
-> that causes the runtime-unlinkable output.** The patch skips
-> `FUN_1008E640` (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
-> `SymWriter::Save`, then forces `EAX=1` so `CompileText` proceeds to
-> `ModuleInfo::SetGuid` / `MDVault::SaveModule` and marks the item verified
-> despite an incomplete finalization. The real fix is per-thread STA COM
-> (TVS-L.2) + complete patch removal (TVS-L.3). See the section banner and
+> **SUPERSEDED 2026-08-23 (updated TVS-L.3 — patch removed):** The "Fix" above
+> is not a fix; it is the **bypass that causes the runtime-unlinkable output.**
+> The patch skips `FUN_1008E640` (compiler/link-finalization),
+> `SymInfo::AdjustOffsets`, and `SymWriter::Save`, then forces `EAX=1` so
+> `CompileText` proceeds to `ModuleInfo::SetGuid` / `MDVault::SaveModule` and
+> marks the item verified despite an incomplete finalization. The real fix is
+> per-thread STA COM (TVS-L.2, COMPLETE) + complete patch removal (TVS-L.3,
+> **COMPLETE** — the patch, its byte constants, validation helpers, constructor
+> call, cached RVA/original-byte members, and destructor restoration branch
+> have all been removed from production code). See the section banner and
 > `docs/workstream_unknown_link_fix_plan.md`.
 
 **Patch bytes (8 bytes at `orlib20_base + 0x11230`):**
@@ -550,7 +617,7 @@ C2 0C 00          RET 0x0C
 
 1. `findExistPos(name, whType)` → `progId` (notify if not found; `success=false`).
 2. `saveSource` — hidden EDIT control + `SaveModule_New` (sets warehouse source text for the existing entry).
-3. `verifyModule` — `CELCompiler` setup + `StartCompilingProcess` + `VerifyModule_New` (with the `FUN_10011230` patch applied — see §5.6) → compiles AND re-persists the `.ell` file for the existing `progId`.
+3. `verifyModule` — `CELCompiler` setup + `StartCompilingProcess` + `VerifyModule_New` (historically "with the `FUN_10011230` patch applied — see §5.6"; that patch has been **completely removed in TVS-L.3**, and `VerifyModule_New` now drives the real finalization path under the per-thread STA COM prerequisite from TVS-L.2) → compiles AND re-persists the `.ell` file for the existing `progId`.
 4. Error check + `EndCompilingProcess` + `CloseWarehouseForCurrentThreadAndPath` + `OrlibExit`.
 
 The only difference from INSERT is that `CreateEntryEX` is skipped — the existing `progId` is reused, so the ProgId is preserved across the modify.
@@ -568,14 +635,17 @@ The only difference from INSERT is that `CreateEntryEX` is skipped — the exist
 
 ## 6. Comparison & Recommendation
 
-> **SUPERSESSION NOTE — 2026-08-23:** The Recommendation below characterizes
-> the `FUN_10011230` patch as "persistence ... demonstrated" and "LOW risk."
-> That characterization is **superseded**: the patch is the bypass that
-> produces runtime-unlinkable output, and production runtime acceptance is
-> currently **BROKEN**. The Approach 2 recommendation (orlib20.dll direct)
-> remains the correct architectural choice; the patch is the implementation
-> defect to be removed by Workstream L
-> (`docs/workstream_unknown_link_fix_plan.md`). See §5.6 supersession banner.
+> **SUPERSESSION NOTE — 2026-08-23 (updated TVS-L.3 — patch removed):** The
+> Recommendation below characterizes the `FUN_10011230` patch as "persistence
+> ... demonstrated" and "LOW risk." That characterization is **superseded**:
+> the patch was the bypass that produced runtime-unlinkable output, and
+> production runtime acceptance was **BROKEN** while the patch was present.
+> The patch has now been **completely removed in TVS-L.3**; the real
+> finalization path runs under the per-thread STA COM prerequisite from
+> TVS-L.2. The Approach 2 recommendation (orlib20.dll direct) remains the
+> correct architectural choice; the patch was the implementation defect
+> removed by Workstream L (`docs/workstream_unknown_link_fix_plan.md`). See
+> §5.6 supersession banner.
 
 | Criterion | Approach 1 (ELIS.exe COM) | Approach 2 (orlib20.dll direct) |
 |-----------|---------------------------|---------------------------------|
@@ -600,13 +670,16 @@ Both de-risking gates have **PASSED**: (a) orlib20 parameter orders are **CONFIR
 
 ## 7. Next Steps (TVS-2 Proposal)
 
-> **SUPERSESSION NOTE — 2026-08-23:** The status updates below mark the
-> `FUN_10011230` patch path as "COMPLETED" / "DONE." That is accurate for
-> warehouse/compile-persistence only and is **NOT** runtime-link acceptance.
-> Production runtime acceptance is currently **BROKEN**; the patch is the
-> bypass to be removed by Workstream L
-> (`docs/workstream_unknown_link_fix_plan.md`, TVS-L.1 through TVS-L.5,
-> PLANNED but NOT implemented). See §5.6 supersession banner.
+> **SUPERSESSION NOTE — 2026-08-23 (updated TVS-L.3 — patch removed):** The
+> status updates below mark the `FUN_10011230` patch path as "COMPLETED" /
+> "DONE." That was accurate for warehouse/compile-persistence only and was
+> **NOT** runtime-link acceptance. Production runtime acceptance was
+> **BROKEN** while the patch was present; the patch was the bypass removed by
+> Workstream L (`docs/workstream_unknown_link_fix_plan.md`, TVS-L.1 through
+> TVS-L.5). TVS-L.1 (RED harness) and TVS-L.2 (STA COM lifecycle guard) are
+> COMPLETE, and TVS-L.3 has **completely removed** the persistence patch from
+> production code so the real finalization path now runs. See §5.6 supersession
+> banner.
 
 > **Status update:** Items (a), (b), and (c) below are all **COMPLETED**. Parameter orders are CONFIRMED (see §5.1, `orlib_param_orders.md`), the headless init smoke test PASSED (see `headless_init_smoke_test.md`), standalone INSERT persistence has been demonstrated (see §5.6), DELETE is IMPLEMENTED & APPROVED (see §5.7), and MODIFY is IMPLEMENTED & APPROVED (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining work is follow-ups only (see §5.5 and §8).
 
@@ -633,12 +706,13 @@ Each function gets a red-green TDD cycle against a disposable test library copy 
 
 ## 8. Open Questions / Risks
 
-> **SUPERSESSION NOTE — 2026-08-23:** Resolved items #5, #6, and #11 below
-> mark the `FUN_10011230` patch path as "RESOLVED." That resolution is
-> **superseded** for runtime-link acceptance: the patch produces
-> runtime-unlinkable output. The real prerequisite is per-thread STA COM
-> (not "partially initialized CLR"), and the patch is slated for complete
-> removal in TVS-L.3. See §5.6 supersession banner and
+> **SUPERSESSION NOTE — 2026-08-23 (updated TVS-L.3 — patch removed):**
+> Resolved items #5, #6, and #11 below mark the `FUN_10011230` patch path as
+> "RESOLVED." That resolution was **superseded** for runtime-link acceptance:
+> the patch produced runtime-unlinkable output. The real prerequisite is
+> per-thread STA COM (not "partially initialized CLR"), and the patch has been
+> **completely removed in TVS-L.3** (no longer "slated for" removal — the
+> removal is done). See §5.6 supersession banner and
 > `docs/workstream_unknown_link_fix_plan.md`.
 
 > **Resolved since initial study:** Items #1 (headless `CreateRte` — smoke test PASSED), #2 (`contextId` — CONFIRMED as 1), #3 (`_CreateEntryEX` params — CONFIRMED, see §5.1), #5 (`_SaveModule_New` GUI binding — hidden-EDIT workaround CONFIRMED, persistence via `VerifyModule_New` + §5.6 patch), #6 (`MDVault::SaveModule` direct — no longer needed; persistence achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule`), #8 (`_GetCompilingErrors` formatting — CONFIRMED, see §5.1), #11 (`_SaveTextEX` persistence — RESOLVED; `SaveModule_New` saves source only, `VerifyModule_New` persists `.ell`), and #13 (Frida live RE — enabled via Python frida MCP, Frida 17.17.0).

@@ -64,8 +64,13 @@
 // TsDevLib operations run on a 64 MB-stack worker thread.
 
 #include "tsdev_lib.h"
+#include "persistence_integrity.h"  // TVS-L.9: shared post-verify validator
+#include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
+
+#include <windows.h>
+#include <bcrypt.h>           // TVS-L.9: SHA-256 of pre-op .ell/.xml artifacts
 
 #include <cstdio>
 #include <cstdlib>
@@ -236,6 +241,12 @@ struct CliResult {
     std::string humanStdout;
     std::string humanStderr;
     std::string errorMessage;  // concise message for JSON error.message
+    std::string cleanupError;  // TVS-L.10: secondary create-path cleanup error
+                                // (non-empty only when partial-entry cleanup was
+                                // attempted after a post-createEntry failure and
+                                // the cleanup itself failed). Preserves the
+                                // primary diagnostic; cleanup failure never
+                                // flips a failure into a success.
     bool        exists = false;  // "exists" op: whether the item was found
     std::string storedName;  // "exists" op: verbatim stored name (empty if not found)
     std::string sourceText;  // "get-source" op: retrieved EL source (JSON mode)
@@ -255,7 +266,7 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 6:  return "entry_op_failure";
         case 7:  return "save_source_failure";
         case 8:  return "compile_error";
-        case 9:  return "ell_missing";
+        case 9:  return "artifact_missing";
         case 10: return "thread_failure";
         case 11: return "not_elevated";
         default: return "unknown_error";
@@ -306,6 +317,15 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
         if (r.exitCode == 8) {
             if (r.progId > 0) err["prog_id"] = r.progId;
             err["compile_errors"] = r.compileErrors;
+        }
+        // TVS-L.10: secondary create-path cleanup error. Emitted only when
+        // non-empty — i.e. when partial-entry cleanup was attempted after a
+        // post-createEntry failure AND the cleanup itself failed. This is
+        // attached SECONDARY to the primary error.code/message; it never
+        // replaces them and never flips success. A successful cleanup is
+        // silent (no field), so a cleanup failure is always visible.
+        if (!r.cleanupError.empty()) {
+            err["cleanup_error"] = r.cleanupError;
         }
         j["error"] = err;
     }
@@ -367,10 +387,423 @@ void emitOutput(const CliResult& r, bool jsonMode) {
 // call, batch constructs once and reuses). This avoids duplicating the
 // createEntry/saveSource/verifyModule/deleteEntry sequence.
 //
+// --- TVS-L.9: shared post-verify persistence-integrity check ---------------
+//
+// Fault A (docs/RE/RE_L8_STALE_WRITE_FAULT_A.md): when the .ell write fails at
+// the OS level but ELMDCore.dll forces `true`, the operation reports
+// exit 0 / success=true while the .ell is left STALE (hash unchanged) and the
+// .xml is rewritten with a NEW GUID that has ZERO occurrences in the stale
+// .ell. The existing .ell/.xml existence checks do NOT catch this (both files
+// exist). The shared validator in src/persistence_integrity.cpp classifies the
+// cross-store consistency; the helpers below snapshot pre-op hashes and apply
+// ONE shared post-verify check that both doInsert and doModify call AFTER
+// orlib reports success and the existing existence checks pass. Upsert
+// inherits the check via doInsert/doModify (it delegates to one of them).
+//
+// Per the approved L.8 decision gate (BLOCKED recovery): this is DETECT-AND-
+// FAIL only. It does NOT restore the .ell/.xml, does NOT invent a
+// rollback/unverify/retry API, and does NOT delete the warehouse component.
+// On any non-Verified/non-NoOp verdict it sets success=false, exit 9 (the
+// existing "artifact_missing" code, reused by all persistence-failure paths),
+// and a persistence-specific structured reason in errorMessage/humanStderr
+// that includes type / ProgId / .ell path / .xml path.
+
+// sha256FileCli: compute the uppercase-hex SHA-256 of a regular file at
+// `path` via the native Win32 bcrypt provider. Returns empty string on any
+// failure (missing file, directory, read/hash error). Mirrors the validator's
+// internal hasher; kept local to this TU because persistence_integrity.h
+// exposes only validatePersistenceIntegrity() (matched exactly — no extra
+// declarations added).
+std::string sha256FileCli(const std::string& path) {
+    HANDLE hFile = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                               nullptr, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return std::string();
+    struct FileGuard {
+        HANDLE h;
+        ~FileGuard() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); }
+    } fileGuard{hFile};
+
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM,
+                                                  nullptr, 0);
+    if (status != 0) return std::string();
+    struct AlgGuard {
+        BCRYPT_ALG_HANDLE h;
+        ~AlgGuard() { if (h) BCryptCloseAlgorithmProvider(h, 0); }
+    } algGuard{hAlg};
+
+    DWORD hashObjLen = 0, cbResult = 0;
+    status = BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH,
+                               reinterpret_cast<PUCHAR>(&hashObjLen),
+                               sizeof(DWORD), &cbResult, 0);
+    if (status != 0) return std::string();
+    DWORD hashLen = 0;
+    status = BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH,
+                               reinterpret_cast<PUCHAR>(&hashLen),
+                               sizeof(DWORD), &cbResult, 0);
+    if (status != 0) return std::string();
+
+    std::vector<uint8_t> hashObj(hashObjLen);
+    BCRYPT_HASH_HANDLE hHash = nullptr;
+    status = BCryptCreateHash(hAlg, &hHash, hashObj.data(), hashObjLen,
+                              nullptr, 0, 0);
+    if (status != 0) return std::string();
+    struct HashGuard {
+        BCRYPT_HASH_HANDLE h;
+        ~HashGuard() { if (h) BCryptDestroyHash(h); }
+    } hashGuard{hHash};
+
+    const DWORD chunkSize = 65536;
+    std::vector<uint8_t> chunk(chunkSize);
+    for (;;) {
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(hFile, chunk.data(), chunkSize, &bytesRead, nullptr);
+        if (!ok) return std::string();
+        if (bytesRead == 0) break;  // EOF
+        status = BCryptHashData(hHash, chunk.data(), bytesRead, 0);
+        if (status != 0) return std::string();
+    }
+
+    std::vector<uint8_t> hash(hashLen);
+    status = BCryptFinishHash(hHash, hash.data(), hashLen, 0);
+    if (status != 0) return std::string();
+
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(hash.size() * 2);
+    for (uint8_t b : hash) {
+        out.push_back(hex[(b >> 4) & 0xF]);
+        out.push_back(hex[b & 0xF]);
+    }
+    return out;
+}
+
+// emptyBufferSha256: the SHA-256 of a zero-byte buffer, computed once and
+// cached. Used as the "pre-hash" sentinel when a pre-op artifact did NOT
+// exist (insert of a brand-new item, or modify of a corrupt item whose
+// .ell/.xml were missing before the operation). It is a real, non-empty hex
+// SHA-256, so the validator does NOT treat it as "unknown" (the header maps
+// only an EMPTY pre-hash to InvalidInput). Because a valid post-op .ell/.xml
+// is never zero bytes, this sentinel correctly forces ellChanged/xmlChanged =
+// true for any real post-op artifact — i.e. "there was no prior file, so the
+// post-op file is by definition a change". A zero-byte (corrupt) post-op file
+// would hash-equal the sentinel -> ellChanged=false -> FaultA_StaleEll, which
+// is the correct detect-and-fail outcome for a corrupt artifact.
+//
+// Computed directly via bcrypt (hash of zero bytes — no BCryptHashData call).
+// This is the well-known constant E3B0C442...B855; computing it avoids
+// hardcoding a magic constant and stays consistent with the project's
+// bcrypt-everywhere style.
+const std::string& emptyBufferSha256() {
+    static std::string cached;
+    static bool initialized = false;
+    if (initialized) return cached;
+    initialized = true;
+
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM,
+                                                  nullptr, 0);
+    if (status != 0) { cached.clear(); return cached; }
+    struct AlgGuard {
+        BCRYPT_ALG_HANDLE h;
+        ~AlgGuard() { if (h) BCryptCloseAlgorithmProvider(h, 0); }
+    } algGuard{hAlg};
+
+    DWORD hashObjLen = 0, cbResult = 0;
+    BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH,
+                      reinterpret_cast<PUCHAR>(&hashObjLen),
+                      sizeof(DWORD), &cbResult, 0);
+    DWORD hashLen = 0;
+    BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH,
+                      reinterpret_cast<PUCHAR>(&hashLen),
+                      sizeof(DWORD), &cbResult, 0);
+    std::vector<uint8_t> hashObj(hashObjLen);
+    BCRYPT_HASH_HANDLE hHash = nullptr;
+    BCryptCreateHash(hAlg, &hHash, hashObj.data(), hashObjLen, nullptr, 0, 0);
+    struct HashGuard {
+        BCRYPT_HASH_HANDLE h;
+        ~HashGuard() { if (h) BCryptDestroyHash(h); }
+    } hashGuard{hHash};
+    // Hash ZERO bytes (no BCryptHashData call).
+    std::vector<uint8_t> hash(hashLen);
+    BCryptFinishHash(hHash, hash.data(), hashLen, 0);
+
+    static const char* hex = "0123456789ABCDEF";
+    cached.reserve(hash.size() * 2);
+    for (uint8_t b : hash) {
+        cached.push_back(hex[(b >> 4) & 0xF]);
+        cached.push_back(hex[b & 0xF]);
+    }
+    return cached;
+}
+
+// noPriorArtifactHash: the pre-hash to pass for an artifact that did NOT
+// exist before the operation. Returns the empty-buffer SHA-256 (see
+// emptyBufferSha256). Falls back to a clearly-non-matching sentinel only if
+// bcrypt itself fails to produce the empty-buffer hash (extremely unlikely;
+// the validator would then still see a non-empty pre-hash that differs from
+// any real post-op hash -> ellChanged=true).
+const std::string& noPriorArtifactHash() {
+    const std::string& h = emptyBufferSha256();
+    if (!h.empty()) return h;
+    static const std::string fallback = "<no-prior-artifact>";
+    return fallback;
+}
+
+// verdictLabel: human-readable label for an IntegrityVerdict, used in the
+// persistence-specific structured reason message.
+const char* verdictLabel(IntegrityVerdict v) {
+    switch (v) {
+        case IntegrityVerdict::VerifiedRefresh:  return "VerifiedRefresh";
+        case IntegrityVerdict::NoOpAllowed:      return "NoOpAllowed";
+        case IntegrityVerdict::FaultA_StaleEll:  return "FaultA_StaleEll";
+        case IntegrityVerdict::InvalidInput:     return "InvalidInput";
+    }
+    return "Unknown";
+}
+
+// applyPersistenceIntegrityCheck: the SINGLE shared post-verify check called
+// by doInsert and doModify AFTER orlib reports success and the existing
+// .ell/.xml existence checks pass. Classifies the cross-store consistency via
+// validatePersistenceIntegrity().
+//
+// Inputs:
+//   r                 the in-progress CliResult (op/typeStr/name/progId already
+//                     set by the caller). On failure this is mutated to
+//                     success=false / exit 9 with the persistence-specific
+//                     reason. On success it is left untouched (the caller
+//                     fills in the success fields).
+//   ellPath, xmlPath  the POST-op artifact paths (regular files at this point
+//                     — the existence checks already passed).
+//   preEllSha256,
+//   preXmlSha256      SHA-256 of the PRE-op artifacts, or noPriorArtifactHash()
+//                     when the pre-op artifact did not exist. NEVER empty
+//                     (the validator returns InvalidInput for an empty
+//                     pre-hash, which this check would then report as a
+//                     persistence failure).
+//   sourceEqualProven true iff the caller proved the new source is
+//                     byte-identical to the stored source via getSource()
+//                     BEFORE the operation. Only then may an unchanged .ell
+//                     hash be accepted as a no-op (NoOpAllowed) rather than
+//                     rejected as a stale write (FaultA_StaleEll).
+//   noOpRefresh       [out] set to true when the verdict is NoOpAllowed, so
+//                     the caller can report success honestly (NOT as a
+//                     verified refresh — the .ell hash is expected unchanged
+//                     because the source was byte-identical).
+//
+// Returns true if the check passes (VerifiedRefresh or NoOpAllowed); returns
+// false and fills r with exit 9 + a persistence-specific structured reason if
+// the check fails (FaultA_StaleEll or InvalidInput).
+bool applyPersistenceIntegrityCheck(CliResult& r,
+                                    const std::string& ellPath,
+                                    const std::string& xmlPath,
+                                    const std::string& preEllSha256,
+                                    const std::string& preXmlSha256,
+                                    bool sourceEqualProven,
+                                    bool& noOpRefresh) {
+    noOpRefresh = false;
+
+    IntegrityInput in;
+    in.ellPath = ellPath;
+    in.xmlPath = xmlPath;
+    in.preEllSha256 = preEllSha256;
+    in.preXmlSha256 = preXmlSha256;
+    in.sourceEqualProven = sourceEqualProven;
+
+    IntegrityVerdict v = validatePersistenceIntegrity(in);
+
+    if (v == IntegrityVerdict::VerifiedRefresh) {
+        return true;  // real, runtime-linkable refresh — caller reports success
+    }
+    if (v == IntegrityVerdict::NoOpAllowed) {
+        noOpRefresh = true;  // genuine no-op — caller reports success (NOT a refresh)
+        return true;
+    }
+
+    // FaultA_StaleEll or InvalidInput: detect-and-fail. Reuse exit 9
+    // ("artifact_missing", the existing code for .ell/.xml integrity failures,
+    // reused by ALL persistence-failure paths per the L.9 constraint). The
+    // persistence-specific structured reason (verdict + type/ProgId/paths) goes
+    // into errorMessage (-> JSON error.message) and humanStderr.
+    r.success = false;
+    r.exitCode = 9;
+    r.ellPath = ellPath;  // keep the path for JSON ell_path on this failure
+
+    const char* reason = (v == IntegrityVerdict::InvalidInput)
+        ? "persistence integrity check could not evaluate the artifacts "
+          "(unreadable/unparseable .ell or .xml, or GUID missing from .xml)"
+        : "persistence integrity check FAILED — stale .ell (Fault A): the "
+          ".ell hash is unchanged or the post-op XML GUID is not present "
+          "exactly once (mixed-endian) in the .ell; the artifacts are "
+          "inconsistent and the item is runtime-unlinkable";
+
+    r.errorMessage = std::string(reason)
+        + " [verdict=" + verdictLabel(v)
+        + ", type=" + r.typeStr
+        + ", name=\"" + r.name + "\""
+        + ", ProgId=" + std::to_string(r.progId)
+        + ", .ell=" + ellPath
+        + ", .xml=" + xmlPath + "]";
+
+    r.humanStderr = std::string("tsdev_cli: persistence integrity FAILED for ")
+        + r.typeStr + " \"" + r.name + "\" (ProgId=" + std::to_string(r.progId)
+        + ") [verdict=" + verdictLabel(v) + "]\n"
+        + "  .ell=" + ellPath + "\n"
+        + "  .xml=" + xmlPath + "\n"
+        + "  " + reason + "\n"
+        + "  (detect-and-fail; no rollback/retry attempted)\n";
+    return false;
+}
+
+// --- TVS-L.10: SINGLE create-path partial-entry cleanup owner ---------------
+//
+// cleanupCreatePathFailure is the ONE place that decides whether a partial
+// warehouse entry created by a successful createEntry is removed when the
+// create-path subsequently fails, and performs the removal. It is called by
+// doInsert on EVERY post-createEntry failure branch (saveSource fail AND
+// every verifyModule failure mode). Upsert-new inherits it via doInsert.
+//
+// Contract:
+//   * `progId` is the ProgId returned by the successful createEntry (> 0).
+//   * `type` / `name` are the EXACT warehouse/API name + ComponentType passed
+//     to createEntry (no EL source parsing — HARD RULE 0). deleteEntry uses
+//     them to locate the partial entry via FindExistPos and the .ell/.xml
+//     paths via the expanded whType (the enum value).
+//   * `stage` identifies WHICH post-create step failed (SaveSourceFailed or
+//     one of the VerifyModule_* enumerators). It is passed to
+//     requiresCreatePathCleanup() so the ownership decision is routed through
+//     the single pure function pinned by the unit test, and so the stage is
+//     visible in diagnostics.
+//
+// Cleanup action: deleteEntry(type, name, flush=false). This removes the
+// partial warehouse entry (FindExistPos + FUN_101a8360 delete orchestrator +
+// InitGlobalLookup/DeleteFromTree BST update) AND deletes both artifacts
+// (.ell and .xml) from disk via deleteEntry's existing step 5. flush=false
+// is used in BOTH single-item and batch/serve paths: in batch/serve the
+// warehouse must stay open for the session lifetime (closing it frees the
+// IWHouse interface at [warehouse+0x5E] and crashes subsequent ops), and in
+// the single-item path the destructor's OrlibExit persists the deletion
+// anyway. This matches the existing compile-fail cleanup behavior.
+//
+// Diagnostics: the PRIMARY failure (exit 7/8) is already recorded in `r`
+// by the caller. Cleanup errors are attached SECONDARY:
+//   * On successful cleanup: a one-line notice is appended to humanStderr
+//     (informational, not an error). cleanupError is left empty so JSON
+//     emits no cleanup_error field.
+//   * On cleanup FAILURE: the failure reason is appended to humanStderr AND
+//     recorded in r.cleanupError (emitted as error.cleanup_error in JSON).
+//     The primary exitCode / errorMessage / compileErrors are untouched, so
+//     a cleanup failure can never look like full success (the result stays
+//     exit 7/8, success=false). The caller's return is unaffected — it
+//     still returns the original failure result.
+//
+// Returns true if cleanup succeeded (or was not required), false if the
+// cleanup itself failed. The return value is informational; the caller does
+// NOT change its exit code based on it.
+bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
+                              const std::string& typeStr,
+                              const std::string& name, int progId,
+                              CreatePathFailureStage stage, CliResult& r) {
+    if (!tsdev::requiresCreatePathCleanup(progId, stage)) {
+        // createEntry did not succeed (progId <= 0) — no partial entry exists.
+        // Nothing to clean up. (Reached only defensively; doInsert never
+        // calls this when progId <= 0.)
+        return true;
+    }
+
+    const char* stageLabel = "unknown";
+    switch (stage) {
+        case CreatePathFailureStage::SaveSourceFailed:           stageLabel = "saveSource"; break;
+        case CreatePathFailureStage::VerifyModule_Oom:           stageLabel = "verifyModule-OOM"; break;
+        case CreatePathFailureStage::VerifyModule_SehCtor:       stageLabel = "verifyModule-SEH(ctor)"; break;
+        case CreatePathFailureStage::VerifyModule_SehStartCompiling:
+            stageLabel = "verifyModule-SEH(StartCompiling)"; break;
+        case CreatePathFailureStage::VerifyModule_SehVerify:     stageLabel = "verifyModule-SEH(Verify)"; break;
+        case CreatePathFailureStage::VerifyModule_CompileErrors: stageLabel = "verifyModule-compileErrors"; break;
+        // TVS-L.11: post-verify failure branches (after successful create+verify).
+        case CreatePathFailureStage::PostVerify_EllMissing:           stageLabel = "postVerify-ellMissing"; break;
+        case CreatePathFailureStage::PostVerify_XmlMissing:           stageLabel = "postVerify-xmlMissing"; break;
+        case CreatePathFailureStage::PostVerify_PersistenceIntegrity: stageLabel = "postVerify-persistenceIntegrity"; break;
+        // TVS-L.11: defensive default — every CreatePathFailureStage enumerator
+        // is handled above, but a future addition must not silently fall
+        // through to the "unknown" initial value without surfacing here.
+        default:
+            stageLabel = "unknown";
+            break;
+    }
+
+    std::string note = std::string("tsdev_cli: create-path failed at ")
+        + stageLabel + " after successful createEntry — cleaning up partial "
+        + typeStr + " \"" + name + "\" (ProgId=" + std::to_string(progId)
+        + ")\n";
+
+    bool cleanupOk = false;
+    std::string cleanupErr;
+    // TVS-L.12: deleteEntry now classifies each DeleteFileA failure via
+    // deleteDiskCleanupErrorFailsResult() and, when a real removal failure
+    // occurs (e.g. ERROR_ACCESS_DENIED on a read-only .ell), returns false
+    // AND populates diskCleanupErrorOut with the residual path + Windows
+    // error. Capture that detail so it can be folded into cleanupErr below
+    // and surfaced in r.cleanupError (JSON error.cleanup_error) — a stale
+    // .ell/.xml left behind by the cleanup delete must never look like a
+    // clean cleanup. This does NOT invent attrib -R or any recovery; it only
+    // reports the residual the orchestrator already surfaced.
+    std::string diskCleanupError;
+    try {
+        // flush=false: keeps the warehouse open for batch/serve lifetime.
+        // deleteEntry removes the warehouse entry (BST update via
+        // DeleteFromTree) AND both artifacts (.ell/.xml) from disk.
+        cleanupOk = lib.deleteEntry(type, name, /*flush=*/false,
+                                    &diskCleanupError);
+        if (!cleanupOk) {
+            // deleteEntry returns false for two distinct reasons: an earlier
+            // failure (not found / orchestrator SEH — diskCleanupError stays
+            // empty) OR a disk-cleanup failure classified by the L.12
+            // decision (diskCleanupError carries the residual path + Windows
+            // error). Distinguish them so the secondary diagnostic names the
+            // residual artifact when one is present.
+            if (diskCleanupError.empty()) {
+                cleanupErr = "deleteEntry returned false (entry may have "
+                             "already been removed or FindExistPos missed "
+                             "it)";
+            } else {
+                cleanupErr = "deleteEntry returned false — disk cleanup "
+                             "failed; residual artifact(s): "
+                             + diskCleanupError;
+            }
+        }
+    } catch (const std::exception& e) {
+        cleanupErr = std::string("deleteEntry threw: ") + e.what();
+    } catch (...) {
+        cleanupErr = "deleteEntry threw unknown exception";
+    }
+
+    if (cleanupOk) {
+        note += "tsdev_cli: cleanup succeeded — partial entry + .ell/.xml removed\n";
+        r.humanStderr += note;
+    } else {
+        // Attach the cleanup failure SECONDARY. The primary diagnostic
+        // (exitCode / errorMessage / compileErrors) is preserved untouched;
+        // success stays false. cleanupError is emitted as error.cleanup_error
+        // in JSON so a cleanup failure is always visible and never looks like
+        // full success.
+        r.cleanupError = std::string("create-path cleanup (stage=")
+            + stageLabel + ") failed: " + cleanupErr;
+        r.humanStderr += note;
+        r.humanStderr += std::string("tsdev_cli: WARNING — create-path cleanup of \"")
+            + name + "\" (ProgId=" + std::to_string(progId)
+            + ") failed: " + cleanupErr + "\n";
+    }
+    return cleanupOk;
+}
+
 // doInsert: when `flushPerItem` is true (single-item path), closeWarehouse() is
-// called after verifyModule and before the .ell check — matching the original
-// single-item sequence byte-for-byte. When false (batch path), closeWarehouse
-// is skipped here; the batch worker calls it ONCE at the end of the batch.
+// called AFTER all post-verify validation (.ell/.xml existence + L.9
+// persistence-integrity check) succeeds — so that any cleanupCreatePathFailure
+// branch can still call deleteEntry() against an open warehouse (TVS-L.11).
+// When false (batch path), closeWarehouse is skipped here; the batch worker
+// calls it ONCE at the end of the batch.
 CliResult doInsert(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
                    const std::string& source, bool flushPerItem) {
@@ -415,11 +848,25 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                          + std::to_string(progId);
         r.humanStderr = std::string("tsdev_cli: saveSource failed for ProgId=")
                         + std::to_string(progId) + "\n";
+        // TVS-L.10: createEntry succeeded (progId > 0) but saveSource failed.
+        // The partial warehouse entry is orphaned without this — the previous
+        // code had NO cleanup on this path. Route through the SINGLE owner.
+        // Cleanup errors attach secondarily; the primary exit-7 diagnostic
+        // is preserved and success stays false.
+        cleanupCreatePathFailure(lib, type, typeStr, name, progId,
+                                 CreatePathFailureStage::SaveSourceFailed, r);
         return r;
     }
 
     // 4. Compile / verify — fail loudly on errors.
-    std::string errors = lib.verifyModule(type, progId);
+    //    TVS-L.10: pass &verifyStage so that if verifyModule fails, the
+    //    SINGLE cleanup owner can report WHICH internal path failed (OOM,
+    //    SEH-ctor, SEH-StartCompiling, SEH-Verify, or compile errors) and
+    //    route the cleanup through requiresCreatePathCleanup(). The stage
+    //    is initialized to CompileErrors as a defensive default; verifyModule
+    //    overwrites it on every non-empty return path.
+    CreatePathFailureStage verifyStage = CreatePathFailureStage::VerifyModule_CompileErrors;
+    std::string errors = lib.verifyModule(type, progId, &verifyStage);
     if (!errors.empty()) {
         r.exitCode = 8;
         r.progId = progId;
@@ -428,16 +875,29 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         r.humanStderr = std::string("tsdev_cli: compilation FAILED for \"")
                         + name + "\" (ProgId=" + std::to_string(progId)
                         + "):\n" + errors + "\n";
+        // TVS-L.10: createEntry succeeded (progId > 0) but verify/compile
+        // failed (OOM / SEH-ctor / SEH-StartCompiling / SEH-Verify / compile
+        // errors). The previous code cleaned up ONLY the compile-error case
+        // (and only incidentally the SEH/OOM cases via the !errors.empty()
+        // branch inside verifyModule). Route ALL of them through the SINGLE
+        // owner. Cleanup errors attach secondarily; the primary exit-8
+        // diagnostic + compileErrors are preserved and success stays false.
+        cleanupCreatePathFailure(lib, type, typeStr, name, progId,
+                                 verifyStage, r);
         return r;
     }
 
-    // 5. Close the warehouse (flush) — single-item only; batch flushes once
-    //    at the end.
-    if (flushPerItem) {
-        lib.closeWarehouse();
-    }
-
-    // 6. Verify the .ell file exists.
+    // 5. Verify the .ell file exists.
+    //    TVS-L.11: the post-verify existence checks (.ell/.xml), the L.9
+    //    persistence-integrity check, and any L.10 cleanupCreatePathFailure
+    //    MUST run BEFORE closeWarehouse in the single-item path. Closing the
+    //    warehouse first would free the orlib20 warehouse handle, so the
+    //    deleteEntry() inside cleanupCreatePathFailure could no longer operate
+    //    (FindExistPos / FUN_101a8360 / BST update all need an open warehouse).
+    //    closeWarehouse is therefore deferred to step 8, AFTER successful
+    //    validation. In the batch/serve path (flushPerItem == false) the
+    //    warehouse is never closed here — the batch worker closes it once at
+    //    the end of the session, preserving the session lifetime.
     std::string ellPath = lib.getEllPath(type, progId);
     if (!lib.ellFileExists(type, progId)) {
         r.exitCode = 9;
@@ -446,10 +906,79 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                          + ellPath;
         r.humanStderr = std::string("tsdev_cli: compilation succeeded but .ell file not found: ")
                         + ellPath + "\n";
+        // TVS-L.11: createEntry + verify succeeded (progId > 0) but the .ell
+        // artifact is missing on disk — the partial warehouse entry is
+        // orphaned without this. Route through the SAME L.10 single owner.
+        // Cleanup errors attach secondarily; the primary exit-9 diagnostic
+        // is preserved and success stays false.
+        cleanupCreatePathFailure(lib, type, typeStr, name, progId,
+                                 CreatePathFailureStage::PostVerify_EllMissing, r);
         return r;
     }
 
-    // 7. Success.
+    // 6. Verify the .xml file exists.
+    if (!lib.xmlFileExists(type, progId)) {
+        r.exitCode = 9;
+        r.progId = progId;
+        r.errorMessage = "compilation succeeded but .xml file not found at "
+                        + lib.getXmlPath(type, progId)
+                        + " — finalization may be incomplete";
+        r.humanStderr = std::string("tsdev_cli: compilation succeeded but .xml file not found at ")
+                        + lib.getXmlPath(type, progId)
+                        + " — finalization may be incomplete\n";
+        // TVS-L.11: createEntry + verify succeeded (progId > 0) but the .xml
+        // artifact is missing on disk — route through the SAME L.10 single
+        // owner. Cleanup errors attach secondarily; the primary exit-9
+        // diagnostic is preserved and success stays false.
+        cleanupCreatePathFailure(lib, type, typeStr, name, progId,
+                                 CreatePathFailureStage::PostVerify_XmlMissing, r);
+        return r;
+    }
+
+    // 7. TVS-L.9: shared post-verify persistence-integrity check.
+    //    For insert there is NO prior .ell/.xml (it is a brand-new item), so
+    //    the pre-hashes are the no-prior-artifact sentinel (forces
+    //    ellChanged/xmlChanged = true for any real post-op artifact). The
+    //    source is new by construction, so sourceEqualProven = false. The
+    //    validator then requires: regular files (already checked above), a
+    //    parseable XML GUID, and EXACTLY ONE mixed-endian occurrence of that
+    //    GUID in the new .ell — the Fault A signature (new XML GUID with zero
+    //    occurrences in a stale/missing .ell) is detected here even on insert.
+    {
+        std::string xmlPath = lib.getXmlPath(type, progId);
+        r.progId = progId;
+        bool noOpRefresh = false;
+        if (!applyPersistenceIntegrityCheck(r, ellPath, xmlPath,
+                                            noPriorArtifactHash(),
+                                            noPriorArtifactHash(),
+                                            /*sourceEqualProven=*/false,
+                                            noOpRefresh)) {
+            // TVS-L.11: createEntry + verify succeeded (progId > 0) but the
+            // L.9 persistence-integrity validator detected Fault A (stale .ell)
+            // or InvalidInput — the artifacts are inconsistent and the item is
+            // runtime-unlinkable. Route through the SAME L.10 single owner so
+            // the partial warehouse entry + .ell/.xml are removed. Cleanup
+            // errors attach secondarily; the primary exit-9 persistence-specific
+            // diagnostic (errorMessage / humanStderr) is preserved and success
+            // stays false.
+            cleanupCreatePathFailure(lib, type, typeStr, name, progId,
+                                     CreatePathFailureStage::PostVerify_PersistenceIntegrity, r);
+            return r;  // exit 9, persistence-specific reason already in r
+        }
+        // Insert can never be a no-op (brand-new item); noOpRefresh is ignored.
+    }
+
+    // 8. Close the warehouse (flush) — single-item only; batch flushes once
+    //    at the end. TVS-L.11: this is deferred until AFTER all post-verify
+    //    validation (steps 5–7) succeeds, so that any cleanupCreatePathFailure
+    //    branch above could still call deleteEntry() against an open warehouse.
+    //    In the batch/serve path (flushPerItem == false) the warehouse is left
+    //    open for the session lifetime.
+    if (flushPerItem) {
+        lib.closeWarehouse();
+    }
+
+    // 9. Success.
     r.success = true;
     r.exitCode = 0;
     r.progId = progId;
@@ -465,6 +994,17 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
 // createEntry). Does not call closeWarehouse (the original single-item path
 // did not either — persistence happens via OrlibExit in the destructor, or
 // via the batch worker's single closeWarehouse at the end).
+//
+// TVS-L.9: BEFORE modifyEntry runs, this function snapshots the pre-op
+// .ell/.xml SHA-256 hashes (when the files already exist) and proves or
+// disproves source-equality via getSource() — the explicit get-source
+// equality check that, when true, lets the shared post-verify validator
+// accept an unchanged .ell hash as a genuine no-op (NoOpAllowed) instead of
+// rejecting it as a stale write (FaultA_StaleEll). AFTER orlib reports
+// success and the existing .ell/.xml existence checks pass, the SINGLE shared
+// applyPersistenceIntegrityCheck() classifies the cross-store consistency.
+// No EasyLanguage source is parsed for metadata (HARD RULE 0); the only
+// metadata read is the GUID from the .xml descriptor artifact.
 CliResult doModify(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
                    const std::string& source) {
@@ -472,6 +1012,55 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     r.op = "modify";
     r.typeStr = typeStr;
     r.name = name;
+
+    // --- TVS-L.9 pre-op snapshot (when the files already exist) ---
+    // Look up the existing ProgId so we can read the pre-op artifacts BEFORE
+    // modifyEntry rewrites them. modifyEntry does its own findExistPos
+    // internally; this extra lookup is a cheap BST search and keeps the
+    // snapshot point unambiguous (before any mutation).
+    int preProgId = lib.findExistPos(name, type);
+
+    std::string preEllPath, preXmlPath;
+    std::string preEllHash, preXmlHash;
+    bool sourceEqualProven = false;
+
+    if (preProgId > 0) {
+        preEllPath = lib.getEllPath(type, preProgId);
+        preXmlPath = lib.getXmlPath(type, preProgId);
+
+        // Snapshot pre-op hashes ONLY when the files already exist. When they
+        // do not (corrupt prior state), use the no-prior-artifact sentinel so
+        // the validator forces ellChanged/xmlChanged = true for the post-op
+        // artifacts (a real refresh after recovery from a missing prior .ell).
+        if (lib.ellFileExists(type, preProgId)) {
+            preEllHash = sha256FileCli(preEllPath);
+            if (preEllHash.empty()) preEllHash = noPriorArtifactHash();
+        } else {
+            preEllHash = noPriorArtifactHash();
+        }
+        if (lib.xmlFileExists(type, preProgId)) {
+            preXmlHash = sha256FileCli(preXmlPath);
+            if (preXmlHash.empty()) preXmlHash = noPriorArtifactHash();
+        } else {
+            preXmlHash = noPriorArtifactHash();
+        }
+
+        // Explicit get-source equality: prove the new source is byte-identical
+        // to the STORED source (retrieved via getSource from the warehouse
+        // record — NOT parsed from EL source comments). Only when this is
+        // true may an unchanged .ell hash be accepted as a no-op. getSource
+        // returns empty on failure; in that case sourceEqualProven stays
+        // false (fail safe: cannot prove no-op -> require hash refresh).
+        std::string storedSource = lib.getSource(type, name);
+        if (!storedSource.empty() && storedSource == source) {
+            sourceEqualProven = true;
+        }
+    } else {
+        // Item does not exist — let modifyEntry surface the not-found result
+        // (exit 5) below. No pre-snapshot is possible.
+        preEllHash = noPriorArtifactHash();
+        preXmlHash = noPriorArtifactHash();
+    }
 
     Result res = lib.modifyEntry(type, name, source);
 
@@ -496,6 +1085,52 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     }
 
     std::string ellPath = lib.getEllPath(type, res.progId);
+    if (!lib.ellFileExists(type, res.progId)) {
+        r.exitCode = 9;
+        r.progId = res.progId;
+        r.errorMessage = "compilation succeeded but .ell file not found at "
+                        + lib.getEllPath(type, res.progId)
+                        + " — finalization may be incomplete";
+        r.humanStderr = std::string("tsdev_cli: compilation succeeded but .ell file not found at ")
+                        + lib.getEllPath(type, res.progId)
+                        + " — finalization may be incomplete\n";
+        return r;
+    }
+    if (!lib.xmlFileExists(type, res.progId)) {
+        r.exitCode = 9;
+        r.progId = res.progId;
+        r.errorMessage = "compilation succeeded but .xml file not found at "
+                        + lib.getXmlPath(type, res.progId)
+                        + " — finalization may be incomplete";
+        r.humanStderr = std::string("tsdev_cli: compilation succeeded but .xml file not found at ")
+                        + lib.getXmlPath(type, res.progId)
+                        + " — finalization may be incomplete\n";
+        return r;
+    }
+
+    // TVS-L.9: shared post-verify persistence-integrity check. The pre-op
+    // hashes were snapshotted above (or the no-prior-artifact sentinel when
+    // the pre-op files did not exist). sourceEqualProven is true ONLY when
+    // getSource returned byte-identical source before the operation. On
+    // Fault A / GUID-missing / stale hash / invalid input: success=false,
+    // exit 9, persistence-specific structured reason (verdict + type/ProgId/
+    // paths) — detect-and-fail, no rollback/retry (L.8 BLOCKED recovery).
+    {
+        std::string xmlPath = lib.getXmlPath(type, res.progId);
+        r.progId = res.progId;
+        bool noOpRefresh = false;
+        if (!applyPersistenceIntegrityCheck(r, ellPath, xmlPath,
+                                            preEllHash, preXmlHash,
+                                            sourceEqualProven,
+                                            noOpRefresh)) {
+            return r;  // exit 9, persistence-specific reason already in r
+        }
+        // On NoOpAllowed: report success=true but NOT as a verified refresh.
+        // The .ell hash is expected unchanged because the caller proved the
+        // source was byte-identical; the human/JSON success message below
+        // carries the standard "modified" wording (no "refreshed" claim).
+    }
+
     r.success = true;
     r.exitCode = 0;
     r.progId = res.progId;
@@ -531,16 +1166,39 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    bool deleted = lib.deleteEntry(type, name, flushPerItem);
+    // TVS-L.12: deleteEntry now reports a disk-cleanup failure (a stale
+    // .ell/.xml left on disk) by returning false AND populating
+    // `diskCleanupError` with the residual path(s) + Windows error(s). The
+    // delete orchestrator has ALREADY run in that case, so the warehouse entry
+    // was removed — only the on-disk artifact(s) remain. We extend the
+    // existing exit-6 / entry_op_failure message (no new error code/hierarchy)
+    // to surface the residual path/error and to state that the warehouse entry
+    // was already removed, so the operator knows the on-disk state is stale.
+    // `diskCleanupError` is empty for non-cleanup failures (not found is
+    // handled above; orchestrator SEH aborts earlier), so an empty value here
+    // means an earlier deleteEntry failure and keeps the original message.
+    std::string diskCleanupError;
+    bool deleted = lib.deleteEntry(type, name, flushPerItem, &diskCleanupError);
     if (!deleted) {
         r.exitCode = 6;
         r.progId = progId;
-        r.errorMessage = std::string("deleteEntry failed for ") + typeStr
-                         + " \"" + name + "\" (ProgId="
-                         + std::to_string(progId) + ").";
-        r.humanStderr = std::string("tsdev_cli: deleteEntry failed for ")
-                        + typeStr + " \"" + name + "\" (ProgId="
-                        + std::to_string(progId) + ").\n";
+        if (!diskCleanupError.empty()) {
+            r.errorMessage = std::string("deleteEntry partially failed for ")
+                + typeStr + " \"" + name + "\" (ProgId="
+                + std::to_string(progId) + "): warehouse entry was removed, "
+                "but disk cleanup failed — " + diskCleanupError;
+            r.humanStderr = std::string("tsdev_cli: deleteEntry partially "
+                "failed for ") + typeStr + " \"" + name + "\" (ProgId="
+                + std::to_string(progId) + "): warehouse entry was removed, "
+                "but disk cleanup failed — " + diskCleanupError + "\n";
+        } else {
+            r.errorMessage = std::string("deleteEntry failed for ") + typeStr
+                             + " \"" + name + "\" (ProgId="
+                             + std::to_string(progId) + ").";
+            r.humanStderr = std::string("tsdev_cli: deleteEntry failed for ")
+                            + typeStr + " \"" + name + "\" (ProgId="
+                            + std::to_string(progId) + ").\n";
+        }
         return r;
     }
 

@@ -1,7 +1,10 @@
 # Workstream L — Runtime-Link Root-Cause Fix
 
-**Status:** PLANNED — not yet started. No production implementation made.
-**Review status:** Independent review loops APPROVED; final hands-on adversarial PM review APPROVED on 2026-08-23 after correcting RED-suite gating, cross-references, behavioral test design, rollback policy, runtime-scope wording, and causal E2E timing.
+**Status:** NOT YET CLOSED — Workstream L recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.1–L.3 remain COMPLETE; L.4/L.5 completion was FALSIFIED by persistence and deletion fault injection and is superseded by L.6–L.15 (L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are necessary but not sufficient; the `FUN_10011230` persistence bypass is removed). No production handoff is authorized until L.17 independent final verification passes (see `docs/PM_WORKING_MEMORY.md`). Workstream M remains BLOCKED until L.17.
+**Review status:** Independent review loops APPROVED; final hands-on adversarial PM review APPROVED on 2026-08-23 after correcting RED-suite gating, cross-references, behavioral test design, rollback policy, runtime-scope wording, and causal E2E timing. (Plan-level review approval is distinct from the L.4/L.5 completion-claim falsification, which reopened the workstream after the fact.)
+
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
 **Priority:** P0 / blocker. The CLI currently produces runtime-unlinkable
 strategies that fail in TradeStation Desktop with "Unknown link error
 occurred." This invalidates the core product until fixed.
@@ -617,6 +620,28 @@ succeeds after an earlier per-item compile error (batch/serve resilience).
 **Handoff state:** Persistence validation and cleanup/rollback hardened. L.5
 may begin.
 
+> **FALSIFICATION NOTE (2026-08-23):** The "Persistence validation and
+> cleanup/rollback hardened" handoff-state claim above is FALSIFIED for the
+> L.4 completion claim. Independent fault injection showed the production CLI
+> returns `exit 0` / `success=true` while leaving the library inconsistent:
+> Fault A (stale-ELL modify, audit `TS_AUTO_AUDIT_STALE_20260823_154324`,
+> ProgId 7333) left the ELL SHA-256 unchanged while the XML changed, and Fault
+> B (orphan-ELL delete, audit `TS_AUTO_AUDIT_DELETE_20260823_160907`,
+> ProgId 7456) left the ELL present after a "successful" delete. Both
+> persistence and deletion fault injection jointly falsify the L.4 completion
+> claim. L.4 is FALSIFIED and superseded by the L.6–L.15 recovery
+> (implemented on branch `workstream-L-recovery`; production fix owned by L.9
+> for Fault A — detect-and-fail stale-ELL modify/upsert — and L.12 for Fault B
+> — detect-and-report orphan-ELL delete; test-oracle repair by L.6; complete
+> evidence re-capture by L.7). The L.8 decision-gate for Fault A recovery is
+> BLOCKED — see `docs/RE/RE_L8_STALE_WRITE_FAULT_A.md` §7 (no
+> `TSDev.exe`-equivalent save-failure observation established; no invented
+> TSDev recovery; L.9 cannot invent a recovery sequence not present in the
+> binary). Existence checks are necessary but not sufficient. See
+> `docs/PM_WORKING_MEMORY.md`. The
+> handoff-state line is retained above for provenance only and must NOT be read
+> as a current completion statement.
+
 ---
 
 ### TVS-L.5 — Full verification matrix + real production CLI/Desktop runtime
@@ -710,6 +735,27 @@ workstream is declared complete.
 
 **Handoff state:** Workstream L complete. Runtime linkability confirmed end-
 to-end across all entry paths and component types.
+
+> **FALSIFICATION NOTE (2026-08-23):** The "Workstream L complete. Runtime
+> linkability confirmed end-to-end across all entry paths and component types"
+> handoff-state claim above is FALSIFIED for the L.5 completion claim. The L.5
+> "full verification matrix + Desktop runtime gate across all 5 types" claim
+> was falsified jointly by the same persistence and deletion fault injection
+> that falsified L.4: Fault A (stale-ELL modify, audit
+> `TS_AUTO_AUDIT_STALE_20260823_154324`, ProgId 7333) and Fault B
+> (orphan-ELL delete, audit `TS_AUTO_AUDIT_DELETE_20260823_160907`,
+> ProgId 7456) each returned `exit 0` / `success=true` while leaving the
+> library inconsistent, contradicting the matrix's artifact-integrity and
+> cleanup invariants. The historical L.5 Desktop runtime gate observed no
+> "Unknown link error occurred" for any CLI-inserted item before/after Desktop
+> restart, but that gate did not exercise the persistence/delete fault paths
+> whose failures falsified L.4/L.5. **No new Desktop runtime re-gate is
+> claimed without an L.17 result.** L.5 is FALSIFIED and superseded by the
+> L.6–L.15 recovery (implemented on branch `workstream-L-recovery`;
+> test-oracle repair by L.6; complete evidence re-capture by L.7; production
+> fixes by L.9/L.12). See `docs/PM_WORKING_MEMORY.md`. The handoff-state line
+> is retained above for provenance only and must NOT be read as a current
+> completion statement.
 
 ---
 

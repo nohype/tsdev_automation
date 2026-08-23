@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-EXPECTED_SIGNATURE_COUNT = 25
+EXPECTED_SIGNATURE_COUNT = 24
 EXPECTED_DATA_GLOBAL_COUNT = 3
 EXPECTED_EXPORT_COUNT = 10
 

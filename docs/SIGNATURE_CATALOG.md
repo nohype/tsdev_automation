@@ -1,5 +1,44 @@
 # Signature Catalog — orlib20.dll Code-Section RVA Targets
 
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
+> **CURRENT-STATUS BANNER — Workstream L.** Workstream L is **NOT YET
+> CLOSED**. TVS-L.1–L.3 are **COMPLETE** (RED harness, STA COM lifecycle
+> guard, and removal of the `FUN_10011230` persistence bypass — the catalog
+> total change to 24 signatures / 11 patch sites described in the TVS-L.3
+> cleanup note below has shipped; the `FUN_10011230` persistence bypass is
+> removed). The TVS-L.4 (persistence validation + cleanup/rollback hardening)
+> and TVS-L.5 (full verification matrix + Desktop runtime gate) completion
+> claim was **FALSIFIED by independent persistence and deletion fault
+> injection** (Fault A: stale-ELL modify; Fault B: orphan-ELL delete; both
+> returned `exit 0` / `success=true`) and is **superseded by the L.6–L.15
+> recovery**, which is **implemented on branch `workstream-L-recovery`**
+> (L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
+> modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks
+> are necessary but not sufficient) (see `docs/PM_WORKING_MEMORY.md`). **No
+> new Desktop runtime re-gate is claimed without an L.17 result.** Workstream
+> M remains BLOCKED until L.17 independent final verification. The earlier
+> "Workstream L is PLANNED but NOT implemented" statement in the supersession
+> banner below predates L.1–L.3 and is retained as historical context; it is
+> reconciled here: L.3 **shipped** (target #9 retired, 24/11 counts), and
+> L.4/L.5 are **falsified/superseded by L.6–L.15**, not complete. Signature
+> facts (counts, RVAs, original/replacement bytes, scan results) below are
+> unchanged and remain authoritative.
+
+> **TVS-L.3 CLEANUP NOTE (post-L.3 shipment).** The
+> `FUN_10011230_persistence_patch` entry (former target #9, §3 row 9, §4.9)
+> has been **removed** from this catalog as part of TVS-L.3
+> (`docs/workstream_unknown_link_fix_plan.md`). Catalog totals are now
+> **24 signatures / 11 patch sites** (3 data globals, 10 exports unchanged);
+> `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 24. Target #9 is
+> **retired as a stable-ID gap** — targets 1–8 and 10–25 retain their original
+> IDs; generated array indices must not be inferred from IDs. The 2026-08-23
+> supersession banner below is **retained as historical context**; it
+> documents the root-cause finding (caller `ADD ESP,0x0C` at `0x1001E0C1`,
+> original plain `RET` at `0x10011454`, patched `RET 0x0C` as callee-cleanup
+> ABI hazard) that motivated the removal. The durable evidence remains in
+> `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
+
 > **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
 >
 > Confirmed Unknown-link findings have invalidated the **calling-convention
@@ -43,6 +82,13 @@
 > remain in this catalog and in `signatures/v9.50.01.3344.json`** — the
 > production code still applies this patch.
 >
+> **[L.3 UPDATE — shipped:** TVS-L.3 has now shipped. The removal described
+> above is **complete**: the target #9 entry, §4.9, and all 25/12 count
+> references have been removed/updated to 24/11 throughout this catalog and
+> in `signatures/v9.50.01.3344.json`. The preceding paragraphs are retained
+> as the historical 2026-08-23 record of the root-cause finding. See the
+> TVS-L.3 cleanup note at the very top of this file.**]**
+>
 > **Production runtime acceptance is currently BROKEN.** CLI-produced
 > strategies fail in TradeStation Desktop with "Unknown link error occurred"
 > despite TSDev reporting them VERIFIED. Workstream L is **PLANNED but NOT
@@ -51,17 +97,38 @@
 > `docs/workstream_unknown_link_fix_plan.md`; dynamic A/B proof:
 > `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
 > `tmp/com_nopatch_6689.xml`.
+>
+> **[L.3 UPDATE — shipped:** TVS-L.3 has now shipped; the persistence bypass
+> is removed and the real finalization path runs. See the TVS-L.3 cleanup
+> note at the top of this file and `docs/workstream_unknown_link_fix_plan.md`
+> for the current Workstream L status.**]**
+>
+> **[RECONCILIATION — current Workstream L status:** The "Workstream L is
+> PLANNED but NOT implemented" statement above predates L.1–L.3 and is
+> retained as historical context. Current status: TVS-L.1–L.3 **COMPLETE**
+> (L.3 shipped — target #9 retired, 24 signatures / 11 patch sites; the
+> `FUN_10011230` persistence bypass is removed); TVS-L.4 and TVS-L.5
+> **FALSIFIED** — their completion claim was falsified by persistence and
+> deletion fault injection and is **superseded by the L.6–L.15 recovery**,
+> which is **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED,
+> L.9 detect-and-fail stale-ELL modify/upsert, L.12 detect-and-report
+> orphan-ELL delete; existence checks are necessary but not sufficient) (see
+> `docs/PM_WORKING_MEMORY.md`). Workstream L is **NOT YET CLOSED**; no new
+> Desktop runtime re-gate is claimed without an L.17 result. Workstream M
+> remains BLOCKED until L.17 independent final verification. The
+> current-status banner at the top of this file is the authoritative
+> current-status statement; signature facts below are unchanged.**]**
 
 | Field | Value |
 |---|---|
 | **TVS Identifier** | TVS-B.1 + Workstreams F.4, F.5 |
 | **Date** | 2026-08-17 (B.1); 2026-08-19/26 (F.4, F.5 additions) |
 | **Status** | APPROVED |
-| **Purpose** | Catalogs the 25 code-section RVA targets in `orlib20.dll` (12 from TVS-B.1 + 13 from Workstreams F.4 and F.5), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 10 export names, 3 data-section RVA targets, 12 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
+| **Purpose** | Catalogs the 24 code-section RVA targets in `orlib20.dll` (11 from TVS-B.1 + 13 from Workstreams F.4 and F.5; target #9 retired in TVS-L.3), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 10 export names, 3 data-section RVA targets, 11 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
 
 > **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/archive/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
 
-> **WORKSTREAM F.4/F.5 NOTICE (2026-08-19/26):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The catalog below has been updated to reflect all 25 signatures, 10 exports, 3 data globals, and 12 patch sites. The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py` (EXPECTED_SIGNATURE_COUNT=25, EXPECTED_DATA_GLOBAL_COUNT=3, EXPECTED_EXPORT_COUNT=10).
+> **WORKSTREAM F.4/F.5 NOTICE (2026-08-19/26):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The catalog below has been updated to reflect all 24 signatures, 10 exports, 3 data globals, and 11 patch sites (post-TVS-L.3; was 25/12 before target #9 retirement). The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py` (EXPECTED_SIGNATURE_COUNT=24, EXPECTED_DATA_GLOBAL_COUNT=3, EXPECTED_EXPORT_COUNT=10).
 
 **Source artifacts (all in `tmp/re_artifacts/`):**
 
@@ -73,7 +140,7 @@
 | `b1_signatures.h` | The original 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
 | `b1_export_confirmation.md` | Export table confirmation for the original 7 export names |
 | `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) for the original 12 signatures |
-| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 25 signatures, 3 data globals, 10 exports (all versions) |
+| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 24 signatures, 3 data globals, 10 exports (all versions) |
 
 ---
 
@@ -141,7 +208,7 @@ In all signatures in this catalog, `??` represents a **wildcard byte** (matches 
 
 *Source: `signatures/v9.50.01.3344.json` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25), additional patch metadata columns are populated.
+One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap, not renumbered). For patch sites (targets 10–12, 13–21, 25), additional patch metadata columns are populated.
 
 > **Note on patch-site targets:** The signature matches the **containing function** entry point (or a mid-function anchor for some F.5 signatures), not the patch byte itself. The "RVA" column shows the **patch-site RVA** (the production target). The "Sig Match RVA" column shows where the signature actually matches (the containing function entry or anchor). The patch byte is at `Sig Match RVA + Patch Offset`.
 
@@ -155,7 +222,6 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 | 6 | DeleteFromTree | 0x1E4030 | `__thiscall` (ecx=globalLookup; stack: whType, progId, flag); RET 12 | 66 | Yes (1/1) | No |
 | 7 | GetWarehouse | 0x1A9650 | `__cdecl`, 1 arg (path; 0=default) | 45 | Yes (1/1) | No |
 | 8 | FUN_101a8360_delete_orchestrator | 0x1A8360 | `__fastcall` (ECX=whType, EDX=progId, no stack args) | 64 | Yes (1/1) | No |
-| 9 | FUN_10011230_persistence_patch | 0x11230 | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C in patch) — **CALLING-CONVENTION NARRATIVE STALE 2026-08-23: original callee ends in plain `RET` (`0x10011454`); caller performs `ADD ESP,0x0C` (`0x1001E0C1`); original ABI is caller-cleanup, patch's `RET 0x0C` is callee-cleanup (ABI hazard). See top-of-file banner and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. Entry retained until TVS-L.3.** | 72 | Yes (1/1) | Yes |
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | `__thiscall` (ecx=this) | 36 | Yes (1/1) | Yes |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | `__thiscall` (ecx=this) | 37 | Yes (1/1) | Yes |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | `__thiscall` (ecx=this) | 57 | Yes (1/1) | Yes |
@@ -177,7 +243,6 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 
 | # | Name | Patch-Site RVA | Sig Match RVA (containing fn) | Patch Offset | Original Bytes | Replacement Bytes |
 |---|---|---|---|---|---|---|
-| 9 | FUN_10011230_persistence_patch | 0x11230 | 0x11230 | 0x00 (0) | `55 8B EC 6A FF 68 CD D3` | `B8 01 00 00 00 C2 0C 00` — **STALE (2026-08-23): replacement bytes encode callee-cleanup `RET 0x0C` (`C2 0C 00`), an ABI hazard against the original caller-cleanup contract; see §4.9 banner. Entry retained until TVS-L.3.** |
 | 10 | FUN_101d0950_thread_check_INT3 | 0x1D0993 | 0x1D0950 | 0x43 (67) | `CC` | `90` |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x1CF5D4 | 0x1CF5B0 | 0x24 (36) | `CC` | `90` |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x1D1FC8 | 0x1D1FA0 | 0x28 (40) | `CC` | `90` |
@@ -196,7 +261,7 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 
 *Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `signatures/v9.50.01.3344.json` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-**Export status note (applies to all 25 targets):** None of the 25 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 10 exported functions used in production code are documented separately in §5.
+**Export status note (applies to all 24 targets):** None of the 24 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 10 exported functions used in production code are documented separately in §5.
 
 ---
 
@@ -422,94 +487,22 @@ One row per RVA target (25 rows). For patch sites (targets 9–12, 13–21, 25),
 
 ---
 
-### 4.9 Target 9: FUN_10011230 persistence patch (RVA 0x11230)
+### 4.9 Target 9: RETIRED (FUN_10011230 persistence patch) — removed in TVS-L.3
 
-> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
-> The signature/patch *facts* in this section (RVA, original bytes, replacement
-> bytes, signature hex, scan result) are **retained as-is** because production
-> code still applies this patch. The entry is slated for **complete removal**
-> in TVS-L.3 (`docs/workstream_unknown_link_fix_plan.md`); until L.3 ships, the
-> 25-signature / 12-patch-site totals and this entry must remain. The following
-> narrative claims are **stale/superseded** (corrections applied in-line
-> below; historical text preserved with correction rather than destructive
-> rewriting):
->
-> - **Calling-convention field and "RET 0x0C cleans 12 bytes" structural
->   assumption — STALE.** Durable Ghidra evidence
->   (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee ends in
->   **plain `RET`** at `0x10011454` and the caller executes **`ADD ESP,0x0C`**
->   at `0x1001E0C1`: the original ABI is fastcall-like register passing with
->   **caller cleanup** for the 12 stack bytes. The patch's `RET 0x0C` changes
->   that cleanup contract to callee cleanup — a static ABI hazard, not a
->   correct ABI match. No claim is made that an observed historical crash was
->   caused by it.
-> - **"Patch details" framing (makes `SymWriter::Save` return success so the
->   `.ell` is written; bypasses a .NET `XmlDocument.Save` crash in
->   `ELDebugger.dll`) — STALE.** The patch is the **bypass that produces
->   runtime-unlinkable output**: it skips `FUN_1008E640`
->   (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
->   `SymWriter::Save`, then forces `EAX=1` so `CompileText` proceeds to
->   `ModuleInfo::SetGuid` / `MDVault::SaveModule` and marks the item verified
->   despite an incomplete finalization. The real prerequisite is **per-thread
->   STA COM** for the MSXML wrapper used by `SymWriter::Save` (not "partially
->   initialized CLR"). Production runtime acceptance is currently **BROKEN**;
->   Workstream L is PLANNED but NOT implemented. Dynamic A/B proof:
->   `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
->   `tmp/com_nopatch_6689.xml`.
-
-| Field | Value |
-|---|---|
-| **RVA (patch site)** | 0x11230 |
-| **VA (patch site)** | 0x10011230 |
-| **Name** | FUN_10011230_persistence_patch |
-| **Calling convention** | `__fastcall` (ECX=arg1, EDX=arg2), 12 bytes stack args (RET 0x0C in patch) — **STALE 2026-08-23: original callee ends in plain `RET` (`0x10011454`); caller performs `ADD ESP,0x0C` (`0x1001E0C1`); original ABI is caller-cleanup, patch's `RET 0x0C` is callee-cleanup (ABI hazard). See section banner.** |
-| **Signature length** | 72 bytes |
-| **Patch site?** | Yes — **slated for complete removal in TVS-L.3** |
-| **Sig match RVA** | 0x11230 (patch at function entry, offset 0) |
-| **Patch offset** | 0x00 (0) from function entry |
-| **Original bytes at patch site** | `55 8B EC 6A FF 68 CD D3` (8 bytes) |
-| **Replacement bytes** | `B8 01 00 00 00 C2 0C 00` (8 bytes = `MOV EAX,1; RET 0x0C`) — **STALE 2026-08-23: `RET 0x0C` is callee-cleanup; original ABI is caller-cleanup (plain `RET` + caller `ADD ESP,0x0C`). See section banner.** |
-| **Exported?** | No (internal function, resolved by RVA) |
-
-**Signature (matches ORIGINAL unpatched bytes):**
-```
-55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 81 EC 68 01 00 00 56 57 8D 45 EC 89 4D E8 8B FA C7 45 EC 00 00 00 00 50 57 8D 8D 8C FE FF FF E8 ?? ?? ?? ?? C7 45 FC 00 00 00 00 68 B1 00 00 00
-```
-
-**Uniqueness verification:** Scan count = 1, matched at RVA 0x00011230 (expected RVA). PASS. Patch byte check: OK (byte at patch offset = 0x55, matches original first byte). *(Source: `b1_sig_scan_run.md`, final run, target [9])*
-
-**Patch details:**
-- The patch overwrites the first 8 bytes of the function with `MOV EAX, 1; RET 0x0C` (`B8 01 00 00 00 C2 0C 00`), making `SymWriter::Save` return success so the `.ell` file is written. This bypasses a .NET `XmlDocument.Save` crash in `ELDebugger.dll`.
-- The signature matches the **original unpatched** bytes. `patchOffset = 0` because the patch overwrites the function entry itself.
-- Original first 8 bytes: `55 8B EC 6A FF 68 CD D3` (PUSH EBP; MOV EBP,ESP; PUSH -1; PUSH 0x101ED3CD).
-- **RESOLVED (TVS-B.1.5):** The production code now validates original bytes before patching via `validatePersistencePatchBytes()`. See AGENTS.md DONE entry for TVS-B.1.5.
-
-> **STALE 2026-08-23 (Patch details):** The first bullet's framing ("makes
-> `SymWriter::Save` return success so the `.ell` file is written; bypasses a
-> .NET `XmlDocument.Save` crash in `ELDebugger.dll`") is **superseded**. The
-> patch is the bypass that produces runtime-unlinkable output; it skips
-> `FUN_1008E640` (compiler/link-finalization), `SymInfo::AdjustOffsets`, and
-> `SymWriter::Save`, then forces `EAX=1`. The real prerequisite is per-thread
-> STA COM for the MSXML wrapper (not "partially initialized CLR"). The
-> byte-validation (TVS-B.1.5) and signature-match facts remain accurate. See
-> the section banner and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
-
-**Structural assumptions:**
-- Assumes the standard 24-byte SEH frame prologue (SEH handler at bytes 6–9 wildcarded; actual handler = 0x101ED3CD).
-- Assumes `__fastcall` convention (ECX=arg1, EDX=arg2) with 12 bytes of stack args (the patch's `RET 0x0C` cleans 12 bytes).
-- Assumes a 0x168 (360) byte stack frame (`81 EC 68 01 00 00`).
-- Assumes error record size 0xB1 = 177 (`68 B1 00 00 00` = PUSH 0xB1) — embedded in the signature as a fixed structural immediate.
-- Distinctive feature: `81 EC 68 01 00 00` (SUB ESP,0x168) + `8B FA` (MOV EDI,EDX — fastcall 2nd arg) + `68 B1 00 00 00` (PUSH 0xB1 = 177 — error record size, very distinctive).
-
-> **STALE 2026-08-23 (Structural assumptions):** The second bullet's claim
-> "the patch's `RET 0x0C` cleans 12 bytes" is **superseded**. Durable Ghidra
-> evidence (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`) shows the original callee
-> ends in **plain `RET`** at `0x10011454` and the caller executes
-> **`ADD ESP,0x0C`** at `0x1001E0C1`: the original ABI is fastcall-like
-> register passing with **caller cleanup** for the 12 stack bytes. The patch's
-> `RET 0x0C` changes that cleanup contract to callee cleanup — a static ABI
-> hazard, not a correct ABI match. The SEH-prologue, stack-frame, and
-> error-record-size assumptions remain accurate. See the section banner.
+> **RETIRED in TVS-L.3.** The `FUN_10011230_persistence_patch` entry (target
+> #9) has been **completely removed** from this catalog as part of TVS-L.3
+> (`docs/workstream_unknown_link_fix_plan.md`). The persistence bypass patch
+> is no longer applied in production code; the real finalization path
+> (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
+> `SymWriter::Save`, then `ModuleInfo::SetGuid` / `MDVault::SaveModule`) now
+> runs. Target #9 is retained as a **stable-ID gap** — targets 1–8 and 10–25
+> keep their original IDs; generated array indices must not be inferred from
+> IDs. The historical 2026-08-23 supersession content that previously occupied
+> this section (calling-convention correction: caller `ADD ESP,0x0C` at
+> `0x1001E0C1`, original plain `RET` at `0x10011454`, patched `RET 0x0C` as
+> callee-cleanup ABI hazard; patch-details correction: bypass that produced
+> runtime-unlinkable output) is preserved in the top-of-file banner and in
+> `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
 
 ---
 
@@ -1170,7 +1163,7 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 
 *Source: `tmp/re_artifacts/b1_rva_inventory.md` (entries 13–15), `tmp/re_artifacts/b1_ghidra_evidence.md` (§3 Data-Section RVA Targets)*
 
-These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 25 code-section signature targets.
+These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 24 code-section signature targets.
 
 | # | RVA | VA | Name | Purpose | Access method |
 |---|---|---|---|---|---|
@@ -1201,8 +1194,6 @@ These constants are used by the production code and/or embedded in signatures. T
 | Constant | Value | Name | Where embedded |
 |---|---|---|---|
 | Error record stride | 0x129 (297) | kErrRecordStride | Target 1 (StartCompilingProcess): `69` opcode prefix of `IMUL EAX, EAX, 0x129` |
-| Error record size | 0xB1 (177) | — | Target 9 (FUN_10011230): `68 B1 00 00 00` (PUSH 0xB1) |
-| Stack frame size | 0x168 (360) | — | Target 9: `81 EC 68 01 00 00` (SUB ESP, 0x168) |
 | Stack frame size | 0x194 (404) | — | Target 7 (GetWarehouse): `81 EC 94 01 00 00` (SUB ESP, 0x194) |
 | Stack frame size | 0x2DC (732) | — | Target 8 (FUN_101a8360): `81 EC DC 02 00 00` (SUB ESP, 0x2DC) |
 | Stack frame size | 0x28 (40) | — | Target 6 (DeleteFromTree): `83 EC 28` (SUB ESP, 0x28) |
@@ -1254,7 +1245,7 @@ These constants are used by the production code and/or embedded in signatures. T
 
 ### Probe description
 
-The standalone probe `src/sig_scan.cpp` verifies that each of the 25 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`.
+The standalone probe `src/sig_scan.cpp` verifies that each of the 24 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`.
 
 **How it works:**
 
@@ -1266,7 +1257,7 @@ The standalone probe `src/sig_scan.cpp` verifies that each of the 25 candidate s
 6. **Converts match offsets to RVAs**: `RVA = textRVA + offsetInText`. Reports file offset and RVA for each match.
 7. **PASS criteria**: exactly 1 match AND the match RVA equals the expected RVA from `signatures/v9.50.01.3344.json`.
 8. **Patch-site verification**: for patch sites, reads the byte at `matchOffset + patchOffset` and compares it to the first byte of `originalBytes`. Reports OK if they match, WARNING if they differ (may already be patched).
-9. **Exit code**: 0 = all 25 PASS; 1 = at least one FAIL.
+9. **Exit code**: 0 = all 24 PASS; 1 = at least one FAIL.
 
 ### Build and run
 
@@ -1280,9 +1271,9 @@ Defaults to `tests/fixtures/orlib20_baseline.dll` if no argument is given.
 
 ### Result
 
-**25 / 25 signatures PASS. Exit code 0.**
+**24 / 24 signatures PASS. Exit code 0.**
 
-All 25 signatures matched exactly once at their expected RVAs within the `.text` section. All 12 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original 12 signatures (targets 1–12) were verified by `b1_sig_scan_run.md` (exit 0). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 25 signatures.
+All 24 signatures matched exactly once at their expected RVAs within the `.text` section. All 11 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original TVS-B.1 signatures (targets 1–8, 10–12; 11 remaining after TVS-L.3 retired target 9) were verified by `b1_sig_scan_run.md` (which originally verified 12; target 9 was removed in TVS-L.3). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 24 signatures.
 
 | # | Name | Expected RVA | Match Count | Matched RVA | Result |
 |---|---|---|---|---|---|
@@ -1294,7 +1285,6 @@ All 25 signatures matched exactly once at their expected RVAs within the `.text`
 | 6 | DeleteFromTree | 0x001E4030 | 1 | 0x001E4030 | PASS |
 | 7 | GetWarehouse | 0x001A9650 | 1 | 0x001A9650 | PASS |
 | 8 | FUN_101a8360_delete_orchestrator | 0x001A8360 | 1 | 0x001A8360 | PASS |
-| 9 | FUN_10011230_persistence_patch | 0x00011230 | 1 | 0x00011230 | PASS (patch byte 0x55 OK) |
 | 10 | FUN_101d0950_thread_check_INT3 | 0x001D0950 | 1 | 0x001D0950 | PASS (patch byte 0xCC OK) |
 | 11 | FUN_101cf5b0_thread_check_INT3 | 0x001CF5B0 | 1 | 0x001CF5B0 | PASS (patch byte 0xCC OK) |
 | 12 | FUN_101d1fa0_thread_check_INT3 | 0x001D1FA0 | 1 | 0x001D1FA0 | PASS (patch byte 0xCC OK) |
@@ -1312,11 +1302,11 @@ All 25 signatures matched exactly once at their expected RVAs within the `.text`
 | 24 | FUN_101c36d0_verbatim_name_getter | 0x001C36D0 | 1 | 0x001C36D0 | PASS |
 | 25 | FUN_101c36d0_thread_check_INT3 | 0x001C3736 | 1 | 0x001C3736 | PASS (patch byte 0xCC OK) |
 
-*(Source: `b1_sig_scan_run.md` for targets 1–12; `tests/run_regression.ps1` sigtool suite for targets 13–25. All 25 signatures verified unique with expectedMatchCount=1 in `signatures/v9.50.01.3344.json`.)*
+*(Source: `b1_sig_scan_run.md` for targets 1–8, 10–12; `tests/run_regression.ps1` sigtool suite for targets 13–25. All 24 signatures verified unique with expectedMatchCount=1 in `signatures/v9.50.01.3344.json`.)*
 
 **Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `signatures/v9.50.01.3344.json`.
 
-**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 25 signatures.
+**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 24 signatures.
 
 ---
 
@@ -1327,7 +1317,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 | Item | Status | Description |
 |---|---|---|
 | Data-section RVA resolution | DONE (TVS-B.4/B.4.5) | The 3 data-section RVAs (0x23CEA0, 0x23CEA4, 0x23AAB8) are now resolved via signature-based instruction-operand extraction. See §6. |
-| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 25 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
+| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 24 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
 | Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
 | SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
 | Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7) and ShowMe (TVS-C.8); 3 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, TradingApp (0x1402), and ShowMe (0x0502) are confirmed. ActivityBar, PaintBar, ProbabilityMap warehouse types remain unconfirmed. |
@@ -1338,7 +1328,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 
 | Criterion (HANDOFF_B §4) | Where satisfied |
 |---|---|
-| 1. Document lists, for each of 25 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields) |
-| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 25/25 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
+| 1. Document lists, for each of 24 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields) |
+| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 24/24 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
 | 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (10 export names with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND) |
 | 4. Catalog notes orlib20.dll file version, PE timestamp, file size, SHA-256 hash | §1 (DLL Baseline: FileVersion 9.50.01.3344, PE timestamp 0x5C01735E, file size 4,924,400 bytes, SHA-256 318DB24A...) |

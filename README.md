@@ -4,6 +4,8 @@ Automated management of the TradeStation Development Environment (TSDev) Library
 
 ## Known Critical Issue — Current Status
 
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15.**
+
 **Strategies inserted/modified/upserted by the production `tsdev_cli` /
 `TsDevClient` may appear VERIFIED in TSDev but fail at runtime in TradeStation
 Desktop with "Unknown link error occurred."** A full Desktop restart does not
@@ -18,8 +20,17 @@ workaround only and is not an acceptable fix for an automated tool.**
 This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
 It is not a general breakage of the other operations
 (insert/modify/delete/exists/get-source/upsert/batch), which remain functional
-at the CLI/library level. **Workstream L** is planned to fix the root cause and
-add a Desktop runtime-execution regression test; it is **not yet implemented**.
+at the CLI/library level. **Workstream L** is the workstream addressing the
+root cause and the Desktop runtime-execution regression gate. Current status:
+L.1–L.3 remain COMPLETE; the L.4/L.5 completion claim was FALSIFIED by
+persistence and deletion fault injection and is superseded by the L.6–L.15
+recovery, which is implemented on branch `workstream-L-recovery` (L.8 BLOCKED
+— no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert;
+L.12 detect-and-report orphan-ELL delete; existence checks are necessary but
+not sufficient; the `FUN_10011230` persistence bypass is removed). Workstream
+L is not yet CLOSED. No new Desktop runtime re-gate is claimed without an
+L.17 result. Workstream M remains BLOCKED until L.17 independent final
+verification.
 
 - Workstream L plan: [`docs/workstream_unknown_link_fix_plan.md`](docs/workstream_unknown_link_fix_plan.md)
 - Durable root-cause record: [`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
@@ -311,4 +322,4 @@ Run `tsdev-automation --help` for full usage.
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 ```
 
-Runs 135 test cases across 12 sub-suites: sigtool (12) + C++ unit (26) + E2E CLI (34) + exists (5) + batch-stdin (8) + upsert (9) + get-source (7) + exists-ci (9) + batch-upsert (5) + directory-batch (9) + serve E2E (2) + ShowMe E2E (9).
+Runs 14 registered sub-suites (13 default; Suite 14 stress opt-in via `-ExtendedStress`) — 136 test cases, 249 assertions, 600 opt-in stress cycles, 27 C++ unit test executables.

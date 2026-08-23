@@ -33,11 +33,11 @@ $sigtool = "$PSScriptRoot\..\build\Release\sigtool.exe"
 # Baseline DLL used for all tests.
 $dll = "$PSScriptRoot\fixtures\orlib20_baseline.dll"
 
-# Committed signature set for v9.50.01.3344 (25 signatures, 12 patch_site).
+# Committed signature set for v9.50.01.3344 (24 signatures, 11 patch_site).
 $sigJson = "$PSScriptRoot\..\signatures\v9.50.01.3344.json"
 
 # Total number of signatures in the committed set (used for summary checks).
-$expectedSignatureCount = 25
+$expectedSignatureCount = 24
 
 # ---------------------------------------------------------------------------
 # Robustness settings
@@ -160,7 +160,7 @@ $script:failCount = 0
 # ===========================================================================
 # Test 1: verify (default signatures)
 #   sigtool should detect the DLL version, load the committed signature set,
-#   and report all 20 signatures as PASS. Exit 0.
+#   and report all 24 signatures as PASS. Exit 0.
 # ===========================================================================
 Run-Test -Name "verify (default signatures)" `
     -ExpectedExit 0 `
@@ -169,7 +169,7 @@ Run-Test -Name "verify (default signatures)" `
         $script:code = $LASTEXITCODE
     } `
     -ExtraCheck {
-        # Accept either a "22/22"-style summary or 22 individual PASS lines.
+        # Accept either a "24/24"-style summary or 24 individual PASS lines.
         ($script:out -match "$expectedSignatureCount\s*/\s*$expectedSignatureCount") -or
         (($script:out -split "`r?`n" | Select-String -Pattern 'PASS' -CaseSensitive).Count -ge $expectedSignatureCount)
     }
@@ -192,7 +192,7 @@ Run-Test -Name "verify --verbose" `
 
 # ===========================================================================
 # Test 3: verify-patch
-#   Validates original bytes at every patch_site signature. All 12 patch sites
+#   Validates original bytes at every patch_site signature. All 11 patch sites
 #   should match the baseline DLL. Exit 0.
 # ===========================================================================
 Run-Test -Name "verify-patch" `
@@ -259,7 +259,7 @@ Run-Test -Name "manifest (known version)" `
 # ===========================================================================
 # Test 8: verify with explicit --signatures JSON
 #   Pointing sigtool at the same JSON it would auto-detect should still
-#   produce 20/20 PASS. Exit 0.
+#   produce 24/24 PASS. Exit 0.
 # ===========================================================================
 Run-Test -Name "verify --signatures JSON" `
     -ExpectedExit 0 `

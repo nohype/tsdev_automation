@@ -1,36 +1,30 @@
 // test_auto_cleanup.cpp
 //
-// Integration test (GREEN — fix implemented in tsdev_lib.cpp) for TD-001:
-//   "Partial warehouse entry on compile failure — no auto-cleanup."
+// Integration test (GREEN) for the TVS-L.10 create-path cleanup architecture.
 //
-// When `tsdev_cli insert` fails compilation (exit 8), `createEntry` has
-// already allocated a ProgId and created a warehouse entry. The CLI now
-// auto-cleans up this partial entry (fix implemented in tsdev_lib.cpp).
+// History: this test was originally written for TD-001, when the partial-entry
+// cleanup on compile failure lived INSIDE verifyModule (keyed off the
+// process-global g_lastCreated). TVS-L.10 moved that cleanup OUT of
+// verifyModule and into doInsert (the SINGLE create-path cleanup owner in the
+// CLI). verifyModule now REPORTS the failure stage via an out-parameter but
+// does NOT clean up — the caller owns cleanup.
 //
-// This test verifies the DESIRED behavior: after a failed insert (compile
-// error), the partial entry SHOULD be cleaned up automatically. It replicates
-// the insert flow (createEntry + saveSource + verifyModule) with invalid
-// EasyLanguage source that fails compilation, then asserts that the partial
-// entry does NOT exist afterwards (findExistPos returns <= 0).
+// This test verifies the NEW TVS-L.10 contract at the library layer:
+//   1. createEntry + saveSource + verifyModule(&outStage) with invalid source.
+//   2. verifyModule returns a NON-EMPTY error string (compilation FAILED).
+//   3. verifyModule sets *outStage = VerifyModule_CompileErrors (the stage is
+//      reported so the caller / doInsert can route through
+//      requiresCreatePathCleanup() and record WHICH path failed).
+//   4. The partial entry STILL EXISTS after verifyModule returns (verifyModule
+//      no longer auto-cleans up — that is doInsert's job). findExistPos > 0.
+//   5. An explicit deleteEntry (simulating what doInsert does on a
+//      post-createEntry failure) removes the partial entry + both artifacts.
+//      findExistPos then returns <= 0.
 //
-// The auto-cleanup is implemented, so this test PASSES (GREEN).
+// The test is self-cleaning: if any assertion fails, it deletes the entry via
+// deleteEntry so the test is repeatable.
 //
-// The test is self-cleaning: if the partial entry persists (test fails), it
-// deletes the entry via deleteEntry so the test is repeatable.
-//
-// Flow:
-//   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. findExistPos(name, Strategy) — delete if it already exists (pre-clean)
-//   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
-//   4. saveSource(Strategy, progId, invalidSource) — assert success
-//   5. verifyModule(Strategy, progId) — assert compilation FAILS (error string
-//      non-empty); this is the compile-failure scenario
-//   6. findExistPos(name, Strategy) — ASSERT returns <= 0 (entry should NOT
-//      exist — auto-cleanup expected)
-//      - If > 0: test FAILS — partial entry persists; clean it up
-//   7. Print PASS / FAIL
-//
-// Exit code: 0 on PASS (entry auto-cleaned up), 1 on FAIL (entry persists).
+// Exit code: 0 on PASS, nonzero per failing step.
 //
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
@@ -133,10 +127,18 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 5: verifyModule — expect compilation FAILURE ---
-    std::fprintf(stdout, "\n[5] verifyModule(Strategy, %d)...\n", progId);
+    // --- Step 5: verifyModule — expect compilation FAILURE + stage report ---
+    // TVS-L.10: verifyModule now takes an optional CreatePathFailureStage*
+    // out-param. On a non-empty (failure) return it MUST set *outStage to the
+    // matching enumerator. For a compile error that is VerifyModule_CompileErrors.
+    // verifyModule NO LONGER auto-cleans up the partial entry — that is the
+    // caller's (doInsert's) job.
+    std::fprintf(stdout, "\n[5] verifyModule(Strategy, %d, &outStage)...\n",
+                 progId);
+    tsdev::CreatePathFailureStage stage =
+        tsdev::CreatePathFailureStage::VerifyModule_CompileErrors; // sentinel
     std::string errors =
-        lib->verifyModule(ComponentType::Strategy, progId);
+        lib->verifyModule(ComponentType::Strategy, progId, &stage);
     if (errors.empty()) {
         std::fprintf(stdout, "    verifyModule: no errors (unexpected)\n");
         st->exitCode = fail(
@@ -147,41 +149,81 @@ DWORD WINAPI runTest(LPVOID param) {
         lib->deleteEntry(ComponentType::Strategy, kTestName);
         delete lib;
         return 0;
-    } else {
-        std::fprintf(stdout, "    verifyModule: compilation FAILED (expected)\n");
-        std::fprintf(stderr, "    errors:\n%s\n", errors.c_str());
+    }
+    std::fprintf(stdout, "    verifyModule: compilation FAILED (expected)\n");
+    std::fprintf(stderr, "    errors:\n%s\n", errors.c_str());
+    std::fprintf(stdout, "    outStage = %d (expect %d = VerifyModule_CompileErrors)\n",
+                 static_cast<int>(stage),
+                 static_cast<int>(tsdev::CreatePathFailureStage::VerifyModule_CompileErrors));
+    if (stage != tsdev::CreatePathFailureStage::VerifyModule_CompileErrors) {
+        st->exitCode = fail(
+            "verifyModule did NOT set outStage=VerifyModule_CompileErrors "
+            "on the compile-error path",
+            41);
+        lib->deleteEntry(ComponentType::Strategy, kTestName);
+        delete lib;
+        return 0;
     }
 
-    // --- Step 6: findExistPos — ASSERT entry does NOT exist (auto-cleanup) ---
+    // --- Step 6: findExistPos — ASSERT entry STILL EXISTS (verifyModule
+    //      no longer auto-cleans up — TVS-L.10 moved cleanup to doInsert) ---
     std::fprintf(stdout,
                  "\n[6] findExistPos(\"%s\", Strategy) — "
-                 "asserting entry does NOT exist...\n",
+                 "asserting entry STILL EXISTS (verifyModule no longer cleans)...\n",
                  kTestName);
-    int afterProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
-    std::fprintf(stdout, "    findExistPos = %d\n", afterProgId);
-
-    if (afterProgId <= 0) {
-        // --- Step 7: PASS — entry was auto-cleaned up ---
-        std::fprintf(stdout,
-                     "\nPASS: partial entry auto-cleaned up on compile "
-                     "failure\n");
-        st->exitCode = 0;
-    } else {
-        // --- Step 7: FAIL — partial entry persists ---
-        std::fprintf(stdout,
-                     "\nFAIL: partial entry persists after compile failure "
-                     "(ProgId=%d)\n",
-                     afterProgId);
+    int afterVerifyProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
+    std::fprintf(stdout, "    findExistPos = %d\n", afterVerifyProgId);
+    if (afterVerifyProgId <= 0) {
+        // verifyModule cleaned up — that is the OLD TD-001 behavior, which
+        // TVS-L.10 removed. Failing here catches a regression that re-adds
+        // cleanup inside verifyModule.
         st->exitCode = fail(
-            "partial warehouse entry NOT cleaned up after compile failure",
-            1);
-        // Clean up the persistent partial entry so the test is repeatable.
-        std::fprintf(stdout,
-                     "    Cleaning up persistent entry via deleteEntry...\n");
-        bool cleaned = lib->deleteEntry(ComponentType::Strategy, kTestName);
-        std::fprintf(stdout, "    deleteEntry = %s\n",
-                     cleaned ? "true" : "false");
+            "verifyModule auto-cleaned the partial entry — TVS-L.10 moved "
+            "cleanup to doInsert; verifyModule must NOT clean up",
+            50);
+        delete lib;
+        return 0;
     }
+    std::fprintf(stdout,
+                 "    PASS: partial entry still exists after verifyModule "
+                 "(cleanup is the caller's job)\n");
+
+    // --- Step 7: Explicit deleteEntry — simulates what doInsert does on a
+    //      post-createEntry failure. Removes the warehouse entry + both
+    //      artifacts (.ell/.xml). Assert the entry is gone afterwards. ---
+    std::fprintf(stdout,
+                 "\n[7] deleteEntry(Strategy, \"%s\", flush=false) — "
+                 "simulating doInsert cleanup...\n",
+                 kTestName);
+    bool cleaned = lib->deleteEntry(ComponentType::Strategy, kTestName,
+                                    /*flush=*/false);
+    std::fprintf(stdout, "    deleteEntry = %s\n", cleaned ? "true" : "false");
+    if (!cleaned) {
+        st->exitCode = fail(
+            "deleteEntry returned false — could not remove the partial entry",
+            60);
+        // Best-effort retry with flush=true (single-item mode).
+        lib->deleteEntry(ComponentType::Strategy, kTestName);
+        delete lib;
+        return 0;
+    }
+
+    int afterCleanupProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
+    std::fprintf(stdout, "    findExistPos after cleanup = %d\n",
+                 afterCleanupProgId);
+    if (afterCleanupProgId > 0) {
+        st->exitCode = fail(
+            "partial entry STILL exists after explicit deleteEntry cleanup",
+            70);
+        lib->deleteEntry(ComponentType::Strategy, kTestName);
+        delete lib;
+        return 0;
+    }
+
+    std::fprintf(stdout,
+                 "\nPASS: TVS-L.10 contract holds — verifyModule reports stage "
+                 "without cleaning; explicit caller cleanup removes the entry\n");
+    st->exitCode = 0;
 
     delete lib; // calls OrlibExit + destroys EDIT control (same thread)
     return 0;
@@ -192,8 +234,8 @@ DWORD WINAPI runTest(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::fprintf(stdout,
-                 "=== test_auto_cleanup: partial entry cleanup on compile "
-                 "failure (TD-001) ===\n");
+                 "=== test_auto_cleanup: TVS-L.10 create-path cleanup contract "
+                 "(verifyModule reports stage; caller owns cleanup) ===\n");
     std::fprintf(stdout, "Strategy name: %s\n", kTestName);
 
     // Run the entire test on a worker thread with a 64 MB stack. The

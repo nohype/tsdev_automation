@@ -9,11 +9,31 @@
 
 #include "tsdev_lib.h"
 #include "orlib_resolver.h"
+#include "com_apartment_guard.h"
+#include "delete_disk_cleanup.h"
+
+// TVS-L.13: the test-only construction seam (private ctor
+// TsDevLib::TsDevLib(const wchar_t*, const TsDevLibTestConfig&) and the
+// test-only factory tsdev::makeTsDevLibForTest) is defined below. The private
+// ctor constructs the COM apartment guard with the injected ComApi
+// (config.comApi) instead of the default real CoInitializeEx, then — on COM
+// success and config.throwAfterCom == false — delegates to the shared
+// initAfterCom() body so the post-COM init sequence is identical to the
+// public ctor (no duplication). On COM failure it throws with the HRESULT
+// and does NOTHING else (no SetDllDirectory, no orlib, no patch, no
+// warehouse). On COM success + throwAfterCom it throws immediately so the
+// guard's destructor balances CoUninitialize once during unwinding.
+// tsdev_lib_test_hooks.h is the INTERNAL/test-only header that defines
+// TsDevLibTestConfig and declares the factory; it is NOT a public header and
+// is not included by src/tsdev_lib.h, so no COM configuration leaks into the
+// public user API.
+#include "tsdev_lib_test_hooks.h"
 
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <sstream>
 
 // Compile-time debug logging gate. Define TSDEV_DEBUG at build time to
 // enable stderr diagnostics in deleteEntry. Production builds are clean.
@@ -41,42 +61,7 @@ const wchar_t* kSupportDlls[] = {
 // CELCompiler object size (§8).
 const size_t kCELCompilerSize = 0x58; // 88 bytes
 
-// Persistence patch (§12): bypass FUN_10011230 (SymWriter crash).
-//   MOV EAX, 1   (5 bytes)  B8 01 00 00 00
-//   RET 0x0C     (3 bytes)  C2 0C 00
-// Patch-site resolution is now handled by OrlibResolver::applyPatch
-// (TVS-B.5). These byte arrays are retained as patch CONTENT (not RVAs)
-// for use by validatePersistencePatchBytes() and tests.
-const unsigned char kPersistencePatchBytes[] = {
-    0xB8, 0x01, 0x00, 0x00, 0x00,  // MOV EAX, 1
-    0xC2, 0x0C, 0x00               // RET 0x0C
-};
-
-// Original 8 bytes at the persistence patch site (FUN_10011230 entry, pre-patch).
-// Bytes 6-7 are the low 2 bytes of the SEH handler address (image-base-
-// relative, subject to ASLR relocation) and are wildcarded in validation.
-const unsigned char kPersistenceOriginalBytes[] = {
-    0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68, 0xCD, 0xD3
-};
-const unsigned char kPersistenceOriginalMask[] = {
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00  // 1=check, 0=wildcard
-};
-
-// TD-001: tracks the most recently created warehouse entry so verifyModule
-// can auto-clean it up on compile failure. Set by createEntry, consumed and
-// cleared by verifyModule, and cleared at the start of modifyEntry (modify
-// operates on an existing entry and must never delete it on a compile
-// failure). TsDevLib is thread-affine and used one instance per process, so
-// file-local state is safe here.
-struct LastCreatedEntry {
-    int  progId   = 0;
-    int  category = 0;
-    char name[128] = {};  // Fixed-size buffer (component names are short);
-                          // std::string would require C++ unwinding, which is
-                          // incompatible with the __try/__except in createEntry.
-} g_lastCreated;
-
-// Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in ten
+// Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in eleven
 // dispatch helpers so they can be called from any thread, not just the
 // worker thread. Each patch is a single byte.
 //
@@ -92,6 +77,7 @@ struct LastCreatedEntry {
 //   FUN_101cfce0_thread_check_INT3 (command 0x0D — COM interface get)
 //   FUN_101d15c0_thread_check_INT3 (command 0x0D — local-mode record retrieval)
 //   FUN_101d18c0_thread_check_INT3 (command 0x10 — BST search non-server mode)
+//   FUN_101c36d0_thread_check_INT3 (verbatim name getter, non-server mode)
 // The patch metadata (offsets, original/replacement bytes) is encoded
 // in signatures/v9.50.01.3344.json and loaded by the resolver's signature catalog.
 
@@ -594,7 +580,7 @@ bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
 #pragma warning(pop)
 
 // Restore `len` original bytes at an executable address. Used by the
-// TsDevLib destructor to undo the persistence + thread-check patches so a
+// TsDevLib destructor to undo the thread-check patches so a
 // subsequent TsDevLib instance in the same process can re-scan the (now
 // original) bytes successfully. POD-only (no C++ objects with destructors)
 // so __try would be legal, but no SEH guard is needed here — VirtualProtect
@@ -739,7 +725,60 @@ std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
 // Constructor / Destructor
 // ============================================================================
 
-TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
+TsDevLib::TsDevLib(const wchar_t* tsPathOverride)
+    // The COM guard is constructed FIRST, in the member-initialization list,
+    // so CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) runs before any
+    // effective action in the constructor body (SetDllDirectoryW,
+    // LoadLibraryW, OrlibResolver, support-DLL loads, patch application,
+    // OrlibInit). The default ComApi binds the real CoInitializeEx /
+    // CoUninitialize from ole32.dll. If COM init fails (any HRESULT other
+    // than S_OK / S_FALSE), the body below throws before touching orlib20.
+    : m_comGuard(std::make_unique<ComApartmentGuard>()) {
+    // 0. STA COM must be entered on this thread before any orlib20 load or
+    //    init. A failed CoInitializeEx (including RPC_E_CHANGED_MODE, which
+    //    indicates the thread is already in an incompatible apartment) is a
+    //    hard initialization failure: do NOT proceed with orlib loading,
+    //    window creation, entry creation, or ELL/XML mutation. The guard's
+    //    destructor is a no-op when not initialized, so no CoUninitialize is
+    //    issued on this failure path. Include the hexadecimal HRESULT for
+    //    diagnostics.
+    if (!m_comGuard->initialized()) {
+        std::stringstream ss;
+        ss << "tsdev: COM initialization failed: HRESULT 0x"
+           << std::hex << std::uppercase
+           << static_cast<unsigned long>(m_comGuard->initResult());
+        std::fprintf(stderr, "%s\n", ss.str().c_str());
+        fflush(stderr);
+        throw std::runtime_error(ss.str());
+    }
+
+    // Steps 1–13 (SetDllDirectoryW → OrlibResolver → support DLLs → patches →
+    // OrlibInit → hidden EDIT control) are shared with the private test-only
+    // ctor via initAfterCom() so the two construction paths are behaviorally
+    // identical past the COM-init step (TVS-L.13).
+    initAfterCom(tsPathOverride);
+}
+
+// TVS-L.13: shared post-COM initialization body. Called by BOTH constructors
+// AFTER the COM apartment guard has been constructed and verified initialized
+// (S_OK / S_FALSE). Extracted from the public ctor so the private test-only
+// ctor can reuse the exact same sequence without duplicating ~110 lines.
+//
+// If any step here throws (e.g. orlib20.dll missing, OrlibInit returned FALSE,
+// patch application failed), the exception propagates out of the calling
+// constructor. NOTE: when a constructor throws, the destructor BODY
+// (~TsDevLib) does NOT run — only the destructors of FULLY-CONSTRUCTED
+// members run, in reverse declaration order, during stack unwinding. The
+// destructor body runs only when the constructor completes normally (the
+// object's lifetime began). So a throw from this body is balanced solely by
+// the member destructors: because m_comGuard is a fully-constructed member
+// (constructed first in the member-init list), its destructor runs during
+// stack unwinding and balances COM exactly once — the same unwind behavior
+// the public ctor already relied on. The ~TsDevLib body's gating by
+// m_orlibInitialized / m_editorHwnd / m_patchesApplied matters only for the
+// NORMAL-destruction case (object fully constructed, destructor body runs);
+// it does NOT participate in the constructor-throw unwind path.
+void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     // 1. Resolve the TS install root (override → registry → conventional
     //    default). This also prints to stderr which mechanism was used.
     m_tsRoot = resolveTsInstallRoot(tsPathOverride);
@@ -830,10 +869,11 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
     m_errCountRva    = m_resolver->resolveErrorCountRva();
     m_errHinstRva    = m_resolver->resolveErrorHinstRva();
 
-    // 11. Apply patches via existing private methods (which delegate to
-    //    m_resolver->applyPatch). OrlibResolverError propagates out of
-    //    the constructor on validation or VirtualProtect failure (AC6).
-    applyPersistencePatch();
+    // 11. Apply the thread-check INT3 patches via the existing private method
+    //     (which delegates to m_resolver->applyPatch). OrlibResolverError
+    //     propagates out of the constructor on validation or VirtualProtect
+    //     failure (AC6). The original FUN_10011230 finalization path is left
+    //     unpatched so the real symbol/finalization flow runs end-to-end.
     applyThreadCheckPatches();
 
     // 12. Initialize orlib20 (SEH-protected — AC3).
@@ -849,6 +889,107 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride) {
         callOrlibExit(m_pOrlibExit);
         throw std::runtime_error("tsdev: failed to create hidden EDIT control");
     }
+}
+
+// ============================================================================
+// TVS-L.13: PRIVATE test-only construction seam.
+//
+// This ctor is PRIVATE (declared in src/tsdev_lib.h) and the ONLY intended
+// caller is the test-only free function tsdev::makeTsDevLibForTest(...)
+// (declared in the INTERNAL header src/tsdev_lib_test_hooks.h, which is NOT
+// part of the public user API). End users cannot call this ctor: the
+// parameter type TsDevLibTestConfig is forward-declared (opaque) in the
+// public header and defined only in the internal/test-only header.
+//
+// Contract (enforced by tests/test_tsdev_com_init_seam.cpp):
+//   - Constructs the COM apartment guard with the INJECTED ComApi
+//     (config.comApi) instead of the default real CoInitializeEx. This lets a
+//     pure unit test drive COM init with mock function pointers and never
+//     touch the test process's real COM apartment state.
+//   - On COM init FAILURE (any HRESULT other than S_OK / S_FALSE, including
+//     RPC_E_CHANGED_MODE and a generic E_FAIL): throws std::runtime_error
+//     naming the exact hexadecimal HRESULT (uppercase, 0x%08X form, matching
+//     the public ctor's diagnostic format) and does NOTHING else — no
+//     SetDllDirectoryW, no orlib20 / support-DLL load, no patch application,
+//     no OrlibInit, no warehouse access. The guard's destructor is a no-op
+//     (m_initialized == false), so the injected CoUninitialize is NOT called.
+//     COM failure is a HARD stop before every later step.
+//   - On COM init SUCCESS (S_OK or S_FALSE) with config.throwAfterCom == true:
+//     throws std::runtime_error IMMEDIATELY after the COM guard is
+//     constructed, simulating a later-constructor exception. The guard's
+//     destructor runs during stack unwinding and calls the injected
+//     CoUninitialize EXACTLY once. No orlib20 / patch / warehouse side effect
+//     runs (the throw happens before initAfterCom is reached).
+//   - On COM init SUCCESS with config.throwAfterCom == false: proceeds with
+//     the normal constructor body via initAfterCom() — identical to the
+//     public ctor. This path requires a real TradeStation install and is NOT
+//     exercised by the pure unit test.
+// ============================================================================
+TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
+                   const TsDevLibTestConfig& config)
+    // Construct the COM guard with the INJECTED ComApi so the test controls
+    // CoInitializeEx / CoUninitialize. The guard is constructed FIRST (member-
+    // init list) so COM is entered before any later step, exactly as in the
+    // public ctor.
+    : m_comGuard(std::make_unique<ComApartmentGuard>(config.comApi)) {
+    // COM-init hard-failure check. Identical diagnostic format to the public
+    // ctor: "tsdev: COM initialization failed: HRESULT 0x%08X" (uppercase
+    // hex). On failure the guard is NOT initialized, so its destructor is a
+    // no-op — the injected CoUninitialize is never called, and NO later step
+    // (SetDllDirectory / orlib / patch / warehouse) runs because we throw
+    // here, before initAfterCom.
+    if (!m_comGuard->initialized()) {
+        std::stringstream ss;
+        ss << "tsdev: COM initialization failed: HRESULT 0x"
+           << std::hex << std::uppercase
+           << static_cast<unsigned long>(m_comGuard->initResult());
+        std::fprintf(stderr, "%s\n", ss.str().c_str());
+        fflush(stderr);
+        throw std::runtime_error(ss.str());
+    }
+
+    // COM succeeded (S_OK or S_FALSE). If the test requested a simulated
+    // later-constructor exception, throw NOW — before any orlib20 / patch /
+    // warehouse side effect. The COM guard is a fully-constructed member, so
+    // its destructor runs during stack unwinding and calls the injected
+    // CoUninitialize EXACTLY once, balancing the successful CoInitializeEx on
+    // this thread. This is the "later-constructor exception after COM
+    // success" unwind path (TVS-L.13 acceptance criterion 5).
+    if (config.throwAfterCom) {
+        throw std::runtime_error(
+            "tsdev: injected post-COM constructor exception (TVS-L.13 test seam)");
+    }
+
+    // COM succeeded and no simulated throw: proceed with the normal
+    // constructor body, shared with the public ctor via initAfterCom() so the
+    // two paths are behaviorally identical past the COM-init step. This path
+    // requires a real TradeStation install (orlib20.dll) and is NOT exercised
+    // by the pure unit test.
+    initAfterCom(tsPathOverride);
+}
+
+// ============================================================================
+// TVS-L.13: test-only factory. Thin wrapper around the private ctor above.
+// Returns a std::unique_ptr<TsDevLib> so the caller's ownership is explicit
+// and the public ~TsDevLib() balances COM + OrlibExit on the same thread.
+// Declared in the INTERNAL header src/tsdev_lib_test_hooks.h (NOT a public
+// header); the public tsdev_lib.h only friend-declares it so it can reach the
+// private ctor. End users never see or call this function.
+//
+// Defined directly here (NOT in a re-opened namespace tsdev {} block) because
+// this entire TU is already inside `namespace tsdev` (opened at the top of the
+// file). Re-opening it would create a nested tsdev::tsdev namespace and the
+// symbol would not match the declaration in tsdev_lib_test_hooks.h.
+// ============================================================================
+std::unique_ptr<TsDevLib> makeTsDevLibForTest(
+    const wchar_t* tsPathOverride,
+    const TsDevLibTestConfig& config) {
+    // Construct via the private test-only ctor and hand ownership to the
+    // caller. If the ctor throws (COM failure or throwAfterCom), no object is
+    // produced and the unique_ptr is never set — the COM guard's destructor
+    // has already balanced COM during the ctor's stack unwinding.
+    return std::unique_ptr<TsDevLib>(
+        new TsDevLib(tsPathOverride, config));
 }
 
 TsDevLib::~TsDevLib() {
@@ -868,24 +1009,16 @@ TsDevLib::~TsDevLib() {
     if (m_orlibInitialized && m_pOrlibExit) {
         callOrlibExit(m_pOrlibExit);
     }
-    // Restore all 10 patch sites to their original bytes AFTER OrlibExit but
+    // Restore all 11 patch sites to their original bytes AFTER OrlibExit but
     // BEFORE m_resolver (unique_ptr) is destroyed — the resolver still owns
     // the loaded orlib20.dll and its base address, so baseAddress() is valid
     // here. This returns the in-memory DLL to its original state so that a
     // subsequent TsDevLib instance in the same process can re-scan the
-    // original-byte signatures (the persistence patch signature scans for
-    // 55 8B EC 6A FF 68...; the thread-check signatures scan for 0xCC).
+    // original-byte signatures (the thread-check signatures scan for 0xCC).
     // Without this restoration the second instance's scan finds the patched
-    // bytes (B8 01 00 00 00 C2 0C 00 / 0x90) and throws OrlibResolverError.
+    // bytes (0x90) and throws OrlibResolverError.
     if (m_patchesApplied) {
         uintptr_t base = m_resolver->baseAddress();
-        // Persistence patch: restore 8 original bytes. Guarded by the cached
-        // RVA so a site whose resolve threw before caching (RVA still 0) is
-        // skipped — restoring to base+0 would corrupt the DLL header.
-        if (m_persistencePatchRva != 0) {
-            restoreBytes(reinterpret_cast<void*>(base + m_persistencePatchRva),
-                         m_persistenceOriginalBytes, 8);
-        }
         // Thread-check patches: restore 1 original byte (0xCC) each. Only
         // restore sites whose RVA was actually cached before a possible
         // throw; for a site where applyPatch threw after the RVA was cached,
@@ -931,14 +1064,13 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
         // a hard failure (ProgId 0).
         return 0;
     }
-    if (progId > 0) {
-        g_lastCreated.progId = progId;
-        g_lastCreated.category = getCategory(type);
-        strncpy_s(g_lastCreated.name, sizeof(g_lastCreated.name),
-                  name.c_str(), _TRUNCATE);
-    } else {
-        g_lastCreated = {};
-    }
+    // TVS-L.10: createEntry no longer records the created entry in a
+    // process-global (g_lastCreated is removed). The SINGLE create-path
+    // cleanup owner is doInsert in the CLI, which already has the (type,
+    // name, progId) triple in local scope and calls
+    // requiresCreatePathCleanup() + deleteEntry(flush=false) on every
+    // post-createEntry failure. This eliminates the shared mutable state
+    // that previously coupled createEntry, verifyModule, and modifyEntry.
     return progId;
 }
 
@@ -1167,10 +1299,12 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
     return result;
 }
 
-std::string TsDevLib::verifyModule(ComponentType type, int progId) {
+std::string TsDevLib::verifyModule(ComponentType type, int progId,
+                                    CreatePathFailureStage* outStage) {
     // Allocate and zero the CELCompiler object (88 bytes).
     void* compilerMem = std::malloc(kCELCompilerSize);
     if (!compilerMem) {
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_Oom;
         return "tsdev: out of memory allocating CELCompiler object";
     }
     std::memset(compilerMem, 0, kCELCompilerSize);
@@ -1181,6 +1315,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
     if (!callCtor(reinterpret_cast<CELCompilerCtorFn>(m_pCELCompilerCtor),
                   compilerMem)) {
         std::free(compilerMem);
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehCtor;
         return "tsdev: CELCompiler constructor raised an exception";
     }
 
@@ -1197,6 +1332,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
         callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
                  compilerMem);
         std::free(compilerMem);
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehStartCompiling;
         return "tsdev: StartCompilingProcess raised an exception";
     }
 
@@ -1210,6 +1346,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
         callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
                  compilerMem);
         std::free(compilerMem);
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehVerify;
         return "tsdev: VerifyModule_New raised an exception";
     }
 
@@ -1223,6 +1360,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
                      + std::to_string(seh.verifyResult)
                      + " with no error text";
         }
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_CompileErrors;
     }
 
     // EndCompilingProcess (fastcall, 1 arg = 0).
@@ -1233,31 +1371,20 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId) {
              compilerMem);
     std::free(compilerMem);
 
-    // TD-001: auto-cleanup a freshly-created entry on compile failure. Only
-    // fires when this verifyModule targets the entry most recently created by
-    // createEntry (and not since cleared), so modifyEntry and standalone
-    // verify calls are unaffected. Best-effort: cleanup failures are swallowed
-    // so they never mask the original compile error.
-    if (!errors.empty() && g_lastCreated.progId == progId &&
-        g_lastCreated.category == getCategory(type)) {
-        std::fprintf(stderr,
-            "tsdev: compile failed — cleaning up partial warehouse entry "
-            "\"%s\" (ProgId=%d)\n", g_lastCreated.name, progId);
-        try {
-            // flush=false: in serve/batch mode (long-lived TsDevLib), calling
-            // closeWarehouse() here would free the IWHouse interface and crash
-            // subsequent ops. The partial entry was just created in-process
-            // and never persisted to disk (compile failed, no .ell file);
-            // DeleteFromTree inside deleteEntry updates the BST, and OrlibExit
-            // in the destructor handles persistence.
-            deleteEntry(type, g_lastCreated.name, /*flush=*/false);
-        } catch (...) {
-        }
-        g_lastCreated = {};
-    } else if (errors.empty()) {
-        g_lastCreated = {};
-    }
-
+    // TVS-L.10: create-path partial-entry cleanup is NO LONGER owned here.
+    // The previous TD-001 branch keyed cleanup off the process-global
+    // g_lastCreated (set by createEntry) and only fired when !errors.empty()
+    // — i.e. it covered compile errors but only INCIDENTALLY covered the
+    // OOM / SEH-ctor / SEH-StartCompiling / SEH-Verify early returns (they
+    // happen to return a non-empty string), and it did NOT cover the
+    // saveSource failure at all (that exit happens before verifyModule is
+    // reached). The SINGLE authoritative owner is now doInsert in the CLI,
+    // which calls requiresCreatePathCleanup(progId, stage) on EVERY
+    // post-createEntry failure (saveSource fail + every verifyModule
+    // failure mode) and routes them through one deleteEntry(flush=false)
+    // call. The stage is reported back via `outStage` so doInsert can
+    // record WHICH path failed. On the success (empty errors) return,
+    // outStage is left untouched (the caller initializes it to a sentinel).
     return errors;
 }
 
@@ -1339,12 +1466,20 @@ void TsDevLib::closeWarehouse() {
     __try {
         m_pCloseWarehouse(0);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Best-effort flush; ignore SEH.
+        // Best-effort flush; log SEH but do not propagate (destructor path).
+        std::fprintf(stderr,
+            "tsdev: WARNING — closeWarehouse raised SEH exception\n");
     }
 }
 
 bool TsDevLib::ellFileExists(ComponentType type, int progId) {
     std::string path = getEllPath(type, progId);
+    DWORD attr = GetFileAttributesA(path.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES);
+}
+
+bool TsDevLib::xmlFileExists(ComponentType type, int progId) {
+    std::string path = getXmlPath(type, progId);
     DWORD attr = GetFileAttributesA(path.c_str());
     return (attr != INVALID_FILE_ATTRIBUTES);
 }
@@ -1372,7 +1507,7 @@ const char* TsDevLib::getWrkPath() const {
 }
 
 bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
-                           bool flush) {
+                           bool flush, std::string* diskCleanupErrorOut) {
     int category = getCategory(type);
     int expandedWhType = static_cast<int>(type);
 
@@ -1495,6 +1630,18 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     }
 
     // 5. Delete the .ell and .xml files from disk.
+    //
+    // TVS-L.12: each DeleteFileA is now classified by the SINGLE decision
+    // deleteDiskCleanupErrorFailsResult(). ERROR_SUCCESS and
+    // ERROR_FILE_NOT_FOUND are benign (artifact gone / already absent —
+    // idempotent). Any OTHER nonzero error (e.g. ERROR_ACCESS_DENIED: the
+    // artifact is present but could not be removed) is a REAL cleanup failure:
+    // the orchestrator has ALREADY removed the warehouse entry, but a stale
+    // .ell/.xml is left on disk. In that case deleteEntry now returns false
+    // (instead of unconditionally returning true) so the caller does not treat
+    // a stale-artifact state as success. The residual path + Windows error are
+    // surfaced via `diskCleanupErrorOut` (when provided) and via the existing
+    // stderr WARNING (the "logged message" already carries path + error).
     char ellPath[512];
     char xmlPath[512];
     std::snprintf(ellPath, sizeof(ellPath), "%s\\elmodule_%d_%d.ell",
@@ -1502,8 +1649,52 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     std::snprintf(xmlPath, sizeof(xmlPath), "%s\\elmodule_%d_%d.xml",
                   m_myWorkBin.c_str(), expandedWhType, progId);
     TSDEV_DBG("tsdev: deleteEntry — deleting %s and %s\n", ellPath, xmlPath);
-    DeleteFileA(ellPath);
-    DeleteFileA(xmlPath);
+
+    bool cleanupFailed = false;
+    if (diskCleanupErrorOut != nullptr) diskCleanupErrorOut->clear();
+
+    if (!DeleteFileA(ellPath)) {
+        DWORD err = GetLastError();
+        if (tsdev::deleteDiskCleanupErrorFailsResult(
+                err, tsdev::DeleteDiskArtifactKind::Ell)) {
+            // Real removal failure (e.g. ERROR_ACCESS_DENIED): the artifact is
+            // present but could not be removed. Surface it as a WARNING (the
+            // "logged message" carries path + Windows error) and record it for
+            // the caller's Result/CliResult message via diskCleanupErrorOut.
+            cleanupFailed = true;
+            std::fprintf(stderr,
+                "tsdev: WARNING — failed to delete %s (error=%lu)\n",
+                ellPath, err);
+            if (diskCleanupErrorOut != nullptr) {
+                if (!diskCleanupErrorOut->empty()) *diskCleanupErrorOut += "; ";
+                *diskCleanupErrorOut += std::string("failed to delete ")
+                    + ellPath + " (Windows error=" + std::to_string(err) + ")";
+            }
+        }
+        // else: the decision classified this as benign (ERROR_FILE_NOT_FOUND —
+        // artifact already absent, idempotent). No WARNING, no failure. This
+        // preserves the ONE case today's code already handled correctly.
+    }
+    if (!DeleteFileA(xmlPath)) {
+        DWORD err = GetLastError();
+        if (tsdev::deleteDiskCleanupErrorFailsResult(
+                err, tsdev::DeleteDiskArtifactKind::Xml)) {
+            cleanupFailed = true;
+            std::fprintf(stderr,
+                "tsdev: WARNING — failed to delete %s (error=%lu)\n",
+                xmlPath, err);
+            if (diskCleanupErrorOut != nullptr) {
+                if (!diskCleanupErrorOut->empty()) *diskCleanupErrorOut += "; ";
+                *diskCleanupErrorOut += std::string("failed to delete ")
+                    + xmlPath + " (Windows error=" + std::to_string(err) + ")";
+            }
+        }
+    }
+
+    if (cleanupFailed) {
+        TSDEV_DBG("tsdev: deleteEntry — disk cleanup failed, returning false\n");
+        return false;
+    }
 
     TSDEV_DBG("tsdev: deleteEntry — returning true\n");
     return true;
@@ -1516,7 +1707,21 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
 // ============================================================================
 Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
                              const std::string& newSource) {
-    g_lastCreated = {};
+    // TVS-L.10: the g_lastCreated reset that lived here is gone with the
+    // global itself. modifyEntry operates on an EXISTING entry (no
+    // createEntry), so it must never trigger create-path cleanup. It calls
+    // verifyModule with outStage=nullptr, so no stage is recorded and the
+    // create-path cleanup owner (doInsert) is never involved.
+    // Structural guarantee (Ghidra-verified, see
+    // docs/RE/RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md):
+    // On ANY modify failure (compile or post-compile finalization),
+    // the .ell file is NEVER truncated or replaced. This is because
+    // MDVault::SaveModule (which writes .ell) is only called when
+    // FUN_10011230 returns success. On failure, only SymWriter::Save
+    // (which writes .xml debugger data) may run unconditionally.
+    // The .xml inconsistency is a debugger/source-map issue, not a
+    // runtime linkability risk. This matches TSDev's behavior (no
+    // rollback for .xml). No backup/restore is needed.
     // 1. Look up the existing component by name + type.
     int progId = findExistPos(name, type);
     TSDEV_DBG("tsdev: modifyEntry — findExistPos(\"%s\", %d) = %d\n",
@@ -1578,65 +1783,6 @@ HWND TsDevLib::createHiddenEditControl() {
 void TsDevLib::setSourceText(HWND hwnd, const std::string& source) {
     std::wstring wide = toWide(source);
     SetWindowTextW(hwnd, wide.c_str());
-}
-
-bool TsDevLib::validatePersistencePatchBytes(const unsigned char* expected,
-                                              const unsigned char* mask, size_t len) {
-    // Use the cached persistence patch RVA (resolved in applyPersistencePatch
-    // BEFORE the original bytes were overwritten). We must NOT re-scan the
-    // signature here: resolvePersistencePatch() searches for the ORIGINAL
-    // unpatched bytes, which have already been replaced by the patch — a
-    // post-patch scan finds 0 matches and throws OrlibResolverError.
-    if (m_persistencePatchRva == 0) {
-        std::fprintf(stderr, "tsdev: validatePersistencePatchBytes — "
-                     "ERROR: persistence patch RVA was not cached (constructor failed?)\n");
-        fflush(stderr);
-        return false;
-    }
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(
-        m_resolver->baseAddress() + m_persistencePatchRva);
-    for (size_t i = 0; i < len; i++) {
-        if (mask[i] && p[i] != expected[i]) {
-            std::fprintf(stderr, "tsdev: validatePersistencePatchBytes — "
-                         "ERROR: byte at RVA 0x%llX offset %zu is 0x%02X, expected 0x%02X\n",
-                         (unsigned long long)m_persistencePatchRva, i,
-                         (unsigned)p[i], (unsigned)expected[i]);
-            fflush(stderr);
-            return false;
-        }
-    }
-    return true;
-}
-
-void TsDevLib::applyPersistencePatch() {
-    // Cache the persistence patch RVA BEFORE applying the patch. The
-    // signature scan in resolvePersistencePatch() searches for the ORIGINAL
-    // unpatched bytes (55 8B EC 6A FF 68...); once applyPatch() overwrites
-    // them with B8 01 00 00 00 C2 0C 00, a later re-scan finds 0 matches and
-    // throws OrlibResolverError. validatePersistencePatchBytes() relies on
-    // this cached RVA to read the patched bytes without re-scanning.
-    PatchSiteDescriptor desc = m_resolver->resolvePersistencePatch();
-    m_persistencePatchRva = desc.patchRva;
-
-    // Save the ACTUAL 8 original bytes at the patch site BEFORE overwriting
-    // them. kPersistenceOriginalBytes wildcards out positions 6-7 (the low
-    // 2 bytes of the SEH handler address, which are ASLR-relocated), so it
-    // cannot be used to restore — we need the real on-disk bytes. The
-    // destructor writes these back so a second TsDevLib instance in the same
-    // process can re-scan the original-byte signature successfully.
-    const unsigned char* site = reinterpret_cast<const unsigned char*>(
-        m_resolver->baseAddress() + m_persistencePatchRva);
-    std::memcpy(m_persistenceOriginalBytes, site, 8);
-
-    // Delegates to the resolver's applyPatch, which handles:
-    //   resolvePatchSite → validatePatchSite (throw on mismatch)
-    //   → idempotency check → VirtualProtect → memcpy → restore.
-    // OrlibResolverError propagates to the constructor (AC6 diagnostics).
-    m_resolver->applyPatch("FUN_10011230_persistence_patch");
-    // Mark applied immediately so the destructor restores this patch even
-    // if a subsequent thread-check patch throws (partial-construction gap,
-    // TD-002). The destructor guards each site by its cached RVA.
-    m_patchesApplied = true;
 }
 
 void TsDevLib::applyThreadCheckPatches() {

@@ -1,8 +1,72 @@
 # Project History — TSDev Automation
 
+---
+
+> ## ⚠️ CORRECTION NOTICE — 2026-08-23 (TVS-L.3) ⚠️
+>
+> **The historical entries below are preserved as-is and are NOT rewritten.** This
+> notice is prepended per `docs/workstream_unknown_link_fix_plan.md` §5 item 10
+> and TVS-L.3 ("prepend a conspicuous dated correction; preserve history; do not
+> silently rewrite"). The dated `SUPERSEDED (2026-08-23)` annotations already
+> inline within certain entries remain unchanged.
+>
+> **Corrections superseding statements in the historical entries below:**
+>
+> 1. **`FUN_10011230` persistence patch REMOVED in TVS-L.3.** The
+>    `FUN_10011230_persistence_patch` (RVA `0x11230`, replacement bytes
+>    `B8 01 00 00 00 C2 0C 00` = `MOV EAX,1; RET 0x0C`) has been removed
+>    completely. The original finalization/symbol path
+>    (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
+>    `SymWriter::Save`, then `ModuleInfo::SetGuid` / `MDVault::SaveModule`) now
+>    runs under STA COM (TVS-L.2). No production code path returns success after
+>    link/symbol failure.
+>
+> 2. **Signature count changed from 25 → 24; patch sites from 12 → 11.** The
+>    removed `FUN_10011230_persistence_patch` signature/patch-site entry reduces
+>    the catalog from 25 signatures / 12 patch sites to **24 signatures / 11
+>    patch sites** (3 data globals, 10 exports unchanged). Historical entries
+>    below that state "25 signatures", "12 signatures", "12 patch sites",
+>    "12/12", "12 RVA targets", "12 code-section RVA targets",
+>    "8 CALL_TARGETs + 4 PATCH_SITEs", or "4 patch sites" (persistence + 3
+>    thread-checks) reflect the pre-L.3 state and are now stale.
+>
+> 3. **Stale `__fastcall` / callee-cleanup statements about `FUN_10011230` are
+>    INCORRECT.** Where historical entries characterize `FUN_10011230` (or the
+>    persistence patch) as `__fastcall` / callee-cleanup, the evidence shows the
+>    opposite: the caller performs `ADD ESP,0x0C` (caller cleanup), the original
+>    epilogue is a plain `RET`, and the patched epilogue is `RET 0x0C`. The
+>    `RET 0x0C` patch is therefore ABI-invalid (double cleanup). See
+>    `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. (Note: `__fastcall` references
+>    to the unrelated `FUN_101a8360` DELETE orchestrator and the generic
+>    OrlibResolver typedef description are NOT affected by this correction.)
+>
+> 4. **"`.xml` not written — acceptable" was WRONG.** XML absence is a visible
+>    marker that the original path was skipped, not acceptable evidence of
+>    complete verification. Bypass-produced Strategies fail in TradeStation
+>    Desktop with "Unknown link error occurred."
+>
+> **Authoritative current state:** `AGENTS.md`, `docs/SIGNATURE_CATALOG.md`,
+> `docs/FEASIBILITY.md`, and `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. The entries
+> below this notice are historical records of what was believed/done at the time
+> and are retained for provenance; they must not be read as current operational
+> guidance.
+
+---
+
 > Historical project log — completed TVS details. For current state, see AGENTS.md. For PM working memory, see docs/PM_WORKING_MEMORY.md.
 
 > NOTE: 'NEXT:' pointers within this file are historical artifacts from when the TVSs were being executed. Workstreams A–J are complete. Workstream K (Serve mode) K.1–K.6b complete. Crash handling complete. ShowMe (TVS-C.8) complete. See AGENTS.md for current project status.
+
+> **Workstream L is NOT YET CLOSED — see `docs/PM_WORKING_MEMORY.md`.** The TVS-L.4/L.5 completion claim was FALSIFIED by persistence and deletion fault injection and is **superseded by the L.6–L.15 recovery**, which is **implemented on branch `workstream-L-recovery`** (L.1–L.3 remain COMPLETE; L.4/L.5 are NOT complete — their DONE bodies below are retained as dated/superseded history and are NOT rewritten; L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are necessary but not sufficient; the `FUN_10011230` persistence bypass is removed). **No new Desktop runtime re-gate is claimed without an L.17 result.** Workstream M remains BLOCKED until L.17 independent final verification.
+
+> **HISTORICAL SNAPSHOT (2026-08-23, pre-L.1) — superseded.** The paragraph
+> below recorded the project state before Workstream L was implemented. It is
+> retained as a historical snapshot. It was superseded first by the TVS-L.1–L.5
+> implementation (L.1–L.3 genuinely COMPLETE; L.4/L.5 claimed COMPLETE) and then
+> by the **REOPENING** of Workstream L after independent persistence and
+> deletion fault injection falsified the L.4/L.5 completion claim (see
+> `docs/PM_WORKING_MEMORY.md`). Do not read the paragraph below as current
+> truth; current state is in `AGENTS.md` and `docs/PM_WORKING_MEMORY.md`.
 
 > PLANNED WORKSTREAMS (2026-08-23, not implemented — not completion entries): Workstream L (Unknown link defect fix) — PLANNED, highest priority, not implemented; plan at `docs/workstream_unknown_link_fix_plan.md`. Workstream M (TSDev parity) — PLANNED after L, not implemented; plan at `docs/workstream_tsdev_parity_plan.md`. Acceptance criteria are temporarily not satisfied at production runtime because inserted Strategies fail Desktop execution, despite library/CLI/Python operations existing. Durable RE evidence: `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`, `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. No implementation has been made for L or M.
 
@@ -746,3 +810,164 @@ Scrubbed the two personal usernames (leaked via USERPROFILE- and USERNAME-derive
 - **TVS-H.3 (history rewrite):** Committed H.1 → condensed 57→9 via orphan branch + `git read-tree --reset -u` → `git filter-repo --replace-text` (regex:`<username>`==>user) for text blobs → `--invert-paths` stripped binary artifacts (build/, build_probe/, ghidra_project/, *.obj/exe/lib/pdb/pyc/gbf/grf/ps/bin, __pycache__) → first adversarial review found CRITICAL uppercase variants of the username in .tlog files + proprietary TradeStation files in history → FIX: `--invert-paths --path tmp/` (stripped ALL of tmp/ including ~10,000 proprietary .xml/.ell files + 4 .dlls + .tlog files containing the username) + case-insensitive scrub `regex:(?i)<username>==>user` → force-pushed to origin. Final adversarial review APPROVED (all 10 checks pass: zero username hits in any text or binary blob across all 9 commits, H.1 relative paths preserved in HEAD, 129 files, key files intact, monotonic trees, .gitignore covers future contamination).
 - **Build + regression verification:** 8/8 C++ suites (93 cases) + 62/62 Python tests PASS. No regressions. (Historical counts — superseded by later TVSs.)
 - **Key lesson:** filter-repo `--replace-text` regex is CASE-SENSITIVE by default — always use `(?i)` for username scrubs. MSVC .tlog files uppercase paths. Binary blobs need `--invert-paths` stripping, not just `--replace-text`. `git filter-repo` strips upstream tracking config — re-add remote and use `git push -u origin main` to restore tracking.
+
+> **Workstream L is NOT YET CLOSED — see `docs/PM_WORKING_MEMORY.md`.** The TVS-L.4/L.5 completion claim was FALSIFIED by persistence and deletion fault injection and is **superseded by the L.6–L.15 recovery**, which is **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are necessary but not sufficient). The L.4/L.5 DONE bodies below are retained as dated/superseded history and are NOT rewritten. **No new Desktop runtime re-gate is claimed without an L.17 result.** Workstream M remains BLOCKED until L.17 independent final verification.
+
+## DONE — TVS-L.4: Persistence validation + partial-artifact cleanup/rollback hardening — COMPLETE
+
+> **HISTORICAL COMPLETION CLAIM — FALSIFIED, NOT CURRENT TRUTH.** The
+> "COMPLETE" claim in this entry's title, body, verification results, and
+> handoff state is a **historical record** of what was believed true when
+> TVS-L.4 was closed. It was **falsified by subsequent persistence fault
+> injection** (Fault A: stale-ELL modify returned `exit 0` / `success=true`
+> despite leaving the ELL unchanged), which directly contradicts the L.4 claim
+> of "no orphan artifacts on failed insert" and "intact old artifacts on failed
+> modify". TVS-L.4 is **FALSIFIED and superseded by the L.6–L.15 recovery**,
+> which is **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no
+> invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12
+> detect-and-report orphan-ELL delete; existence checks are necessary but not
+> sufficient). Workstream L is **NOT YET CLOSED** — no production handoff is
+> authorized until L.17 independent final verification; no new Desktop runtime
+> re-gate is claimed without an L.17 result. Workstream M remains BLOCKED until
+> L.17 (see `docs/PM_WORKING_MEMORY.md`). The implementation/test details below
+> are retained as provenance and are not asserted as current truth.
+
+- **Date:** 2026-08-23
+- **Goal:** Harden persistence validation and partial-artifact cleanup/rollback around insert/modify/upsert, building on the TVS-L.3 causal fix. Gate `.xml` existence alongside `.ell`, surface previously-swallowed cleanup/SEH failures, and add regression cases proving no orphan artifacts on failed insert and intact old artifacts on failed modify.
+- **Production code changes:**
+  - `src/tsdev_lib.h` / `src/tsdev_lib.cpp`: Added `xmlFileExists()` method (parallel to `ellFileExists`; checks `getXmlPath()` + `GetFileAttributesA`). Replaced empty catch in TD-001 cleanup (`verifyModule`) with stderr logging; captures `deleteEntry` return value and logs if false (inside the try block to avoid double-logging on exception). Replaced bare `DeleteFileA` calls in `deleteEntry` with return-value-checked versions that log to stderr on failure (excluding `ERROR_FILE_NOT_FOUND`); captures `GetLastError()` once per failure. Replaced empty SEH catch in `closeWarehouse` with stderr logging. Added structural-guarantee comment in `modifyEntry` documenting that `.ell` is never truncated on any modify failure (Ghidra-verified).
+  - `src/tsdev_cli.cpp`: Added `.xml` existence check to `doInsert` (after the existing `.ell` check; exit 9 if missing). Added both `.ell` and `.xml` existence checks to `doModify` (after `modifyEntry` success; exit 9 if either missing). Renamed exit code 9 label from `ell_missing` to `artifact_missing`.
+- **Test changes:** Extended `tests/test_unknown_link_regression.ps1` with L4.1–L4.5 (39 new assertions), turning Suite 13 from 8 cases into 47 cases:
+  - L4.1 — Failed insert (compile error): no `.ell`, no `.xml`, no warehouse entry.
+  - L4.2 — Failed modify (compile error): old `.ell`/`.xml` intact (SHA-256 unchanged), entry still exists.
+  - L4.3 — Successful modify: both `.ell` and `.xml` exist, fresh, GUID matches, source round-trips.
+  - L4.4 — Successful upsert-new: both `.ell` and `.xml` exist, GUID matches, source round-trips.
+  - L4.5 — Successful upsert-existing: both `.ell` and `.xml` exist, fresh, GUID matches, source round-trips.
+  - Added shared helper functions (`Get-ProgIdFromJson`, `Get-ExistsFromJson`, `Get-SourceFromJson`, `Extract-XmlGuid`, `Test-GuidBytesInEll`, `Invoke-CleanupForName`, `Remove-PreExistingArtifacts`, `Get-ValidStrategySource`, `Get-InvalidPlotStrategySource`).
+- **RE documentation:** New `docs/RE/RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md` — Ghidra analysis of the `_VerifyModule_New` finalization path.
+- **Key RE finding:** `.ell` is structurally guaranteed to be unchanged on ANY modify failure. `MDVault::SaveModule` (which writes the `.ell`) is skipped when `FUN_10011230` returns false. Only `.xml` (debugger/source-map data) can be rewritten on a post-compile finalization failure. No backup/restore of `.ell` is needed around `modifyEntry`. This is the reason L4.2 (failed-modify rollback) holds without an explicit backup/restore step.
+- **Verification results:**
+  - Build: SUCCESS, no warnings.
+  - L.1+L.4 harness: 47/47 PASS (8 L1.* + 39 L4.*).
+  - Full E2E suite: 13/13 suites PASS (Suite 13 now 47 cases instead of 8; total 182 cases).
+  - Unit tests: 27/27 PASS.
+- **Adversarial review outcome:** Round 1 DISAPPROVED (1 CRITICAL, 1 MAJOR, 2 MINOR) → all fixed → Round 2 APPROVED (1 MINOR fixed post-approval; 2 INFO).
+- **Handoff state:** TVS-L.4 COMPLETE. L.5 (full verification matrix + Desktop runtime gate across all 5 types) may begin.
+
+## DONE — TVS-L.5: Full verification matrix + Desktop runtime gate — COMPLETE — WORKSTREAM L COMPLETE
+
+> **HISTORICAL COMPLETION CLAIM — FALSIFIED, NOT CURRENT TRUTH.** The
+> "COMPLETE" / "WORKSTREAM L COMPLETE" claims in this entry's title, body,
+> verification results, and handoff state are a **historical record** of what
+> was believed true when TVS-L.5 was closed. They were **falsified by
+> subsequent persistence and deletion fault injection** (Fault A: stale-ELL
+> modify; Fault B: orphan-ELL delete; both returned `exit 0` / `success=true`),
+> which directly contradicts the L.5 claim of a "full verification matrix"
+> across all 5 types. The historical Desktop runtime gate result (no "Unknown
+> link error occurred" for freshly inserted items across all 5 types) is
+> retained as a factual observation, but it did not exercise the
+> persistence/delete fault paths and does not prove Workstream L completion.
+> **No new Desktop runtime re-gate is claimed without an L.17 result.**
+> TVS-L.5 is **FALSIFIED and superseded by the L.6–L.15 recovery**, which is
+> **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no invented
+> TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12
+> detect-and-report orphan-ELL delete; existence checks are necessary but not
+> sufficient). Workstream L is **NOT YET CLOSED** — no production handoff is
+> authorized until L.17 independent final verification. Workstream M remains
+> BLOCKED until L.17 (see `docs/PM_WORKING_MEMORY.md`). The implementation/test
+> details below are retained as provenance and are not asserted as current truth.
+
+- **Date:** 2026-08-23
+- **Goal:** Complete the unknown-link workstream by expanding the regression matrix to all 5 supported component types, executing the 600-cycle stress gate, and completing the user-supervised Desktop runtime-execution acceptance gate on the `+TP:GC_1M_010115_081426_CLEAN*` chart.
+- **Test changes:**
+  - Extended `tests/test_unknown_link_regression.ps1` (Suite 13) from 47 to 249 assertions by adding type-specific semantic-error and mutation coverage for all 5 supported component types (40 L1 + 195 L4 + 14 L5.SEM).
+  - Added `tests/test_unknown_link_stress.ps1` (Suite 14) to `tests/run_regression.ps1` as an opt-in 600-cycle stress test (120 cycles × 5 types).
+  - Updated durable documentation: `docs/PM_WORKING_MEMORY.md`, `docs/PROJECT_HISTORY.md`, `AGENTS.md`, and `docs/E2E_TEST_SPEC.md` (Part H.10).
+- **Verification results:**
+  - **Build:** No production code changed in TVS-L.5 (only test scripts and docs). Existing Win32 Release build used.
+  - **Suite 13 (expanded harness):** 249/249 assertions PASSED (40 L1 + 195 L4 + 14 L5.SEM).
+  - **Full regression suite:** 13/13 suites PASSED (Suite 14 skipped by default).
+  - **Suite 14 (600-cycle stress):** 600/600 PASSED, 0 failed. 120 cycles × 5 types (Strategy, Indicator, Function, TradingApp, ShowMe). Elapsed: 9m20s. No crashes, no COM imbalance, no stale artifacts.
+- **Desktop runtime gate:**
+  - **Automated checks:** Suite 13 (249/249 assertions via CLI) and Suite 14 (600/600 stress cycles via CLI).
+  - **Manual observations (user-supervised on `+TP:GC_1M_010115_081426_CLEAN*` chart):**
+    - Strategy (`x=0`, no orders): no Events Log error, no trades — PASS. The gate observed successful strategy *calculation*, not order placement, which is the correct approach under safety constraints.
+    - Function caller strategy (calls `TS_AUTO_L5_RT_FUNC`, no orders): no Events Log error — PASS.
+    - Indicator (`Plot1(x, "MyPlot")`): no Events Log error, plots a horizontal straight line — PASS.
+    - ShowMe (`Plot1(High, "Up bar")` on `Close > Open`): no Events Log error, plots high markers on up-bars — PASS.
+    - TradingApp (using `elsystem`): no Events Log error (black window, no UI — expected for minimal fixture) — PASS.
+    - After Desktop restart: all items still on chart, no errors — PASS.
+  - **Safety note:** The Desktop runtime gate was manually supervised by the user. An earlier automated computer-use attempt pressed F5 inside the live trading application (can trigger order execution) and created a strategy with `x=1` (would generate live market orders); both were corrected. The final gate used `x=0` (no orders) strategies only.
+- **Adversarial review outcome:** Initial review **DISAPPROVED** with documentation findings (C1-C4, M1-M3). All findings addressed in this update.
+- **Handoff state:** TVS-L.5 COMPLETE. Workstream L COMPLETE.
+
+---
+
+## TVS-L.17 — Automated verification record (2026-08-24)
+
+> **This is a verification RECORD, not a COMPLETE / Workstream-L-closed claim.** Workstream L is NOT CLOSED. See `docs/PM_WORKING_MEMORY.md` "⚠️ CURRENT STATUS" and `AGENTS.md` "### Project Status" for the authoritative current state.
+
+- **Date:** 2026-08-24
+- **Type:** Documentation-only record of the L.17 automated verification run. No production code and no test code were changed for this record.
+- **Outcome:** L.17 automated verification **APPROVED 2026-08-24**.
+- **Automated gates (all PASS):**
+  - Build: PASS
+  - 24/11 signatures: PASS (24 signatures, 11 patch sites)
+  - 14 NoTs units: PASS
+  - 34/34 CLI E2E: PASS
+  - 253/253 unknown-link: PASS
+  - 288/288 with L7 RED: PASS
+  - 139 Python mocked: PASS
+  - 600/600 Suite 14: PASS
+- **Two findings (open, non-blocking for the automated record):**
+  1. L-suite scripts parse/run under **pwsh 7**, not Windows PowerShell 5.1. `docs/BUILD.md` and `tests/run_regression.ps1` still invoke Windows PowerShell 5.1; the L-suite scripts do not parse/run correctly under that host. Invoke under pwsh 7 until the BUILD.md / `run_regression.ps1` host invocation is updated. (No code change made in this record.)
+  2. The L7 harness regenerates `docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md` on each run (overwrites the durable evidence file). This is existing documented behavior of the L.7 RED harness; flagged here as a finding for awareness.
+- **What this record does NOT claim:**
+  - NOT a Workstream L COMPLETE / closed claim. Workstream L is NOT CLOSED.
+  - The user-supervised Desktop runtime gate remains outstanding.
+  - L.8 remains BLOCKED (no invented TSDev recovery).
+  - Workstream M remains BLOCKED.
+  - Does NOT claim that persistence follows a TSDev-equivalent recovery policy. No such equivalence has been established (L.8 is BLOCKED precisely because no `TSDev.exe`-equivalent save-failure observation exists).
+- **No production/test code changed. No git stage/commit performed.**
+
+### 2026-08-24 — Concurrent-write incident during user-supervised L.17 Desktop gate (NOT an L.17 Desktop PASS)
+
+- **This is a concurrent-write incident record, not an L.17 Desktop PASS.** Workstream L is still NOT CLOSED. L.8 remains BLOCKED. Workstream M remains BLOCKED. The user-supervised Desktop runtime gate remains outstanding. See `docs/PM_WORKING_MEMORY.md` "DURABLE CONCURRENCY CAVEAT — 2026-08-24" for the durable caveat.
+- **What happened:** operator asked to change the two CLI-inserted strategies so they generate one closed historical trade (CurrentBar Buy/Sell), not live `x=1` orders. PM ran only `tsdev_cli --json modify` on `TS_AUTO_L17_RT_STRAT_20260824` (ProgId 7804) and `TS_AUTO_L17_RT_CALLER_20260824` (ProgId 7805) while TradeStation Desktop was already running. No Desktop keystrokes, no TSDev.exe, no F5.
+- **Crash timeline:** source files written ~14:14:31; `ORPlat.exe` PID 26704 crashed 14:14:33 with `STATUS_HEAP_CORRUPTION` (0xC0000374); ELL/XML for 7804/7805 written 14:14:39; cascade killed `TSELAppHost`, `ordllhst` (`orxcom.dll`), multiple `orchart`/`Charting Host`. User killed remaining TS processes and reopened Desktop (~14:18).
+- **Warehouse records survived:** `exists`/`get-source` still match CurrentBar Buy@1 / Sell@3; all six L17 items still present (7804/7805/1121/1985/1986/1987).
+- **Root characterization:** concurrent-write incident — `tsdev_cli`/orlib20 warehouse write while Desktop holds orlib20/charts open. The L.17 automated E2E assumed Desktop was not running; that assumption was violated here. **Operational rule: do NOT run `tsdev_cli` insert/modify/delete while TradeStation Desktop is open.**
+- **Does NOT invent a persist-recovery policy. Does NOT close Workstream L. Does NOT claim TSDev-equivalent recovery.** L.8 remains BLOCKED. Workstream M remains BLOCKED. Desktop runtime gate remains outstanding.
+- **No production/test code changed. No git stage/commit performed.**
+
+### 2026-08-24 — First-pass user-supervised L.17 Desktop observations (NOT gate-complete; restart still required; Workstream L NOT CLOSED)
+
+- **First-pass, user-observed ONLY — not agent computer-use, not a gate-complete claim.** Workstream L is still NOT CLOSED. A Desktop restart check is still outstanding. L.8 remains BLOCKED. Workstream M remains BLOCKED. See `docs/PM_WORKING_MEMORY.md` "FIRST-PASS USER-SUPERVISED L.17 DESKTOP OBSERVATIONS — 2026-08-24" for the durable record.
+- **Sequence:** after the concurrent-write crash and the user's Desktop reopen, the user applied the CLI-inserted L.17 items in TradeStation Desktop and observed runtime behavior. No `tsdev_cli` insert/modify/delete was run while Desktop was open for this pass.
+- **User-observed result (all six L.17 items, by stored name):** Strategy `TS_AUTO_L17_RT_STRAT_20260824` works without errors; Function via caller `TS_AUTO_L17_RT_CALLER_20260824` (calls `TS_AUTO_L17_RT_FUNC_20260824`) works without errors; Indicator `TS_AUTO_L17_RT_IND_20260824` works without errors; ShowMe `TS_AUTO_L17_RT_SHOWME_20260824` works without errors; TradingApp `TS_AUTO_L17_RT_TA_20260824` does not crash and produces no error messages (TradingApp has no functionality/print/UI; matches H.10 expected black/minimal window).
+- **Strategy modification for execution proof:** strategies were modified to one historical closed Buy/Sell on CurrentBar 1/3 so a closed trade can prove execution (the modification that triggered the concurrent-write crash; after Desktop reopen the modified strategies were observed working).
+- **What this record does NOT claim:** does NOT claim Unknown-link fully closed; does NOT claim persist recovery / TSDev-equivalent recovery (L.8 BLOCKED); does NOT claim the Desktop runtime gate is complete (restart check outstanding); does NOT close Workstream L; does NOT unblock Workstream M. Items remain in the warehouse until after restart check + cleanup.
+- **No production/test code changed. No git stage/commit performed.**
+
+### 2026-08-24 — User-supervised L.17 Desktop restart check — PASSED (Workstream L still NOT CLOSED — L.8 BLOCKED)
+
+- **This is a documentation-only record of the user-supervised Desktop restart check.** It is NOT a Workstream-L-closed / COMPLETE claim. Workstream L is still NOT CLOSED. See `docs/PM_WORKING_MEMORY.md` "DESKTOP RESTART CHECK — PASSED 2026-08-24" and `AGENTS.md` "### Project Status" for the authoritative current state.
+- **The user-supervised Desktop restart check is now SATISFIED (2026-08-24).** This removes the specific "Desktop runtime gate outstanding" blocker that was cited in the L.17 automated-verification record and in the first-pass observations above. The first-pass user-observed PASS plus this post-restart PASS together satisfy the user-supervised Desktop runtime gate for the L.17 item set.
+- **User-supervised, NOT agent computer-use — the agent did not drive the Desktop UI.** The user observed the runtime behavior after a Desktop restart.
+- **What was observed (all five L.17 component types on `+TP:GC_1M_010115_081426_CLEAN*`, by stored name):**
+  - Strategy `TS_AUTO_L17_RT_STRAT_20260824` — works as expected.
+  - Function via caller `TS_AUTO_L17_RT_CALLER_20260824` (calls `TS_AUTO_L17_RT_FUNC_20260824`) — works as expected.
+  - Indicator `TS_AUTO_L17_RT_IND_20260824` — works as expected.
+  - ShowMe `TS_AUTO_L17_RT_SHOWME_20260824` — works as expected.
+  - TradingApp `TS_AUTO_L17_RT_TA_20260824` — **no-crash/no-error only (no UI)**. TradingApp has no functionality/print/UI; verification is no-crash/no-error only, matching the H.10 expected black/minimal window behavior. No UI was exercised.
+- **Strategies use one historical closed Buy/Sell on CurrentBar 1/3** (not live `x=1` orders) — the same modified strategies from the first-pass observation.
+- **First-pass also PASS.** The first-pass user-observed PASS (see section above) plus this post-restart PASS together satisfy the user-supervised Desktop runtime gate.
+- **No TSDev re-verify was performed.** No TSDev.exe, no F5, no Build > Verify. No `tsdev_cli` insert/modify/delete was run while Desktop was open for this restart check (the durable concurrency rule still holds: **do NOT run `tsdev_cli` insert/modify/delete while TradeStation Desktop is open**).
+- **What this record does NOT claim:**
+  - NOT a Workstream L COMPLETE / closed claim. Workstream L is still NOT CLOSED.
+  - Does NOT prove Fault A/B persist/delete recovery. The Desktop gate and persist/delete recovery are separate concerns; passing the Desktop gate does NOT claim persist-recovery completeness.
+  - **L.8 remains BLOCKED** (no invented TSDev persist recovery — no `TSDev.exe`-equivalent save-failure observation was established; L.9 cannot invent a recovery sequence not present in the binary).
+  - **Workstream M remains BLOCKED** until an explicit close/unblocking decision; do not silently mark M unblocked.
+  - Does NOT claim that persistence follows a TSDev-equivalent recovery policy. No such equivalence has been established (L.8 is BLOCKED precisely because no `TSDev.exe`-equivalent save-failure observation exists).
+- **The 2026-08-24 concurrent-write incident remains recorded** (see the "2026-08-24 — Concurrent-write incident" entry above). The operational rule is durable: **do NOT run `tsdev_cli` insert/modify/delete while TradeStation Desktop is open.**
+- **No production/test code changed. No git stage/commit performed.** Documentation-only record.

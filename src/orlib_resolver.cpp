@@ -865,18 +865,15 @@ bool OrlibResolver::validatePatchSite(const std::string& name,
 }
 
 bool OrlibResolver::validatePatchSite(const PatchSiteDescriptor& desc) {
-    // Derive the validation mask from the patch-site name:
-    //   - persistence patch: bytes 6-7 are the low 2 bytes of the SEH
-    //     handler address (image-base-relative, ASLR-dependent) → wildcarded.
-    //     This matches kPersistenceOriginalMask in tsdev_lib.cpp.
-    //   - thread-check INT3 patches: single byte 0xCC, no wildcards.
+    // Derive the validation mask from the patch-site name.
+    //   - thread-check INT3 patches: single byte 0xCC, no wildcards — a
+    //     full-FF mask (check every byte) is correct.
+    // The persistence patch (which required wildcarding bytes 6-7 of an
+    // SEH handler address) has been removed (TVS-L.3); no remaining patch
+    // site needs wildcarded original bytes. If a future patch site requires
+    // wildcards, derive the mask from its signature definition here.
     std::vector<uint8_t> mask;
-    if (desc.name.find("persistence") != std::string::npos) {
-        mask = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00};
-    } else {
-        // Thread-check: full-FF mask (no wildcards).
-        mask.assign(desc.originalBytes.size(), 0xFF);
-    }
+    mask.assign(desc.originalBytes.size(), 0xFF);
     return validatePatchSite(desc.name, desc.patchRva, desc.originalBytes,
                              mask);
 }
@@ -937,12 +934,8 @@ bool OrlibResolver::applyPatch(const std::string& name) {
 }
 
 // ===========================================================================
-// Specific patch-site convenience methods (4)
+// Specific patch-site convenience methods (3)
 // ===========================================================================
-
-PatchSiteDescriptor OrlibResolver::resolvePersistencePatch() {
-    return resolvePatchSite("FUN_10011230_persistence_patch");
-}
 
 PatchSiteDescriptor OrlibResolver::resolveThreadCheck1() {
     return resolvePatchSite("FUN_101d0950_thread_check_INT3");

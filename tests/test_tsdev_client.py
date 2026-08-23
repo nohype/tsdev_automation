@@ -2548,7 +2548,7 @@ class TestServeBrokerCrashDetection:
 _UNIQUE = "PyAutoTest"
 
 # Valid EasyLanguage sources per component type (verified against the real
-# EasyLanguage compiler via tsdev_cli -- all four compile to exit 0).
+# EasyLanguage compiler via tsdev_cli -- all five compile to exit 0).
 # Function source MUST assign to a variable named exactly like the component.
 _SOURCES: dict[str, dict[str, str]] = {
     "strategy": {
@@ -2568,10 +2568,17 @@ _SOURCES: dict[str, dict[str, str]] = {
         "insert": "using elsystem;\n",
         "modify": "using elsystem;\nusing elsystem.windows.forms;\n",
     },
+    # ShowMe (whType 1282) can use Plot statements (like Indicators) but
+    # cannot use Buy/Sell order statements (Strategy-only). Verified against
+    # the real EasyLanguage compiler via tsdev_cli (see tests/test_showme_e2e.ps1).
+    "showme": {
+        "insert": 'if Close > Open then\n    Plot1(High, "Up bar");\n',
+        "modify": 'if Close < Open then\n    Plot1(Low, "Down bar");\n',
+    },
 }
 
-# All four supported component types.
-_ALL_TYPES = ["strategy", "indicator", "function", "tradingapp"]
+# All five supported component types.
+_ALL_TYPES = ["strategy", "indicator", "function", "tradingapp", "showme"]
 
 
 def _src(type_: str, op: str, name: str) -> str:
@@ -2603,12 +2610,12 @@ class TestE2E:
     warehouse.  These are skipped unless the CLI binary is discoverable.
 
     Every test cleans up all components it creates via the autouse
-    ``_cleanup_all`` fixture, which sweeps all known test names across all four
+    ``_cleanup_all`` fixture, which sweeps all known test names across all five
     types so no orphans remain even if a test fails mid-way.
     """
 
     # Names used across the E2E suite.  The cleanup fixture sweeps ALL of these
-    # across ALL four types so a failure mid-test cannot leak warehouse entries.
+    # across ALL five types so a failure mid-test cannot leak warehouse entries.
     _TEST_NAMES: list[str] = [
         _UNIQUE + "_Strat",
         _UNIQUE + "_Func",
@@ -2628,13 +2635,14 @@ class TestE2E:
         _UNIQUE + "_MDirA",
         _UNIQUE + "_MDirB",
         _UNIQUE + "_TxtA",
+        "TS_AUTO_PY_SHOWME_L14A",
     ]
 
     @pytest.fixture(autouse=True)
     def _real_client(self):
         self.c = TsDevClient()
         yield
-        # Sweep: best-effort delete of every test name across all 4 types.
+        # Sweep: best-effort delete of every test name across all 5 types.
         # A clean warehouse has no orphans, so every delete should raise
         # NotFoundError (exit 5).  We swallow errors here; the dedicated
         # test_no_orphans test asserts the sweep result explicitly.
@@ -2705,6 +2713,78 @@ class TestE2E:
         assert m.prog_id == prog_id, "ProgId must be preserved across modify"
         d = self.c.delete("tradingapp", name)
         assert d.success, d
+
+    # -- Part 1b: full ShowMe lifecycle E2E (TVS-L.14a GREEN, test-only) ----
+
+    def test_showme_lifecycle_e2e(self) -> None:
+        """TVS-L.14a GREEN: real ShowMe lifecycle E2E through TsDevClient
+        against the real ``tsdev_cli.exe`` and TradeStation warehouse.
+
+        Exercises the full insert -> exists -> get-source -> modify ->
+        get-source(after modify) -> upsert-existing -> delete -> exists(after
+        delete) lifecycle for a ShowMe item (whType 1282). ShowMe studies can
+        use Plot statements (like Indicators) but cannot use Buy/Sell order
+        statements (Strategy-only).
+
+        Uses a unique disposable ``TS_AUTO_`` name and relies on the autouse
+        ``_real_client`` cleanup fixture (which sweeps ``_TEST_NAMES`` across
+        ``_ALL_TYPES``) for orphan prevention. ELL/XML artifact and GUID
+        checks are intentionally omitted because no such helpers exist for
+        any other component type in ``TestE2E`` — the existing lifecycle
+        tests assert only ``r.ell_path`` (non-empty), which this test mirrors.
+        """
+        name = "TS_AUTO_PY_SHOWME_L14A"
+
+        # 1. insert — valid ShowMe source using Plot1.
+        r = self.c.insert("showme", name, _src("showme", "insert", name))
+        assert r.success, r
+        assert r.prog_id is not None and r.prog_id > 0
+        assert r.ell_path, "insert must report a non-empty ell_path"
+        prog_id = r.prog_id
+
+        # 2. exists — case-sensitive exact match returns the verbatim name
+        #    and the same ProgId assigned at insert.
+        ex = self.c.exists("showme", name)
+        assert ex.success, ex
+        assert ex.exists is True
+        assert ex.prog_id == prog_id, "exists must report the same ProgId as insert"
+        assert ex.stored_name == name, f"stored_name must be {name!r}, got {ex.stored_name!r}"
+
+        # 3. get-source — retrieved source must contain the insert marker.
+        gs = self.c.get_source("showme", name)
+        assert gs.success, gs
+        assert gs.source is not None, "get-source must return a non-null source"
+        assert "Plot1" in gs.source, "get-source must contain the Plot1 marker from insert source"
+
+        # 4. modify — replace source; ProgId must be preserved.
+        m = self.c.modify("showme", name, _src("showme", "modify", name))
+        assert m.success, m
+        assert m.prog_id == prog_id, "ProgId must be preserved across modify"
+        assert m.ell_path, "modify must report a non-empty ell_path"
+
+        # 5. get-source after modify — the new source must round-trip.
+        gs2 = self.c.get_source("showme", name)
+        assert gs2.success, gs2
+        assert gs2.source is not None
+        assert "Down bar" in gs2.source, "get-source after modify must contain the modify marker"
+
+        # 6. upsert-existing — item already exists, so upsert must take the
+        #    modify-path and preserve the ProgId.
+        u = self.c.upsert("showme", name, _src("showme", "insert", name))
+        assert u.success, u
+        assert u.prog_id == prog_id, "ProgId must be preserved on upsert-existing (modify-path)"
+        assert u.ell_path, "upsert-existing must report a non-empty ell_path"
+
+        # 7. delete — remove the ShowMe item.
+        d = self.c.delete("showme", name)
+        assert d.success, d
+
+        # 8. exists after delete — must report exists=False, ProgId 0.
+        ex2 = self.c.exists("showme", name)
+        assert ex2.success, ex2
+        assert ex2.exists is False, "exists must be False after delete"
+        assert ex2.prog_id == 0, "ProgId must be 0 after delete"
+        assert ex2.stored_name == "", "stored_name must be empty after delete"
 
     # -- Part 2: larger batch (init amortization) ---------------------------
 
@@ -2936,7 +3016,7 @@ class TestE2E:
 
     def test_no_orphans_after_suite(self) -> None:
         """Final safety-net sweep: attempt to delete every test name across all
-        4 types; each must raise NotFoundError, proving no orphaned warehouse
+        5 types; each must raise NotFoundError, proving no orphaned warehouse
         entries remain. The autouse ``_real_client`` fixture already cleans up
         after every test, so this is not reliant on alphabetical-last ordering
         — it simply re-verifies explicitly so a leftover entry is reported as a

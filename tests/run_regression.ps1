@@ -3,13 +3,13 @@
     Master regression runner for the TSDev Automation project (TVS-B.6.3).
 
 .DESCRIPTION
-    Orchestrates ALL twelve regression sub-suites in a single command, in the
+    Orchestrates ALL fourteen regression sub-suites in a single command, in the
     order required by the B.6 acceptance criteria:
 
       1. sigtool verify gate   (tests/test_sigtool.ps1)
          12 sigtool CLI tests against the baseline DLL. Fast, no live TS.
       2. C++ unit tests        (tests/run_unit_tests.ps1)
-         26 C++ test executables (or 9 with -NoTs). Medium duration.
+         27 C++ test executables (or 10 with -NoTs). Medium duration.
       3. E2E CLI tests         (tests/run_e2e_tests.ps1)
          34 E2E CLI test cases per E2E_TEST_SPEC.md. Slowest; creates and
          deletes real warehouse entries.
@@ -50,6 +50,23 @@
          9 ShowMe-component E2E test cases (SM1-SM9). Requires live TS;
          skipped under -NoTs or -SkipShowMeE2e. Inserts and deletes real
          warehouse entries.
+     13. Unknown Link regression (tests/test_unknown_link_regression.ps1)
+        249 assertions across all 5 component types (TVS-L.1+L.4+L.5:
+        artifact invariants, mutations, semantic errors). Requires live TS;
+        skipped under -NoTs. Inserts and deletes real warehouse entries and
+        verifies the ELL/XML finalization artifacts, GUID byte match, source
+        round-trip, and cleanup. Mandatory in normal mode (no dedicated skip
+        flag).
+     14. Unknown Link stress (tests/test_unknown_link_stress.ps1)
+        REPEATED-INSTANCE lifecycle stress: 600 insert/delete cycles
+        (120 per type x 5 types), each cycle spawning a FRESH tsdev_cli.exe
+        process. Requires live TS; skipped under -NoTs or when
+        -ExtendedStress is not set. Asserts insert/delete success, ELL/XML
+        existence after insert, ELL/XML absence after delete, and no crash
+        reporter processes. Opt-in only. This is repeated-instance stress
+        and does NOT prove long-lived COM/handle/window leak absence; that
+        is the domain of tests/test_stress_batch.cpp (single-process
+        resource sampling at start/mid/end).
 
     Each sub-suite is launched in its own PowerShell child process via
     `& powershell -ExecutionPolicy Bypass -File <path> [args]` so that a
@@ -86,7 +103,9 @@
       - Skip the directory-batch E2E suite entirely (prints "SKIP: directory-batch tests require live TS").
       - Skip the serve E2E suite entirely (prints "SKIP: serve E2E tests require live TS").
       - Skip the ShowMe E2E suite entirely (prints "SKIP: showme tests require live TS").
-      - Pass -NoTs to run_unit_tests.ps1 (runs only the 9 non-TS unit tests).
+      - Skip the Unknown Link regression suite entirely (prints "SKIP: unknown-link tests require live TS").
+      - Skip the Unknown Link stress suite entirely (prints "SKIP: unknown-link stress tests require live TS").
+      - Pass -NoTs to run_unit_tests.ps1 (runs only the 10 non-TS unit tests).
       - Still run the sigtool suite (it does not need live TS, only the
         baseline DLL).
 
@@ -129,25 +148,48 @@
 .PARAMETER SkipShowMeE2e
     Switch. Skip the ShowMe E2E test suite (tests/test_showme_e2e.ps1).
 
+.PARAMETER ExtendedStress
+    Switch. Opt-in for the Unknown Link stress test suite
+    (tests/test_unknown_link_stress.ps1). When set, Suite 14 runs after Suite
+    13. By default the stress suite is skipped without affecting the overall
+    regression result. Requires live TS.
+
 .PARAMETER Verbose
     Switch. Passed through to all sub-scripts (enables full output for
     every test, not just failures).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-    Runs all 12 suites (sigtool + 26 unit tests + 34 E2E tests + 5 exists tests + 8 batch-stdin tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5 batch-upsert tests + 9 directory-batch tests + 2 serve E2E tests + 9 ShowMe tests).
+    Processes all 14 suite banners (Suite 14 skipped by default; opt-in via
+    -ExtendedStress): sigtool + 27 unit tests + 34 E2E tests + 5 exists
+    tests + 8 batch-stdin tests + 9 upsert tests + 7 get-source tests + 9
+    exists-ci tests + 5 batch-upsert tests + 9 directory-batch tests + 2
+    serve E2E tests + 9 ShowMe tests + 249 unknown-link regression
+    assertions.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
-    Runs sigtool + 9 non-TS unit tests; skips E2E, exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert, directory-batch, serve, and ShowMe E2E suites.
+    Runs sigtool + 10 non-TS unit tests; skips E2E, exists, batch-stdin,
+    upsert, get-source, exists-ci, batch-upsert, directory-batch, serve,
+    ShowMe, and unknown-link E2E suites (regression and stress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e
-    Runs sigtool + all 26 unit tests + 5 exists tests + 8 batch-stdin tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5 batch-upsert tests + 9 directory-batch tests + 9 ShowMe tests; skips E2E.
+    Runs sigtool + all 27 unit tests + 5 exists tests + 8 batch-stdin
+    tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5
+    batch-upsert tests + 9 directory-batch tests + 9 ShowMe tests +
+    249 unknown-link regression assertions; skips E2E and the stress
+    suite (opt-in: -ExtendedStress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose
-    Runs all 12 suites with full output for every test.
+    Processes all 14 suite banners with full output for every test (Suite 14
+    skipped by default; opt-in via -ExtendedStress).
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -ExtendedStress
+    Runs all 14 suites including the Unknown Link stress test (120
+    insert/delete cycles per component type, 600 total).
 
 .NOTES
     Exit codes:
@@ -159,10 +201,11 @@
         (or: cmake --build build --config Release --target test_regression)
       - TradeStation 9.5 must be installed for the E2E, exists, and
         batch-stdin, upsert, get-source, exists-ci, batch-upsert,
-        directory-batch, serve, and ShowMe E2E suites (unless -NoTs,
+        directory-batch, serve, ShowMe, and unknown-link E2E suites (unless -NoTs,
         -SkipE2e, -SkipExists, -SkipBatchStdin, -SkipUpsert,
         -SkipGetSource, -SkipExistsCi, -SkipBatchUpsert,
         -SkipDirectoryBatch, -SkipServeE2e, or -SkipShowMeE2e is used).
+        The Unknown Link stress suite additionally requires -ExtendedStress.
       - tests/fixtures/orlib20_baseline.dll must exist for the sigtool
         suite and test_orlib_resolver. If missing, the runner PROMPTS the
         user to copy it from the TradeStation installation. If the user
@@ -170,7 +213,8 @@
         FAILED; other suites still run.
       - No TradeStation processes/services should be running for the E2E,
         exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert,
-        directory-batch, serve, and ShowMe E2E suites.
+        directory-batch, serve, ShowMe, and unknown-link E2E suites (including
+        the stress suite when -ExtendedStress is used).
 #>
 
 param(
@@ -189,6 +233,7 @@ param(
     [switch]$SkipDirectoryBatch,
     [switch]$SkipServeE2e,
     [switch]$SkipShowMeE2e,
+    [switch]$ExtendedStress,
     [switch]$Verbose
 )
 
@@ -214,6 +259,8 @@ $BatchUpsertScript = Join-Path $PSScriptRoot "test_batch_upsert.ps1"
 $DirectoryBatchScript = Join-Path $PSScriptRoot "test_directory_batch.ps1"
 $ServeE2eScript = Join-Path $PSScriptRoot "run_serve_e2e.ps1"
 $ShowMeE2eScript = Join-Path $PSScriptRoot "test_showme_e2e.ps1"
+$UnknownLinkScript = Join-Path $PSScriptRoot "test_unknown_link_regression.ps1"
+$UnknownLinkStressScript = Join-Path $PSScriptRoot "test_unknown_link_stress.ps1"
 
 # Baseline DLL prerequisite path.
 $BaselineDll = Join-Path $ProjectRoot "tests\fixtures\orlib20_baseline.dll"
@@ -439,6 +486,7 @@ Write-Host "SkipBatchUpsert : $SkipBatchUpsert"
 Write-Host "SkipDirectoryBatch : $SkipDirectoryBatch"
 Write-Host "SkipServeE2e : $SkipServeE2e"
 Write-Host "SkipShowMeE2e : $SkipShowMeE2e"
+Write-Host "ExtendedStress : $ExtendedStress"
 Write-Host "Verbose      : $Verbose"
 if ($TsPath) { Write-Host "TsPath       : $TsPath" }
 
@@ -488,7 +536,7 @@ if (-not $skipE2eActual) { $suiteCount++ }
 if ($skipE2eActual) { $suiteCount++ }
 
 # exists E2E is skipped if -SkipExists is set OR -NoTs is set (exists requires
-# live TS — it inserts and deletes a real warehouse probe entry).
+# live TS -- it inserts and deletes a real warehouse probe entry).
 $skipExistsActual = $SkipExists -or $NoTs
 if (-not $skipExistsActual) { $suiteCount++ }
 
@@ -497,7 +545,7 @@ if (-not $skipExistsActual) { $suiteCount++ }
 if ($skipExistsActual) { $suiteCount++ }
 
 # batch-stdin E2E is skipped if -SkipBatchStdin is set OR -NoTs is set
-# (batch-stdin requires live TS — it inserts/deletes real warehouse entries).
+# (batch-stdin requires live TS -- it inserts/deletes real warehouse entries).
 $skipBatchStdinActual = $SkipBatchStdin -or $NoTs
 if (-not $skipBatchStdinActual) { $suiteCount++ }
 
@@ -506,7 +554,7 @@ if (-not $skipBatchStdinActual) { $suiteCount++ }
 if ($skipBatchStdinActual) { $suiteCount++ }
 
 # upsert E2E is skipped if -SkipUpsert is set OR -NoTs is set
-# (upsert requires live TS — it inserts/deletes real warehouse entries).
+# (upsert requires live TS -- it inserts/deletes real warehouse entries).
 $skipUpsertActual = $SkipUpsert -or $NoTs
 if (-not $skipUpsertActual) { $suiteCount++ }
 
@@ -515,7 +563,7 @@ if (-not $skipUpsertActual) { $suiteCount++ }
 if ($skipUpsertActual) { $suiteCount++ }
 
 # get-source E2E is skipped if -SkipGetSource is set OR -NoTs is set
-# (get-source requires live TS — it inserts/deletes real warehouse entries).
+# (get-source requires live TS -- it inserts/deletes real warehouse entries).
 $skipGetSourceActual = $SkipGetSource -or $NoTs
 if (-not $skipGetSourceActual) { $suiteCount++ }
 
@@ -524,7 +572,7 @@ if (-not $skipGetSourceActual) { $suiteCount++ }
 if ($skipGetSourceActual) { $suiteCount++ }
 
 # exists case-insensitive E2E is skipped if -SkipExistsCi is set OR -NoTs is
-# set (exists-ci requires live TS — it inserts/deletes real warehouse entries).
+# set (exists-ci requires live TS -- it inserts/deletes real warehouse entries).
 $skipExistsCiActual = $SkipExistsCi -or $NoTs
 if (-not $skipExistsCiActual) { $suiteCount++ }
 
@@ -533,7 +581,7 @@ if (-not $skipExistsCiActual) { $suiteCount++ }
 if ($skipExistsCiActual) { $suiteCount++ }
 
 # batch-upsert E2E is skipped if -SkipBatchUpsert is set OR -NoTs is set
-# (batch-upsert requires live TS — it inserts/deletes real warehouse entries).
+# (batch-upsert requires live TS -- it inserts/deletes real warehouse entries).
 $skipBatchUpsertActual = $SkipBatchUpsert -or $NoTs
 if (-not $skipBatchUpsertActual) { $suiteCount++ }
 
@@ -542,7 +590,7 @@ if (-not $skipBatchUpsertActual) { $suiteCount++ }
 if ($skipBatchUpsertActual) { $suiteCount++ }
 
 # directory-batch E2E is skipped if -SkipDirectoryBatch is set OR -NoTs is set
-# (directory-batch requires live TS — it inserts/deletes real warehouse
+# (directory-batch requires live TS -- it inserts/deletes real warehouse
 # entries).
 $skipDirectoryBatchActual = $SkipDirectoryBatch -or $NoTs
 if (-not $skipDirectoryBatchActual) { $suiteCount++ }
@@ -558,13 +606,32 @@ if (-not $skipServeE2eActual) { $suiteCount++ }
 if ($skipServeE2eActual) { $suiteCount++ }
 
 # ShowMe E2E is skipped if -SkipShowMeE2e is set OR -NoTs is set
-# (ShowMe requires live TS — it inserts/deletes real warehouse entries).
+# (ShowMe requires live TS -- it inserts/deletes real warehouse entries).
 $skipShowMeE2eActual = $SkipShowMeE2e -or $NoTs
 if (-not $skipShowMeE2eActual) { $suiteCount++ }
 
 # If ShowMe is skipped (e.g. due to -NoTs), still print a SKIP banner so the
 # user sees why. Count it in the total for banner numbering.
 if ($skipShowMeE2eActual) { $suiteCount++ }
+
+# Unknown Link regression is skipped if -NoTs is set (it requires live TS --
+# it inserts/deletes real warehouse entries across all 5 component types and
+# verifies ELL/XML finalization artifacts, mutations, and semantic errors).
+# It has NO dedicated skip flag: it is mandatory in normal mode (part of the
+# full regression suite).
+$skipUnknownLinkActual = $NoTs
+if (-not $skipUnknownLinkActual) { $suiteCount++ }
+
+# If unknown-link is skipped (e.g. due to -NoTs), still print a SKIP banner so
+# the user sees why. Count it in the total for banner numbering.
+if ($skipUnknownLinkActual) { $suiteCount++ }
+
+# Unknown Link stress is skipped if -NoTs is set OR -ExtendedStress is not set
+# (it requires live TS and is opt-in). It is always counted so banner
+# numbering is stable regardless of the opt-in flag.
+$skipUnknownLinkStressActual = $NoTs -or (-not $ExtendedStress)
+if (-not $skipUnknownLinkStressActual) { $suiteCount++ }
+if ($skipUnknownLinkStressActual) { $suiteCount++ }
 
 # ---------------------------------------------------------------------------
 # Suite 1: sigtool verify gate
@@ -795,6 +862,48 @@ else {
     if ($Verbose)  { $showMeArgs += "-Verbose" }
     Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
         -SuiteName "ShowMe E2E tests" -ScriptPath $ShowMeE2eScript -Arguments $showMeArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 13: Unknown Link regression (TVS-L.1+L.4+L.5 validation harness)
+# ---------------------------------------------------------------------------
+if ($skipUnknownLinkActual) {
+    $idx++
+    $reason = "unknown-link tests require live TS"
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "Unknown Link regression" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    $unknownLinkArgs = @()
+    if ($TsPath)   { $unknownLinkArgs += @("-TsPath", $TsPath) }
+    if ($Verbose)  { $unknownLinkArgs += "-Verbose" }
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "Unknown Link regression" -ScriptPath $UnknownLinkScript -Arguments $unknownLinkArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 14: Unknown Link REPEATED-INSTANCE lifecycle stress (opt-in, requires live TS).
+# Each cycle spawns a fresh CLI process; this does NOT prove long-lived
+# COM/handle/window leak absence (that is test_stress_batch.cpp's domain).
+# ---------------------------------------------------------------------------
+if ($skipUnknownLinkStressActual) {
+    $idx++
+    if ($NoTs) {
+        $reason = "unknown-link stress tests require live TS"
+    } else {
+        $reason = "skipped by default (opt-in: -ExtendedStress)"
+    }
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "Unknown Link stress" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    $unknownLinkStressArgs = @()
+    if ($TsPath)   { $unknownLinkStressArgs += @("-TsPath", $TsPath) }
+    if ($Verbose)  { $unknownLinkStressArgs += "-Verbose" }
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "Unknown Link stress" -ScriptPath $UnknownLinkStressScript -Arguments $unknownLinkStressArgs | Out-Null
 }
 
 # ---------------------------------------------------------------------------

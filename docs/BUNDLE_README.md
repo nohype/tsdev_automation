@@ -10,6 +10,8 @@ Library without the TSDev UI. It contains:
 
 ## Known Critical Issue — Current Status
 
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15.**
+
 **Strategies inserted/modified/upserted by `tsdev_cli.exe` / the Python wrapper
 may appear VERIFIED in TSDev but fail at runtime in TradeStation Desktop with
 "Unknown link error occurred."** A full Desktop restart does not repair a
@@ -23,8 +25,17 @@ workaround only and is not an acceptable fix for an automated tool.**
 
 This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
 The other operations (insert/modify/delete/exists/get-source/upsert/batch)
-remain functional at the CLI/library level. A fix is planned as **Workstream L**
-but is **not yet implemented**. For details, see the project repository's
+remain functional at the CLI/library level. **Workstream L** is the workstream
+addressing the root cause and the Desktop runtime-execution regression gate.
+Current status: L.1–L.3 remain COMPLETE; the L.4/L.5 completion claim was
+FALSIFIED by persistence and deletion fault injection and is superseded by the
+L.6–L.15 recovery, which is implemented on branch `workstream-L-recovery`
+(L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
+modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are
+necessary but not sufficient; the `FUN_10011230` persistence bypass is
+removed). Workstream L is not yet CLOSED. No new Desktop runtime re-gate is
+claimed without an L.17 result. Workstream M remains BLOCKED until L.17
+independent final verification. For details, see the project repository's
 `docs/workstream_unknown_link_fix_plan.md` (Workstream L plan) and
 `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` (durable root-cause record).
 

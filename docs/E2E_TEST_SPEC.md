@@ -2,37 +2,62 @@
 
 **Status:** Production-grade test specification
 **Applies to:** `tsdev_cli.exe` (the production CLI for the TSDev Library)
-**Last verified:** 2026-08-20 — core runner `tests/run_e2e_tests.ps1` PASSED 34/34 Part A-C cases, plus Workstream F tests and Workstream I directory batch tests. ShowMe is NOT executed by that runner; it is covered by the separate suite `tests/test_showme_e2e.ps1` (regression Suite 12, cases SM1-SM9). Serve mode E2E is implemented and passing as regression Suite 11 (`tests/run_serve_e2e.ps1` driving `tests/test_serve_e2e.py`, 2 pytest cases; TVS-K.6a complete).
+
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
+**Last verified:** 2026-08-23 — core runner `tests/run_e2e_tests.ps1` PASSED 34/34 Part A-C cases, plus Workstream F tests and Workstream I directory batch tests. ShowMe is covered by the separate suite `tests/test_showme_e2e.ps1` (regression Suite 12, cases SM1-SM9). Serve mode E2E is implemented and passing as regression Suite 11 (`tests/run_serve_e2e.ps1` driving `tests/test_serve_e2e.py`, 2 pytest cases; TVS-K.6a complete). TVS-L.5 added Suite 13 (249/249 assertions) and Suite 14 (600/600 stress cycles) and executed the Desktop runtime gate (Part H.10) — that historical Desktop gate result is retained as a factual observation but does not, by itself, prove Workstream L completion (see §0).
 
 ---
 
-## 0. Known Critical Runtime Defect — Scope Limitation of This Suite
+## 0. Workstream L Status — Desktop Runtime Gate (historical) — Workstream NOT YET CLOSED
 
-**This E2E suite verifies CLI/library-level behavior only** (exit codes,
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
+**This E2E suite verifies CLI/library-level behavior** (exit codes,
 ProgId preservation, `.ell` file creation/removal, compiler error text,
-warehouse cleanup). **It does NOT verify that components produced by the CLI
-are runtime-linkable in TradeStation Desktop.**
+warehouse cleanup). It also documents the Desktop runtime-execution gate in
+Part H.10, which was executed and passed for all 5 supported component types
+as a historical observation.
 
-A known critical defect exists: Strategies inserted/modified/upserted by the
-production `tsdev_cli` appear **VERIFIED in TSDev** but fail at runtime in
-TradeStation Desktop with "Unknown link error occurred." A full Desktop restart
-does not repair a broken CLI Strategy. Other supported component types use the
-common compile/finalization path and therefore belong in Workstream L's
-validation matrix, but equivalent runtime failure is not asserted without
-type-specific evidence. The user workaround (open the Strategy in TSDev, make
-a harmless edit, re-Verify) re-runs the original finalization path and is a
-workaround only — it is **not an acceptable fix** for an automated tool.
+**Workstream L is NOT YET CLOSED.** TVS-L.1–L.3 remain COMPLETE
+(RED harness, STA COM lifecycle guard, persistence-bypass removal; the
+`FUN_10011230` persistence bypass is removed). The TVS-L.4 (persistence
+validation + cleanup/rollback hardening) and TVS-L.5 (full verification
+matrix + Desktop runtime gate) completion claim was **FALSIFIED by
+independent persistence and deletion fault injection** and is **superseded
+by the L.6–L.15 recovery**, which is **implemented on branch
+`workstream-L-recovery`** (L.8 BLOCKED — no invented TSDev recovery; L.9
+detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL
+delete; existence checks are necessary but not sufficient) (see
+`docs/PM_WORKING_MEMORY.md`). The historical Desktop runtime-execution gate
+in Part H.10 observed no "Unknown link error occurred" for any CLI-inserted
+item across all 5 supported component types before and after Desktop restart
+— that factual historical result is retained below and in Part H.10.
+However, **that gate did not prove the persistence or delete fault paths**,
+and **does not establish Workstream L completion or full runtime
+acceptance**: the gate exercised successful link/runtime execution on
+freshly inserted items, not the stale-ELL modify (Fault A) or orphan-ELL
+delete (Fault B) paths whose `exit 0` / `success=true` results falsified the
+L.4/L.5 claims. **No new Desktop runtime re-gate is claimed without an L.17
+result.** Workstream M remains BLOCKED until L.17 independent final
+verification. Defect closure is therefore **not** sufficient and acceptance
+is **not** fully satisfied at production runtime.
 
-**Passing the existing CLI/library tests in this specification (Parts A–G)
-does NOT establish runtime linkability.** Those tests confirm the CLI and
-Python wrapper behave correctly at the library/warehouse level; they do not
-exercise the TradeStation Desktop runtime linker, which is where this defect
-manifests. A PASS verdict must be read as "CLI/library behavior is correct" —
-not as "components are runtime-linkable in Desktop."
+The Desktop runtime-execution gate is a user-supervised procedure on the
+`+TP:GC_1M_010115_081426_CLEAN*` chart; the procedure and historical results
+are documented in Part H.10. The CLI/library tests in this specification
+(Parts A–G) confirm correct CLI/library behavior and are a necessary
+precondition for the Desktop gate; they are not, by themselves, a sufficient
+runtime acceptance verdict, and the Desktop gate in H.10 is likewise not
+sufficient on its own — it did not exercise the persistence/delete fault
+paths.
 
-### 0.1 Implemented tests vs. the missing Desktop runtime-execution test
+### 0.1 Implemented tests vs. the Desktop runtime-execution gate
 
-The currently implemented and passing suites are CLI/library-level only:
+The currently implemented and passing suites include the CLI/library-level
+regression suites plus the opt-in stress suite. The Desktop runtime-execution
+gate has been executed and passed; see Part H.10.
+
 - `tests/run_e2e_tests.ps1` (Parts A–C, 34 cases) — exit codes, ProgId
   preservation, `.ell` create/remove, compiler error text, cleanup.
 - `tests/test_showme_e2e.ps1` (Suite 12, SM1–SM9) — ShowMe lifecycle.
@@ -40,20 +65,42 @@ The currently implemented and passing suites are CLI/library-level only:
   broker lifecycle and compile-failure recovery.
 - Workstream F / I suites (exists, get-source, upsert, batch, directory
   batch) — CLI/library behavior.
+- `tests/test_unknown_link_regression.ps1` (Suite 13) — artifact invariants,
+  persistence/rollback, and semantic errors across all 5 component types
+  (249/249 assertions: 40 L1 + 195 L4 + 14 L5.SEM; Part H).
+- `tests/test_unknown_link_stress.ps1` (Suite 14, opt-in via
+  `-ExtendedStress` in `tests/run_regression.ps1`) — 600 insert/delete cycles
+  (600/600 PASSED; 120 cycles × 5 types).
 
-**No Desktop runtime-execution test exists in the current suite.** Such a
-test — compile via CLI, then load and execute the component in TradeStation
-Desktop and assert a successful runtime link — is required to gate the
-runtime-linkability property. It is part of the future Workstream L
-requirement below, not a test that exists today.
+**The Desktop runtime-execution test was executed and passed (historical,
+TVS-L.5).** It compiles components via the CLI, loads them in TradeStation
+Desktop on the `+TP:GC_1M_010115_081426_CLEAN*` chart, and asserts a
+successful runtime link. This historical result is retained as evidence of
+runtime linkability for freshly inserted items; it is **not** a sufficient
+final gate for Workstream L completion or full runtime acceptance, because it
+did not exercise the persistence (stale-ELL modify) or delete (orphan-ELL
+delete) fault paths whose `exit 0` / `success=true` results falsified the
+L.4/L.5 completion claim (see `docs/PM_WORKING_MEMORY.md`). The procedure and
+results are documented in Part H.10.
 
-### 0.2 Workstream L (planned — not implemented)
+### 0.2 Workstream L (NOT YET CLOSED)
 
-**Workstream L** is a future, planned workstream to fix the runtime-link
-root cause and add the missing Desktop runtime-execution regression test. It
-is **not yet started**; no production implementation has been made, and no
-Desktop runtime-execution test exists today. This is a requirement for a
-future TVS — not a claim that such a test currently exists.
+**Workstream L** is the workstream that addressed the unknown-link runtime
+defect and added the Desktop runtime-execution regression gate. TVS-L.1
+(artifact invariants), L.2 (STA COM lifecycle guard), and L.3 (remove
+persistence bypass; the `FUN_10011230` persistence bypass is removed) are
+**COMPLETE**. TVS-L.4 (persistence validation + cleanup/rollback hardening)
+and L.5 (full verification matrix + Desktop runtime gate) were previously
+claimed COMPLETE but that completion claim was **FALSIFIED by persistence
+and deletion fault injection** and is **superseded by the L.6–L.15 recovery**,
+which is **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no
+invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12
+detect-and-report orphan-ELL delete; existence checks are necessary but not
+sufficient) (see `docs/PM_WORKING_MEMORY.md`). The historical Desktop gate
+result (Part H.10) is retained as a factual observation; it did not prove the
+persistence/delete fault paths or Workstream L completion. **No new Desktop
+runtime re-gate is claimed without an L.17 result.** Workstream M remains
+BLOCKED until L.17 independent final verification.
 
 - Workstream L plan: [`workstream_unknown_link_fix_plan.md`](workstream_unknown_link_fix_plan.md)
 - Durable root-cause record: [`RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
@@ -85,7 +132,15 @@ This document is the **definitive end-to-end (E2E) CLI test specification** for 
 - Performance or stress testing
 - **Serve mode E2E** — implemented and passing as regression Suite 11; the detailed operator procedure is documented in Part F below (TVS-K.6b)
 - **Crash handling E2E** — VEH crash handler + TsDevCrashError (see Part G below for the planned test procedure)
-- **Desktop runtime-execution / runtime-linkability** — NOT covered. The known critical runtime defect and the missing Desktop runtime-execution test are documented in §0 above (Workstream L, planned). Passing this suite does not establish runtime linkability.
+- **Desktop runtime-execution / runtime-linkability** — executed as the
+  Desktop runtime gate in Part H.10 (TVS-L.5), not by the standard automated
+  CLI runners in Parts A–G. The gate passed for all 5 supported component types
+  on the `+TP:GC_1M_010115_081426_CLEAN*` chart (historical result, retained).
+  That gate did not exercise the persistence (stale-ELL modify) or delete
+  (orphan-ELL delete) fault paths and does not, by itself, prove Workstream L
+  completion or full runtime acceptance; Workstream L is NOT YET CLOSED (see
+  `docs/PM_WORKING_MEMORY.md`). No new Desktop runtime re-gate is claimed
+  without an L.17 result.
 
 ---
 
@@ -813,6 +868,409 @@ elevated.
 ### G.3: E2E crash verification (recommended when running Suite 11)
 
 When running serve mode E2E (Part F / regression Suite 11), verify that if the broker process crashes (e.g., due to an orlib20 access violation), the Python client receives a `TsDevCrashError` with the correct `exit_code` attribute, and no TSCrashReport.exe dialog appears (the VEH prevents it). This is a recommended additional check whenever the serve E2E suite is run.
+
+---
+
+## Part H: Unknown Link Validation Harness (TVS-L.1–L.5)
+
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
+**Status:** TVS-L.1, TVS-L.2, and TVS-L.3 are **COMPLETE** (RED harness, STA
+COM lifecycle guard, and removal of the `FUN_10011230` persistence bypass).
+The harness is registered as **regression Suite 13** in
+`tests/run_regression.ps1` and is mandatory (skipped only under `-NoTs`). It
+covers **all 5 supported component types** with artifact invariants,
+mutation/rollback cases, and semantic-error cases. The opt-in stress test is
+**regression Suite 14** (see [H.9](#h9-opt-in-extended-stress-test)).
+
+**TVS-L.4 (persistence validation + cleanup/rollback hardening) and TVS-L.5
+(full verification matrix + Desktop runtime gate) are FALSIFIED, not
+complete.** Their prior completion claim was **FALSIFIED by independent
+persistence and deletion fault injection** (Fault A: stale-ELL modify;
+Fault B: orphan-ELL delete; both returned `exit 0` / `success=true`) and is
+**superseded by the L.6–L.15 recovery**, which is **implemented on branch
+`workstream-L-recovery`** (L.8 BLOCKED — no invented TSDev recovery; L.9
+detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL
+delete; existence checks are necessary but not sufficient) (see
+`docs/PM_WORKING_MEMORY.md`). **No new Desktop runtime re-gate is claimed
+without an L.17 result.** Workstream M remains BLOCKED until L.17
+independent final verification. The historical harness/gate facts below are
+retained: Suite 13 still reports 249 assertions
+(40 L1 + 195 L4 + 14 L5.SEM) and Suite 14 ran 600/600 stress cycles, and the
+Desktop runtime gate in [H.10](#h10-desktop-runtime-acceptance-tvs-l5) was
+executed and passed for all 5 types as a historical observation — but that
+gate did not exercise the persistence (stale-ELL modify) or delete
+(orphan-ELL delete) fault paths and does not, by itself, establish L.4/L.5
+completion or full runtime acceptance. Recovery is tracked under the
+reopened Workstream L (L.6 → L.7 → L.9 → L.12 per the handoff plan).
+
+### H.1: Purpose and the XML-vs-runtime distinction
+
+`tests/test_unknown_link_regression.ps1` is a focused desired-state E2E harness
+that proves the production CLI completes the original finalization path and
+produces consistent artifacts, while explicitly distinguishing two different
+kinds of evidence. The L.1 baseline uses a Strategy smoke case; the full
+per-type matrix is documented in [H.8](#h8-tvs-l5-expansion-to-all-5-component-types):
+
+- **XML evidence (a completion marker):** presence of
+  `elmodule_<whType>_<ProgId>.xml` with the expected
+  `<symbols file="elmodule_<whType>_<ProgId>" version="{GUID}">` header proves
+  the original finalization path (`SymWriter::Save`) ran. The XML is a debugger
+  source-map artifact, not a runtime artifact.
+- **Runtime linkability:** what TradeStation Desktop actually links at
+  runtime. This harness does NOT assert runtime linkability and does NOT
+  substitute a fake runtime proxy. The Desktop runtime-execution acceptance
+  gate is being implemented in Part H.10; the durable root-cause record is in
+  `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`.
+
+**Passing the XML/GUID assertions in this harness proves the original
+finalization path ran; it does NOT prove Desktop linkability.** A PASS verdict
+from this harness must be read as "the artifact-completion path ran" — not as
+"the component is runtime-linkable in Desktop."
+
+### H.2: How to run the harness
+
+The harness runs against the production CLI and requires an elevated
+(administrator) session (the CLI has a `requireAdministrator` manifest).
+
+It is now part of the standard regression suite:
+
+```powershell
+# Run Suite 13 through the master regression runner:
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
+
+# Or run the harness directly:
+powershell -ExecutionPolicy Bypass -File tests\test_unknown_link_regression.ps1
+
+# Optional overrides:
+powershell -ExecutionPolicy Bypass -File tests\test_unknown_link_regression.ps1 `
+    -CliPath "build\Release\tsdev_cli.exe" `
+    -TsPath  "C:\Program Files (x86)\TradeStation 9.5" `
+    -Verbose
+```
+
+Parameters:
+- `-CliPath` — path to `tsdev_cli.exe` (default:
+  `$PSScriptRoot\..\build\Release\tsdev_cli.exe`).
+- `-TsPath` — TradeStation install directory, passed through to the CLI as
+  `--ts-path <dir>` and used to derive the `MyWork\Bin` artifact directory.
+- `-BinPath` — explicit override for the `MyWork\Bin` directory used for
+  `.ell`/`.xml` artifact checks (use only if `-TsPath` is insufficient).
+- `-Verbose` — print full CLI output for every step.
+
+Exit codes returned by the harness:
+- `0` — all desired-state assertions passed (GREEN).
+- `1` — one or more desired-state assertions failed.
+- `2` — environment/prerequisite error (not elevated, CLI missing, etc.).
+
+### H.3: Test flow and desired-state assertions
+
+1. Generate a unique Strategy name `TS_AUTO_L1_RED_<timestamp>`.
+2. Insert a minimal valid Strategy through the production CLI with `--json`;
+   parse the `prog_id` from the JSON output.
+3. Desired-state assertions after the CLI reports success (all expected to
+   pass on post-L.3 code):
+   - **L1.2a — ELL exists and is fresh:** `elmodule_0_<ProgId>.ell` exists in
+     `MyWork\Bin` and its modification time is at or after the insert
+     operation start.
+   - **L1.2b — XML exists and is fresh:** `elmodule_0_<ProgId>.xml` exists in
+     `MyWork\Bin` and is fresh; this proves `SymWriter::Save` ran.
+   - **L1.2c — XML header parses:** the XML contains a
+     `<symbols file="elmodule_0_<ProgId>" version="{GUID}">` opening tag and
+     the GUID string is extracted.
+   - **L1.2d — GUID byte match (complete ELL search):** the GUID string is
+     converted to its 16 Windows mixed-endian layout bytes
+     (Data1 little-endian DWORD, Data2 little-endian WORD, Data3
+     little-endian WORD, Data4 big-endian as-is) and the COMPLETE ELL binary
+     is searched for those 16 bytes. They must occur exactly once. The
+     harness does NOT use a "last 16 bytes" assumption; the authoritative
+     byte-layout analysis is `tmp/com_nopatch_guid_analysis.json`.
+   - **L1.2e — Source round-trips:** `tsdev_cli get-source strategy <name>
+     --json` returns source matching the inserted source unchanged.
+4. Cleanup (MANDATORY, `try/finally`): delete the warehouse entry via
+   `tsdev_cli delete strategy <name>`; verify via `exists` that the entry is
+   gone; verify both `.ell` and `.xml` artifacts are absent afterward. Cleanup
+   runs even after an assertion failure and its status is reported in the
+   summary.
+
+### H.4: Why this harness IS part of the always-green regression runner
+
+`tests/run_regression.ps1` is the always-green master regression runner. The
+TVS-L.1 harness was intentionally RED on pre-L.3 production code (the XML/GUID
+assertions failed because the persistence bypass skipped `SymWriter::Save`).
+That bypass was removed in TVS-L.3, the original finalization path was
+restored, and the harness turned GREEN. It is now **regression Suite 13** in
+`tests/run_regression.ps1` and runs by default; it is skipped only when
+`-NoTs` is set.
+
+### H.5: Historical RED result on pre-L.3 code
+
+Before TVS-L.3, the harness was expected to:
+- PASS L1.1 (insert succeeds, `prog_id` assigned).
+- PASS L1.2a (ELL exists and is fresh; the bypass still wrote the ELL).
+- **FAIL L1.2b** (XML absent; the bypass skipped `SymWriter::Save`).
+- **FAIL L1.2c** (cannot parse the absent XML).
+- **FAIL L1.2d** (no GUID to match against).
+- PASS L1.2e (source round-trips; `getSource` reads the warehouse, not the
+  XML).
+- Exit nonzero (RED baseline).
+
+The exact nonzero run against the pre-L.3 production binary is the recorded
+RED baseline for Workstream L. If the harness unexpectedly passed on pre-L.3
+code, the plan's decision gate required stopping and re-examining the causal
+boundary before proceeding (see `docs/workstream_unknown_link_fix_plan.md`).
+
+### H.6: L.3 turned this GREEN and registered it
+
+After TVS-L.2 (STA COM) and TVS-L.3 (remove the bypass, restore the original
+finalization path), the production CLI runs `SymWriter::Save`, the XML is
+written with the expected `<symbols ... version="{GUID}">` header, and the
+GUID's 16 Windows mixed-endian bytes occur exactly once in the complete ELL.
+The harness now exits 0 (GREEN) and is registered in `tests/run_regression.ps1`
+as **regression Suite 13**.
+
+### H.7: L.4 persistence-validation and rollback-hardening cases (TVS-L.4)
+
+TVS-L.4 extended `tests/test_unknown_link_regression.ps1` with the L4.1–L4.5
+persistence/rollback scenarios (39 new assertions) on top of the L.1
+artifact-completion baseline. These L4 scenarios are now run for every
+component type as part of the full L.5 matrix documented in
+[H.8](#h8-tvs-l5-expansion-to-all-5-component-types).
+These cases validate the persistence and partial-artifact cleanup/rollback
+guarantees around insert/modify/upsert, on top of the L1.* artifact-completion
+assertions. They run as part of the same harness and share its helper functions
+(`Get-ProgIdFromJson`, `Get-ExistsFromJson`, `Get-SourceFromJson`,
+`Extract-XmlGuid`, `Test-GuidBytesInEll`, `Invoke-CleanupForName`,
+`Remove-PreExistingArtifacts`, `Get-ValidStrategySource`,
+`Get-InvalidPlotStrategySource`).
+
+| Test ID | Scenario | Key assertions |
+|---------|----------|-----------------|
+| **L4.1** (Strategy sub-IDs: `L4.1a`, `L4.1b`, `L4.1c`, `L4.1d`, `L4.1e`, `L4.1.CLEANUP`) | Failed insert (compile error) | No `.ell`, no `.xml`, no warehouse entry left behind (no orphan artifacts; TD-001 cleanup verified) |
+| **L4.2** (Strategy sub-IDs: `L4.2a`, `L4.2b`, `L4.2c`, `L4.2d`, `L4.2e`, `L4.2f`, `L4.2g`, `L4.2h`, `L4.2i`, `L4.2.CLEANUP`) | Failed modify (compile error) | Old `.ell`/`.xml` intact (SHA-256 unchanged from pre-modify baseline); warehouse entry still exists (rollback verified) |
+| **L4.3** (Strategy sub-IDs: `L4.3a`–`L4.3g`, `L4.3.CLEANUP`) | Successful modify | Both `.ell` and `.xml` exist and are fresh; XML GUID matches the GUID bytes embedded in the ELL; source round-trips via `get-source` |
+| **L4.4** (Strategy sub-IDs: `L4.4a`–`L4.4f`, `L4.4.CLEANUP`) | Successful upsert-new | Both `.ell` and `.xml` exist; XML GUID matches the ELL-embedded GUID; source round-trips via `get-source` |
+| **L4.5** (Strategy sub-IDs: `L4.5a`–`L4.5g`, `L4.5.CLEANUP`) | Successful upsert-existing | Both `.ell` and `.xml` exist and are fresh; XML GUID matches the ELL-embedded GUID; source round-trips via `get-source` |
+
+**Exact Strategy sub-ID meanings (from `tests/test_unknown_link_regression.ps1`):**
+- **L4.1** — `L4.1a` (pre-existence: entry absent before failed insert), `L4.1b` (insert FAILED with compile error, exit 8), `L4.1c` (no `.ell` after failed insert), `L4.1d` (no `.xml` after failed insert), `L4.1e` (warehouse entry absent after failed insert), `L4.1.CLEANUP` (cleanup removed entry + artifacts).
+- **L4.2** — `L4.2a` (pre-existence: entry absent before L4.2 insert), `L4.2b` (insert valid strategy succeeded, exit 0, prog_id>0), `L4.2c` (pre-modify artifacts exist for hashing), `L4.2d` (modify FAILED with compile error, exit 8), `L4.2e` (`.ell` still exists after failed modify), `L4.2f` (`.xml` still exists after failed modify), `L4.2g` (`.ell` SHA-256 unchanged after failed modify), `L4.2h` (`.xml` SHA-256 unchanged after failed modify), `L4.2i` (warehouse entry still exists after failed modify), `L4.2.CLEANUP` (cleanup removed entry + artifacts).
+
+**Why L4.2 holds without an explicit backup/restore:** Ghidra analysis of the
+`_VerifyModule_New` finalization path (`docs/RE/RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md`)
+shows that `.ell` is structurally guaranteed to be unchanged on ANY modify
+failure — `MDVault::SaveModule` (which writes the `.ell`) is skipped when
+`FUN_10011230` returns false. Only `.xml` (debugger/source-map data) can be
+rewritten on a post-compile finalization failure. The L4.2 assertions
+(SHA-256 of the old `.ell` unchanged) confirm this guarantee at runtime.
+
+**Production-code hardening verified by these cases:**
+- `doInsert` now checks `.xml` existence after the existing `.ell` check
+  (exit 9 / `artifact_missing` if either is absent).
+- `doModify` now checks both `.ell` and `.xml` existence after `modifyEntry`
+  success (exit 9 / `artifact_missing` if either is absent).
+- The TD-001 cleanup path in `verifyModule` and the `deleteEntry`/`closeWarehouse`
+  paths log failures to stderr instead of swallowing them in empty catches.
+
+### H.8: TVS-L.5 expansion to all 5 component types
+
+TVS-L.5 expands the Unknown Link regression harness from the L.1/L.4 Strategy
+baseline to a full matrix across all 5 supported component types: **Strategy,
+Indicator, Function, TradingApp, and ShowMe**. The total assertion count is
+approximately **249**.
+
+#### H.8.1: L1 artifact invariants (per type)
+
+For each component type, the harness asserts the same desired-state
+artifact-completion properties established by L.1:
+
+- **L1.1 — insert succeeds:** the CLI returns exit 0 and assigns a `prog_id`.
+- **L1.2a — ELL exists and is fresh:** `elmodule_<whType>_<ProgId>.ell`
+  exists in `MyWork\Bin` and its modification time is at or after the insert
+  operation start.
+- **L1.2b — XML exists and is fresh:** `elmodule_<whType>_<ProgId>.xml` exists
+  in `MyWork\Bin` and is fresh, proving `SymWriter::Save` ran.
+- **L1.2c — XML header parses:** the XML contains a
+  `<symbols file="elmodule_<whType>_<ProgId>" version="{GUID}">` opening tag
+  and the GUID string is extracted.
+- **L1.2d — GUID byte match (complete ELL search):** the GUID string is
+  converted to its 16 Windows mixed-endian layout bytes and the complete ELL
+  binary is searched for those 16 bytes. They must occur exactly once.
+- **L1.2e — Source round-trips:** `tsdev_cli get-source <type> <name> --json`
+  returns source matching the inserted source unchanged.
+- **L1.0_PREEXIST — pre-existing cleanup:** any prior test artifacts for the
+  generated name are removed before the run.
+- **L1.CLEANUP — mandatory cleanup:** `delete`, `exists`, and artifact
+  absence checks run in a `try/finally` even after an assertion failure.
+
+The test IDs use a per-type prefix for the four non-Strategy extensions:
+**L1.IND**, **L1.FUNC**, **L1.TA**, **L1.SHOWME**. The original Strategy
+baseline cases (from TVS-L.1) use unprefixed IDs (`L1.1`, `L1.0_PREEXIST`,
+`L1.2a` ... `L1.2e`, `L1.CLEANUP`). The four non-Strategy extensions use the
+prefixed convention with `.1`, `.0_PREEXIST`, `.2a`, `.2b`, `.2c`, `.2d`,
+`.2e`, and `.CLEANUP` sub-cases (e.g., `L1.IND.1`, `L1.IND.2a`,
+`L1.IND.CLEANUP`).
+
+#### H.8.2: L4 mutation cases (per type)
+
+For each of the 5 component types, the L4 scenarios from H.7 are executed:
+
+| Test ID (per type) | Scenario | Key assertions |
+|--------------------|----------|----------------|
+| **L4.1** | Failed insert (compile error) | No `.ell`, no `.xml`, no warehouse entry left behind |
+| **L4.2** | Failed modify (compile error) | Old `.ell`/`.xml` intact; warehouse entry still exists |
+| **L4.3** | Successful modify | `.ell` and `.xml` exist and fresh; XML GUID matches ELL bytes; source round-trips |
+| **L4.4** | Successful upsert-new | `.ell` and `.xml` exist; XML GUID matches ELL bytes; source round-trips |
+| **L4.5** | Successful upsert-existing | `.ell` and `.xml` exist and fresh; XML GUID matches ELL bytes; source round-trips |
+
+The test IDs use a per-type prefix for the four non-Strategy extensions:
+**L4.IND**, **L4.FUNC**, **L4.TA**, **L4.SHOWME**. The original Strategy
+baseline cases (from TVS-L.4) use unprefixed IDs: `L4.1a`–`L4.1e` +
+`L4.1.CLEANUP`, `L4.2a`–`L4.2i` + `L4.2.CLEANUP`, `L4.3a`–`L4.3g` +
+`L4.3.CLEANUP`, `L4.4a`–`L4.4f` + `L4.4.CLEANUP`, `L4.5a`–`L4.5g` +
+`L4.5.CLEANUP` (exact sub-IDs verified in `tests/test_unknown_link_regression.ps1`).
+The four non-Strategy extensions use the same sub-letter scheme under the
+prefixed convention, with `Run-L4ForType` passing `IdBase = "<prefix>1"` ..
+`"<prefix>5"` to the shared `Run-L4-1` .. `Run-L4-5` helpers (e.g.,
+`L4.IND.1a`, `L4.IND.1b`, `L4.IND.1c`, `L4.IND.1d`, `L4.IND.1e`,
+`L4.IND.1.CLEANUP`, `L4.IND.2a`–`L4.IND.2i`, `L4.IND.2.CLEANUP`, …;
+likewise for `L4.FUNC.*`, `L4.TA.*`, `L4.SHOWME.*`).
+
+#### H.8.3: L5 type-specific semantic error cases
+
+TVS-L.5 adds 7 semantic-error cases that exercise constructs which are valid in
+one component type but rejected by the compiler in another. Each case is
+expected to produce CLI exit code 8 and to leave no orphan `.ell`/`.xml` or
+warehouse entry.
+
+| Test ID | Type | Invalid source | Expected exit code | Expected error substring |
+|---|---|---|---|---|
+| **L5.SEM.STRAT_PLOT** | Strategy | `Plot` statement | 8 | `This word not allowed in a Strategy.` |
+| **L5.SEM.IND_BUY** | Indicator | `Buy`/`Sell` order | 8 | `This word not allowed in a study.` |
+| **L5.SEM.FUNC_PLOT** | Function | `Plot` statement | 8 | `This word not allowed in a function.` |
+| **L5.SEM.FUNC_BUY** | Function | `Buy`/`Sell` order | 8 | `This word not allowed in a function.` |
+| **L5.SEM.TA_BUY** | TradingApp | `Buy`/`Sell` order | 8 | `This word not allowed in a study.` |
+| **L5.SEM.TA_PLOT** | TradingApp | `Plot` statement | 8 | `This word only allowed in an Indicator, ShowMe or PaintBar study.` |
+| **L5.SEM.SHOWME_BUY** | ShowMe | `Buy`/`Sell` order | 8 | `This word not allowed in a study.` |
+
+### H.9: Opt-in extended stress test
+
+**File:** `tests/test_unknown_link_stress.ps1`
+
+This is an opt-in, long-duration stress suite registered as **regression
+Suite 14** in `tests/run_regression.ps1`. It runs only when the
+`-ExtendedStress` switch is set; by default it is skipped without failing the
+overall regression.
+
+#### H.9.1: What it exercises
+
+The stress suite performs **600 insert/delete cycles** (120 per component type
+× 5 component types) against a live TradeStation warehouse. Each cycle:
+
+1. Generates a unique name.
+2. Inserts the component through `tsdev_cli`.
+3. Verifies the `.ell` and `.xml` artifacts exist.
+4. Deletes the component.
+5. Verifies the `.ell` and `.xml` artifacts are gone.
+6. Verifies no TradeStation crash-reporter processes (`TSCrashReport.exe` or
+   similar) are running.
+
+#### H.9.2: How to run it
+
+```powershell
+# As part of the full regression suite:
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -ExtendedStress
+
+# Directly:
+powershell -ExecutionPolicy Bypass -File tests\test_unknown_link_stress.ps1
+```
+
+#### H.9.3: Required cadence
+
+Run the stress suite **once at the end of every TVS development cycle** as a
+long-horizon gate. It is not part of the default quick regression because it
+takes significantly longer than the standard 14 suites.
+
+#### H.9.4: Key assertions
+
+- Insert succeeds (exit 0, `prog_id` assigned).
+- `elmodule_<whType>_<ProgId>.ell` and `.xml` exist immediately after insert.
+- Delete succeeds (exit 0).
+- The `.ell` and `.xml` artifacts are absent immediately after delete.
+- No TradeStation crash reporter processes are observed during or after the run.
+
+### H.10: Desktop runtime acceptance (TVS-L.5)
+
+> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+
+The final unknown-link acceptance gate is a **Desktop runtime-execution test**:
+compile a component with `tsdev_cli`, apply it to a specific TradeStation
+Desktop chart, and assert that the component links and runs without an
+"Unknown link error occurred" failure.
+
+This procedure is performed on a live chart and is **not** a pure CLI/library
+test. The CLI-inserted components are loaded through the standard TradeStation
+Desktop Insert Study dialog onto the `+TP:GC_1M_010115_081426_CLEAN*` chart.
+The Events Log is observed for each component; any "Unknown link error occurred"
+entry is a failure. The gate was executed and passed in TVS-L.5.
+
+#### H.10.1: Procedure
+
+1. Build or reuse the existing Win32 Release `tsdev_cli.exe`.
+2. Use `tsdev_cli insert <type> <name> <source_file>` to insert a test
+   component for each of the 5 supported types.
+3. In TradeStation Desktop, open the `+TP:GC_1M_010115_081426_CLEAN*` chart.
+4. For each inserted component, open the chart's Insert Study dialog, select the
+   CLI-inserted item, and apply it to the chart.
+5. Observe the Events Log for errors.
+6. For Strategies, use `Inputs: int x(0);` and an `if x > 0 then Buy` condition
+   so the strategy *calculates* but does not place live market orders.
+7. Restart TradeStation Desktop and verify that all inserted items remain on the
+   chart without error.
+
+#### H.10.2: Automated vs. manual observation
+
+- **Automated checks (via CLI, no Desktop interaction):**
+  - `tests/test_unknown_link_regression.ps1` (Suite 13): 249/249 assertions.
+  - `tests/test_unknown_link_stress.ps1` (Suite 14): 600/600 insert/delete
+    cycles.
+
+- **Manual checks (user-supervised, on the `+TP:GC_1M_010115_081426_CLEAN*`
+  chart only):**
+  - **Strategy (`x=0`, no orders):** No Events Log error, no trades generated —
+    PASS. The gate observed successful strategy *calculation* (`if x > 0 then
+    Buy` condition evaluated), not order placement.
+  - **Function caller strategy (calls `TS_AUTO_L5_RT_FUNC`, no orders):** No
+    Events Log error — PASS. Function linked and executed.
+  - **Indicator (`Plot1(x, "MyPlot")`):** No Events Log error, plots a
+    horizontal straight line — PASS.
+  - **ShowMe (`Plot1(High, "Up bar")` on `Close > Open`):** No Events Log
+    error, plots high markers on up-bars — PASS.
+  - **TradingApp (using `elsystem`):** No Events Log error (black window, no UI
+    — expected for minimal fixture) — PASS.
+  - **After Desktop restart:** All items still on chart, no errors — PASS.
+
+#### H.10.3: Key finding (historical)
+
+No "Unknown link error occurred" was observed for any CLI-inserted item, before
+or after Desktop restart. This historical observation is retained. It is
+**not** a sufficient defect-closure statement: the gate did not exercise the
+persistence (stale-ELL modify) or delete (orphan-ELL delete) fault paths whose
+`exit 0` / `success=true` results later falsified the L.4/L.5 completion claim
+(see `docs/PM_WORKING_MEMORY.md`). Workstream L is NOT YET CLOSED; the
+unknown-link defect closure is superseded by the L.6–L.15 recovery (implemented
+on branch `workstream-L-recovery`), not complete. **No new Desktop runtime
+re-gate is claimed without an L.17 result.** Workstream M remains BLOCKED
+until L.17 independent final verification.
+
+#### H.10.4: Safety note
+
+The Desktop runtime gate was manually supervised by the user. Earlier in the
+session, an automated computer-use attempt violated safety by (a) pressing keys
+(F5) inside the live trading application, which can trigger order execution, and
+(b) creating a strategy with `x=1` that would generate live market orders. Both
+were corrected. The final gate was conducted manually with `x=0` (no orders)
+strategies only.
 
 ---
 

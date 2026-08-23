@@ -18,9 +18,27 @@
 #include <memory>
 #include <windows.h>
 
+#include "create_path_cleanup.h"  // CreatePathFailureStage (TVS-L.10 verifyModule out-param)
+
+class ComApartmentGuard;   // forward declaration (global namespace, matches com_apartment_guard.h)
+
+// TVS-L.13 test-only construction seam (GREEN — implemented).
+//
+// TsDevLibTestConfig is an OPAQUE, forward-declared struct from the point of
+// view of this PUBLIC header. Its definition lives ONLY in the internal/test-
+// only header src/tsdev_lib_test_hooks.h, which is NOT included here and is
+// NOT part of the public user API. The definition carries the injected COM
+// API (ComApi) and a flag that simulates a later-constructor exception
+// immediately after a successful COM init — but NONE of those COM details
+// appear in this public header, so no COM configuration (ComApi,
+// CoInitializeEx function-pointer types, <objbase.h>) leaks into the public
+// user API. Users see only an opaque struct name and a PRIVATE constructor
+// they cannot call.
+struct TsDevLibTestConfig;  // defined in src/tsdev_lib_test_hooks.h (test-only)
+
 namespace tsdev {
 
-class OrlibResolver;  // forward declaration (defined in orlib_resolver.h)
+class OrlibResolver;       // forward declaration (defined in orlib_resolver.h)
 
 // Confirmed warehouse types (see orlib_param_orders.md §1 and
 // tradingapp_whtype.md). The enum value is the EXPANDED whType
@@ -65,12 +83,29 @@ struct EnumerateResult {
 // RAII wrapper for an orlib20 session.
 //
 // Constructor:  loads orlib20.dll, pre-loads support DLLs, applies the
-//               FUN_10011230 persistence patch, resolves exports, calls
+//               thread-check INT3 patches, resolves exports, calls
 //               OrlibInit(NULL, 1), creates a hidden EDIT control.
 //               Throws std::runtime_error on fatal failure.
 // Destructor:   calls OrlibExit(), destroys the EDIT control.
 //
 // Not copyable, not movable (owns DLL handles and live window objects).
+//
+// Same-thread contract (HARD, TVS-L.2):
+//   TsDevLib must be constructed, used, and destroyed on a single thread.
+//   The COM guard (m_comGuard) initializes STA COM on the owning thread via
+//   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) as the very first
+//   effective action of the constructor — BEFORE any SetDllDirectoryW,
+//   LoadLibraryW, OrlibResolver construction, support-DLL load, patch
+//   application, or OrlibInit — and balances it with CoUninitialize as the
+//   last effective action of the destructor — AFTER OrlibExit, hidden-window
+//   destruction, and patch restoration. CoInitializeEx / CoUninitialize are
+//   thread-affine: balancing COM on a different thread from the one that
+//   entered the apartment is undefined behavior. The owning TsDevLib is
+//   non-movable and lives on a single 64 MiB worker thread; the guard shares
+//   that lifetime. If COM initialization fails (any HRESULT other than S_OK
+//   or S_FALSE, including RPC_E_CHANGED_MODE), the constructor throws with
+//   the HRESULT in the message and performs NO orlib loading, NO window
+//   creation, NO entry creation, and NO ELL/XML mutation.
 class TsDevLib {
 public:
     explicit TsDevLib(const wchar_t* tsPathOverride = nullptr);
@@ -80,6 +115,44 @@ public:
     TsDevLib& operator=(const TsDevLib&) = delete;
     TsDevLib(TsDevLib&&)                 = delete;
     TsDevLib& operator=(TsDevLib&&)      = delete;
+
+    // --- TVS-L.13 test-only construction seam (GREEN — implemented) ---
+    // PRIVATE constructor + friend factory. This is NOT part of the public
+    // user API: it is private, and the only caller intended is the test-only
+    // free function tsdev::makeTsDevLibForTest(...) declared in the INTERNAL
+    // header src/tsdev_lib_test_hooks.h (NOT a public header). The parameter
+    // type TsDevLibTestConfig is forward-declared above and defined in the
+    // internal header, so this declaration does NOT pull ComApi / COM headers
+    // into the public API.
+    //
+    // Contract (IMPLEMENTED in src/tsdev_lib.cpp; enforced by
+    // tests/test_tsdev_com_init_seam.cpp):
+    //   - Constructs the COM apartment guard with the injected ComApi
+    //     (config.comApi) instead of the default real CoInitializeEx.
+    //   - If the injected CoInitializeEx returns anything other than S_OK /
+    //     S_FALSE (e.g. RPC_E_CHANGED_MODE, E_FAIL), throws std::runtime_error
+    //     with the HRESULT in the message and performs NO SetDllDirectoryW,
+    //     NO orlib20 load, NO patch application, NO OrlibInit, and NO warehouse
+    //     access — COM failure is a hard stop before every later step.
+    //   - If config.throwAfterCom is true AND COM init succeeded, throws
+    //     std::runtime_error immediately after the COM guard is constructed
+    //     (simulating a later-constructor exception). The COM guard's
+    //     destructor runs during stack unwinding and balances COM exactly
+    //     once (calls the injected CoUninitialize once). No orlib20 / patch /
+    //     warehouse side effect runs.
+    //   - Otherwise (COM success, throwAfterCom == false) proceeds with the
+    //     normal constructor body (SetDllDirectoryW, OrlibResolver, support
+    //     DLLs, patches, OrlibInit, hidden EDIT control) — identical to the
+    //     public constructor above.
+    explicit TsDevLib(const wchar_t* tsPathOverride,
+                      const TsDevLibTestConfig& config);
+
+    // Friend the test-only factory so it can reach the private constructor.
+    // The factory is declared in src/tsdev_lib_test_hooks.h and is the SOLE
+    // intended caller of the private ctor. Users have no path to it.
+    friend std::unique_ptr<TsDevLib> makeTsDevLibForTest(
+        const wchar_t* tsPathOverride,
+        const TsDevLibTestConfig& config);
 
     // Look up an existing component by name.
     // Returns ProgId (>0) if found, 0 if not found.
@@ -129,7 +202,24 @@ public:
     // Uses the internal hidden EDIT control (m_editorHwnd) — the same
     // control saveSource uses — for both VerifyModule_New and the
     // CELCompiler +0x18 field.
-    std::string verifyModule(ComponentType type, int progId);
+    //
+    // TVS-L.10: verifyModule no longer owns create-path partial-entry
+    // cleanup (that was the TD-001 incidental !errors.empty() branch keyed
+    // off the process-global g_lastCreated, which is now removed). The
+    // SINGLE create-path cleanup owner is doInsert in the CLI, which calls
+    // requiresCreatePathCleanup() after every post-createEntry failure.
+    // To let doInsert report WHICH verify-internal path failed (and to make
+    // coverage of every failure mode explicit), verifyModule optionally
+    // writes the failure stage to `*outStage`:
+    //   * nullptr (default) — stage not reported (used by modifyEntry, which
+    //     operates on an existing entry and must never trigger create-path
+    //     cleanup).
+    //   * non-null  — set to the matching CreatePathFailureStage enumerator
+    //     on every non-empty (failure) return path: OOM, SEH in ctor /
+    //     StartCompiling / VerifyModule_New, and compile errors. Left
+    //     untouched on the success (empty-string) return.
+    std::string verifyModule(ComponentType type, int progId,
+                             CreatePathFailureStage* outStage = nullptr);
 
     // Refresh the warehouse cache so that the cached _LoadMasterRecsEX@16
     // enumeration sees items created/modified/deleted in the same process.
@@ -149,7 +239,8 @@ public:
     void closeWarehouse();
 
     // Delete an existing component. Returns true if deleted, false if not
-    // found. The flow (confirmed via Frida trace of live TSDev.exe):
+    // found OR if a delete-path disk-cleanup failure occurred (TVS-L.12). The
+    // flow (confirmed via Frida trace of live TSDev.exe):
     //   FindExistPos(name, whType) →
     //   FUN_101a8360 (delete orchestrator: __fastcall ECX=whType, EDX=progId)
     //     — loads program, marks deleted, runs CELProgramWriter cleanup,
@@ -158,8 +249,29 @@ public:
     //   closeWarehouse (best-effort flush) →
     //   OrlibExit (in destructor, persists the deletion) →
     //   delete .ell/.xml files via Windows API.
+    //
+    // TVS-L.12: step 5 (delete .ell/.xml) consults
+    // deleteDiskCleanupErrorFailsResult() for EACH DeleteFileA call. A real
+    // removal failure (e.g. ERROR_ACCESS_DENIED — artifact present but could
+    // not be removed) now makes deleteEntry return false instead of
+    // unconditionally returning true. ERROR_SUCCESS and ERROR_FILE_NOT_FOUND
+    // remain non-failures (idempotent absence is not a failure). When false is
+    // returned due to a disk-cleanup failure, the orchestrator has ALREADY run
+    // (the warehouse entry was removed); only the on-disk artifact(s) remain.
+    //
+    // `diskCleanupErrorOut` (optional, may be nullptr): when provided and
+    // deleteEntry returns false due to a disk-cleanup failure, it is populated
+    // with a human-readable description of the residual artifact(s) — the path
+    // and the Windows error code for each DeleteFileA that failed the
+    // decision. It is left untouched for non-cleanup failures (not found /
+    // orchestrator SEH) so a caller can distinguish "warehouse entry removed,
+    // disk cleanup failed" (non-empty) from an earlier failure (empty). This
+    // mirrors the existing createEntry(..., int& errCode) out-parameter
+    // pattern; it is a diagnostic channel only and does not introduce a new
+    // error code or hierarchy.
     bool deleteEntry(ComponentType type, const std::string& name,
-                     bool flush = true);
+                     bool flush = true,
+                     std::string* diskCleanupErrorOut = nullptr);
 
     // Modify an existing component's EasyLanguage source and recompile/re-verify.
     // Flow (reuses the existing INSERT primitives directly — no new orlib20
@@ -176,12 +288,15 @@ public:
     //     - if verifyModule returns an empty string (success): return
     //       Result{success=true, message="", progId=progId}
     // The .ell file is updated on disk via verifyModule's existing
-    // persistence path (the FUN_10011230 patch is applied in the constructor).
+    // persistence path (the real finalization path runs end-to-end).
     Result modifyEntry(ComponentType type, const std::string& name,
                        const std::string& newSource);
 
     // Check whether the .ell file for a given entry exists on disk.
     bool ellFileExists(ComponentType type, int progId);
+
+    // Check whether the .xml (debug symbols) file for a given entry exists on disk.
+    bool xmlFileExists(ComponentType type, int progId);
 
     // Return the full path of the .ell file for a given entry.
     std::string getEllPath(ComponentType type, int progId);
@@ -195,28 +310,25 @@ public:
     // Return the discovered MWRKArea.wrk path (narrow, for debug logging / tests).
     const char* getWrkPath() const;
 
-    // Validate that bytes at the persistence patch RVA match the expected
-    // pattern (with mask). Returns true if match, false + stderr on mismatch.
-    // Read-only — does not patch. Used by applyPersistencePatch() and tests.
-    bool validatePersistencePatchBytes(const unsigned char* expected,
-                                       const unsigned char* mask, size_t len);
-
 private:
+    // --- COM apartment guard (TVS-L.2) ---
+    // Declared FIRST among the members that participate in the init/teardown
+    // sequence so it is constructed first (CoInitializeEx runs before any
+    // SetDllDirectoryW / LoadLibraryW / OrlibResolver / patch / OrlibInit)
+    // and destructed LAST (CoUninitialize runs after the destructor body's
+    // OrlibExit + hidden-window destruction + patch restoration, and after
+    // every other member's destructor — members are destructed in reverse
+    // declaration order). PIMPL via unique_ptr so the ComApartmentGuard
+    // definition (com_apartment_guard.h) is not required in this header.
+    // The default ComApi binds the real CoInitializeEx / CoUninitialize.
+    std::unique_ptr<ComApartmentGuard> m_comGuard;
+
     // --- OrlibResolver (TVS-B.5) ---
     std::unique_ptr<OrlibResolver> m_resolver;  // owns the DLL load + all resolution
     void*      m_pDeleteOrchestrator = nullptr;  // Target 8, resolved by signature scan
     uintptr_t  m_errArrayPtrRva      = 0;        // data global, resolved by instruction extraction
     uintptr_t  m_errCountRva         = 0;        // data global, resolved by instruction extraction
     uintptr_t  m_errHinstRva         = 0;        // data global, resolved by instruction extraction
-    uintptr_t  m_persistencePatchRva = 0;        // persistence patch site RVA, cached BEFORE
-                                                 // the patch is applied (the signature scan
-                                                 // for original bytes fails post-patch)
-    unsigned char m_persistenceOriginalBytes[8] = {};  // ACTUAL 8 original bytes at the
-                                                       // persistence patch site (including the
-                                                       // ASLR-sensitive positions 6-7 that
-                                                       // kPersistenceOriginalBytes wildcards
-                                                       // out), saved BEFORE patching so the
-                                                       // destructor can restore them.
     uintptr_t  m_threadCheckRvas[11] = {};       // RVAs of the 11 thread-check patch sites,
                                                  // cached BEFORE patching for restoration.
     unsigned char m_threadCheckOriginalBytes[11] = {};  // original byte (0xCC) at each
@@ -369,9 +481,18 @@ private:
     // --- Helpers ---
     HWND createHiddenEditControl();
     void setSourceText(HWND hwnd, const std::string& source);
-    void applyPersistencePatch();
     void applyThreadCheckPatches();
     std::string readErrorsFromArray(const std::string* source);
+
+    // TVS-L.13: shared post-COM initialization body. Called by BOTH the
+    // public ctor and the private test-only ctor AFTER the COM apartment guard
+    // has been constructed and verified initialized (S_OK / S_FALSE). This
+    // avoids duplicating the ~110-line init sequence (SetDllDirectoryW,
+    // OrlibResolver, support DLLs, patches, OrlibInit, hidden EDIT control)
+    // across the two constructors. It is a private implementation detail —
+    // not part of the public API — and exists solely to keep the two
+    // construction paths behaviorally identical past the COM-init step.
+    void initAfterCom(const wchar_t* tsPathOverride);
 };
 
 } // namespace tsdev
