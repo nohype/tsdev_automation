@@ -398,10 +398,6 @@ typedef void (__stdcall *CloseWarehouseFn)(int param);
 typedef void (__cdecl *StartCompilingProcessFn)(void);
 // Target 2: EndCompilingProcess — __fastcall, 1 arg.
 typedef void (__fastcall *EndCompilingProcessFn)(int param);
-// Target 3: CELCompiler constructor — __fastcall (ecx=this).
-typedef void* (__fastcall *CELCompilerCtorFn)(void* thisPtr);
-// Target 4: CELCompiler destructor — __fastcall (ecx=this).
-typedef void (__fastcall *CELCompilerDtorFn)(void* thisPtr);
 // Target 5: InitGlobalLookup — __cdecl, no args, returns global lookup ptr.
 typedef void* (__cdecl *InitGlobalLookupFn)(void);
 // Target 6: DeleteFromTree — __thiscall (ecx=globalLookup; stack: whType,
@@ -413,6 +409,35 @@ typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 // Target 8: FUN_101a8360 delete orchestrator — __fastcall (ECX=whType,
 //   EDX=progId, no stack args). Invoked via inline asm in production code.
 //   Stored as void*.
+
+// --- Workstream M slice M.1: CELCompiler alloc/destroy via orlib20 ordinals ---
+// TSDev allocates+constructs the CELCompiler via orlib20 ordinal export 66
+// (FUN_10165f70 = operator_new(0x58) + ctor FUN_10165a00) and destructs+frees
+// via ordinal 67 (FUN_10165fd0 = dtor FUN_10165ac0 + operator delete(p,0x58)).
+// Calling conventions CONFIRMED by disassembly (see tmp/m1_ghidra_findings.md):
+//   Ordinal 66: __cdecl, no args, returns void* (the constructed object, or
+//               NULL on alloc failure). Ends with plain RET (C3).
+//   Ordinal 67: __stdcall, one arg (void* p), returns void. Ends with
+//               RET 4 (C2 04 00). Getting this wrong corrupts the stack.
+// These REPLACE the old signature-scanned CELCompilerCtorFn / CELCompilerDtorFn
+// (raw ctor/dtor at RVA 0x165A00 / 0x165AC0), which TSDev never calls
+// directly — TSDev reaches them exclusively through the ordinal-66/67
+// wrappers. The raw ctor/dtor signatures have been removed from the
+// signature catalog (R-M.1.1).
+typedef void* (__cdecl *CELCompilerAllocFn)(void);      // ordinal 66
+typedef void  (__stdcall *CELCompilerDestroyFn)(void*); // ordinal 67
+
+// Workstream M slice M.3: 0x40A library-change notification sender.
+// orlib20 ordinal 57 (FUN_101526f0), __stdcall, RET 8 (2 dword args):
+//   void NotifyLibChanged(unsigned short category, unsigned short progId)
+// Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
+// msg=0x40A, and calls tslib!PosMessageToClients (async PostMessageW to
+// the registered client HWND set). Always returns 1 (the return value is
+// NOT a delivery guarantee — see docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+// The wrapper is an ordinal-only [NONAME] export, so it is resolved via
+// resolveExportByOrdinal(57), not by name.
+typedef void (__stdcall *NotifyLibChangedFn)(unsigned short category,
+                                             unsigned short progId); // ordinal 57
 
 // ===========================================================================
 // OrlibResolver
@@ -587,19 +612,72 @@ public:
     /// \throws OrlibResolverError if the signature does not match uniquely.
     EndCompilingProcessFn resolveEndCompilingProcess();
 
-    /// \brief Resolve Target 3: CELCompiler constructor (__fastcall).
-    /// RVA resolved at runtime via signature scan (see
-    /// signatures/v9.50.01.3344.json).
-    /// \return Typed function pointer (CELCompilerCtorFn).
-    /// \throws OrlibResolverError if the signature does not match uniquely.
-    CELCompilerCtorFn resolveCELCompilerCtor();
+    /// \brief Resolve Target 3 (M.1): CELCompiler alloc+ctor via orlib20
+    /// ordinal export 66 (__cdecl, no args, returns void*).
+    ///
+    /// Workstream M slice M.1 replaced the old signature-scanned
+    /// resolveCELCompilerCtor() (raw ctor at RVA 0x165A00) with ordinal-based
+    /// resolution. TSDev reaches the CELCompiler constructor EXCLUSIVELY
+    /// through orlib20 ordinal export 66 (FUN_10165f70 = operator_new(0x58)
+    /// + ctor FUN_10165a00), NEVER via a direct call to the raw ctor. The
+    /// ordinal wrapper allocates the 0x58-byte object AND constructs it in
+    /// one call, returning the pointer (or NULL on alloc failure). The
+    /// caller must NOT separately malloc/memset the object — ordinal 66 does
+    /// both internally.
+    ///
+    /// Calling convention (CONFIRMED by disassembly, see
+    /// tmp/m1_ghidra_findings.md): __cdecl, no args, returns void*. Ends
+    /// with plain RET (C3).
+    ///
+    /// \return Typed function pointer (CELCompilerAllocFn).
+    /// \throws OrlibResolverError if ordinal 66 is not in the export table.
+    CELCompilerAllocFn resolveCELCompilerAlloc();
 
-    /// \brief Resolve Target 4: CELCompiler destructor (__fastcall).
-    /// RVA resolved at runtime via signature scan (see
-    /// signatures/v9.50.01.3344.json).
-    /// \return Typed function pointer (CELCompilerDtorFn).
-    /// \throws OrlibResolverError if the signature does not match uniquely.
-    CELCompilerDtorFn resolveCELCompilerDtor();
+    /// \brief Resolve Target 4 (M.1): CELCompiler dtor+free via orlib20
+    /// ordinal export 67 (__stdcall, one arg void* p, returns void).
+    ///
+    /// Workstream M slice M.1 replaced the old signature-scanned
+    /// resolveCELCompilerDtor() (raw dtor at RVA 0x165AC0) with ordinal-based
+    /// resolution. TSDev reaches the CELCompiler destructor EXCLUSIVELY
+    /// through orlib20 ordinal export 67 (FUN_10165fd0 = dtor FUN_10165ac0
+    /// + operator delete(p, 0x58)). The ordinal wrapper destructs AND frees
+    /// the object in one call. The caller must NOT separately std::free the
+    /// pointer — ordinal 67 does both internally (calling std::free after
+    /// would double-free).
+    ///
+    /// Calling convention (CONFIRMED by disassembly, see
+    /// tmp/m1_ghidra_findings.md): __stdcall, one arg (void* p), returns
+    /// void. Ends with RET 4 (C2 04 00). Getting this wrong corrupts the
+    /// stack.
+    ///
+    /// \return Typed function pointer (CELCompilerDestroyFn).
+    /// \throws OrlibResolverError if ordinal 67 is not in the export table.
+    CELCompilerDestroyFn resolveCELCompilerDestroy();
+
+    /// \brief Resolve Target 4b (M.3): 0x40A library-change notification
+    /// sender via orlib20 ordinal export 57 (__stdcall, 2 dword args,
+    /// returns void).
+    ///
+    /// Workstream M slice M.3: TSDev posts the 0x40A library-change
+    /// notification by calling orlib20 ordinal 57 (FUN_101526f0) after a
+    /// successful verify (FUN_00453f70) and after a successful
+    /// category-gated delete (FUN_10159ae0). The wrapper is an ordinal-only
+    /// [NONAME] export, so it is resolved via resolveExportByOrdinal(57),
+    /// not by name. See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 (R-M.3.1).
+    ///
+    /// Calling convention (CONFIRMED by Ghidra disassembly):
+    /// __stdcall, RET 8 (C2 08 00) — 2 dword args:
+    ///   void NotifyLibChanged(unsigned short category,
+    ///                         unsigned short progId)
+    /// Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
+    /// msg=0x40A, and calls tslib!PosMessageToClients (async PostMessageW
+    /// to the registered client HWND set). Always returns 1 (the return
+    /// value is NOT a delivery guarantee — see
+    /// docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+    ///
+    /// \return Typed function pointer (NotifyLibChangedFn).
+    /// \throws OrlibResolverError if ordinal 57 is not in the export table.
+    NotifyLibChangedFn resolveNotifyLibChanged();
 
     /// \brief Resolve Target 5: InitGlobalLookup (__cdecl).
     /// RVA resolved at runtime via signature scan (see
@@ -751,6 +829,24 @@ public:
     /// \return Raw FARPROC (caller casts to the appropriate typedef).
     /// \throws OrlibResolverError if the export is not found.
     FARPROC resolveExport(const char* decoratedName);
+
+    /// \brief Generic export resolution by ordinal number.
+    ///
+    /// Workstream M slice M.1: orlib20 exports the CELCompiler alloc/destroy
+    /// wrappers as ordinal-only ([NONAME]) exports 66 and 67. These have NO
+    /// name in the export name table, so resolveExport(name) cannot find
+    /// them. This method resolves by ordinal directly:
+    ///   - Production mode: GetProcAddress(m_module, MAKEINTRESOURCEA(ordinal))
+    ///     (the Windows loader accepts ordinal-by-MAKEINTRESOURCEA lookup).
+    ///   - Test mode: index into the export directory's AddressOfFunctions
+    ///     array by (ordinal - export->Base), skipping the name array loop.
+    ///     Validates the ordinal is in range [Base, Base + NumberOfFunctions).
+    ///
+    /// \param ordinal Export ordinal (e.g. 66, 67). Must be >= 1.
+    /// \return Raw FARPROC (caller casts to the appropriate typedef).
+    /// \throws OrlibResolverError if the ordinal is out of range or the
+    ///         export function RVA is 0 (empty / forwarder slot).
+    FARPROC resolveExportByOrdinal(int ordinal);
 
     // --- Patch-site resolution & validation (5 PATCH_SITEs) ----------------
     //
@@ -1019,6 +1115,21 @@ private:
     /// \return FARPROC (address within the in-memory buffer).
     /// \throws OrlibResolverError if the export is not found.
     FARPROC resolveExportFromBuffer(const char* decoratedName);
+
+    /// \brief Resolve an export by ordinal from the in-memory PE buffer
+    /// (test mode).
+    ///
+    /// Workstream M slice M.1: ordinal-indexed path that reads
+    /// funcRvas[ordinal - Base] directly, skipping the name array loop. Used
+    /// by resolveExportByOrdinal() in test mode for ordinal-only ([NONAME])
+    /// exports (e.g. orlib20 ordinals 66/67) that have no name table entry.
+    /// Validates the ordinal is in range [Base, Base + NumberOfFunctions) and
+    /// that the function RVA is non-zero (a zero RVA is an empty slot or a
+    /// forwarder, neither of which is a callable function).
+    /// \return FARPROC (address within the in-memory buffer: base + RVA).
+    /// \throws OrlibResolverError if the ordinal is out of range or the
+    ///         function RVA is 0.
+    FARPROC resolveExportFromBufferByOrdinal(int ordinal);
 };
 
 } // namespace tsdev

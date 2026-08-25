@@ -674,16 +674,33 @@ EndCompilingProcessFn OrlibResolver::resolveEndCompilingProcess() {
     return reinterpret_cast<EndCompilingProcessFn>(baseAddress() + rva);
 }
 
-CELCompilerCtorFn OrlibResolver::resolveCELCompilerCtor() {
-    const OrlibSignatureDef& sig = findSignature("CELCompiler_ctor");
-    uintptr_t rva = resolveBySignature("CELCompiler_ctor", sig);
-    return reinterpret_cast<CELCompilerCtorFn>(baseAddress() + rva);
+// Workstream M slice M.1: CELCompiler alloc/destroy resolution switched from
+// signature scan (raw ctor/dtor at RVA 0x165A00 / 0x165AC0) to ordinal-based
+// resolution (orlib20 ordinal exports 66 / 67). TSDev reaches the ctor/dtor
+// EXCLUSIVELY through the ordinal wrappers (FUN_10165f70 / FUN_10165fd0),
+// never via a direct call to the raw ctor/dtor — see tmp/m1_ghidra_findings.md
+// §1b (no direct static CALL from TSDev.exe to 0x10165A00 / 0x10165AC0).
+CELCompilerAllocFn OrlibResolver::resolveCELCompilerAlloc() {
+    // Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
+    return reinterpret_cast<CELCompilerAllocFn>(resolveExportByOrdinal(66));
 }
 
-CELCompilerDtorFn OrlibResolver::resolveCELCompilerDtor() {
-    const OrlibSignatureDef& sig = findSignature("CELCompiler_dtor");
-    uintptr_t rva = resolveBySignature("CELCompiler_dtor", sig);
-    return reinterpret_cast<CELCompilerDtorFn>(baseAddress() + rva);
+CELCompilerDestroyFn OrlibResolver::resolveCELCompilerDestroy() {
+    // Ordinal 67: __stdcall, one arg (void* p), returns void (dtor + free).
+    return reinterpret_cast<CELCompilerDestroyFn>(resolveExportByOrdinal(67));
+}
+
+// Workstream M slice M.3: 0x40A library-change notification sender resolved
+// by orlib20 ordinal 57 (FUN_101526f0). TSDev posts 0x40A via this ordinal
+// after a successful verify (FUN_00453f70) and after a successful
+// category-gated delete (FUN_10159ae0). The wrapper is an ordinal-only
+// [NONAME] export, so it is resolved by ordinal, not by name. See
+// docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 (R-M.3.1).
+NotifyLibChangedFn OrlibResolver::resolveNotifyLibChanged() {
+    // Ordinal 57: __stdcall, 2 dword args (unsigned short category,
+    // unsigned short progId), returns void (always returns 1 per the
+    // disassembly, but the return value is not a delivery guarantee).
+    return reinterpret_cast<NotifyLibChangedFn>(resolveExportByOrdinal(57));
 }
 
 InitGlobalLookupFn OrlibResolver::resolveInitGlobalLookup() {
@@ -803,6 +820,43 @@ FARPROC OrlibResolver::resolveExport(const char* decoratedName) {
         std::snprintf(detail, sizeof(detail), "GetLastError=%lu",
                       static_cast<unsigned long>(err));
         throw OrlibResolverError("export not found", decoratedName, detail);
+    }
+    return proc;
+}
+
+// Workstream M slice M.1: ordinal-based export resolution. orlib20 exports
+// the CELCompiler alloc/destroy wrappers as ordinal-only ([NONAME]) exports
+// 66 and 67 — they have NO entry in the export name table, so the name-based
+// resolveExport() cannot find them. This method resolves by ordinal:
+//   - Production: GetProcAddress accepts MAKEINTRESOURCEA(ordinal) for
+//     ordinal-by-number lookup (the Windows loader supports this for both
+//     named and [NONAME] exports).
+//   - Test: index into AddressOfFunctions by (ordinal - Base) directly,
+//     skipping the name array loop (see resolveExportFromBufferByOrdinal).
+FARPROC OrlibResolver::resolveExportByOrdinal(int ordinal) {
+    if (ordinal < 1) {
+        char detail[64];
+        std::snprintf(detail, sizeof(detail), "ordinal=%d (must be >= 1)",
+                      ordinal);
+        throw OrlibResolverError("ordinal out of range", "(ordinal)", detail);
+    }
+
+    if (m_testMode) {
+        return resolveExportFromBufferByOrdinal(ordinal);
+    }
+
+    // Production mode: GetProcAddress with MAKEINTRESOURCEA(ordinal). The
+    // macro packs the ordinal into the low word of a string pointer; the
+    // loader recognizes the high-zero pattern as an ordinal hint.
+    FARPROC proc = GetProcAddress(m_module, MAKEINTRESOURCEA(ordinal));
+    if (!proc) {
+        DWORD err = GetLastError();
+        char detail[64];
+        std::snprintf(detail, sizeof(detail),
+                      "ordinal=%d GetLastError=%lu",
+                      ordinal, static_cast<unsigned long>(err));
+        throw OrlibResolverError("export not found by ordinal",
+                                 "(ordinal)", detail);
     }
     return proc;
 }
@@ -1514,6 +1568,86 @@ FARPROC OrlibResolver::resolveExportFromBuffer(const char* decoratedName) {
 
     // No matching name found.
     throw OrlibResolverError("export not found", decoratedName, "");
+}
+
+// Workstream M slice M.1: ordinal-indexed export resolution from the
+// in-memory PE buffer (test mode). Reads funcRvas[ordinal - Base] directly,
+// skipping the name array loop. Used for ordinal-only ([NONAME]) exports
+// (e.g. orlib20 ordinals 66/67) that have no entry in the name table.
+FARPROC OrlibResolver::resolveExportFromBufferByOrdinal(int ordinal) {
+    if (!m_testMode || !m_image) {
+        char detail[64];
+        std::snprintf(detail, sizeof(detail),
+                      "ordinal=%d (not in test mode or null image buffer)",
+                      ordinal);
+        throw OrlibResolverError("resolveExportFromBufferByOrdinal requires "
+                                 "test mode", "(ordinal)", detail);
+    }
+    if (ordinal < 1) {
+        char detail[64];
+        std::snprintf(detail, sizeof(detail), "ordinal=%d (must be >= 1)",
+                      ordinal);
+        throw OrlibResolverError("ordinal out of range", "(ordinal)", detail);
+    }
+    if (m_exportDirRva == 0) {
+        throw OrlibResolverError("no export directory", "(ordinal)", "");
+    }
+
+    // --- Locate the export directory in the raw file buffer ---
+    uint32_t expOff = rvaToFileOffset(m_image, m_imageSize,
+                                      static_cast<uint32_t>(m_exportDirRva));
+    if (expOff == 0 ||
+        expOff + sizeof(IMAGE_EXPORT_DIRECTORY) > m_imageSize) {
+        throw OrlibResolverError("export directory out of bounds",
+                                 "(ordinal)", "");
+    }
+    const IMAGE_EXPORT_DIRECTORY* exp =
+        reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(m_image + expOff);
+
+    const DWORD numFuncs      = exp->NumberOfFunctions;
+    const DWORD base          = exp->Base;
+    const DWORD addrFunctions = exp->AddressOfFunctions;
+
+    // Validate the ordinal is in range [Base, Base + numFuncs). The PE export
+    // directory's Base is the ordinal of the FIRST entry in
+    // AddressOfFunctions; index = ordinal - Base.
+    if (ordinal < static_cast<int>(base) ||
+        ordinal >= static_cast<int>(base + numFuncs)) {
+        char detail[128];
+        std::snprintf(detail, sizeof(detail),
+                      "ordinal=%d out of range [Base=%lu, Base+NumberOfFunctions=%lu)",
+                      ordinal,
+                      static_cast<unsigned long>(base),
+                      static_cast<unsigned long>(base + numFuncs));
+        throw OrlibResolverError("ordinal out of range", "(ordinal)", detail);
+    }
+
+    // --- Locate & bounds-check the function RVA table ---
+    uint32_t funcOff = rvaToFileOffset(m_image, m_imageSize, addrFunctions);
+    if (addrFunctions == 0 || funcOff == 0 ||
+        funcOff + static_cast<size_t>(sizeof(DWORD)) * numFuncs > m_imageSize) {
+        throw OrlibResolverError("export function table out of bounds",
+                                 "(ordinal)", "");
+    }
+    const DWORD* funcRvas =
+        reinterpret_cast<const DWORD*>(m_image + funcOff);
+
+    // Index into the function RVA table by (ordinal - Base).
+    DWORD index = static_cast<DWORD>(ordinal) - base;
+    DWORD funcRva = funcRvas[index];
+    if (funcRva == 0) {
+        // A zero RVA is an empty slot or a forwarder — not a callable
+        // function. Reject it so the caller does not get a bogus pointer.
+        char detail[128];
+        std::snprintf(detail, sizeof(detail),
+                      "ordinal=%d (index=%lu) has RVA=0 (empty slot/forwarder)",
+                      ordinal, static_cast<unsigned long>(index));
+        throw OrlibResolverError("export ordinal has null RVA",
+                                 "(ordinal)", detail);
+    }
+
+    // Return the absolute (simulated) address: base + RVA.
+    return reinterpret_cast<FARPROC>(m_base + funcRva);
 }
 
 } // namespace tsdev

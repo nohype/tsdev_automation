@@ -34,9 +34,9 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-EXPECTED_SIGNATURE_COUNT = 24
+EXPECTED_SIGNATURE_COUNT = 22
 EXPECTED_DATA_GLOBAL_COUNT = 3
-EXPECTED_EXPORT_COUNT = 10
+EXPECTED_EXPORT_COUNT = 13
 
 # Hex pattern tokens are split across adjacent C++ string literals in chunks of
 # this many bytes for readability (matches the historical b1_signatures.h style
@@ -264,15 +264,35 @@ def validate_signature_set(sigset, file_version, signature_set_file):
         seen_dg_names.add(dg["name"])
 
     seen_exp_names = set()
+    seen_exp_ordinals = set()
     for i, exp in enumerate(exps):
         ectx = "{} exports[{}]".format(ctx, i)
         if not isinstance(exp, dict):
             fail("{}: export must be a JSON object".format(ectx))
-        for field in ("name", "rva", "callingConvention"):
+        for field in ("rva", "callingConvention"):
             require_field(exp, field, ectx)
-        if exp["name"] in seen_exp_names:
-            fail("{}: duplicate export name {!r}".format(ectx, exp["name"]))
-        seen_exp_names.add(exp["name"])
+        # Workstream M slice M.1: an export entry may be ordinal-only
+        # ([NONAME]) — in that case "name" is null and "ordinal" is present
+        # (a positive int). A named export has a non-null "name" string and
+        # no "ordinal" field (ordinal defaults to 0 = "by name").
+        name = exp.get("name", None)
+        ordinal = exp.get("ordinal", 0)
+        if name is None:
+            # Ordinal-only export: ordinal MUST be a positive int.
+            if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal <= 0:
+                fail("{}: export with name=null must have a positive integer "
+                     "'ordinal' field".format(ectx))
+            if ordinal in seen_exp_ordinals:
+                fail("{}: duplicate export ordinal {}".format(ectx, ordinal))
+            seen_exp_ordinals.add(ordinal)
+        else:
+            # Named export: name must be a non-empty string.
+            if not isinstance(name, str) or not name:
+                fail("{}: export name must be a non-empty string or null "
+                     "(ordinal-only)".format(ectx))
+            if name in seen_exp_names:
+                fail("{}: duplicate export name {!r}".format(ectx, name))
+            seen_exp_names.add(name)
 
 
 # ---------------------------------------------------------------------------
@@ -432,10 +452,11 @@ def generate_header(manifest, sigsets, manifest_paths, timestamp_str):
     out.append("// Export definition")
     out.append("// ---------------------------------------------------------------------------")
     out.append("struct ExportDef {")
-    out.append("    const char* name;")
+    out.append("    const char* name;          // null for ordinal-only ([NONAME]) exports (M.1)")
     out.append("    int          rva;")
     out.append("    const char* callingConvention;")
     out.append("    bool         decorated;")
+    out.append("    int          ordinal;      // M.1: ordinal for ordinal-only exports; 0 = by name")
     out.append("};")
     out.append("")
 
@@ -515,15 +536,19 @@ def generate_header(manifest, sigsets, manifest_paths, timestamp_str):
         # 15. kExports_<version>[]
         out.append("constexpr ExportDef kExports_{}[] = {{".format(suffix))
         for exp in sigset["exports"]:
-            name = exp["name"]
-            rva = parse_hex_int(exp["rva"], "{}.rva".format(name))
+            name = exp.get("name", None)
+            rva = parse_hex_int(exp["rva"], "export.rva")
             conv = exp["callingConvention"]
             decorated = exp.get("decorated", True)
-            out.append('    {{{}, {}, {}, {}}},'.format(
-                c_string_literal(name),
+            ordinal = exp.get("ordinal", 0)
+            # name is null for ordinal-only ([NONAME]) exports (M.1).
+            name_literal = "nullptr" if name is None else c_string_literal(name)
+            out.append('    {{{}, {}, {}, {}, {}}},'.format(
+                name_literal,
                 fmt_rva(rva),
                 c_string_literal(conv),
-                "true" if decorated else "false"))
+                "true" if decorated else "false",
+                ordinal))
         out.append("};")
         out.append("")
 

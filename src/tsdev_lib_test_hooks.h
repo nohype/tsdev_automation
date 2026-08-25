@@ -83,6 +83,114 @@ struct TsDevLibTestConfig {
     // once. When false, the ctor proceeds with the normal body (requires a
     // real TradeStation install).
     bool throwAfterCom = false;
+
+    // Workstream M slice M.1 — optional test hook invoked by verifyModule()
+    // immediately BEFORE the _VerifyModule_New call (i.e. AFTER the
+    // StartCompilingProcess call and AFTER the +0x00/+0x04 result-field
+    // pre-zeroing, matching FUN_004D9480). Gives a test live read access to
+    // the 0x58-byte CELCompiler object state so it can assert the TSDev-parity
+    // field layout (+0x00, +0x04, +0x08, +0x0C, +0x10, +0x18, +0x28, ...).
+    //
+    // Signature:
+    //   void onCompilerReady(void* compilerMem, int componentType, int progId)
+    //     compilerMem    — pointer to the live CELCompiler object (0x58 bytes)
+    //     componentType  — the ComponentType enum value being verified
+    //                      (passed as static_cast<int>(type))
+    //     progId         — the ProgId passed to verifyModule
+    //
+    // When nullptr (the default), verifyModule() does NOT invoke any hook and
+    // behaves exactly as in production. The hook is invoked ONLY on the
+    // success path between StartCompilingProcess and _VerifyModule_New; it is
+    // NOT invoked on the OOM / SEH-ctor / SEH-StartCompiling early-return
+    // paths (no compiler object exists yet on those paths).
+    void (*onCompilerReady)(void* compilerMem, int componentType, int progId) = nullptr;
+
+    // Workstream M slice M.2 — optional test hook invoked by saveSource()
+    // immediately BEFORE the _SaveModule_New@20 call, capturing the flags
+    // value (arg3) and password buffer (arg5) for TSDev-parity assertions.
+    // See docs/RE/RE_M2_SAVEMODULE_NEW.md (UPDATE 2026-08-25, Corrections 1
+    // and 2) for the confirmed flag values and password buffer contents.
+    //
+    // Signature:
+    //   void onSaveModuleNewReady(const unsigned int* flags,
+    //                             const char* passwordBuf,
+    //                             int passwordBufSize,
+    //                             int componentType,
+    //                             int progId)
+    //     flags          — pointer to the flags word passed as arg3 (may be
+    //                      NULL in the current production code; the GREEN
+    //                      phase will pass a non-NULL pointer to a word
+    //                      computed as (getCategory(type) & 0x7) | 0x60).
+    //     passwordBuf    — pointer to the 64-byte password buffer passed as
+    //                      arg5 (may be NULL in the current production code;
+    //                      the GREEN phase will pass a non-NULL pointer to a
+    //                      zeroed-then-!p$Kn@aSus-filled buffer).
+    //     passwordBufSize— size of the password buffer (64 in GREEN; 0 while
+    //                      production still passes NULL).
+    //     componentType  — static_cast<int>(type) being saved.
+    //     progId         — the ProgId passed to saveSource.
+    //
+    // When nullptr (the default), saveSource() does NOT invoke any hook and
+    // behaves exactly as in production. The hook is invoked ONLY on the path
+    // immediately before the m_pSaveModuleNew call.
+    //
+    // NOTE on the password buffer: "!p$Kn@aSus" (10 bytes at 0x00567b40 in
+    // TSDev.exe) is TSDev's INTERNAL DEFAULT password, NOT a user secret. It
+    // is a hardcoded constant baked into TSDev.exe, used as the encryption
+    // key material for items TSDev force-protects. The CLI must replicate
+    // this fixed internal default string, never accept user input for it.
+    void (*onSaveModuleNewReady)(const unsigned int* flags,
+                                 const char* passwordBuf,
+                                 int passwordBufSize,
+                                 int componentType,
+                                 int progId) = nullptr;
+
+    // Workstream M slice M.3 — optional test hook invoked by verifyModule()
+    // and deleteEntry() immediately BEFORE the 0x40A notification would be
+    // sent (via orlib20 Ordinal_57 / FUN_101526f0) after a successful verify
+    // or a successful (category-gated) delete. Captures the exact
+    // (msg, wParam, lParam) tuple plus the affected componentType and progId
+    // so a test can assert the TSDev-parity packing.
+    //
+    // See docs/RE/RE_M3_0x40A_NOTIFICATION.md (R-M.3.1, R-M.3.2):
+    //   msg    = 0x040A
+    //   wParam = 0
+    //   lParam = (category << 16) | (ProgId & 0xFFFF)
+    // The low word of lParam IS the ProgId (warehouse record index), NOT the
+    // subtype. category = getCategory(type) (low 8 bits of the expanded
+    // whType).
+    //
+    // Confirmed operation set (R-M.3.2):
+    //   - verify-success (insert/modify/upsert) sends 0x40A
+    //   - delete-success sends 0x40A (gated category != 4)
+    //   - failed compile/verify does NOT send 0x40A
+    //
+    // Signature:
+    //   void onNotifyReady(UINT msg, WPARAM wParam, LPARAM lParam,
+    //                      int componentType, int progId)
+    //     msg           — the message ID the production code is about to post
+    //                    (0x040A). Passed as-is so the test can assert it
+    //                    without hardcoding in the hook plumbing.
+    //     wParam        — the wParam value (0).
+    //     lParam        — the packed lParam value
+    //                    ((category << 16) | (ProgId & 0xFFFF)).
+    //     componentType — static_cast<int>(type) of the affected module.
+    //     progId        — the ProgId of the affected module.
+    //
+    // When nullptr (the default), verifyModule() and deleteEntry() do NOT
+    // invoke any hook and behave exactly as in production. The hook is
+    // invoked ONLY on the post-success path (the same point at which TSDev
+    // calls orlib20 Ordinal_57); it is NOT invoked on the verify-failure or
+    // delete-failure paths.
+    //
+    // ERROR SEMANTICS (R-M.3.3): Ordinal_57 always returns 1; send failure
+    // is silently ignored; no receiver = silent no-op. The hook therefore
+    // does NOT model receiver delivery — it only captures the would-be send
+    // arguments. Receiver-aware testing is the test's responsibility (it
+    // registers via _OrlibRegisterNotificationHandle@4 / ordinal 595 in the
+    // GREEN phase; the RED test asserts only the hook capture).
+    void (*onNotifyReady)(UINT msg, WPARAM wParam, LPARAM lParam,
+                          int componentType, int progId) = nullptr;
 };
 
 namespace tsdev {

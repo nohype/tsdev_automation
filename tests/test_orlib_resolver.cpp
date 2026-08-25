@@ -263,59 +263,124 @@ int main() {
         }
     }
 
-    // --- Target 3: CELCompiler constructor (__fastcall) ---
+    // --- Target 3 (M.1): CELCompiler alloc+ctor via ordinal 66 (__cdecl) ---
+    // Workstream M slice M.1 replaced the old signature-scanned
+    // resolveCELCompilerCtor() (raw ctor at RVA 0x165A00) with ordinal-based
+    // resolution. TSDev reaches the ctor EXCLUSIVELY through orlib20 ordinal
+    // export 66 (FUN_10165f70 = operator_new(0x58) + ctor). The raw
+    // ctor/dtor signatures have been REMOVED from the catalog, so the old
+    // findSignatureByName("CELCompiler_ctor") assertions are gone. The new
+    // assertions verify:
+    //   - resolveExportByOrdinal(66) returns a non-null FARPROC whose RVA is
+    //     within the .text section range.
+    //   - resolveCELCompilerAlloc() returns a non-null CELCompilerAllocFn.
+    //   - The resolved RVA matches the confirmed ordinal-66 wrapper RVA
+    //     0x165F70 (from the export table, NOT from a signature entry).
     {
-        const tsdev::SignatureDef* sig =
-            findSignatureByName("CELCompiler_ctor");
-        CHECK(sig != nullptr,
-              "catalog contains signature 'CELCompiler_ctor'");
+        const tsdev::ExportDef* exp66 = nullptr;
+        for (int i = 0; i < tsdev::kExportCount; ++i) {
+            if (tsdev::kExports[i].ordinal == 66) { exp66 = &tsdev::kExports[i]; break; }
+        }
+        CHECK(exp66 != nullptr,
+              "catalog contains ordinal-66 export entry (M.1)");
         bool threw = false;
         std::string errMsg;
-        uintptr_t rva = 0;
+        uintptr_t rvaByOrdinal = 0;
+        FARPROC fnByOrdinal = nullptr;
         try {
-            tsdev::CELCompilerCtorFn fn = resolver->resolveCELCompilerCtor();
-            rva = reinterpret_cast<uintptr_t>(fn) - kBase;
+            fnByOrdinal = resolver->resolveExportByOrdinal(66);
+            rvaByOrdinal = reinterpret_cast<uintptr_t>(fnByOrdinal) - kBase;
         } catch (const tsdev::OrlibResolverError& ex) {
             threw = true;
             errMsg = ex.what();
         }
         if (threw) {
-            std::string msg = std::string("resolveCELCompilerCtor threw: ") + errMsg;
+            std::string msg = std::string("resolveExportByOrdinal(66) threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else if (sig) {
-            char buf[128];
+        } else {
+            CHECK(fnByOrdinal != nullptr,
+                  "resolveExportByOrdinal(66) returns non-null FARPROC");
+            // Verify the RVA is within the .text section range.
+            auto bounds = resolver->textSectionBounds();
+            char buf[256];
             std::snprintf(buf, sizeof(buf),
-                          "resolveCELCompilerCtor RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, sig->rva);
-            CHECK(rva == (uintptr_t)sig->rva, buf);
+                          "resolveExportByOrdinal(66) RVA==0x%llX within .text [0x%llX, 0x%llX)",
+                          (unsigned long long)rvaByOrdinal,
+                          (unsigned long long)bounds.first,
+                          (unsigned long long)(bounds.first + bounds.second));
+            CHECK(rvaByOrdinal >= bounds.first &&
+                  rvaByOrdinal <  bounds.first + bounds.second, buf);
+            // Verify the RVA matches the confirmed ordinal-66 wrapper RVA.
+            if (exp66) {
+                std::snprintf(buf, sizeof(buf),
+                              "resolveExportByOrdinal(66) RVA==0x%llX (expected 0x%X)",
+                              (unsigned long long)rvaByOrdinal, exp66->rva);
+                CHECK(rvaByOrdinal == (uintptr_t)exp66->rva, buf);
+            }
+        }
+        // Also verify the typed resolver method returns a non-null pointer
+        // (the production path used by verifyModule).
+        try {
+            tsdev::CELCompilerAllocFn fn = resolver->resolveCELCompilerAlloc();
+            CHECK(fn != nullptr,
+                  "resolveCELCompilerAlloc() returns non-null CELCompilerAllocFn");
+        } catch (const tsdev::OrlibResolverError& ex) {
+            std::string msg = std::string("resolveCELCompilerAlloc threw: ") + ex.what();
+            CHECK(false, msg.c_str());
         }
     }
 
-    // --- Target 4: CELCompiler destructor (__fastcall) ---
+    // --- Target 4 (M.1): CELCompiler dtor+free via ordinal 67 (__stdcall) ---
+    // Analogous to Target 3 above: ordinal 67 (FUN_10165fd0 = dtor +
+    // operator delete(p, 0x58)) replaces the old signature-scanned
+    // resolveCELCompilerDtor() (raw dtor at RVA 0x165AC0).
     {
-        const tsdev::SignatureDef* sig =
-            findSignatureByName("CELCompiler_dtor");
-        CHECK(sig != nullptr,
-              "catalog contains signature 'CELCompiler_dtor'");
+        const tsdev::ExportDef* exp67 = nullptr;
+        for (int i = 0; i < tsdev::kExportCount; ++i) {
+            if (tsdev::kExports[i].ordinal == 67) { exp67 = &tsdev::kExports[i]; break; }
+        }
+        CHECK(exp67 != nullptr,
+              "catalog contains ordinal-67 export entry (M.1)");
         bool threw = false;
         std::string errMsg;
-        uintptr_t rva = 0;
+        uintptr_t rvaByOrdinal = 0;
+        FARPROC fnByOrdinal = nullptr;
         try {
-            tsdev::CELCompilerDtorFn fn = resolver->resolveCELCompilerDtor();
-            rva = reinterpret_cast<uintptr_t>(fn) - kBase;
+            fnByOrdinal = resolver->resolveExportByOrdinal(67);
+            rvaByOrdinal = reinterpret_cast<uintptr_t>(fnByOrdinal) - kBase;
         } catch (const tsdev::OrlibResolverError& ex) {
             threw = true;
             errMsg = ex.what();
         }
         if (threw) {
-            std::string msg = std::string("resolveCELCompilerDtor threw: ") + errMsg;
+            std::string msg = std::string("resolveExportByOrdinal(67) threw: ") + errMsg;
             CHECK(false, msg.c_str());
-        } else if (sig) {
-            char buf[128];
+        } else {
+            CHECK(fnByOrdinal != nullptr,
+                  "resolveExportByOrdinal(67) returns non-null FARPROC");
+            auto bounds = resolver->textSectionBounds();
+            char buf[256];
             std::snprintf(buf, sizeof(buf),
-                          "resolveCELCompilerDtor RVA==0x%llX (expected 0x%X)",
-                          (unsigned long long)rva, sig->rva);
-            CHECK(rva == (uintptr_t)sig->rva, buf);
+                          "resolveExportByOrdinal(67) RVA==0x%llX within .text [0x%llX, 0x%llX)",
+                          (unsigned long long)rvaByOrdinal,
+                          (unsigned long long)bounds.first,
+                          (unsigned long long)(bounds.first + bounds.second));
+            CHECK(rvaByOrdinal >= bounds.first &&
+                  rvaByOrdinal <  bounds.first + bounds.second, buf);
+            if (exp67) {
+                std::snprintf(buf, sizeof(buf),
+                              "resolveExportByOrdinal(67) RVA==0x%llX (expected 0x%X)",
+                              (unsigned long long)rvaByOrdinal, exp67->rva);
+                CHECK(rvaByOrdinal == (uintptr_t)exp67->rva, buf);
+            }
+        }
+        try {
+            tsdev::CELCompilerDestroyFn fn = resolver->resolveCELCompilerDestroy();
+            CHECK(fn != nullptr,
+                  "resolveCELCompilerDestroy() returns non-null CELCompilerDestroyFn");
+        } catch (const tsdev::OrlibResolverError& ex) {
+            std::string msg = std::string("resolveCELCompilerDestroy threw: ") + ex.what();
+            CHECK(false, msg.c_str());
         }
     }
 

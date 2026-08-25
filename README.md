@@ -322,4 +322,4 @@ Run `tsdev-automation --help` for full usage.
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 ```
 
-Runs 14 registered sub-suites (13 default; Suite 14 stress opt-in via `-ExtendedStress`) — 136 test cases, 249 assertions, 600 opt-in stress cycles, 27 C++ unit test executables.
+Runs 14 registered sub-suites (13 default; Suite 14 stress opt-in via `-ExtendedStress`) — 142 test cases, 253 assertions, 600 opt-in stress cycles, 33 C++ unit test executables.

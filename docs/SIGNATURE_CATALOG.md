@@ -1,5 +1,91 @@
 # Signature Catalog — orlib20.dll Code-Section RVA Targets
 
+> **CORRECTION NOTICE — 2026-08-26 (Workstream M, slice M.3).**
+>
+> Workstream M slice M.3 (TSDev parity — 0x40A post-success library-change
+> notification) has **added** the ordinal-only `[NONAME]` export **57**
+> (`FUN_101526f0`, the asynchronous 0x40A sender) to the tracked export
+> list. Production code now resolves it via `GetProcAddress` with
+> `MAKEINTRESOURCEA(57)` (production path) or PE export-table indexing
+> (test-mode path), and `verifyModule()` (success path) plus `deleteEntry()`
+> (success path, gated `category != 4`) call it to post the 0x40A
+> notification, matching TSDev's Frida-confirmed ordering. See new §5
+> entry "Ordinal 57".
+>
+> **Catalog totals change as a result:**
+>
+> - Signature count: **22 → 22** (unchanged — ordinal 57 is an export, not
+>   a code-section signature).
+> - Export count: **12 → 13** (added ordinal 57). All prior "12 exports"
+>   references in this document are superseded to **13 exports**.
+> - Generated header constants: `kSignatureCount=22`, `kExportCount=13`
+>   (was 22 / 12).
+> - `tools/sigcodegen.py` `EXPECTED_EXPORT_COUNT` is now 13 (was 12).
+>
+> Per the project's documentation rules, historical banners and sections
+> below are **not silently rewritten**; dated corrections are prepended
+> instead. The 2026-08-24 M.1 correction notice (which describes the
+> 24 → 22 signature / 10 → 12 export transition) is retained as historical
+> context and is **superseded by this notice** with respect to the export
+> count only. Signature *facts* (RVAs, original/replacement bytes, scan
+> results) for the 22 retained signatures remain authoritative and
+> unchanged.
+>
+> **Evidence:** `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1) —
+> Ghidra export-table annotation `/* 0x1526f0  57   */` confirming
+> ordinal 57 = `FUN_101526f0` (`MOVZX ECX,word[EBP+8]` category,
+> `MOVZX EAX,word[EBP+0xC]` ProgId, `SHL ECX,0x10`, `OR ECX,EAX`,
+> `PUSH ECX` lParam, `PUSH 0` wParam, `PUSH 0x40A` msg,
+> `CALL [tslib!PosMessageToClients]`, `MOV EAX,1`, `RET 8`); Frida trace
+> `tmp/frida_trace_verify.log` confirming 57 `PostMessageW(0x40A)` sends
+> to 19 registered HWNDs after verify success.
+
+> **CORRECTION NOTICE — 2026-08-24 (Workstream M, slice M.1).**
+>
+> Workstream M slice M.1 (TSDev parity — compiler-object lifecycle) has
+> **retired** the `CELCompiler_ctor` (§4.3) and `CELCompiler_dtor` (§4.4)
+> code-section RVA signatures. Production code no longer resolves the
+> CELCompiler constructor/destructor by RVA signature; instead it resolves
+> them as **ordinal-only `[NONAME]` exports 66 and 67** of `orlib20.dll`
+> via `GetProcAddress` with `MAKEINTRESOURCEA(ordinal)` (production path) or
+> PE export-table indexing (test-mode path). See new §5 entries "Ordinal 66"
+> and "Ordinal 67" and the RETIRED notes prepended to §4.3 and §4.4.
+>
+> **Catalog totals change as a result:**
+>
+> - Signature count: **24 → 22** (removed `CELCompiler_ctor`,
+>   `CELCompiler_dtor`). All prior "24 signatures" references in this
+>   document are superseded to **22 signatures**.
+> - Export count: **10 → 12** (added ordinal 66, ordinal 67). All prior
+>   "10 exports" references are superseded to **12 exports**.
+> - Generated header constants: `kSignatureCount=22`, `kExportCount=12`
+>   (was 24 / 10).
+> - `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 22 and
+>   `EXPECTED_EXPORT_COUNT` is now 12.
+>
+> Per the project's documentation rules, historical banners and sections
+> below are **not silently rewritten**; dated corrections are prepended
+> instead. The historical TVS-L.3 cleanup note and 2026-08-23 supersession
+> banner (which describe the earlier 25 → 24 / 12 → 11 patch-site transition)
+> are retained as historical context and are **superseded by this notice**
+> with respect to signature/export counts only. Signature *facts* (RVAs,
+> original/replacement bytes, scan results) for the 22 retained signatures
+> remain authoritative and unchanged.
+>
+> **Evidence:** `tmp/m1_ghidra_findings.md` §1 (R-M.1.1) — Ghidra export
+> table annotations + xrefs confirming ordinal 66 = FUN_10165f70
+> (`operator_new(0x58)` + ctor FUN_10165a00, cdecl, no args, returns
+> `void*`) and ordinal 67 = FUN_10165fd0 (dtor FUN_10165ac0 + `operator
+> delete(p, 0x58)`, stdcall, one arg `void* p`, returns void). Full M.1
+> findings/handoff: `docs/M1_HANDOFF.md`.
+>
+> **Verification status (post-M.1):** 22/22 signatures PASS;
+> `test_orlib_resolver` 251/251 × 3 cycles, 0 failures; `test_sigtool`
+> 12/12 passed; `test_compiler_layout` 18/18 assertions, 0 failures;
+> `test_no_hardcoded_rvas` 25 forbidden entries, 0 violations; full
+> regression 12/12 suites PASS. See `docs/M1_HANDOFF.md` for the complete
+> test and E2E results.
+
 > **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
 
 > **CURRENT-STATUS BANNER — Workstream L.** Workstream L is **NOT YET
@@ -124,11 +210,13 @@
 | **TVS Identifier** | TVS-B.1 + Workstreams F.4, F.5 |
 | **Date** | 2026-08-17 (B.1); 2026-08-19/26 (F.4, F.5 additions) |
 | **Status** | APPROVED |
-| **Purpose** | Catalogs the 24 code-section RVA targets in `orlib20.dll` (11 from TVS-B.1 + 13 from Workstreams F.4 and F.5; target #9 retired in TVS-L.3), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 10 export names, 3 data-section RVA targets, 11 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
+| **Purpose** | Catalogs the 22 code-section RVA targets in `orlib20.dll` (11 from TVS-B.1 + 13 from Workstreams F.4 and F.5; target #9 retired in TVS-L.3; targets #3 `CELCompiler_ctor` and #4 `CELCompiler_dtor` retired in Workstream M.1 — see the 2026-08-24 correction notice at the top of this file), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 12 export entries (10 by-name exports plus 2 ordinal-only `[NONAME]` exports 66/67 added in M.1), 3 data-section RVA targets, 11 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
 
 > **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/archive/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
 
 > **WORKSTREAM F.4/F.5 NOTICE (2026-08-19/26):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The catalog below has been updated to reflect all 24 signatures, 10 exports, 3 data globals, and 11 patch sites (post-TVS-L.3; was 25/12 before target #9 retirement). The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py` (EXPECTED_SIGNATURE_COUNT=24, EXPECTED_DATA_GLOBAL_COUNT=3, EXPECTED_EXPORT_COUNT=10).
+>
+> **[M.1 UPDATE — 2026-08-24:** The counts in this notice are superseded by Workstream M.1. M.1 retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures (§4.3, §4.4) and added ordinal-only exports 66 and 67 (see §5). Current counts: **22 signatures, 12 exports, 3 data globals, 11 patch sites**. `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 22 and `EXPECTED_EXPORT_COUNT` is now 12. The F.4/F.5 narrative above is retained as the historical record of the F.4/F.5 additions; only the totals are superseded. See the 2026-08-24 correction notice at the top of this file and `docs/M1_HANDOFF.md`.**]
 
 **Source artifacts (all in `tmp/re_artifacts/`):**
 
@@ -140,7 +228,7 @@
 | `b1_signatures.h` | The original 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
 | `b1_export_confirmation.md` | Export table confirmation for the original 7 export names |
 | `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) for the original 12 signatures |
-| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 24 signatures, 3 data globals, 10 exports (all versions) |
+| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 22 signatures, 3 data globals, 12 exports (all versions; post-M.1 — was 24/10 before M.1 retired `CELCompiler_ctor`/`CELCompiler_dtor` and added ordinal 66/67) |
 
 ---
 
@@ -208,7 +296,7 @@ In all signatures in this catalog, `??` represents a **wildcard byte** (matches 
 
 *Source: `signatures/v9.50.01.3344.json` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap, not renumbered). For patch sites (targets 10–12, 13–21, 25), additional patch metadata columns are populated.
+One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets #3 `CELCompiler_ctor` / #4 `CELCompiler_dtor` retired in Workstream M.1 — stable-ID gaps, not renumbered). The two M.1-retired rows are retained below marked **RETIRED 2026-08-24 (M.1)** for historical traceability; they are no longer part of the active 22-signature set and are not generated into `signatures/v9.50.01.3344.json`. For patch sites (targets 10–12, 13–21, 25), additional patch metadata columns are populated.
 
 > **Note on patch-site targets:** The signature matches the **containing function** entry point (or a mid-function anchor for some F.5 signatures), not the patch byte itself. The "RVA" column shows the **patch-site RVA** (the production target). The "Sig Match RVA" column shows where the signature actually matches (the containing function entry or anchor). The patch byte is at `Sig Match RVA + Patch Offset`.
 
@@ -216,8 +304,8 @@ One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap,
 |---|---|---|---|---|---|---|
 | 1 | StartCompilingProcess | 0x165DE0 | `__cdecl`, no args | 64 | Yes (1/1) | No |
 | 2 | EndCompilingProcess | 0x165ED0 | `__fastcall`, 1 arg (int param) | 55 | Yes (1/1) | No |
-| 3 | CELCompiler_ctor | 0x165A00 | `__fastcall` (ecx=this) | 64 | Yes (1/1) | No |
-| 4 | CELCompiler_dtor | 0x165AC0 | `__fastcall` (ecx=this) | 38 | Yes (1/1) | No |
+| 3 | CELCompiler_ctor — **RETIRED 2026-08-24 (M.1)** | 0x165A00 | `__fastcall` (ecx=this) | 64 | Yes (1/1) | No |
+| 4 | CELCompiler_dtor — **RETIRED 2026-08-24 (M.1)** | 0x165AC0 | `__fastcall` (ecx=this) | 38 | Yes (1/1) | No |
 | 5 | InitGlobalLookup | 0x1A9460 | `__cdecl`, no args | 66 | Yes (1/1) | No |
 | 6 | DeleteFromTree | 0x1E4030 | `__thiscall` (ecx=globalLookup; stack: whType, progId, flag); RET 12 | 66 | Yes (1/1) | No |
 | 7 | GetWarehouse | 0x1A9650 | `__cdecl`, 1 arg (path; 0=default) | 45 | Yes (1/1) | No |
@@ -261,7 +349,7 @@ One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap,
 
 *Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `signatures/v9.50.01.3344.json` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
 
-**Export status note (applies to all 24 targets):** None of the 24 RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 10 exported functions used in production code are documented separately in §5.
+**Export status note (applies to all 22 active targets):** None of the 22 active RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 12 exported entries used in production code (10 by-name exports plus 2 ordinal-only `[NONAME]` exports 66/67 added in M.1) are documented separately in §5. The two M.1-retired targets (#3 `CELCompiler_ctor`, #4 `CELCompiler_dtor`) were previously resolved by RVA signature; M.1 replaced them with ordinal 66/67 export resolution (see §5 and the RETIRED notes on §4.3/§4.4).
 
 ---
 
@@ -322,6 +410,23 @@ One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap,
 
 ### 4.3 Target 3: CELCompiler constructor (RVA 0x165A00)
 
+> **RETIRED 2026-08-24 (M.1).** This signature has been **retired** by
+> Workstream M slice M.1 (TSDev parity — compiler-object lifecycle) and is
+> **no longer generated** into `signatures/v9.50.01.3344.json` or resolved
+> by the production `OrlibResolver`. M.1 replaced direct RVA resolution of
+> the CELCompiler constructor with **ordinal-only `[NONAME]` export 66**
+> resolution: production code calls `GetProcAddress(m_orlibModule,
+> MAKEINTRESOURCEA(66))` (test mode: PE export-table indexing by ordinal).
+> Ordinal 66 maps to `FUN_10165f70` (RVA 0x165F70), a `__cdecl` thunk with
+> no arguments that returns `void*` and performs `operator_new(0x58)` +
+> `ctor FUN_10165a00` (the same constructor this signature targeted, at
+> RVA 0x165A00). The historical signature/scan/structural-assumption
+> content below is **retained as the historical record** of the pre-M.1
+> RVA-resolution approach; it is **superseded** for production purposes by
+> the ordinal 66 entry in §5. See `docs/M1_HANDOFF.md` (R-M.1.1) and
+> `tmp/m1_ghidra_findings.md` §1 for the Ghidra export-table evidence.
+> Catalog totals are now **22 signatures / 12 exports** (was 24 / 10).
+
 | Field | Value |
 |---|---|
 | **RVA** | 0x165A00 |
@@ -349,6 +454,25 @@ One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap,
 ---
 
 ### 4.4 Target 4: CELCompiler destructor (RVA 0x165AC0)
+
+> **RETIRED 2026-08-24 (M.1).** This signature has been **retired** by
+> Workstream M slice M.1 (TSDev parity — compiler-object lifecycle) and is
+> **no longer generated** into `signatures/v9.50.01.3344.json` or resolved
+> by the production `OrlibResolver`. M.1 replaced direct RVA resolution of
+> the CELCompiler destructor with **ordinal-only `[NONAME]` export 67**
+> resolution: production code calls `GetProcAddress(m_orlibModule,
+> MAKEINTRESOURCEA(67))` (test mode: PE export-table indexing by ordinal).
+> Ordinal 67 maps to `FUN_10165fd0` (RVA 0x165FD0), a `__stdcall` function
+> taking one argument `void* p` and returning void, which performs
+> `dtor FUN_10165ac0` (the same destructor this signature targeted, at
+> RVA 0x165AC0) + `operator delete(p, 0x58)`. Ordinal 67 frees the object
+> internally; callers must **not** double-free. The historical
+> signature/scan/structural-assumption content below is **retained as the
+> historical record** of the pre-M.1 RVA-resolution approach; it is
+> **superseded** for production purposes by the ordinal 67 entry in §5.
+> See `docs/M1_HANDOFF.md` (R-M.1.1) and `tmp/m1_ghidra_findings.md` §1
+> for the Ghidra export-table evidence. Catalog totals are now
+> **22 signatures / 12 exports** (was 24 / 10).
 
 | Field | Value |
 |---|---|
@@ -1112,9 +1236,23 @@ One row per RVA target (24 rows; target #9 retired in TVS-L.3 — stable-ID gap,
 
 ## 5. Export Name Confirmation
 
-*Source: `tmp/re_artifacts/b1_export_confirmation.md` (original 7), `signatures/v9.50.01.3344.json` (all 10)*
+*Source: `tmp/re_artifacts/b1_export_confirmation.md` (original 7), `signatures/v9.50.01.3344.json` (all 10 by-name exports), `tmp/m1_ghidra_findings.md` §1 (R-M.1.1 — ordinal 66/67, added in M.1)*
 
-The 10 export names used in production code, confirmed present in `orlib20_baseline.dll`'s export table via `dumpbin /exports`. Export table: 699 functions total, 636 named, 63 ordinal-only (`[NONAME]`). Ordinal base = 10. The original 7 exports (TVS-B.1) are used in `src/tsdev_lib.cpp`. The 3 new exports (F.4/F.5) are used in the `get-source` and `exists --case-insensitive` code paths.
+> **[M.1 UPDATE — 2026-08-24:** Workstream M.1 added two **ordinal-only
+> `[NONAME]` exports** (66 and 67) to the production resolution set,
+> replacing the retired `CELCompiler_ctor` / `CELCompiler_dtor` RVA
+> signatures (§4.3, §4.4). The export count is now **12** (10 by-name +
+> 2 ordinal-only). The two new entries are resolved by ordinal via
+> `GetProcAddress(m_orlibModule, MAKEINTRESOURCEA(ordinal))` in
+> production and by PE export-table indexing in test mode (see
+> `src/orlib_resolver.cpp` `resolveExportByOrdinal()`). They are
+> `[NONAME]` exports — they have **no export name string** and cannot be
+> resolved by `GetProcAddress(name)`. See the new rows 11–12 in the table
+> below and the §5.1 / §5.2 detail subsections. Evidence:
+> `tmp/m1_ghidra_findings.md` §1 (R-M.1.1); full handoff:
+> `docs/M1_HANDOFF.md`.**]
+
+The 12 export entries used in production code, confirmed present in `orlib20_baseline.dll`'s export table via `dumpbin /exports` (by-name entries) and Ghidra export-table annotations + xrefs (ordinal-only entries). Export table: 699 functions total, 636 named, 63 ordinal-only (`[NONAME]`). Ordinal base = 10. The original 7 by-name exports (TVS-B.1) are used in `src/tsdev_lib.cpp`. The 3 by-name exports added in F.4/F.5 are used in the `get-source` and `exists --case-insensitive` code paths. The 2 ordinal-only exports added in M.1 are used in the CELCompiler object-lifecycle path (alloc+ctor / dtor+free), replacing the retired §4.3/§4.4 RVA signatures.
 
 | # | Export name (as used in code) | Decorated? | Ordinal | Hint | Export RVA | Found in export table? | Added in |
 |---|---|---|---|---|---|---|---|
@@ -1128,8 +1266,64 @@ The 10 export names used in production code, confirmed present in `orlib20_basel
 | 8 | `_LoadTextFileEX@16` | Yes (stdcall-decorated) | — | — | 0x001081A0 | Yes | F.4 |
 | 9 | `_LoadMasterRecsEX@16` | Yes (stdcall-decorated) | — | — | 0x001A5360 | Yes | F.5 |
 | 10 | `_GetMasterRecByType@16` | Yes (stdcall-decorated) | — | — | 0x001A0460 | Yes | F.5 |
+| 11 | ordinal 66 (`[NONAME]`) | **N/A — ordinal-only, no name** | 66 | — | 0x00165F70 | Yes (ordinal-only `[NONAME]`) | M.1 |
+| 12 | ordinal 67 (`[NONAME]`) | **N/A — ordinal-only, no name** | 67 | — | 0x00165FD0 | Yes (ordinal-only `[NONAME]`) | M.1 |
 
-**All 10 export names are present in the export table.** None are ordinal-only; all 10 are exported by name. Ordinal/hint values for exports 8–10 are not documented in `b1_export_confirmation.md` (which predates F.4/F.5); the RVAs are from `signatures/v9.50.01.3344.json`.
+**All 12 export entries are present in the export table.** Exports 1–10 are exported by name (none of those 10 are ordinal-only). Exports 11–12 are **ordinal-only `[NONAME]`** — they have no export name string and are resolved by ordinal via `GetProcAddress` with `MAKEINTRESOURCEA(ordinal)` (production) or PE export-table indexing (test mode). Ordinal/hint values for by-name exports 8–10 are not documented in `b1_export_confirmation.md` (which predates F.4/F.5); the RVAs are from `signatures/v9.50.01.3344.json`. The RVAs and ordinals for entries 11–12 are from `tmp/m1_ghidra_findings.md` §1 (R-M.1.1).
+
+### 5.1 Ordinal 66 — CELCompiler alloc+ctor (`[NONAME]` export, added in M.1)
+
+*Source: `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
+
+| Field | Value |
+|---|---|
+| **Ordinal** | 66 |
+| **Export RVA** | 0x00165F70 |
+| **VA** | 0x10165F70 |
+| **Ghidra symbol** | FUN_10165f70 |
+| **Exported by name?** | **No** — ordinal-only `[NONAME]` export; no name string in the export table. Resolved by `GetProcAddress(m_orlibModule, MAKEINTRESOURCEA(66))` (production) or PE export-table indexing by ordinal (test mode). |
+| **Calling convention** | `__cdecl`, no args |
+| **Signature** | `void* f()` — takes no arguments, returns a pointer to the newly allocated and constructed CELCompiler object. |
+| **Semantics** | `operator_new(0x58)` followed by the CELCompiler constructor `FUN_10165a00` (RVA 0x165A00 — the function previously targeted by the now-retired §4.3 `CELCompiler_ctor` signature). Allocates the 0x58-byte CELCompiler object and constructs it in one call. |
+| **Replaces** | §4.3 `CELCompiler_ctor` (RVA 0x165A00) RVA-signature resolution. M.1 retired that signature; the constructor is now reached indirectly via this ordinal 66 thunk. |
+| **Caller responsibility** | Caller must eventually free the returned object via **ordinal 67** (which performs dtor + `operator delete(p, 0x58)`). Do **not** call `free`/`operator delete` directly. |
+
+### 5.2 Ordinal 67 — CELCompiler dtor+free (`[NONAME]` export, added in M.1)
+
+*Source: `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
+
+| Field | Value |
+|---|---|
+| **Ordinal** | 67 |
+| **Export RVA** | 0x00165FD0 |
+| **VA** | 0x10165FD0 |
+| **Ghidra symbol** | FUN_10165fd0 |
+| **Exported by name?** | **No** — ordinal-only `[NONAME]` export; no name string in the export table. Resolved by `GetProcAddress(m_orlibModule, MAKEINTRESOURCEA(67))` (production) or PE export-table indexing by ordinal (test mode). |
+| **Calling convention** | `__stdcall`, one stack arg |
+| **Signature** | `void f(void* p)` — takes a pointer to the CELCompiler object (as returned by ordinal 66), returns nothing. |
+| **Semantics** | Calls the CELCompiler destructor `FUN_10165ac0` (RVA 0x165AC0 — the function previously targeted by the now-retired §4.4 `CELCompiler_dtor` signature) on `p`, then calls `operator delete(p, 0x58)` to free the 0x58-byte allocation. **Ordinal 67 frees the object internally** — callers must not double-free. |
+| **Replaces** | §4.4 `CELCompiler_dtor` (RVA 0x165AC0) RVA-signature resolution. M.1 retired that signature; the destructor is now reached indirectly via this ordinal 67 thunk. |
+| **Caller responsibility** | Pass the pointer obtained from ordinal 66. Do not call any other free on the same pointer. |
+
+### 5.3 Ordinal 57 — 0x40A library-change notification sender (`[NONAME]` export, added in M.3)
+
+*Source: `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1)*
+
+| Field | Value |
+|---|---|
+| **Ordinal** | 57 |
+| **Export RVA** | 0x001526F0 |
+| **VA** | 0x101526F0 |
+| **Ghidra symbol** | FUN_101526f0 |
+| **Exported by name?** | **No** — ordinal-only `[NONAME]` export; no name string in the export table. Resolved by `GetProcAddress(m_orlibModule, MAKEINTRESOURCEA(57))` (production) or PE export-table indexing by ordinal (test mode). |
+| **Calling convention** | `__stdcall`, two stack args, `RET 8` (C2 08 00) |
+| **Signature** | `void f(unsigned short category, unsigned short progId)` — takes the affected module's category (whType low 8 bits) and ProgId (warehouse record index), returns nothing (the disassembly unconditionally `MOV EAX,1` before `RET 8`, but the return value is NOT a delivery guarantee — see §3.1 of the RE note). |
+| **Semantics** | Packs `lParam=(category<<16)\|(progId&0xFFFF)`, `wParam=0`, `msg=0x40A`, loads the `tslib::EventsViaHandles` singleton (`PTR_DAT_10231050`) into `ECX` as `this`, and calls `tslib!PosMessageToClients` — the **asynchronous** `PostMessageW`-based variant that iterates the registered client HWND set and posts `0x40A` once per registered handle. Frida-confirmed: 57 total `PostMessageW(0x40A)` sends to 19 distinct receiver HWNDs after a single verify-success operation (3 operations × 19 HWNDs). |
+| **Packing (R-M.3.1)** | `msg=0x040A`, `wParam=0`, `lParam=(category<<16)\|(ProgId&0xFFFF)`. The **low word of `lParam` IS the ProgId** (warehouse record index), NOT the subtype. Confirmed by three converging evidence lines (Frida trace identity, Ghidra static field layout, Frida `lParam=0x1a1e/0x1a1f/0x1a20` = ProgIds 6686/6687/6688). |
+| **Error semantics (R-M.3.3)** | Always returns 1 regardless of how many HWNDs received the message or whether any `PostMessageW` succeeded. Send failure is silently ignored; no receiver = silent no-op. Operation success is NOT blocked by receiver absence. Callers must NOT treat the return as a delivery guarantee. |
+| **TSDev callers** | `FUN_00453f70` (verify-success handler, xref from `0x00453f89`) and `FUN_0044cab0` (rename / change-analysis-technique-type, xref from `0x0044cd8a`). TSDev does NOT import the synchronous variant (ordinal 65, `FUN_101526c0`, which calls `SendMessageToClients`). |
+| **Operation set (R-M.3.2)** | verify-success (insert/modify/upsert) sends 0x40A via this ordinal; delete sends 0x40A via the internal `FUN_10159ae0` (gated `category != 4`); failed compile/verify does NOT send. The CLI's `deleteEntry()` calls the orchestrator `FUN_101a8360` (NOT `FUN_10159dd0`/`FUN_10159ae0`), so it posts 0x40A explicitly via this ordinal for parity, gated `category != 4`. |
+| **Caller responsibility** | Pass `getCategory(type)` as `category` and `progId & 0xFFFF` as `progId`. Do not interpret the return value as delivery success. |
 
 ### `FindExistPos` decorated-form check
 
@@ -1140,9 +1334,9 @@ The production code resolves `FindExistPos` by its **undecorated** name (not `_F
 
 Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 0x001A41B0), but that is a separate export, not the decorated form of `FindExistPos`. The production code's claim that `FindExistPos` is exported undecorated is **CONFIRMED** — the decorated form does not exist.
 
-### Calling conventions for the 10 exports
+### Calling conventions for the 13 exports
 
-*Source: `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary, original 7), `signatures/v9.50.01.3344.json` (all 10)*
+*Source: `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary, original 7), `signatures/v9.50.01.3344.json` (all 10 by-name exports), `tmp/m1_ghidra_findings.md` §1 (R-M.1.1 — ordinal 66/67, added in M.1), `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1 — ordinal 57, added in M.3)*
 
 | Export | Convention | Signature |
 |---|---|---|
@@ -1156,6 +1350,9 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 | `_LoadTextFileEX@16` | `__stdcall` | (int whType, int progId, char** outText, int* outSize) → int — source text retrieval (F.4) |
 | `_LoadMasterRecsEX@16` | `__stdcall` | (int whType, void* callback, int param3, int param4) → int — master record enumeration (F.5) |
 | `_GetMasterRecByType@16` | `__stdcall` | (int whType, int index, void* outRec, int param4) → int — master record by type (F.5) |
+| ordinal 66 (`[NONAME]`) | `__cdecl` | () → `void*` — `operator_new(0x58)` + ctor `FUN_10165a00`; CELCompiler alloc+ctor (M.1) |
+| ordinal 67 (`[NONAME]`) | `__stdcall` | (`void* p`) → void — dtor `FUN_10165ac0` + `operator delete(p, 0x58)`; CELCompiler dtor+free, frees internally (M.1) |
+| ordinal 57 (`[NONAME]`) | `__stdcall` | (`unsigned short category, unsigned short progId`) → void — packs `lParam=(category<<16)\|(progId&0xFFFF)`, `wParam=0`, `msg=0x40A`, calls `tslib!PosMessageToClients`; always returns 1 (NOT a delivery guarantee); 0x40A library-change notification sender (M.3) |
 
 ---
 
@@ -1163,7 +1360,7 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 
 *Source: `tmp/re_artifacts/b1_rva_inventory.md` (entries 13–15), `tmp/re_artifacts/b1_ghidra_evidence.md` (§3 Data-Section RVA Targets)*
 
-These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 24 code-section signature targets.
+These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 22 code-section signature targets.
 
 | # | RVA | VA | Name | Purpose | Access method |
 |---|---|---|---|---|---|
@@ -1245,7 +1442,7 @@ These constants are used by the production code and/or embedded in signatures. T
 
 ### Probe description
 
-The standalone probe `src/sig_scan.cpp` verifies that each of the 24 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`.
+The standalone probe `src/sig_scan.cpp` verifies that each of the 22 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`. (Was 24 prior to Workstream M.1, which retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures — see the 2026-08-24 correction notice at the top of this file and the RETIRED notes on §4.3/§4.4.)
 
 **How it works:**
 
@@ -1257,7 +1454,7 @@ The standalone probe `src/sig_scan.cpp` verifies that each of the 24 candidate s
 6. **Converts match offsets to RVAs**: `RVA = textRVA + offsetInText`. Reports file offset and RVA for each match.
 7. **PASS criteria**: exactly 1 match AND the match RVA equals the expected RVA from `signatures/v9.50.01.3344.json`.
 8. **Patch-site verification**: for patch sites, reads the byte at `matchOffset + patchOffset` and compares it to the first byte of `originalBytes`. Reports OK if they match, WARNING if they differ (may already be patched).
-9. **Exit code**: 0 = all 24 PASS; 1 = at least one FAIL.
+9. **Exit code**: 0 = all 22 PASS; 1 = at least one FAIL.
 
 ### Build and run
 
@@ -1271,16 +1468,25 @@ Defaults to `tests/fixtures/orlib20_baseline.dll` if no argument is given.
 
 ### Result
 
-**24 / 24 signatures PASS. Exit code 0.**
+> **[M.1 UPDATE — 2026-08-24:** The active signature count is now **22**.
+> Targets #3 `CELCompiler_ctor` and #4 `CELCompiler_dtor` were retired by
+> Workstream M.1 and are no longer scanned by `sig_scan` or generated into
+> `signatures/v9.50.01.3344.json`. Their historical scan rows are retained
+> below marked **RETIRED 2026-08-24 (M.1)** for traceability; they are
+> excluded from the active 22/22 PASS count. The constructor/destructor
+> are now reached via ordinal 66/67 export resolution (see §5.1/§5.2 and
+> `docs/M1_HANDOFF.md`).**]
 
-All 24 signatures matched exactly once at their expected RVAs within the `.text` section. All 11 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original TVS-B.1 signatures (targets 1–8, 10–12; 11 remaining after TVS-L.3 retired target 9) were verified by `b1_sig_scan_run.md` (which originally verified 12; target 9 was removed in TVS-L.3). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 24 signatures.
+**22 / 22 signatures PASS. Exit code 0.** (Pre-M.1: 24 / 24 signatures PASS — the two retired rows below were part of that historical 24/24 result.)
+
+All 22 active signatures matched exactly once at their expected RVAs within the `.text` section. All 11 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original TVS-B.1 signatures (targets 1–8, 10–12; 11 remaining after TVS-L.3 retired target 9; 9 remaining after M.1 retired targets 3 and 4) were verified by `b1_sig_scan_run.md` (which originally verified 12; target 9 was removed in TVS-L.3; targets 3 and 4 were removed in M.1). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 22 active signatures (post-M.1).
 
 | # | Name | Expected RVA | Match Count | Matched RVA | Result |
 |---|---|---|---|---|---|
 | 1 | StartCompilingProcess | 0x00165DE0 | 1 | 0x00165DE0 | PASS |
 | 2 | EndCompilingProcess | 0x00165ED0 | 1 | 0x00165ED0 | PASS |
-| 3 | CELCompiler_ctor | 0x00165A00 | 1 | 0x00165A00 | PASS |
-| 4 | CELCompiler_dtor | 0x00165AC0 | 1 | 0x00165AC0 | PASS |
+| 3 | CELCompiler_ctor | 0x00165A00 | 1 | 0x00165A00 | PASS — **RETIRED 2026-08-24 (M.1)** (historical row; no longer scanned) |
+| 4 | CELCompiler_dtor | 0x00165AC0 | 1 | 0x00165AC0 | PASS — **RETIRED 2026-08-24 (M.1)** (historical row; no longer scanned) |
 | 5 | InitGlobalLookup | 0x001A9460 | 1 | 0x001A9460 | PASS |
 | 6 | DeleteFromTree | 0x001E4030 | 1 | 0x001E4030 | PASS |
 | 7 | GetWarehouse | 0x001A9650 | 1 | 0x001A9650 | PASS |
@@ -1302,11 +1508,11 @@ All 24 signatures matched exactly once at their expected RVAs within the `.text`
 | 24 | FUN_101c36d0_verbatim_name_getter | 0x001C36D0 | 1 | 0x001C36D0 | PASS |
 | 25 | FUN_101c36d0_thread_check_INT3 | 0x001C3736 | 1 | 0x001C3736 | PASS (patch byte 0xCC OK) |
 
-*(Source: `b1_sig_scan_run.md` for targets 1–8, 10–12; `tests/run_regression.ps1` sigtool suite for targets 13–25. All 24 signatures verified unique with expectedMatchCount=1 in `signatures/v9.50.01.3344.json`.)*
+*(Source: `b1_sig_scan_run.md` for targets 1–8, 10–12; `tests/run_regression.ps1` sigtool suite for targets 13–25. All 22 active signatures verified unique with expectedMatchCount=1 in `signatures/v9.50.01.3344.json` (post-M.1). The two retired rows (#3, #4) are historical and excluded from the active 22/22 PASS count.)*
 
 **Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `signatures/v9.50.01.3344.json`.
 
-**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 24 signatures.
+**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 22 active signatures.
 
 ---
 
@@ -1317,7 +1523,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 | Item | Status | Description |
 |---|---|---|
 | Data-section RVA resolution | DONE (TVS-B.4/B.4.5) | The 3 data-section RVAs (0x23CEA0, 0x23CEA4, 0x23AAB8) are now resolved via signature-based instruction-operand extraction. See §6. |
-| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 24 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. |
+| Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 22 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. (Was 24 prior to M.1, which retired the `CELCompiler_ctor`/`CELCompiler_dtor` signatures in favor of ordinal 66/67 export resolution.) |
 | Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
 | SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
 | Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7) and ShowMe (TVS-C.8); 3 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, TradingApp (0x1402), and ShowMe (0x0502) are confirmed. ActivityBar, PaintBar, ProbabilityMap warehouse types remain unconfirmed. |
@@ -1328,7 +1534,7 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 
 | Criterion (HANDOFF_B §4) | Where satisfied |
 |---|---|
-| 1. Document lists, for each of 24 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields) |
-| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 24/24 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
-| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (10 export names with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND) |
+| 1. Document lists, for each of 22 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields). (Was 24; targets #3/#4 retired in M.1 — see 2026-08-24 correction notice and RETIRED notes on §4.3/§4.4.) |
+| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 22/22 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
+| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (12 export entries: 10 by-name exports with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND; 2 ordinal-only `[NONAME]` exports 66/67 added in M.1 with Ghidra-confirmed RVAs) |
 | 4. Catalog notes orlib20.dll file version, PE timestamp, file size, SHA-256 hash | §1 (DLL Baseline: FileVersion 9.50.01.3344, PE timestamp 0x5C01735E, file size 4,924,400 bytes, SHA-256 318DB24A...) |

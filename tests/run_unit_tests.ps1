@@ -60,7 +60,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
-    Runs all 31 tests.
+    Runs all 33 tests.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
@@ -68,7 +68,7 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
-    Runs all 31 tests with full output for every test.
+    Runs all 33 tests with full output for every test.
 
 .NOTES
     Exit codes:
@@ -124,6 +124,9 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_insert';                 RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_insert_tradingapp';      RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_auto_cleanup';           RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_compiler_layout';        RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_save_module';            RequiresTs = $true  }
+    [pscustomobject]@{ Name = 'test_0x40a_notification';     RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_modify';                 RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_modify_tradingapp';      RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_exists';                 RequiresTs = $true  }
@@ -267,7 +270,7 @@ function Print-Summary {
 Write-Host "TSDev Automation - C++ Unit Test Runner" -ForegroundColor Cyan
 Write-Host "Project root : $ProjectRoot"
 Write-Host "Build dir    : $ResolvedBuildDir"
-Write-Host "Mode         : $(if ($NoTs) { 'no-ts (14 non-TS tests only)' } else { 'full (all 31 tests)' })"
+Write-Host "Mode         : $(if ($NoTs) { 'no-ts (14 non-TS tests only)' } else { 'full (all 33 tests)' })"
 Write-Host "Verbose      : $Verbose"
 
 if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {

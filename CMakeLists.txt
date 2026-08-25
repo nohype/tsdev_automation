@@ -515,6 +515,64 @@ target_link_libraries(test_get_source tsdev_lib)
 add_executable(test_auto_cleanup tests/test_auto_cleanup.cpp)
 target_link_libraries(test_auto_cleanup tsdev_lib)
 
+# --- Workstream M slice M.1: CELCompiler field-layout parity integration test -
+# TDD RED->GREEN integration test for the CELCompiler allocation / setup /
+# destruction parity with TSDev.exe. Uses the onCompilerReady test hook
+# (populated via makeTsDevLibForTest) to capture the live 0x58-byte CELCompiler
+# object state immediately before _VerifyModule_New and assert the TSDev-parity
+# field layout (+0x00, +0x04, +0x08, +0x0C, +0x10, +0x18, +0x28). Two cases:
+# Strategy (category=0) and Indicator (category=2, catches the +0x08 divergence
+# that Strategy alone would miss). Inserts + verifies + deletes a disposable
+# item per case. REQUIRES TradeStation (constructs a real TsDevLib via the
+# test-only ctor with the real ComApi). Runs on a 64 MB-stack worker thread.
+# Per the operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation
+# Desktop processes may be running when this test executes.
+add_executable(test_compiler_layout tests/test_compiler_layout.cpp)
+target_include_directories(test_compiler_layout PRIVATE src)
+target_link_libraries(test_compiler_layout PRIVATE tsdev_lib Ole32)
+
+# --- TVS-M slice M.2: _SaveModule_New flags/password parity integration test -
+# Asserts the flags word (arg3) and password buffer (arg5) passed to
+# _SaveModule_New@20 by saveSource() match the TSDev.exe values computed by
+# FUN_00452290 (see docs/RE/RE_M2_SAVEMODULE_NEW.md, UPDATE 2026-08-25
+# Corrections 1 and 2). Uses the onSaveModuleNewReady test hook (populated
+# via makeTsDevLibForTest) to capture the flags pointer and password buffer
+# immediately before _SaveModule_New and assert:
+#   flags = (getCategory(type) & 0x7) | 0x60  (pre-verify; bits 5,6 forced on)
+#   password = 64-byte buffer, zeroed then "!p$Kn@aSus" (10 bytes) copied in
+# Three cases: Strategy (0x60), Indicator (0x62), Function (0x64). Inserts +
+# saves + verifies + round-trips + deletes a disposable item per case.
+# REQUIRES TradeStation (constructs a real TsDevLib via the test-only ctor
+# with the real ComApi). Runs on a 64 MB-stack worker thread. Per the
+# operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation Desktop
+# processes may be running when this test executes.
+add_executable(test_save_module tests/test_save_module.cpp)
+target_include_directories(test_save_module PRIVATE src)
+target_link_libraries(test_save_module PRIVATE tsdev_lib Ole32)
+
+# --- TVS-M slice M.3: 0x40A post-success notification parity integration test -
+# Asserts the 0x40A library-change notification (msg=0x40A, wParam=0,
+# lParam=(category<<16)|(ProgId&0xFFFF)) is sent after verify-success and
+# delete-success, and NOT sent after failed verify. Uses the onNotifyReady
+# test hook (populated via makeTsDevLibForTest) to capture the would-be
+# send arguments immediately before the 0x40A post (the same point at
+# which TSDev calls orlib20 Ordinal_57). See
+# docs/RE/RE_M3_0x40A_NOTIFICATION.md (R-M.3.1, R-M.3.2, R-M.3.3).
+# Six cases: 3 verify-success (Strat/Ind/Func) + failed-verify (negative)
+# + delete-success + batch-reuse (3 verify-success cycles on one TsDevLib).
+# REQUIRES TradeStation (constructs a real TsDevLib via the test-only ctor
+# with the real ComApi). Runs on a 64 MB-stack worker thread. Per the
+# operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation Desktop
+# processes may be running when this test executes.
+# RED state: no 0x40A send exists yet — positive cases FAIL (hook did not
+# fire), negative case passes trivially. GREEN phase will add the actual
+# 0x40A send (via orlib20 Ordinal_57) and the hook invocation to
+# verifyModule() (success path) and deleteEntry() (success path,
+# category != 4).
+add_executable(test_0x40a_notification tests/test_0x40a_notification.cpp)
+target_include_directories(test_0x40a_notification PRIVATE src)
+target_link_libraries(test_0x40a_notification PRIVATE tsdev_lib Ole32)
+
 # --- TVS-D.1: Batch feasibility stress test (opt-in, NOT in regression suite) -
 # Validates ONE TsDevLib instance can do N (default 600) sequential
 # insert+compile+verify ops then delete all N, leaving a clean warehouse, all
@@ -583,6 +641,9 @@ set(TSDEV_ADMIN_TARGETS
     test_directory_batch
     test_get_source
     test_auto_cleanup
+    test_compiler_layout
+    test_save_module
+    test_0x40a_notification
     test_stress_batch
 )
 
@@ -699,6 +760,9 @@ add_dependencies(test_regression
     test_directory_batch
     test_get_source
     test_auto_cleanup
+    test_compiler_layout
+    test_save_module
+    test_0x40a_notification
     test_orlib_resolver
     tsdev_cli
     sigtool

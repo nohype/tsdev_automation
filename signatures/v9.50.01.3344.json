@@ -57,38 +57,6 @@
       }
     },
     {
-      "name": "CELCompiler_ctor",
-      "targetType": "call_target",
-      "callingConvention": "fastcall",
-      "expectedRva": "0x165A00",
-      "hexPattern": "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 08 56 57 8B F9 89 7D F0 8D 47 1C C7 47 04 00 00 00 00 C7 47 08 00 00 00 00 C7 47 0C 00 00 00 00 C7 47 10 00 00 00",
-      "length": 64,
-      "expectedMatchCount": 1,
-      "provenance": {
-        "author": "TVS-B.1",
-        "date": "2026-08-17",
-        "source": "Ghidra disassembly",
-        "reference": "docs/SIGNATURE_CATALOG.md §4.3",
-        "notes": "Distinctive: 83 EC 08 56 57 8B F9 (sub esp,8; push esi; push edi; mov edi,ecx) — constructor prologue capturing this pointer"
-      }
-    },
-    {
-      "name": "CELCompiler_dtor",
-      "targetType": "call_target",
-      "callingConvention": "fastcall",
-      "expectedRva": "0x165AC0",
-      "hexPattern": "55 8B EC 51 56 57 8B F9 8B 47 4C 8D 4F 4C 50 FF 30 8D 45 FC 50 E8 ?? ?? ?? ?? 6A 20 6A 01 FF 77 4C E8 ?? ?? ?? ??",
-      "length": 38,
-      "expectedMatchCount": 1,
-      "provenance": {
-        "author": "TVS-B.1",
-        "date": "2026-08-17",
-        "source": "Ghidra disassembly",
-        "reference": "docs/SIGNATURE_CATALOG.md §4.4",
-        "notes": "Distinctive: 55 8B EC 51 56 57 8B F9 8B 47 4C 8D 4F 4C — no SEH frame; destructor prologue"
-      }
-    },
-    {
       "name": "InitGlobalLookup",
       "targetType": "call_target",
       "callingConvention": "cdecl",
@@ -568,6 +536,27 @@
       "name": "_GetMasterRecByType@16",
       "rva": "0x1A0460",
       "callingConvention": "stdcall"
+    },
+    {
+      "name": null,
+      "ordinal": 66,
+      "rva": "0x165f70",
+      "callingConvention": "cdecl",
+      "notes": "M.1: CELCompiler alloc+ctor wrapper (FUN_10165f70 = operator_new(0x58) + ctor FUN_10165a00). Ordinal-only [NONAME] export. Replaces the old signature-scanned CELCompiler_ctor (raw ctor at 0x165A00) which TSDev never calls directly."
+    },
+    {
+      "name": null,
+      "ordinal": 67,
+      "rva": "0x165fd0",
+      "callingConvention": "stdcall",
+      "notes": "M.1: CELCompiler dtor+free wrapper (FUN_10165fd0 = dtor FUN_10165ac0 + operator delete(p,0x58)). Ordinal-only [NONAME] export. Replaces the old signature-scanned CELCompiler_dtor (raw dtor at 0x165AC0) which TSDev never calls directly."
+    },
+    {
+      "name": null,
+      "ordinal": 57,
+      "rva": "0x1526f0",
+      "callingConvention": "stdcall",
+      "notes": "M.3: 0x40A library-change notification sender (FUN_101526f0). Ordinal-only [NONAME] export. __stdcall, RET 8 (2 dword args): (unsigned short category, unsigned short progId). Packs lParam=(category<<16)|(progId&0xFFFF), wParam=0, msg=0x40A, calls tslib!PosMessageToClients (async PostMessageW to registered client HWND set). Always returns 1. See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 (R-M.3.1)."
     }
   ]
 }

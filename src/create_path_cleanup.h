@@ -66,8 +66,8 @@ enum class CreatePathFailureStage {
     // (doInsert exit 7 path — today: NO cleanup, partial entry orphaned.)
     SaveSourceFailed,
 
-    // verifyModule returned early because std::malloc(CELCompiler) failed
-    // (out of memory). Today: cleanup only fires incidentally via the
+    // verifyModule returned early because ordinal 66 (operator_new(0x58))
+    // failed (out of memory). Today: cleanup only fires incidentally via the
     // !errors.empty() branch inside verifyModule.
     VerifyModule_Oom,
 

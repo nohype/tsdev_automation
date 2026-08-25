@@ -58,7 +58,11 @@ const wchar_t* kSupportDlls[] = {
     L"ELDebugger.dll"
 };
 
-// CELCompiler object size (§8).
+// CELCompiler object size — confirmed 0x58 (88 bytes) by Ghidra static
+// analysis of the ordinal-66 alloc wrapper (FUN_10165f70 calls
+// operator_new(0x58)). Workstream M slice M.1: no longer used for allocation
+// (ordinal 66 allocates internally), retained as a documented constant for
+// the confirmed object size. See tmp/m1_ghidra_findings.md §1.
 const size_t kCELCompilerSize = 0x58; // 88 bytes
 
 // Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in eleven
@@ -113,10 +117,12 @@ std::string toNarrow(const std::wstring& s) {
 // The typedefs mirror the private nested typedefs in TsDevLib; function
 // pointer types are structurally identical so the members convert implicitly.
 
-// CELCompilerCtorFn and CELCompilerDtorFn come from orlib_resolver.h
-// (namespace tsdev). They are structurally compatible with the TsDevLib
-// member typedefs (CELCompilerCtor_t / CELCompilerDtor_t) so the SEH
-// wrappers below convert implicitly.
+// CELCompilerAllocFn and CELCompilerDestroyFn come from orlib_resolver.h
+// (namespace tsdev). Workstream M slice M.1 replaced the old
+// signature-scanned CELCompilerCtorFn / CELCompilerDtorFn (raw ctor/dtor)
+// with ordinal-based alloc/destroy wrappers (orlib20 ordinals 66/67).
+//   callAlloc: invokes ordinal 66 (__cdecl, no args, returns void*).
+//   callDestroy: invokes ordinal 67 (__stdcall, one arg void* p).
 typedef void  (__cdecl    *StartCompilingFn)(void);
 typedef void  (__fastcall *EndCompilingFn)(int param);
 typedef int   (__stdcall  *VerifyModuleFn)(HWND, int, int, int, void*);
@@ -125,11 +131,17 @@ struct VerifySehResult {
     int   verifyResult;    // -1 if VerifyModule_New raised
 };
 
-bool callCtor(CELCompilerCtorFn fn, void* mem) {
+// Workstream M slice M.1: SEH-protected call to ordinal 66 (alloc+ctor).
+// __cdecl, no args, returns void* (the constructed object, or NULL on alloc
+// failure). On SEH exception returns false and sets *outPtr=nullptr. POD-only
+// (no C++ objects with destructors) so __try is legal.
+bool callAlloc(CELCompilerAllocFn fn, void** outPtr) {
+    *outPtr = nullptr;
     __try {
-        fn(mem);
+        *outPtr = fn();
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *outPtr = nullptr;
         return false;
     }
 }
@@ -176,7 +188,12 @@ bool callEndCompiling(EndCompilingFn fn, int param) {
     }
 }
 
-bool callDtor(CELCompilerDtorFn fn, void* mem) {
+// Workstream M slice M.1: SEH-protected call to ordinal 67 (dtor+free).
+// __stdcall, one arg (void* p), returns void. The wrapper destructs AND frees
+// the object (operator delete(p, 0x58)) — the caller must NOT std::free the
+// pointer afterwards (that would double-free). POD-only (no C++ objects with
+// destructors) so __try is legal.
+bool callDestroy(CELCompilerDestroyFn fn, void* mem) {
     __try {
         fn(mem);
         return true;
@@ -849,10 +866,19 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
 
     // 9. Resolve 8 internal functions via resolver (signature scan,
     //    replaces old base-address + RVA arithmetic).
+    //    Workstream M slice M.1: CELCompiler alloc/destroy are now resolved
+    //    by orlib20 ORDINAL (66/67), not by signature scan of the raw
+    //    ctor/dtor. See tmp/m1_ghidra_findings.md §1 (R-M.1.1).
     m_pStartCompiling     = m_resolver->resolveStartCompilingProcess();
     m_pEndCompiling       = m_resolver->resolveEndCompilingProcess();
-    m_pCELCompilerCtor    = m_resolver->resolveCELCompilerCtor();
-    m_pCELCompilerDtor    = m_resolver->resolveCELCompilerDtor();
+    m_pCELCompilerAlloc   = m_resolver->resolveCELCompilerAlloc();
+    m_pCELCompilerDestroy = m_resolver->resolveCELCompilerDestroy();
+    // Workstream M slice M.3: resolve the 0x40A notification sender
+    // (orlib20 ordinal 57 = FUN_101526f0). Used by verifyModule() (success
+    // path) and deleteEntry() (success path, category != 4) to post the
+    // library-change notification, matching TSDev's Frida-confirmed
+    // ordering. See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 / §2.5.
+    m_pNotifyLibChanged   = m_resolver->resolveNotifyLibChanged();
     m_pInitGlobalLookup   = m_resolver->resolveInitGlobalLookup();
     m_pDeleteFromTree     = m_resolver->resolveDeleteFromTree();
     m_pGetWarehouse       = m_resolver->resolveGetWarehouse();
@@ -965,6 +991,26 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
     // two paths are behaviorally identical past the COM-init step. This path
     // requires a real TradeStation install (orlib20.dll) and is NOT exercised
     // by the pure unit test.
+    //
+    // Workstream M slice M.1: copy the optional onCompilerReady test hook
+    // from the config BEFORE initAfterCom() so it is in place by the time
+    // any verifyModule() call runs. The public ctor leaves m_onCompilerReady
+    // as nullptr (its default), so production code is unaffected.
+    m_onCompilerReady = config.onCompilerReady;
+    // Workstream M slice M.2: copy the optional onSaveModuleNewReady test
+    // hook from the config BEFORE initAfterCom() so it is in place by the
+    // time any saveSource() call runs. The public ctor leaves
+    // m_onSaveModuleNewReady as nullptr (its default), so production code is
+    // unaffected.
+    m_onSaveModuleNewReady = config.onSaveModuleNewReady;
+    // Workstream M slice M.3: copy the optional onNotifyReady test hook
+    // from the config BEFORE initAfterCom() so it is in place by the time
+    // any verifyModule() or deleteEntry() call runs. The public ctor leaves
+    // m_onNotifyReady as nullptr (its default), so production code is
+    // unaffected. No invocation of this hook is added anywhere in this RED
+    // phase — the GREEN phase will add the actual 0x40A send (and the hook
+    // call) to verifyModule() and deleteEntry().
+    m_onNotifyReady = config.onNotifyReady;
     initAfterCom(tsPathOverride);
 }
 
@@ -1075,13 +1121,34 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
 }
 
 bool TsDevLib::saveSource(ComponentType type, int progId,
-                          const std::string& source) {
+                          const std::string& source, bool isVerified) {
     m_lastSource = source;
     setSourceText(m_editorHwnd, source);
+    // --- Workstream M slice M.2: invoke the optional test-only
+    // save-module-ready hook immediately BEFORE the _SaveModule_New@20 call,
+    // capturing the flags word (arg3) and password buffer (arg5) so a test
+    // can assert the TSDev-parity values. m_onSaveModuleNewReady is nullptr
+    // in production (public ctor), so this is a pure test seam with no
+    // production side effect. ---
+    // TSDev parity: FUN_00452290 forces IsProtected+IsProtectedPlus (bits 5+6)
+    // for all items, using internal default password "!p$Kn@aSus" (0x00567b40).
+    // Category bits 0-2 from type_word & 0x7. Bit 4 (is_verified) set when
+    // re-saving an already-verified item (modify path). See docs/RE/RE_M2_SAVEMODULE_NEW.md.
+    static const char kInternalDefaultPassword[] = "!p$Kn@aSus";  // TSDev internal default at 0x00567b40, NOT a user secret
+    unsigned int saveFlags = (getCategory(type) & 0x7) | 0x60;
+    if (isVerified) {
+        saveFlags |= 0x10;  // bit 4 = is_verified (FUN_0044f720 returns 1 for re-saves)
+    }
+    char savePasswordBuf[64] = {};
+    memcpy(savePasswordBuf, kInternalDefaultPassword, sizeof(kInternalDefaultPassword) - 1);  // 10 bytes, rest already zeroed
+    if (m_onSaveModuleNewReady) {
+        m_onSaveModuleNewReady(&saveFlags, savePasswordBuf, 64,
+                               static_cast<int>(type), progId);
+    }
     int result = 0;
     __try {
         result = m_pSaveModuleNew(getCategory(type), progId,
-                                  NULL, m_editorHwnd, NULL);
+                                  &saveFlags, m_editorHwnd, savePasswordBuf);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -1301,56 +1368,102 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
 
 std::string TsDevLib::verifyModule(ComponentType type, int progId,
                                     CreatePathFailureStage* outStage) {
-    // Allocate and zero the CELCompiler object (88 bytes).
-    void* compilerMem = std::malloc(kCELCompilerSize);
+    // Workstream M slice M.1 — TSDev-parity CELCompiler lifecycle.
+    //
+    // TSDev (FUN_00451800 / FUN_004D9480) allocates+constructs the
+    // 0x58-byte CELCompiler via orlib20 ordinal export 66 (FUN_10165f70 =
+    // operator_new(0x58) + ctor FUN_10165a00) and destructs+frees via
+    // ordinal 67 (FUN_10165fd0 = dtor FUN_10165ac0 + operator
+    // delete(p, 0x58)). The CLI MUST NOT separately malloc/memset the
+    // object (ordinal 66 does both) and MUST NOT std::free the pointer
+    // after ordinal 67 (that would double-free).
+    //
+    // Field layout written by TSDev (FUN_00451800 at 0x00451ac4-0x00451af9),
+    // from warehouse type mapping (NOT source-text parsing):
+    //   +0x08 = category (whType low 8 bits)  = getCategory(type)
+    //   +0x0C = subtype                      = getSubType(type)
+    //   +0x10 = ProgId                        = progId
+    //   +0x18 = notification HWND             = m_editorHwnd
+    //   +0x28 = NOT WRITTEN by TSDev (left as uninitialized heap; ctor does NOT zero it).
+    // After StartCompilingProcess, before _VerifyModule_New, FUN_004D9480
+    // zeroes +0x00 and +0x04 (the result fields). See
+    // tmp/m1_ghidra_findings.md §2-3 (R-M.1.2 / R-M.1.3 / R-M.1.4 / R-M.1.5).
+
+    // --- 1. Allocate + construct via ordinal 66 (no malloc, no memset) ---
+    void* compilerMem = nullptr;
+    if (!callAlloc(reinterpret_cast<CELCompilerAllocFn>(m_pCELCompilerAlloc),
+                   &compilerMem)) {
+        // SEH inside the alloc+ctor wrapper. No object was produced (the
+        // wrapper allocates internally; on SEH we treat it as a ctor
+        // failure). Nothing to free — ordinal 66 owns its own allocation.
+        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehCtor;
+        return "tsdev: CELCompiler alloc+ctor (ordinal 66) raised an exception";
+    }
     if (!compilerMem) {
+        // Ordinal 66 returned NULL — operator_new(0x58) failed inside the
+        // wrapper. Preserve the OOM stage/error behavior.
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_Oom;
         return "tsdev: out of memory allocating CELCompiler object";
     }
-    std::memset(compilerMem, 0, kCELCompilerSize);
 
     std::string errors;
 
-    // Construct the CELCompiler object (fastcall: ecx = this).
-    if (!callCtor(reinterpret_cast<CELCompilerCtorFn>(m_pCELCompilerCtor),
-                  compilerMem)) {
-        std::free(compilerMem);
-        if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehCtor;
-        return "tsdev: CELCompiler constructor raised an exception";
-    }
+    // --- 2. Write the TSDev-parity fields (warehouse type mapping) ---
+    //   +0x08 = category, +0x0C = subtype, +0x10 = ProgId, +0x18 = HWND.
+    //   +0x28 is NOT written (TSDev does not write it; ctor does NOT zero it — uninitialized heap).
+    char* base = static_cast<char*>(compilerMem);
+    *(reinterpret_cast<int*>(base + 0x08)) = getCategory(type);
+    *(reinterpret_cast<int*>(base + 0x0C)) = getSubType(type);
+    *(reinterpret_cast<int*>(base + 0x10)) = progId;
+    *(reinterpret_cast<HWND*>(base + 0x18)) = m_editorHwnd;
 
-    // Set the fields TSDev sets after construction (§8). The +0x18 field
-    // must be the SAME EDIT HWND used by SaveModule_New (m_editorHwnd).
-    *(reinterpret_cast<int*>(static_cast<char*>(compilerMem) + 0x10)) = 0xa02;
-    *(reinterpret_cast<HWND*>(static_cast<char*>(compilerMem) + 0x18)) =
-        m_editorHwnd;
-    *(reinterpret_cast<int*>(static_cast<char*>(compilerMem) + 0x28)) = 6;
-
-    // StartCompilingProcess (cdecl, no args).
+    // --- 3. StartCompilingProcess (cdecl, no args) ---
     if (!callStartCompiling(
             reinterpret_cast<StartCompilingFn>(m_pStartCompiling))) {
-        callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
-                 compilerMem);
-        std::free(compilerMem);
+        // Destroy via ordinal 67 (dtor + free). NO std::free — ordinal 67
+        // already calls operator delete(p, 0x58).
+        callDestroy(reinterpret_cast<CELCompilerDestroyFn>(m_pCELCompilerDestroy),
+                    compilerMem);
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehStartCompiling;
         return "tsdev: StartCompilingProcess raised an exception";
     }
 
-    // VerifyModule_New, SEH-guarded. Error text is read directly from the
-    // global error array after this call (see readErrorsFromArray).
+    // --- 4. Zero the result fields (+0x00, +0x04) AFTER StartCompilingProcess
+    //     and BEFORE _VerifyModule_New, matching FUN_004D9480. These are the
+    //     cumulative compile-result fields that VerifyModule_New populates;
+    //     TSDev zeroes them here so stale state from a prior compile does not
+    //     leak into this one. ---
+    *(reinterpret_cast<int*>(base + 0x00)) = 0;
+    *(reinterpret_cast<int*>(base + 0x04)) = 0;
+
+    // --- 5. Invoke the optional test-only compiler-ready hook immediately
+    //     BEFORE _VerifyModule_New. In TSDev this is the point where
+    //     FUN_004D9480 has just zeroed +0x00/+0x04 and is about to call
+    //     FUN_004D91E0 -> _VerifyModule_New. The hook receives the live
+    //     compiler object so a test can assert the TSDev-parity field
+    //     layout. m_onCompilerReady is nullptr in production (public ctor),
+    //     so this is a pure test seam with no production side effect. ---
+    if (m_onCompilerReady) {
+        m_onCompilerReady(compilerMem, static_cast<int>(type), progId);
+    }
+
+    // --- 6. VerifyModule_New, SEH-guarded. Error text is read directly from
+    //     the global error array after this call (see readErrorsFromArray).
+    //     Args unchanged: HWND=m_editorHwnd, category=getCategory(type),
+    //     ProgId=progId, flag=1, compiler=compilerMem. ---
     VerifySehResult seh;
     if (!callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
             m_editorHwnd, getCategory(type), progId, compilerMem, &seh)) {
         callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
-        callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
-                 compilerMem);
-        std::free(compilerMem);
+        // Destroy via ordinal 67 (dtor + free). NO std::free.
+        callDestroy(reinterpret_cast<CELCompilerDestroyFn>(m_pCELCompilerDestroy),
+                    compilerMem);
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehVerify;
         return "tsdev: VerifyModule_New raised an exception";
     }
 
-    // Build the error string from the global error array (direct access).
+    // --- 7. Build the error string from the global error array ---
     if (seh.verifyResult != 1) {
         // Compile failure — read error records directly from orlib20.dll globals.
         errors = readErrorsFromArray(&m_lastSource);
@@ -1363,13 +1476,41 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_CompileErrors;
     }
 
-    // EndCompilingProcess (fastcall, 1 arg = 0).
+    // --- 8. EndCompilingProcess (fastcall, 1 arg = 0) ---
     callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
 
-    // Destroy the CELCompiler object.
-    callDtor(reinterpret_cast<CELCompilerDtorFn>(m_pCELCompilerDtor),
-             compilerMem);
-    std::free(compilerMem);
+    // --- 8b. M.3: Post-success 0x40A library-change notification
+    //     (TSDev parity). TSDev's FUN_00453f70 calls orlib20 Ordinal_57
+    //     AFTER EndCompilingProcess on verify success (Frida-confirmed
+    //     ordering: verify success → EndCompilingProcess →
+    //     ShowRecalculationWarning → 0x40A send → compiler destruction).
+    //     The send is GATED on verify success (seh.verifyResult == 1) —
+    //     failed compile/verify does NOT send 0x40A (R-M.3.2). The hook
+    //     fires immediately BEFORE the actual 0x40A post (the same point
+    //     at which TSDev calls Ordinal_57), capturing the (msg, wParam,
+    //     lParam) tuple plus the affected componentType and progId so a
+    //     test can assert the TSDev-parity packing. If Ordinal_57 failed
+    //     to resolve (m_pNotifyLibChanged == nullptr), the notification is
+    //     silently skipped (R-M.3.3 error semantics — no crash, no
+    //     failure), but the hook still fires (it captures the intent to
+    //     send). See docs/RE/RE_M3_0x40A_NOTIFICATION.md §2.5 / §3.1. ---
+    if (seh.verifyResult == 1) {
+        unsigned short category = static_cast<unsigned short>(getCategory(type));
+        unsigned short progIdWord = static_cast<unsigned short>(progId & 0xFFFF);
+        LPARAM lParam = (static_cast<LPARAM>(category) << 16) | progIdWord;
+        if (m_onNotifyReady) {
+            m_onNotifyReady(0x40A, 0, lParam, static_cast<int>(type), progId);
+        }
+        if (m_pNotifyLibChanged) {
+            m_pNotifyLibChanged(category, progIdWord);
+        }
+    }
+
+    // --- 9. Destroy + free via ordinal 67. NO std::free — ordinal 67 already
+    //     calls operator delete(p, 0x58). Calling std::free here would
+    //     double-free. ---
+    callDestroy(reinterpret_cast<CELCompilerDestroyFn>(m_pCELCompilerDestroy),
+                compilerMem);
 
     // TVS-L.10: create-path partial-entry cleanup is NO LONGER owned here.
     // The previous TD-001 branch keyed cleanup off the process-global
@@ -1696,6 +1837,37 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
         return false;
     }
 
+    // ------------------------------------------------------------------
+    // 6. M.3: Post-delete 0x40A library-change notification (TSDev parity).
+    //    TSDev's FUN_10159ae0 sends 0x40A after a successful delete, GATED
+    //    on category != 4 (Function deletes do NOT send 0x40A — see
+    //    docs/RE/RE_M3_0x40A_NOTIFICATION.md §2.4). The hook fires
+    //    immediately BEFORE the actual 0x40A post, capturing the
+    //    (msg, wParam, lParam) tuple plus the affected componentType and
+    //    progId so a test can assert the TSDev-parity packing. If
+    //    Ordinal_57 failed to resolve (m_pNotifyLibChanged == nullptr),
+    //    the notification is silently skipped (R-M.3.3 error semantics),
+    //    but the hook still fires (it captures the intent to send).
+    //
+    //    NOTE: this deleteEntry() implementation calls FUN_101a8360 (the
+    //    TSDev UI delete orchestrator), NOT FUN_10159dd0 / FUN_10159ae0
+    //    (the orlib20 delete export that internally sends 0x40A). The
+    //    orchestrator path does NOT emit 0x40A on its own, so an explicit
+    //    send is required here for TSDev parity. This is NOT a duplicate
+    //    send — no orlib20 function called below emits 0x40A.
+    // ------------------------------------------------------------------
+    if (category != 4) {  // Function deletes do NOT send 0x40A
+        unsigned short categoryWord = static_cast<unsigned short>(category);
+        unsigned short progIdWord = static_cast<unsigned short>(progId & 0xFFFF);
+        LPARAM lParam = (static_cast<LPARAM>(categoryWord) << 16) | progIdWord;
+        if (m_onNotifyReady) {
+            m_onNotifyReady(0x40A, 0, lParam, static_cast<int>(type), progId);
+        }
+        if (m_pNotifyLibChanged) {
+            m_pNotifyLibChanged(categoryWord, progIdWord);
+        }
+    }
+
     TSDEV_DBG("tsdev: deleteEntry — returning true\n");
     return true;
 }
@@ -1731,7 +1903,9 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     }
 
     // 2. Replace the source in the existing entry (ProgId does NOT change).
-    bool saved = saveSource(type, progId, newSource);
+    // M.2: pass isVerified=true — modify operates on a previously-verified
+    // item, so flags bit 4 (is_verified) must be set per TSDev FUN_00452290.
+    bool saved = saveSource(type, progId, newSource, true);
     TSDEV_DBG("tsdev: modifyEntry — saveSource = %s\n",
               saved ? "true" : "false");
     if (!saved) {

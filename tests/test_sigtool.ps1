@@ -33,11 +33,14 @@ $sigtool = "$PSScriptRoot\..\build\Release\sigtool.exe"
 # Baseline DLL used for all tests.
 $dll = "$PSScriptRoot\fixtures\orlib20_baseline.dll"
 
-# Committed signature set for v9.50.01.3344 (24 signatures, 11 patch_site).
+# Committed signature set for v9.50.01.3344 (22 signatures, 11 patch_site).
+# Workstream M slice M.1: removed CELCompiler_ctor and CELCompiler_dtor
+# signature entries (raw ctor/dtor no longer called directly; replaced by
+# ordinal-66/67 export resolution). Count went from 24 to 22.
 $sigJson = "$PSScriptRoot\..\signatures\v9.50.01.3344.json"
 
 # Total number of signatures in the committed set (used for summary checks).
-$expectedSignatureCount = 24
+$expectedSignatureCount = 22
 
 # ---------------------------------------------------------------------------
 # Robustness settings
@@ -160,7 +163,7 @@ $script:failCount = 0
 # ===========================================================================
 # Test 1: verify (default signatures)
 #   sigtool should detect the DLL version, load the committed signature set,
-#   and report all 24 signatures as PASS. Exit 0.
+#   and report all 22 signatures as PASS. Exit 0.
 # ===========================================================================
 Run-Test -Name "verify (default signatures)" `
     -ExpectedExit 0 `
@@ -169,7 +172,7 @@ Run-Test -Name "verify (default signatures)" `
         $script:code = $LASTEXITCODE
     } `
     -ExtraCheck {
-        # Accept either a "24/24"-style summary or 24 individual PASS lines.
+        # Accept either a "22/22"-style summary or 22 individual PASS lines.
         ($script:out -match "$expectedSignatureCount\s*/\s*$expectedSignatureCount") -or
         (($script:out -split "`r?`n" | Select-String -Pattern 'PASS' -CaseSensitive).Count -ge $expectedSignatureCount)
     }
@@ -259,7 +262,7 @@ Run-Test -Name "manifest (known version)" `
 # ===========================================================================
 # Test 8: verify with explicit --signatures JSON
 #   Pointing sigtool at the same JSON it would auto-detect should still
-#   produce 24/24 PASS. Exit 0.
+#   produce 22/22 PASS. Exit 0.
 # ===========================================================================
 Run-Test -Name "verify --signatures JSON" `
     -ExpectedExit 0 `

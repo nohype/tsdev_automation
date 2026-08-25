@@ -164,8 +164,12 @@ public:
 
     // Save source text into an entry (does NOT persist to disk).
     // Sets the source into the hidden EDIT control and calls SaveModule_New.
+    // isVerified: true when re-saving an already-verified item (modify path);
+    //   false for new items (insert path). Controls flags bit 4 (is_verified)
+    //   per TSDev FUN_00452290. See docs/RE/RE_M2_SAVEMODULE_NEW.md.
     // Returns true on success.
-    bool saveSource(ComponentType type, int progId, const std::string& source);
+    bool saveSource(ComponentType type, int progId, const std::string& source,
+                    bool isVerified = false);
 
     // Retrieves EasyLanguage source text for an existing item by name + type.
     // Internally encrypted items are decrypted automatically, matching TSDev.
@@ -400,10 +404,27 @@ private:
     typedef void (__cdecl *StartCompilingProcess_t)(void);
     // EndCompilingProcess: __fastcall, 1 arg
     typedef void (__fastcall *EndCompilingProcess_t)(int param);
-    // CELCompiler constructor: __fastcall (ecx=this)
-    typedef void* (__fastcall *CELCompilerCtor_t)(void* thisPtr);
-    // CELCompiler destructor: __fastcall (ecx=this)
-    typedef void (__fastcall *CELCompilerDtor_t)(void* thisPtr);
+    // Workstream M slice M.1: CELCompiler alloc+ctor and dtor+free are now
+    // resolved by orlib20 ORDINAL (66 / 67), not by signature scan of the
+    // raw ctor/dtor. The typedefs are declared locally here (structurally
+    // identical to tsdev::CELCompilerAllocFn / tsdev::CELCompilerDestroyFn
+    // in orlib_resolver.h — function pointer types with the same signature
+    // convert implicitly). See tmp/m1_ghidra_findings.md §1 (R-M.1.1).
+    //   Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
+    //   Ordinal 67: __stdcall, one arg (void* p), returns void (dtor + free).
+    typedef void* (__cdecl *CELCompilerAlloc_t)(void);
+    typedef void  (__stdcall *CELCompilerDestroy_t)(void*);
+    // Workstream M slice M.3: 0x40A library-change notification sender
+    // resolved by orlib20 ORDINAL 57 (FUN_101526f0). __stdcall, RET 8
+    // (2 dword args): (unsigned short category, unsigned short progId).
+    // Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
+    // msg=0x40A, calls tslib!PosMessageToClients. Always returns 1 (the
+    // return value is NOT a delivery guarantee — see
+    // docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1). The typedef is declared
+    // locally here (structurally identical to tsdev::NotifyLibChangedFn in
+    // orlib_resolver.h). See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2.
+    typedef void (__stdcall *NotifyLibChanged_t)(unsigned short category,
+                                                 unsigned short progId);
     // InitGlobalLookup: __cdecl, no args
     // Returns pointer to the global lookup object (used as `this` for
     // DeleteFromTree). Confirmed via Frida trace.
@@ -420,8 +441,18 @@ private:
 
     StartCompilingProcess_t m_pStartCompiling = nullptr;
     EndCompilingProcess_t   m_pEndCompiling   = nullptr;
-    CELCompilerCtor_t       m_pCELCompilerCtor = nullptr;
-    CELCompilerDtor_t       m_pCELCompilerDtor = nullptr;
+    // Workstream M slice M.1: CELCompiler alloc/destroy resolved by ordinal
+    // (66/67) instead of signature scan. Stored as the local typedefs
+    // (CELCompilerAlloc_t / CELCompilerDestroy_t), which are structurally
+    // identical to tsdev::CELCompilerAllocFn / tsdev::CELCompilerDestroyFn.
+    CELCompilerAlloc_t      m_pCELCompilerAlloc   = nullptr;
+    CELCompilerDestroy_t    m_pCELCompilerDestroy = nullptr;
+    // Workstream M slice M.3: 0x40A notification sender resolved by ordinal
+    // (57). Stored as the local typedef (NotifyLibChanged_t), which is
+    // structurally identical to tsdev::NotifyLibChangedFn. nullptr in
+    // production if ordinal 57 resolution failed (notification silently
+    // skipped — see docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+    NotifyLibChanged_t      m_pNotifyLibChanged   = nullptr;
     InitGlobalLookup_t      m_pInitGlobalLookup = nullptr;
     void*                   m_pDeleteFromTree   = nullptr;
     GetWarehouse_t          m_pGetWarehouse     = nullptr;
@@ -477,6 +508,72 @@ private:
     // callVerbatimNameGetter. Used by enumerateRecords() Phase 2 to get the
     // verbatim stored name from the BST node found by FUN_101d05e0.
     void*                   m_pVerbatimNameGetter = nullptr;
+
+    // --- Workstream M slice M.1: test-only compiler-ready hook ---
+    // Optional callback populated from TsDevLibTestConfig::onCompilerReady
+    // during construction via makeTsDevLibForTest (the private test-only
+    // ctor). When non-null, verifyModule() invokes it immediately BEFORE the
+    // _VerifyModule_New call (after StartCompilingProcess and after the
+    // +0x00/+0x04 result-field pre-zeroing), giving a test live read access
+    // to the 0x58-byte CELCompiler object state. Stored as a plain
+    // function pointer (NOT a TsDevLibTestConfig member) so the public
+    // header does not need to include tsdev_lib_test_hooks.h or know the
+    // struct definition. Always nullptr for the public ctor (production).
+    //
+    // Signature: void(*)(void* compilerMem, int componentType, int progId)
+    //   compilerMem    — pointer to the live CELCompiler object
+    //   componentType  — static_cast<int>(type) being verified
+    //   progId         — the ProgId passed to verifyModule
+    void (*m_onCompilerReady)(void* compilerMem, int componentType,
+                              int progId) = nullptr;
+
+    // --- Workstream M slice M.2: test-only save-module-ready hook ---
+    // Optional callback populated from
+    // TsDevLibTestConfig::onSaveModuleNewReady during construction via
+    // makeTsDevLibForTest (the private test-only ctor). When non-null,
+    // saveSource() invokes it immediately BEFORE the _SaveModule_New@20
+    // call, capturing the flags word (arg3) and password buffer (arg5) so a
+    // test can assert the TSDev-parity values. Stored as a plain function
+    // pointer (NOT a TsDevLibTestConfig member) so the public header does
+    // not need to include tsdev_lib_test_hooks.h or know the struct
+    // definition. Always nullptr for the public ctor (production).
+    //
+    // Signature:
+    //   void(*)(const unsigned int* flags, const char* passwordBuf,
+    //           int passwordBufSize, int componentType, int progId)
+    //   flags          — pointer to the flags word (arg3); NULL in the
+    //                    current production code (RED state).
+    //   passwordBuf    — pointer to the 64-byte password buffer (arg5);
+    //                    NULL in the current production code (RED state).
+    //   passwordBufSize— buffer size (0 while production passes NULL).
+    //   componentType  — static_cast<int>(type) being saved.
+    //   progId         — the ProgId passed to saveSource.
+    void (*m_onSaveModuleNewReady)(const unsigned int*, const char*,
+                                   int, int, int) = nullptr;
+
+    // --- Workstream M slice M.3: test-only notify-ready hook ---
+    // Optional callback populated from TsDevLibTestConfig::onNotifyReady
+    // during construction via makeTsDevLibForTest (the private test-only
+    // ctor). When non-null, verifyModule() (on the success path) and
+    // deleteEntry() (on the success path, gated category != 4) invoke it
+    // immediately BEFORE the 0x40A notification would be sent via orlib20
+    // Ordinal_57, capturing the (msg, wParam, lParam) tuple plus the
+    // affected componentType and progId so a test can assert the
+    // TSDev-parity packing (msg=0x40A, wParam=0,
+    // lParam=(category<<16)|(ProgId&0xFFFF)). Stored as a plain function
+    // pointer (NOT a TsDevLibTestConfig member) so the public header does
+    // not need to include tsdev_lib_test_hooks.h or know the struct
+    // definition. Always nullptr for the public ctor (production).
+    //
+    // Signature:
+    //   void(*)(UINT msg, WPARAM wParam, LPARAM lParam,
+    //           int componentType, int progId)
+    //   msg           — 0x040A (the message ID about to be posted).
+    //   wParam        — 0.
+    //   lParam        — (category << 16) | (ProgId & 0xFFFF).
+    //   componentType — static_cast<int>(type) of the affected module.
+    //   progId        — the ProgId of the affected module.
+    void (*m_onNotifyReady)(UINT, WPARAM, LPARAM, int, int) = nullptr;
 
     // --- Helpers ---
     HWND createHiddenEditControl();

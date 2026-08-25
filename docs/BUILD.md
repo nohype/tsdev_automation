@@ -294,8 +294,8 @@ by the B.6 acceptance criteria:
 
 1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
    against the baseline DLL. Fast; no live TradeStation install needed.
-2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 27 C++ test executables
-   (or 10 with `-NoTs`). Medium duration.
+2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 33 C++ test executables
+   (or 14 with `-NoTs`). Medium duration.
 3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — 34 E2E CLI test cases per
    `docs/E2E_TEST_SPEC.md`. Slowest; creates and deletes real warehouse entries.
 4. **exists tests** (`tests/test_exists.ps1`) — 5 exists CLI test cases.
@@ -310,7 +310,7 @@ by the B.6 acceptance criteria:
 10. **directory-batch tests** (`tests/test_directory_batch.ps1`) — 9 directory-batch CLI test cases (DB1–DB9: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir with ProgId preservation, `-t` extension override, empty dir, unknown type, non-existent dir, missing `-t` arg). Requires live TS; skipped under `-NoTs` or `-SkipDirectoryBatch`.
 11. **serve E2E tests** (`tests/run_serve_e2e.ps1` → `tests/test_serve_e2e.py`) — 2 serve-mode end-to-end pytest cases. Requires live TS AND an elevated parent shell; skipped under `-NoTs` or `-SkipServeE2e`.
 12. **ShowMe E2E tests** (`tests/test_showme_e2e.ps1`) — 9 ShowMe-component E2E test cases (SM1–SM9). Requires live TS; skipped under `-NoTs` or `-SkipShowMeE2e`.
-13. **Unknown Link regression** (`tests/test_unknown_link_regression.ps1`) — 249 assertions across all 5 component types (TVS-L.1+L.4+L.5: artifact invariants, mutations, semantic errors). Requires live TS; skipped under `-NoTs`. Mandatory in normal mode (no dedicated skip flag).
+13. **Unknown Link regression** (`tests/test_unknown_link_regression.ps1`) — 253 assertions across all 5 component types (TVS-L.1+L.4+L.5: artifact invariants, mutations, semantic errors). Requires live TS; skipped under `-NoTs`. Mandatory in normal mode (no dedicated skip flag).
 14. **Unknown Link stress** (`tests/test_unknown_link_stress.ps1`) — 600 insert/delete cycles (120 per type × 5 types). Requires live TS; skipped under `-NoTs` or when `-ExtendedStress` is not set. Opt-in only — not run by default.
 
 Each sub-suite runs in its own child PowerShell process so a crash or hang in
@@ -321,7 +321,7 @@ is printed and a single aggregated exit code is returned.
 |-----------------|---------|------------------|--------------------------------------------------------------------------|
 | `$BuildDir`     | string  | `build\Release`  | Directory containing the built executables; passed to `run_unit_tests`. |
 | `$TsPath`       | string  | (none)           | TradeStation install dir; passed to E2E runner as `-TsPath`.            |
-| `-NoTs`         | switch  | —                | Skip all TS-dependent suites (3–14); pass `-NoTs` to unit tests (10 non-TS tests only); still run sigtool. |
+| `-NoTs`         | switch  | —                | Skip all TS-dependent suites (3–14); pass `-NoTs` to unit tests (14 non-TS tests only); still run sigtool. |
 | `-SkipSigtool`  | switch  | —                | Skip the sigtool verify gate suite.                                      |
 | `-SkipUnit`     | switch  | —                | Skip the C++ unit test suite.                                            |
 | `-SkipE2e`      | switch  | —                | Skip the E2E CLI test suite.                                             |
@@ -359,13 +359,13 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
 
 ```powershell
 # Full run — all 14 registered suites (13 default; Suite 14 stress opt-in via -ExtendedStress).
-# 136 test cases across case-counting suites: sigtool 12 + 27 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 7 get-source + 9 exists-ci + 5 batch-upsert + 9 directory-batch + 2 serve E2E + 9 ShowMe E2E; plus Suite 13 (249 assertions) and Suite 14 (600 cycles):
+# 142 test cases across case-counting suites: sigtool 12 + 33 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 7 get-source + 9 exists-ci + 5 batch-upsert + 9 directory-batch + 2 serve E2E + 9 ShowMe E2E; plus Suite 13 (253 assertions) and Suite 14 (600 cycles):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
 # Full run including the opt-in stress suite (Suite 14, 600 cycles):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -ExtendedStress
 
-# No-TradeStation run — sigtool + 10 non-TS unit tests; skips all TS-dependent suites:
+# No-TradeStation run — sigtool + 14 non-TS unit tests; skips all TS-dependent suites:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 
 # Non-default TradeStation install path:
@@ -386,17 +386,17 @@ per-test duration, and returns a single aggregated exit code.
 | Parameter    | Type    | Default          | Description                                                  |
 |--------------|---------|------------------|--------------------------------------------------------------|
 | `$BuildDir`  | string  | `build\Release`  | Directory containing the test executables.                   |
-| `-NoTs`      | switch  | —                | Run only the 10 non-TS-dependent tests; skip the rest.        |
+| `-NoTs`      | switch  | —                | Run only the 14 non-TS-dependent tests; skip the rest.        |
 | `-Verbose`   | switch  | —                | Print full stdout/stderr for every test, not just failures.  |
 
 Exit codes: `0` = all executed tests passed, `1` = one or more failed (or the
 build directory is missing).
 
 ```powershell
-# Run all 27 tests:
+# Run all 33 tests:
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
 
-# Run only the 10 non-TS tests (no TradeStation install needed):
+# Run only the 14 non-TS tests (no TradeStation install needed):
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
 
 # Run all tests with full output:
@@ -526,7 +526,7 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `tsdev_lib`                     | library  | Static library wrapping the orlib20 operation set (links `orlib_resolver`). Explicitly links `Ole32` for `CoInitializeEx`/`CoUninitialize` (used by `ComApartmentGuard` to enter an STA COM apartment on each operation worker thread before orlib init). |
 | `tsdev_cli`                     | exec     | Production CLI (`insert`/`modify`/`delete`/`exists`/`get-source`/`upsert`/`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`/`serve`). Includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
 | `sigtool`                       | exec     | Signature-verification CLI.                                        |
-| `test_regression`               | custom   | Build-only dependency target: builds all 27 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
+| `test_regression`               | custom   | Build-only dependency target: builds all 33 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
 | `test_insert`                   | exec     | INSERT integration test (requires TS).                            |
 | `test_insert_tradingapp`        | exec     | TradingApp INSERT integration test (requires TS).                 |
 | `test_auto_cleanup`             | exec     | Auto-cleanup of partial warehouse entry on compile failure (requires TS — constructs TsDevLib). |
@@ -613,7 +613,7 @@ to be updated:
 The CMake option `TSDEV_REQUIRE_ADMIN` (default **ON**) controls whether
 **all TS-accessing executables** require administrator privileges to start.
 This covers `tsdev_cli.exe` plus the TS-dependent test executables that
-load `orlib20.dll`. The 10 non-TS unit tests
+load `orlib20.dll`. The 14 non-TS unit tests
 (`test_no_hardcoded_rvas`, `test_tradingapp_type`, `test_orlib_resolver`,
 `test_elevation_guard`, `test_json_serialize`, `test_serve_dispatch`,
 `test_serve_framing`, `test_crash_handler`, `test_showme_type`,
@@ -642,7 +642,7 @@ spawned by that parent inherit the elevated token silently, so there are **no
 per-invocation UAC prompts**. You get exactly one UAC prompt per session (to
 elevate the parent), then silent inheritance for every CLI child.
 
-**CI:** CI builds with the default ON. The 10 non-TS unit tests and `sigtool`
+**CI:** CI builds with the default ON. The 14 non-TS unit tests and `sigtool`
 are excluded from the admin manifest (they do not access the TSDev Library),
 so they run non-elevated in CI. Non-e2e Python tests mock `subprocess.run`, so
 CI is unaffected by the elevation requirement.
@@ -773,7 +773,7 @@ and on version tag pushes (`v*`).
 
 - Sets up uv + Python 3.14, configures CMake (Win32), and builds all targets
   (Release).
-- Runs the regression suite in `-NoTs` mode (sigtool + 10 non-TradeStation
+- Runs the regression suite in `-NoTs` mode (sigtool + 14 non-TradeStation
   unit tests).
 - Runs non-e2e Python tests (`pytest -m "not e2e"`; pytest collects 154 tests,
   of which the 15 e2e-marked tests are deselected without a live TradeStation
