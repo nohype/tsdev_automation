@@ -224,6 +224,82 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ---
 
+### M.3b — Fix CLI object-code version defect (version=0 blocking linker element-array population)
+
+> **Added 2026-08-26 by PM directive.** This slice was not in the original plan. It was inserted after M.4 investigation discovered that M.4's linker-based reverse-dependent enumeration cannot work for CLI-compiled items because CLI-compiled items have object-code version=0 (instead of the correct per-category version), which causes the linker's populators to return NULL, leaving element arrays empty. This defect must be fixed before M.4 can be fully tested and verified with CLI-created items. M.4's implementation is complete and verified for existing TSDev-created items (read-only diagnostic passed), but the M.4 regression test creates CLI-compiled items and will fail until this defect is fixed.
+
+**Objective:** Fix the CLI compilation path so that CLI-compiled items produce object code with the correct version field (matching TSDev-created items), enabling the linker to populate element arrays and dep-lists. This unblocks M.4's reverse-dependent enumeration for CLI-compiled items.
+
+**Known factual baseline (approved findings from M.4 investigation, all Ghidra/Frida/runtime-confirmed):**
+- The linker (`FUN_101a3340`, ordinal 85) calls three populators (`FUN_101a25a0`, `FUN_101a2430`, `FUN_101a22c0`) for every item.
+- The populators read the decompressed object-code version at `buffer+0x24` to locate and size element/dependency arrays.
+- CLI-compiled items: `buffer+0x24 = 0` (version=0, size fields +0x18/+0x20/+0x28 also zero) → populators return NULL → element arrays empty.
+- Existing TSDev-created items: `buffer+0x24 = 512 (0x200)` for Strategies (subtype 2/3), `= 4` for Functions, etc. → populators succeed → element arrays populated.
+- `FUN_101d4280(category, subtype)` computes the expected version: category 0 (Strategy) returns 0x200 only when subtype is 2 or 3; category 4 (Function) always returns 4; category 2 (Indicator) is subtype-dependent.
+- All sampled items (CLI-created and existing) have `master_record+0xe9 = 0` (subtype byte), so the subtype is NOT the discriminating factor for the version=0 issue.
+- The .ell files are structurally identical between CLI-created and TSDev-created items (same RNAM header, same metadata tables), but the compiled object code WITHIN the .ell has version=0 for CLI-compiled items.
+- The object-code version is written during compilation (`_VerifyModule_New@20` / `CELBasicCompiler::CompileText` / the WHServer COM worker), NOT during linking.
+- M.1 (CELCompiler allocation/setup parity) is complete — the compiler object fields match TSDev. The version=0 defect persists despite M.1, so the cause is elsewhere in the compilation path.
+- Workstream L is CLOSED (2026-08-24). The version=0 defect is related to but distinct from the Workstream L stale-ELL issue. Workstream L closure was a documented-parity decision; it did not fix the version=0 defect.
+
+**Research questions delegated to this future TVS (slice-scoped only):**
+- R-M.3b.1: What writes the object-code version field at `buffer+0x24`? Trace the compilation path from `_VerifyModule_New@20` through `CELBasicCompiler::CompileText` to the WHServer COM worker to find where the version is set. Cite Ghidra evidence (function addresses, field offsets, write instructions).
+- R-M.3b.2: Why does the CLI compilation path produce version=0 while TSDev produces the correct version? Is there a missing call, a wrong argument, a missing field setup, or a different code path? Compare the CLI's compilation path with TSDev's using Frida tracing (read-only, no UI interaction) and/or Ghidra static analysis.
+- R-M.3b.3: Does the version field depend on the CELCompiler object fields (beyond what M.1 already fixed)? Are there additional compiler fields that TSDev sets but the CLI doesn't? Check `+0x28` and any other fields not covered by M.1.
+- R-M.3b.4: Does the version field depend on the `_SaveModule_New@20` flags or CELProperties metadata (M.2's scope)? Could a missing flag or property cause the compiler to produce version=0?
+- R-M.3b.5: Does the version field depend on the subtype passed to `_CreateEntryEX@24`? The CLI currently passes subtype=0 for Strategies/Functions. TSDev may pass a different subtype. Check if changing the subtype affects the version field.
+- R-M.3b.6: Is there a post-compilation step that TSDev performs but the CLI doesn't? For example, a "finalize" or "link" step that sets the version field after `CompileText` returns.
+- R-M.3b.7: Can we fix the version field directly in the object code buffer after compilation but before linking? Or must the fix be in the compilation path itself? What are the implications of each approach?
+
+**Implementation boundary:**
+- In scope: Investigating and fixing the CLI compilation path so that CLI-compiled items produce object code with the correct version field. This may involve changes to compiler setup, save flags, subtype handling, post-compilation steps, or other compilation-path code.
+- Out of scope: M.4 reverse-dependent traversal (already implemented, blocked by this defect). M.5 consolidation. Source-text parsing. User password. Bypass restoration. Workstream L recovery (closed).
+- Must not modify orlib20.dll or any TradeStation installation file.
+- Must not introduce source-text-based metadata.
+- Must not suppress warnings or mask the real issue.
+
+**Likely files/systems:**
+- `src/tsdev_lib.cpp` (compilation path: `verifyModule`, `createEntry`, `saveSource`, compiler setup).
+- `src/tsdev_lib.h` (compiler/save members if new fields are needed).
+- `src/orlib_resolver.h` / `src/orlib_resolver.cpp` (if additional orlib20 primitives are needed).
+- Tests: `tests/test_tsdev_lib*.cpp`, new diagnostic tests for object-code version verification.
+- Ghidra: decompilation of the compilation path (`_VerifyModule_New@20`, `CELBasicCompiler::CompileText`, WHServer COM worker).
+- Frida: read-only tracing of the compilation path in both TSDev and CLI processes (no UI interaction).
+
+**TDD plan (red → green):**
+1. RED: Add a test that inserts + verifies a disposable Function via the CLI, then calls the linker (ordinal 85) on the resulting item and asserts that `record+0x29` (elemCount) > 0 and `record+0x4f` (elemArrayPtr) != NULL. This fails on current code (elemCount=0, elemArrayPtr=NULL for CLI-compiled items).
+2. Research R-M.3b.1–R-M.3b.7 within this slice; record evidence in a slice-local findings note (e.g. `docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md`).
+3. GREEN: Implement the fix based on the research findings. The fix must ensure CLI-compiled items produce object code with the correct version field, enabling the linker to populate element arrays.
+4. Add regression: after the fix, CLI-compiled items have non-empty element arrays, dep-lists are visible, and `enumerateReverseDependents` finds reverse dependents for CLI-compiled items (not just existing TSDev-created items).
+
+**Acceptance criteria:**
+- CLI-compiled items (all five supported component types) produce object code with the correct version field (matching TSDev-created items of the same type).
+- The linker (ordinal 85) populates element arrays for CLI-compiled items (elemCount > 0, elemArrayPtr != NULL).
+- Dep-lists are visible at element+0x7b for CLI-compiled items that call Functions.
+- `enumerateReverseDependents` finds reverse dependents for CLI-compiled items (not just existing TSDev-created items).
+- The M.4 regression test (`test_reverse_dependent_revalidation.cpp`) passes for CLI-compiled items.
+- No source-text parsing introduced. No user password fiction. No bypass restoration.
+- All existing regression suites pass.
+- No crashes, no TSCrashReport.exe.
+
+**Mandatory CLI E2E:**
+- Run real CLI E2E per `docs/E2E_TEST_SPEC.md` for all five component types. Confirm successful compile/verify AND that the linker populates element arrays for each type.
+- **Object-code version verification:** For each component type, insert a disposable item, verify it, call the linker, and assert elemCount > 0 and elemArrayPtr != NULL. Clean up after.
+- **Dependency graph verification:** Insert a Function, insert a caller (Strategy/Indicator) that calls the Function, modify the Function, and assert that `enumerateReverseDependents` finds the caller. Clean up after.
+- **Operation-mode coverage:** Cover at least Strategy in (a) manifest/stdin batch mode and (b) serve mode. Assert element arrays are populated for every item in every operation.
+
+**Review/handoff requirements:**
+- Adversarial review: confirm the fix addresses the root cause (not a symptom), no source-text parsing, no scope creep into M.4/M.5, no bypass restoration, complete execution.
+- Handoff note recording the root cause, the fix, and the evidence (feed into §5 gate if signature/catalog impact).
+- Update `docs/PM_WORKING_MEMORY.md` with the fix details and unblock M.4.
+
+**Dependency:**
+- Hard dependency on M.1 (CELCompiler setup parity) — the compiler object must be correctly set up before investigating the version=0 issue.
+- M.4 depends on M.3b — M.4's regression test cannot pass until M.3b fixes the version=0 defect.
+- M.3b may depend on M.2 (save flags parity) if R-M.3b.4 confirms that save flags affect the version field.
+
+---
+
 ### M.4 — Reverse-dependent revalidation equivalent to TSDev `FUN_004D91E0`
 
 **Objective:** Emulate TSDev's dependent-program traversal (`FUN_004D91E0`) so that when a Function (or other component) changes its signature/contract, its reverse dependents/callers are revalidated, with interface/contract-change detection and recursion safety.
@@ -383,7 +459,7 @@ Each M slice may touch signatures, the resolver, or the catalog. A decision gate
 ## 6. Exit criteria and risk register
 
 ### Workstream M exit criteria (all must hold)
-- M.1–M.5 each approved by adversarial review with no open findings.
+- M.1–M.5 (including M.3b) each approved by adversarial review with no open findings.
 - Each M slice's mandatory CLI E2E passed for all five component types in the relevant operation modes.
 - No M slice introduced source-text parsing, user password fiction, bypass restoration, or root-cause conflation.
 - Consolidated parity matrix (M.5) passes; residual gaps cataloged or opened as follow-up slices.
@@ -399,6 +475,7 @@ Each M slice may touch signatures, the resolver, or the catalog. A decision gate
 | M.2 reintroduces user password fiction | Low | High (violates corrected findings) | §3 hard rule; adversarial review; no user-facing password CLI/Python/error surface. |
 | M.1 ordinal 66/67 unconfirmed or version-specific | Medium | Medium (parity gap) | R-M.1.1 must cite evidence; if unconfirmed, slice documents the gap and does not guess. |
 | M.3 `0x40A` packing wrong → receivers ignore/misbehave | Medium | Medium (live refresh gap) | R-M.3.1 must cite evidence; receiver fixture mandatory; controlled observation of an actual confirmed consumer where feasible. |
+| M.3b version=0 root cause not found or fix requires orlib20 modification | Medium | High (M.4 blocked) | R-M.3b.1–R-M.3b.7 must cite evidence; if the fix requires orlib20 modification (not allowed), document as a permanent limitation and adapt M.4 tests to use existing items only. |
 | M.5 documentation closure silently rewrites history | Low | Medium (loss of audit trail) | §5 requires dated corrections prepended, not silent edits; adversarial review checks. |
 | M slice expands scope into unrelated orlib20 subsystems | Medium | Medium (scope creep) | §3 hard rule; one subagent → one narrowly scoped subtask; adversarial review checks scope. |
 | L not yet approved/merged → M starts prematurely | Low | High (invalid baseline) | §1 hard dependency on L; M remains planned-only until L is merged. |
@@ -413,7 +490,7 @@ Each M slice may touch signatures, the resolver, or the catalog. A decision gate
 - Each M.x is one TVS owned by the future PM, but no single subagent executes an entire TVS. Decompose it into atomic research, RED-test edit, RED verification, implementation edit, build, GREEN verification, regression, documentation, review, and real-CLI E2E subtasks as applicable.
 - Each R-M.x.y question is a separate narrow subtask unless two questions are inseparable. Use the `universal` profile by default; it has full tool/MCP access. Fall back to `subagent_general` only if `universal` fails. Use `subagent_explore` only for trivial read-only lookups.
 - If research reveals additional independent concerns, add reviewed subtasks or propose a new TVS; never expand one subagent's scope silently.
-- Order: M.1 first (compiler setup informs M.4 and HWND questions). M.2 and M.3 may proceed in parallel after M.1 when they do not touch the same files. M.4 follows M.1. M.5 is last. The executing PM re-confirms dependencies and highest ROI before each slice.
+- Order: M.1 first (compiler setup informs M.4 and HWND questions). M.2 and M.3 may proceed in parallel after M.1 when they do not touch the same files. **M.3b follows M.1 (and possibly M.2 if save flags affect the version field) — it fixes the CLI object-code version=0 defect that blocks M.4.** M.4 follows M.3b (M.4's regression test creates CLI-compiled items which need proper element arrays). M.5 is last. The executing PM re-confirms dependencies and highest ROI before each slice.
 - Each slice updates `docs/PM_WORKING_MEMORY.md` with its state (in-flight / approved / merged) only as part of that slice's own work.
 - Any slice adding or registering tests updates CMake/runner wiring and all live current-count summaries (`AGENTS.md`, `README.md`, `docs/BUILD.md`, `docs/E2E_TEST_SPEC.md`) from actual collected definitions in that same slice; do not defer count accuracy to M.5.
 

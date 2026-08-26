@@ -191,6 +191,27 @@ struct TsDevLibTestConfig {
     // GREEN phase; the RED test asserts only the hook capture).
     void (*onNotifyReady)(UINT msg, WPARAM wParam, LPARAM lParam,
                           int componentType, int progId) = nullptr;
+
+    // Workstream M slice M.4 — optional test hook invoked by verifyModule()
+    // during reverse-dependent revalidation traversal. The hook fires:
+    //   (a) ONE traversal-started sentinel (revalidationTriggered == -1) at
+    //       traversal entry (dependent fields = 0).
+    //   (b) ZERO or more per-dependent events (revalidationTriggered == 0
+    //       for skipped, 1 for reverified).
+    //
+    // Signature:
+    //   void onReverseDependentRevalidationReady(
+    //       int rootComponentType, int rootProgId, int rootCategory,
+    //       int dependentComponentType, int dependentProgId,
+    //       int dependentCategory,
+    //       int revalidationTriggered, int revalidationResult,
+    //       int traversalDepth)
+    //
+    // When nullptr (the default), verifyModule() does NOT invoke any hook
+    // and behaves exactly as in production. RED STATE: the hook is stored
+    // but NEVER invoked because no traversal code exists yet.
+    void (*onReverseDependentRevalidationReady)(
+        int, int, int, int, int, int, int, int, int) = nullptr;
 };
 
 namespace tsdev {

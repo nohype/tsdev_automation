@@ -573,6 +573,226 @@ add_executable(test_0x40a_notification tests/test_0x40a_notification.cpp)
 target_include_directories(test_0x40a_notification PRIVATE src)
 target_link_libraries(test_0x40a_notification PRIVATE tsdev_lib Ole32)
 
+# --- DIAGNOSTIC ONLY (M.4 enumeration speed) — NOT in regression suite ---
+# Standalone diagnostic that measures why enumerateReverseDependents() is too
+# slow. Constructs a real TsDevLib (test-only ctor) + a separate OrlibResolver
+# to time _LoadMasterRecsEX@16 / GetDependencies. Requires TradeStation. Run
+# manually; do NOT add to test_regression or run_regression.
+add_executable(diag_m4_enum_speed tests/diag_m4_enum_speed.cpp)
+target_include_directories(diag_m4_enum_speed PRIVATE src)
+target_link_libraries(diag_m4_enum_speed PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 reverse-dependent GetDependencies probe) — NOT in
+# regression suite. Standalone diagnostic that inserts a Function + a Strategy
+# that calls it, then probes GetDependencies on the Strategy with several
+# whType values (0, 0x200, 4) and elementIndex 0..3 to determine why
+# enumerateReverseDependents() finds zero reverse dependents. Requires
+# TradeStation. Run manually; do NOT add to test_regression or run_regression.
+add_executable(diag_m4_deps tests/diag_m4_deps.cpp)
+target_include_directories(diag_m4_deps PRIVATE src)
+target_link_libraries(diag_m4_deps PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 3-hypothesis GetDependencies probe) — NOT in
+# regression suite. Standalone diagnostic that tests three hypotheses for
+# why GetDependencies returns empty dep lists:
+#   (A) alternative API _GetStaticDependencyList@12 (ordinal 531)
+#   (B) parenthesized call to a Function WITH inputs (vs no-arg form)
+#   (C) dep list materialized lazily after warehouse reload (new TsDevLib)
+# Inserts a Function with a Numeric input + a Strategy that calls it with
+# parentheses, records ProgIds, probes GetDependencies and
+# _GetStaticDependencyList@12, then destroys + recreates TsDevLib to test
+# the reload hypothesis. Requires TradeStation. Run manually; do NOT add
+# to test_regression or run_regression.
+add_executable(diag_m4_deps2 tests/diag_m4_deps2.cpp)
+target_include_directories(diag_m4_deps2 PRIVATE src)
+target_link_libraries(diag_m4_deps2 PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 raw master record structure probe) — NOT in
+# regression suite. Standalone diagnostic that dumps the raw 0x10A-byte
+# master record returned by _GetMasterRecByType@16 for a Strategy that
+# calls a Function, and checks the element-count / element-array-ptr /
+# dep-list fields to understand why GetDependencies returns empty dep
+# lists. Requires TradeStation. Run manually; do NOT add to test_regression
+# or run_regression.
+add_executable(diag_m4_raw_rec tests/diag_m4_raw_rec.cpp)
+target_include_directories(diag_m4_raw_rec PRIVATE src)
+target_link_libraries(diag_m4_raw_rec PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: Ordinal_69 live-record diagnostic (manual, NOT in regression) -
+# Verifies the ABI of Ordinal_69 (orlib20 ord 69, RVA 0x1A3E00) and confirms
+# it returns a LIVE in-memory module record with populated element arrays
+# and dep lists — the data GetDependencies (ord 487) and
+# _GetMasterRecByType@16 (ord 568) fail to surface. Also probes Ordinal_70
+# (refcount-dec), Ordinal_28 (sibling), and GetDependencies (post-Ord69).
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_ord69 tests/diag_m4_ord69.cpp)
+target_include_directories(diag_m4_ord69 PRIVATE src)
+target_link_libraries(diag_m4_ord69 PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 forward-dependency probe) — NOT in regression suite.
+# Standalone diagnostic that tests whether GetDependencies (ord 487) and
+# _GetStaticDependencyList@12 (ord 531) return the Function's ProgId when
+# called on a Strategy that ACTUALLY CALLS the Function (i.e. a module with
+# real dependencies). Also dumps the 0x10A partial copy via Ordinal_28 for
+# both items, calls Ordinal_69 to read live record fields, and probes
+# GetDependencies with multiple calling conventions (__stdcall/__cdecl,
+# 3/4 args) to determine the actual ABI. Requires TradeStation. Run
+# manually; do NOT add to test_regression or run_regression.
+add_executable(diag_m4_fwd_deps tests/diag_m4_fwd_deps.cpp)
+target_include_directories(diag_m4_fwd_deps PRIVATE src)
+target_link_libraries(diag_m4_fwd_deps PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 subtype-byte +0xe9 probe) — NOT in regression suite.
+# Standalone diagnostic that reads master_record[+0xe9] (the subtype byte) for
+# CLI-created items (Function + Strategy) and existing items (Strategies,
+# Functions, Indicators) via Ordinal_28(category, progId, 0, buf), to verify
+# the FUN_101d4280(category, +0xe9) -> version theory (Strategy: 0x200 when
+# +0xe9 is 2 or 3, 0 when +0xe9 is 0 or 1). Enumerates existing records via
+# _LoadMasterRecsEX@16 (read-only — does NOT modify any existing item). Prints
+# a hex dump of 0xe0-0xf5 for one existing Strategy and one existing Function
+# for comparison with CLI-created items. Cleans up the CLI-created items.
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_subtype tests/diag_m4_subtype.cpp)
+target_include_directories(diag_m4_subtype PRIVATE src)
+target_link_libraries(diag_m4_subtype PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 existing-item linker dep-list probe) — NOT in
+# regression suite. Standalone READ-ONLY diagnostic that enumerates existing
+# Strategies/Functions/Indicators via _LoadMasterRecsEX@16, calls the linker
+# (ordinal 85) on each, and reads record+0x6f (dep-list ptr) and record+0x73
+# (dep-list size) directly from the linked record. Also reads the +0x79 gate
+# flag (bit 2) from the Ordinal_28 partial copy, and element+0x73/+0x7b from
+# the element array for comparison. Tests the Ghidra finding that the linker
+# writes the dep-list to rec+0x6f/+0x73 while GetDependencies reads from
+# element+0x7b. Does NOT insert/modify/delete any items. Requires TradeStation.
+# Run manually; do NOT add to test_regression or run_regression.
+add_executable(diag_m4_existing_link tests/diag_m4_existing_link.cpp)
+target_include_directories(diag_m4_existing_link PRIVATE src)
+target_link_libraries(diag_m4_existing_link PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: full dep-list dump for existing items (manual, NOT in regression)
+# Dumps the FULL dep-list content (up to 4096 bytes per element) for existing
+# Strategies (first 10), Indicators (first 10), and Functions (first 5) by
+# calling the linker (ordinal 85) on each existing item, walking the element
+# array (elem size 0xb5), and reading element+0x73 (dep-list size) and
+# element+0x7b (dep-list ptr). Parses each dep-list entry
+# ({type dword, length byte, sourceLine int, sourceCol int, payload}) and
+# reports 0xfa4 (function dependency) entries with the function reference at
+# entry+0xd (expected to be a ProgId). READ-ONLY — does NOT
+# insert/modify/delete any items. Requires TradeStation. Run manually; do NOT
+# add to test_regression or run_regression.
+add_executable(diag_m4_deplist_dump tests/diag_m4_deplist_dump.cpp)
+target_include_directories(diag_m4_deplist_dump PRIVATE src)
+target_link_libraries(diag_m4_deplist_dump PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- DIAGNOSTIC ONLY (M.4 reverse-dependent enumeration verification) ---
+# Standalone READ-ONLY diagnostic that calls the ACTUAL production
+# enumerateReverseDependents method (via a behavior-preserving friend seam in
+# src/tsdev_lib.h) and verifies it finds Indicators 3 and 8 as reverse
+# dependents of Functions 516/517/21/458, plus a negative control (999999).
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_reverse_enum tests/diag_m4_reverse_enum.cpp)
+target_include_directories(diag_m4_reverse_enum PRIVATE src)
+target_link_libraries(diag_m4_reverse_enum PRIVATE tsdev_lib Ole32)
+
+# --- TVS-M.4: Ordinal_71 (InitGlobalLookup) + cmd 0x0D diagnostic (manual) -
+# Verifies the ABI of Ordinal_71 (orlib20 ord 71, RVA 0x1A9460,
+# FUN_101a9460 — "InitGlobalLookup"). Ghidra-confirmed: Ordinal_71 is a
+# lazy BST-global initializer (ignores its 2 pushed args, returns 0x2c-byte
+# BST control block DAT_1023ced4, does NOT trigger the WHServer worker, does
+# NOT set warehouse+0xC2, does NOT return a module record). Also attempts the
+# direct worker-thread command 0x0D replication (FUN_101cfce0 pattern:
+# warehouse+0x12=type, +0x16=progId, +0x04=0x0D, SetEvent(+0x6e),
+# WaitForSingleObject(+0x6a), check +0x4e, read +0x26 SafeArray) and probes
+# Ordinal_10/69/70/68/28 for comparison. Requires TradeStation. Run manually;
+# do NOT add to test_regression or run_regression.
+add_executable(diag_m4_ord71 tests/diag_m4_ord71.cpp)
+target_include_directories(diag_m4_ord71 PRIVATE src)
+target_link_libraries(diag_m4_ord71 PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: Ordinal_69 linker-path diagnostic (manual, NOT in regression) -
+# Tests whether Ordinal_69 with param_3 != 0 (the short-circuit / linker
+# path) returns a record with populated element arrays, vs. param_3 == 0,
+# and whether calling the linker (ordinal 85, FUN_101a3340) directly
+# produces populated arrays. Also probes GetDependencies after the linker
+# path and the SafeArray at +0x26 right after verify (via Ordinal_28).
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_linker tests/diag_m4_linker.cpp)
+target_include_directories(diag_m4_linker PRIVATE src)
+target_link_libraries(diag_m4_linker PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: Frida linker-internal trace driver (manual, NOT in regression) -
+# Drives the orlib20 linker (FUN_101a3340, ordinal 85) from our own CLI
+# process while a Frida script (tmp/frida_m4_linker_trace.js) traces the
+# linker's internals: object-code buffer (FUN_101c2a30), decompressor
+# (FUN_101dd260), 0xBBC magic check, three populators (FUN_101a25a0/2430/22c0),
+# and commit (FUN_101c0990). Answers WHY the linker returns a non-NULL record
+# with EMPTY element arrays. Prints PID + "READY FOR FRIDA" and sleeps 8s to
+# allow Frida attach. All orlib20 calls are SEH-protected. Read-only
+# instrumentation; no production code is modified. Requires TradeStation. Run
+# manually; do NOT add to test_regression or run_regression.
+add_executable(diag_m4_frida_linker tests/diag_m4_frida_linker.cpp)
+target_include_directories(diag_m4_frida_linker PRIVATE src)
+target_link_libraries(diag_m4_frida_linker PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: linker internals diagnostic (manual, NOT in regression) -
+# Investigates why the linker FUN_101a3340 (ordinal 85) returns a non-NULL
+# record with empty element arrays (+0x29=0, +0x4f=NULL, +0x26=NULL) even
+# though warehouse state 0x38 succeeds. Reads warehouse+0x23d (cached linked
+# record) before/after the linker call, dumps the raw compiled object code
+# from the SafeArray at warehouse+0x26 (scans for 0xBBC/0xBB9 magic), dumps
+# the .ell file (first 256 bytes, scans for magic), and compares Ordinal_69
+# with param_3=0 (normal) vs param_3=1 (short-circuit). All orlib20 calls
+# are SEH-protected. The SafeArray is NOT destroyed (owned by the warehouse).
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_linker_internals tests/diag_m4_linker_internals.cpp)
+target_include_directories(diag_m4_linker_internals PRIVATE src)
+target_link_libraries(diag_m4_linker_internals PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: decompressed object code buffer dump + warehouse indirection ---
+# Dumps the DECOMPRESSED object code buffer the linker uses (at wrapper+0x1c1),
+# resolves whether Ordinal_10(0) returns the per-module wrapper or the
+# CELWHouse (Ghidra showed state handlers access *(param_1+0xc)+0x26, NOT
+# param_1+0x26), checks offset 0x26 of the decompressed buffer (0x2000000 in
+# TSDev, NULL in our CLI), scans for 0xBBC/0xBB9 magic in the decompressed
+# data (NOT the compressed .ell file), inspects the SafeArray at the correct
+# indirection, and compares the decompressed objcode with the raw .ell file
+# (which contains COMPRESSED object code with a 0x44-byte header).
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_objcode tests/diag_m4_objcode.cpp)
+target_include_directories(diag_m4_objcode PRIVATE src)
+target_link_libraries(diag_m4_objcode PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: WHServer state 0x38 failure diagnostic (manual, NOT in regression) -
+# Investigates why the linker's state 0x38 (load compiled code from .ell) fails
+# in our CLI process while verify (state 0xe) works. Reads the warehouse object
+# live via Ordinal_10(0), inspects all key warehouse fields (+0x04 state, +0x12
+# type, +0x16 moduleId, +0x1e key, +0x26 SafeArray, +0x4e HRESULT, +0x5e
+# per-module COM, +0x6a done event, +0x6e wake event, +0x72 mutex, +0x76 owner
+# thread, +0xAE main WHServer COM, +0xB6 SA cache), checks the .ell file
+# existence/size, calls the linker (ordinal 85) directly with BOTH __stdcall
+# and __fastcall conventions and errorFlag 0/1, calls Ordinal_69 with
+# param_3=progId (linker path), and tails WH_ERRS.LOG / EL_ERRS.LOG.
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
+add_executable(diag_m4_whserver tests/diag_m4_whserver.cpp)
+target_include_directories(diag_m4_whserver PRIVATE src)
+target_link_libraries(diag_m4_whserver PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- TVS-M.4: Reverse-dependent revalidation integration test ---
+# Validates reverse-dependent revalidation parity with TSDev.exe FUN_004D91E0.
+# Requires TradeStation (real orlib20.dll, real warehouse). NOT in the
+# regression suite (TS-required test, run manually).
+add_executable(test_reverse_dependent_revalidation tests/test_reverse_dependent_revalidation.cpp)
+target_include_directories(test_reverse_dependent_revalidation PRIVATE src)
+target_link_libraries(test_reverse_dependent_revalidation PRIVATE tsdev_lib Ole32)
+
 # --- TVS-D.1: Batch feasibility stress test (opt-in, NOT in regression suite) -
 # Validates ONE TsDevLib instance can do N (default 600) sequential
 # insert+compile+verify ops then delete all N, leaving a clean warehouse, all
@@ -644,6 +864,7 @@ set(TSDEV_ADMIN_TARGETS
     test_compiler_layout
     test_save_module
     test_0x40a_notification
+    test_reverse_dependent_revalidation
     test_stress_batch
 )
 
@@ -763,6 +984,7 @@ add_dependencies(test_regression
     test_compiler_layout
     test_save_module
     test_0x40a_notification
+    test_reverse_dependent_revalidation
     test_orlib_resolver
     tsdev_cli
     sigtool

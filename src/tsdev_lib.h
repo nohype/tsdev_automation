@@ -16,6 +16,8 @@
 
 #include <string>
 #include <memory>
+#include <vector>
+#include <set>
 #include <windows.h>
 
 #include "create_path_cleanup.h"  // CreatePathFailureStage (TVS-L.10 verifyModule out-param)
@@ -385,6 +387,27 @@ private:
     // FUN_101d15c0_thread_check_INT3 patch.
     typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
                                                   int index, void* outBuf);
+    // Workstream M slice M.4: GetDependencies (orlib20 ordinal 487,
+    // RVA 0x153F00). __stdcall, 4 args, RET 0x10.
+    // Returns HGLOBAL (GMEM_MOVEABLE) containing a packed array of int
+    // (dependency ProgIds), or NULL. Count delivered via *outDepCount.
+    // Caller must GlobalLock to read, GlobalFree to free.
+    // See docs/RE/RE_M4_GETDEPENDENCIES_ABI.md.
+    typedef HGLOBAL (__stdcall *GetDependenciesFn)(int whType, int progId,
+                                                    int elementIndex,
+                                                    int* outDepCount);
+    // _DeleteDependencyList@4 (orlib20 ordinal 397, RVA 0x1A9150).
+    // __stdcall, 1 arg (void* list), RET 0x4. Frees via operator delete.
+    // Used to free lists from _GetStaticDependencyList@12 (NOT GetDependencies).
+    typedef void (__stdcall *DeleteDependencyListFn)(void* list);
+    // Workstream M slice M.4: linker-based reverse-dependency helpers.
+    // Ordinal_28 (RVA 0x1A03F0): __stdcall, 4 args (category, progId,
+    // flag, outBuf). Returns 1 on success; writes a 0x10A-byte partial record.
+    // Ordinal_70 (RVA 0x15DF30): __stdcall, 2 args (rec, flag). Releases a
+    // refcounted record returned by the linker.
+    typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
+                                                  int flag, void* outBuf);
+    typedef int (__stdcall *Ordinal70Fn)(void* rec, int flag);
 
     OrlibInit_t          m_pOrlibInit       = nullptr;
     OrlibExit_t          m_pOrlibExit       = nullptr;
@@ -396,6 +419,12 @@ private:
     LoadTextFileExFn     m_loadTextFileEx   = nullptr;
     LoadMasterRecsExFn   m_loadMasterRecsEx = nullptr;
     GetMasterRecByTypeFn m_getMasterRecByType = nullptr;
+    GetDependenciesFn    m_getDependencies    = nullptr;
+    DeleteDependencyListFn m_deleteDependencyList = nullptr;
+    // Workstream M slice M.4: linker-based reverse-dependency state.
+    Ordinal28Fn          m_ord28            = nullptr;  // partial-record copy
+    Ordinal70Fn          m_ord70            = nullptr;  // release linked record
+    void*                m_linkerRaw        = nullptr;  // ordinal 85, inline-asm call
 
     // --- Resolved internal functions (by RVA from orlib20 base) ---
     // RVAs are resolved at runtime via signature scan; see
@@ -575,6 +604,21 @@ private:
     //   progId        — the ProgId of the affected module.
     void (*m_onNotifyReady)(UINT, WPARAM, LPARAM, int, int) = nullptr;
 
+    // Optional callback populated from
+    // TsDevLibTestConfig::onReverseDependentRevalidationReady during
+    // construction via the private test-only ctor. nullptr in production
+    // (public ctor leaves it unset). Invoked by verifyModule() during
+    // reverse-dependent revalidation (M.4). RED STATE: stored but never
+    // invoked because no traversal code exists yet.
+    void (*m_onReverseDependentRevalidationReady)(
+        int, int, int, int, int, int, int, int, int) = nullptr;
+
+    // M.4: Old master record capture for contract-change detection.
+    // The old record is captured before saveSource() and compared against
+    // the new record after verifyModule() to determine if the contract changed.
+    bool m_hasOldMasterRec = false;
+    unsigned char m_oldMasterRec[0x10A] = {};
+
     // --- Helpers ---
     HWND createHiddenEditControl();
     void setSourceText(HWND hwnd, const std::string& source);
@@ -590,6 +634,39 @@ private:
     // not part of the public API — and exists solely to keep the two
     // construction paths behaviorally identical past the COM-init step.
     void initAfterCom(const wchar_t* tsPathOverride);
+
+    // M.4: Enumerate reverse dependents of a root module by inverting forward
+    // dependency lists. Returns a list of (progId, category, subtype) for each
+    // warehouse record whose forward dependencies include rootProgId.
+    // Uses the linker (ordinal 85) + Ordinal_28/70 + _LoadMasterRecsEX@16.
+    // SEH-protected. Does NOT modify warehouse state.
+    struct ReverseDependent {
+        int progId;
+        int category;
+        int subtype;
+    };
+    std::vector<ReverseDependent> enumerateReverseDependents(
+        int rootProgId, int rootCategory);
+
+    // M.4: Reverse-dependent revalidation traversal. Recursively revalidates
+    // all reverse dependents of the root module, matching TSDev FUN_004D91E0.
+    // Uses an explicit visited-set for cycle safety (stricter than TSDev).
+    void traverseReverseDependents(
+        ComponentType rootType, int rootProgId,
+        void* compilerMem,
+        bool contractChanged,
+        std::set<int>& visited,
+        int traversalDepth);
+
+    // M.4 READ-ONLY diagnostic access (test-only seam). Grants the
+    // diag_m4_reverse_enum diagnostic name access to the private
+    // enumerateReverseDependents method and the private ReverseDependent
+    // nested struct so the diagnostic can call the ACTUAL production
+    // implementation directly without going through verifyModule (which
+    // would compile/modify items). This declaration changes NO production
+    // behavior — it only grants name access to a test accessor struct
+    // defined in tests/diag_m4_reverse_enum.cpp.
+    friend struct DiagM4ReverseEnumAccess;
 };
 
 } // namespace tsdev

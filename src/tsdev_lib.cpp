@@ -490,6 +490,242 @@ bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
     return true;
 }
 
+// SEH-protected contract-change comparison (M.4).
+// Replicates TSDev.exe FUN_004d9040: compares two warehouse master records
+// field-by-field. Returns 1 = no change, 0 = changed.
+// SEH-protected because record pointers come from orlib20 and may be invalid.
+// POD-only (no C++ objects) for __try/__except legality.
+int compareMasterRecsContractSeh(const char* oldRec, const char* newRec) {
+    // Null check
+    if (!oldRec || !newRec) return 0;
+
+    int result = 0;  // default: changed
+    __try {
+        // 1. +0xd6: pointer equality (NOT dereferenced)
+        if (*(int*)(oldRec + 0xd6) != *(int*)(newRec + 0xd6)) return 0;
+
+        // 2. +0x15: low byte, mask 0x7E (bits 1-6)
+        unsigned char old15 = *(unsigned char*)(oldRec + 0x15);
+        unsigned char new15 = *(unsigned char*)(newRec + 0x15);
+        if (((old15 ^ new15) & 0x7E) != 0) return 0;
+
+        // 3. +0x7f: ushort, mask 0xB007 (bits 0,1,2,12,13,15)
+        unsigned short old7f = *(unsigned short*)(oldRec + 0x7f);
+        unsigned short new7f = *(unsigned short*)(newRec + 0x7f);
+        if (((old7f ^ new7f) & 0xB007) != 0) return 0;
+
+        // 4. +0x81: ushort, mask 0xF900 (bits 8,11,12,13,14,15)
+        unsigned short old81 = *(unsigned short*)(oldRec + 0x81);
+        unsigned short new81 = *(unsigned short*)(newRec + 0x81);
+        if (((old81 ^ new81) & 0xF900) != 0) return 0;
+
+        // 5. +0x29: int element count, full equality
+        int count = *(int*)(oldRec + 0x29);
+        if (count != *(int*)(newRec + 0x29)) return 0;
+
+        // 6. +0x4f: dereference both, compare array contents at stride 0xb5
+        int* oldArr = *(int**)(oldRec + 0x4f);
+        int* newArr = *(int**)(newRec + 0x4f);
+        if (!oldArr || !newArr) return 0;  // null array = changed
+
+        for (int i = 0; i < count; i++) {
+            const char* oldElem = (const char*)oldArr + (i * 0xb5);
+            const char* newElem = (const char*)newArr + (i * 0xb5);
+            // elem+0xd: int* pointer equality
+            if (*(int*)(oldElem + 0xd) != *(int*)(newElem + 0xd)) return 0;
+            // elem+0x11: int* pointer equality
+            if (*(int*)(oldElem + 0x11) != *(int*)(newElem + 0x11)) return 0;
+            // elem+0x15: int* pointer equality
+            if (*(int*)(oldElem + 0x15) != *(int*)(newElem + 0x15)) return 0;
+            // elem+0x83: uint, bit 2 only (mask 0x4)
+            unsigned int old83 = *(unsigned int*)(oldElem + 0x83);
+            unsigned int new83 = *(unsigned int*)(newElem + 0x83);
+            if (((old83 ^ new83) & 4) != 0) return 0;
+            // elem+0x87: short, full equality
+            if (*(short*)(oldElem + 0x87) != *(short*)(newElem + 0x87)) return 0;
+            // elem+0xb1: int* pointer equality
+            if (*(int*)(oldElem + 0xb1) != *(int*)(newElem + 0xb1)) return 0;
+        }
+
+        result = 1;  // all fields match = no change
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;  // SEH = treat as changed
+    }
+    return result;
+}
+
+// SEH-protected call to GetDependencies (M.4). POD-only.
+// File-scope typedef matching the TsDevLib private member typedef
+// (structurally identical: HGLOBAL (__stdcall*)(int, int, int, int*)),
+// so this free helper can take a typed function pointer without accessing
+// the class's private members.
+typedef HGLOBAL (__stdcall *GetDependenciesFn)(int whType, int progId,
+                                                int elementIndex,
+                                                int* outDepCount);
+struct GetDependenciesSehResult {
+    HGLOBAL handle;  // NULL if no deps or SEH
+    int depCount;    // number of dependency ProgIds in the handle
+};
+bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
+                         int elementIndex,
+                         GetDependenciesSehResult* out) {
+    out->handle = NULL;
+    out->depCount = 0;
+    __try {
+        out->handle = fn(whType, progId, elementIndex, &out->depCount);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+// Workstream M slice M.4: linker-based reverse-dependency helpers.
+// ============================================================================
+
+// SEH-protected call to Ordinal_28 (partial-record copy, RVA 0x1A03F0).
+// __stdcall, 4 args (category, progId, flag, outBuf). Returns 1 on success
+// and writes a 0x10A-byte partial record into outBuf. POD-only.
+typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
+                                              int flag, void* outBuf);
+struct Ord28SehResult { unsigned int result; };
+bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
+               void* outBuf, Ord28SehResult* out) {
+    out->result = 0xFFFFFFFFu;
+    __try { out->result = fn(category, progId, flag, outBuf); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// SEH-protected call to Ordinal_70 (release refcounted record, RVA 0x15DF30).
+// __stdcall, 2 args (rec, flag). POD-only.
+typedef int (__stdcall *Ordinal70Fn)(void* rec, int flag);
+struct Ord70SehResult { int result; };
+bool callOrd70(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
+    out->result = -1;
+    __try { out->result = fn(rec, flag); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// callLinkerManual — calls the linker with ALL 4 args on the stack
+// (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
+// using inline assembly so we can manually restore ESP regardless of whether
+// the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
+// 8). This makes the call robust to calling-convention mismatch.
+//
+// NOTE: This function is NOT itself SEH-protected (inline asm + SEH in the
+// same function is rejected by MSVC C2712/C2181). The caller wraps it.
+//
+// COPIED EXACTLY from tests/diag_m4_deplist_dump.cpp.
+void* callLinkerManual(void* fn, int whType, int whId, int whErrFlag,
+                       void* whPartialBuf) {
+    void* retVal = nullptr;
+    __asm {
+        mov  esi, esp
+        push whPartialBuf
+        push whErrFlag
+        push whId
+        push whType
+        mov  ecx, whType
+        mov  edx, whId
+        call fn
+        mov  retVal, eax
+        mov  esp, esi
+    }
+    return retVal;
+}
+
+struct LinkerSehResult { void* ptr; bool seh; };
+bool callLinkerSafe(void* fn, int type, int id, int errorFlag,
+                    void* partialBuf, LinkerSehResult* out) {
+    out->ptr = nullptr;
+    out->seh = false;
+    __try {
+        out->ptr = callLinkerManual(fn, type, id, errorFlag, partialBuf);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        out->seh = true;
+        return false;
+    }
+    return true;
+}
+
+// SEH-protected raw readers. POD-only so __try/__except is legal.
+bool sehReadInt(const void* p, int* out) {
+    *out = 0;
+    __try { *out = *(const int*)p; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+bool sehReadShort(const void* p, short* out) {
+    *out = 0;
+    __try { *out = *(const short*)p; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+bool sehReadByte(const void* p, unsigned char* out) {
+    *out = 0;
+    __try { *out = *(const unsigned char*)p; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+bool sehReadPtr(const void* p, void** out) {
+    *out = nullptr;
+    __try { *out = *(void* const*)p; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+bool sehReadUInt(const void* p, unsigned int* out) {
+    *out = 0;
+    __try { *out = *(const unsigned int*)p; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+bool sehMemcpy(const void* src, void* dst, size_t n) {
+    __try { std::memcpy(dst, src, n); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// Dep-list entry. The layout is:
+//   +0x00: type   (dword)
+//   +0x04: length (byte) — total entry length including this header
+//   +0x05: sourceLine (int)
+//   +0x09: sourceCol  (int)
+//   +0x0d: payload; for type 0xfa3 / 0xfa4 the first 4 bytes are the
+//          function reference (ProgId).
+struct DepListEntry {
+    unsigned int type;
+    unsigned char length;
+    int funcRef;
+};
+
+// Parse a dep-list buffer. Stops on zero-length entries or truncated entries.
+// The buffer is assumed to be a local copy (already SEH-protected during copy).
+std::vector<DepListEntry> parseDepList(const unsigned char* buf, size_t bufLen) {
+    std::vector<DepListEntry> entries;
+    size_t off = 0;
+    while (off + 5 <= bufLen) {
+        DepListEntry e;
+        e.type   = *(const unsigned int*)(buf + off + 0);
+        e.length = *(const unsigned char*)(buf + off + 4);
+        if (e.length == 0) {
+            break;
+        }
+        if (off + e.length > bufLen) {
+            break;
+        }
+        if (e.length >= 13 && off + 13 + sizeof(int) <= bufLen) {
+            e.funcRef = *(const int*)(buf + off + 13);
+        } else {
+            e.funcRef = 0;
+        }
+        entries.push_back(e);
+        off += e.length;
+    }
+    return entries;
+}
+
 // DEAD CODE — retained for reference. Superseded by callBstSearchWrapper +
 // callVerbatimNameGetter. FUN_101a42d0 returns the ProgId (not the name) in
 // non-server mode (DAT_1023aa8f == 0, which is our case). The new Phase 2
@@ -864,6 +1100,19 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     m_loadMasterRecsEx = (LoadMasterRecsExFn)m_resolver->resolveExport("_LoadMasterRecsEX@16");
     m_getMasterRecByType = (GetMasterRecByTypeFn)m_resolver->resolveExport("_GetMasterRecByType@16");
 
+    // M.4: GetDependencies (ordinal 487) and _DeleteDependencyList@4 (ordinal 397).
+    // These are named exports, resolved by name.
+    m_getDependencies = (GetDependenciesFn)m_resolver->resolveExport("GetDependencies");
+    m_deleteDependencyList = (DeleteDependencyListFn)m_resolver->resolveExport("_DeleteDependencyList@4");
+
+    // Workstream M slice M.4: linker-based reverse-dependency enumeration.
+    // Ordinal_28 (RVA 0x1A03F0), Ordinal_70 (RVA 0x15DF30), and ordinal 85
+    // (the linker, FUN_101a3340). The linker is a __fastcall/__stdcall hybrid
+    // and is invoked via an inline-asm wrapper.
+    m_ord28 = reinterpret_cast<Ordinal28Fn>(m_resolver->resolveExportByOrdinal(28));
+    m_ord70 = reinterpret_cast<Ordinal70Fn>(m_resolver->resolveExportByOrdinal(70));
+    m_linkerRaw = (void*)m_resolver->resolveExportByOrdinal(85);
+
     // 9. Resolve 8 internal functions via resolver (signature scan,
     //    replaces old base-address + RVA arithmetic).
     //    Workstream M slice M.1: CELCompiler alloc/destroy are now resolved
@@ -1011,6 +1260,7 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
     // phase — the GREEN phase will add the actual 0x40A send (and the hook
     // call) to verifyModule() and deleteEntry().
     m_onNotifyReady = config.onNotifyReady;
+    m_onReverseDependentRevalidationReady = config.onReverseDependentRevalidationReady;
     initAfterCom(tsPathOverride);
 }
 
@@ -1476,6 +1726,41 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_CompileErrors;
     }
 
+    // --- 7b. M.4: Reverse-dependent revalidation (TSDev FUN_004D91E0 parity).
+    //     Only on verify success AND category in 0/1/4 (matching TSDev's gate
+    //     at 0x004d92b2-0x004d92bd). The traversal revalidates all reverse
+    //     dependents (callers) of the just-verified module. EndCompilingProcess
+    //     is deferred until AFTER the traversal (matching TSDev's
+    //     FUN_004D9480 which calls EndCompilingProcess after FUN_004D91E0
+    //     returns). The compiler object stays alive during the traversal. ---
+    if (seh.verifyResult == 1) {
+        int rootCategory = getCategory(type);
+        if (rootCategory == 0 || rootCategory == 1 || rootCategory == 4) {
+            // Contract-change check: compare old vs new master record.
+            // The old record was captured before saveSource() (if applicable).
+            bool contractChanged = true;  // default: assume changed
+            if (m_hasOldMasterRec) {
+                // Read the new master record.
+                char newRec[0x10A] = {};
+                GetMasterRecByTypeSehResult gmSeh;
+                if (callGetMasterRecByType(m_getMasterRecByType,
+                        rootCategory, getSubType(type), progId, newRec, &gmSeh)
+                    && gmSeh.result == 1) {
+                    int cmpResult = compareMasterRecsContractSeh(
+                        (const char*)m_oldMasterRec, (const char*)newRec);
+                    contractChanged = (cmpResult == 0);  // 0 = changed
+                }
+                m_hasOldMasterRec = false;  // reset for next operation
+            }
+
+            // Traverse reverse dependents with explicit visited-set.
+            std::set<int> visited;
+            visited.insert(progId);  // root is already visited
+            traverseReverseDependents(type, progId, compilerMem,
+                                      contractChanged, visited, 0);
+        }
+    }
+
     // --- 8. EndCompilingProcess (fastcall, 1 arg = 0) ---
     callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
 
@@ -1601,6 +1886,239 @@ void TsDevLib::refreshCache() {
     // (FUN_101d15c0) and returns a single warehouse record by ProgId.)
     *reinterpret_cast<int*>(wh + 0x12) = 0xC;
     callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x4E);
+}
+
+std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
+    int rootProgId, int rootCategory) {
+    std::vector<ReverseDependent> result;
+    (void)rootCategory;  // rootCategory is unused; we scan all categories.
+
+    if (!m_linkerRaw || !m_ord28 || !m_ord70 || !m_loadMasterRecsEx) {
+        return result;  // exports not resolved — no deps
+    }
+
+    // Refresh cache so newly created records are visible.
+    refreshCache();
+
+    // Enumerate all categories (0-7). For each candidate, get the linked
+    // record via the linker (ordinal 85) and scan each element's dep-list
+    // for a forward reference to rootProgId (type 0xfa3 or 0xfa4).
+    const int kRecordSize = 0x10A;
+    const int kProgIdOffset = 0x00;   // short ProgId
+    const int kSubTypeOffset = 0xE9;  // byte subtype
+    const size_t kElemSize = 0xb5;
+    const size_t kMaxDepListCopy = 8192;
+
+    for (int cat = 0; cat <= 7; cat++) {
+        HGLOBAL buf = NULL;
+        LoadMasterRecsExSehResult lmrSeh;
+        if (!callLoadMasterRecsEx(m_loadMasterRecsEx, cat, &buf,
+                                  (const char*)NULL, 1, &lmrSeh)) {
+            continue;  // SEH — skip this category
+        }
+        int count = lmrSeh.result;
+        if (count <= 0 || buf == NULL) {
+            if (buf) GlobalFree(buf);
+            continue;
+        }
+
+        char* records = (char*)GlobalLock(buf);
+        if (!records) {
+            GlobalFree(buf);
+            continue;
+        }
+
+        for (int i = 0; i < count; i++) {
+            char* rec = records + (size_t)i * kRecordSize;
+
+            short candidateProgId = 0;
+            unsigned char candidateSubType = 0;
+            if (!sehReadShort(rec + kProgIdOffset, &candidateProgId) ||
+                !sehReadByte(rec + kSubTypeOffset, &candidateSubType)) {
+                continue;
+            }
+            if (candidateProgId <= 0) continue;
+            if ((int)candidateProgId == rootProgId) continue;  // skip root
+
+            // Step 1: get the partial record via Ordinal_28.
+            unsigned char partialBuf[kRecordSize] = {};
+            Ord28SehResult ord28r;
+            if (!callOrd28(m_ord28, cat, (int)candidateProgId, /*flag=*/0,
+                           partialBuf, &ord28r)) {
+                continue;
+            }
+            if (ord28r.result != 1) continue;
+
+            // Step 2: call the linker (ordinal 85) to get the linked record.
+            LinkerSehResult linkr;
+            if (!callLinkerSafe(m_linkerRaw, cat, (int)candidateProgId,
+                                /*errorFlag=*/0, partialBuf, &linkr)) {
+                continue;
+            }
+            void* linkedRec = linkr.ptr;
+            if (!linkedRec) continue;
+
+            // Step 3: walk the element array and scan dep-lists.
+            bool isReverseDep = false;
+            int elemCount = 0;
+            void* elemArray = nullptr;
+            if (!sehReadInt((const char*)linkedRec + 0x29, &elemCount) ||
+                !sehReadPtr((const char*)linkedRec + 0x4f, &elemArray)) {
+                // Release the record even if the read failed.
+                Ord70SehResult r70;
+                callOrd70(m_ord70, linkedRec, 0, &r70);
+                continue;
+            }
+
+            unsigned char depBuf[kMaxDepListCopy] = {};
+            if (elemCount > 0 && elemArray) {
+                for (int ei = 0; ei < elemCount && !isReverseDep; ei++) {
+                    const unsigned char* elem =
+                        (const unsigned char*)elemArray + (size_t)ei * kElemSize;
+
+                    unsigned int depListSize = 0;
+                    void* depListPtr = nullptr;
+                    if (!sehReadUInt(elem + 0x73, &depListSize) ||
+                        !sehReadPtr(elem + 0x7b, &depListPtr)) {
+                        continue;  // skip this element on SEH
+                    }
+
+                    if (!depListPtr || depListSize == 0) continue;
+
+                    size_t copySize = depListSize < kMaxDepListCopy
+                                          ? depListSize
+                                          : kMaxDepListCopy;
+                    if (!sehMemcpy(depListPtr, depBuf, copySize)) {
+                        continue;  // skip this element on SEH during copy
+                    }
+
+                    std::vector<DepListEntry> entries =
+                        parseDepList(depBuf, copySize);
+                    for (const auto& e : entries) {
+                        if (e.type == 0xFA3 || e.type == 0xFA4) {
+                            if (e.funcRef == rootProgId) {
+                                isReverseDep = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Step 4: release the linked record via Ordinal_70.
+            Ord70SehResult r70;
+            callOrd70(m_ord70, linkedRec, 0, &r70);
+
+            if (isReverseDep) {
+                result.push_back({(int)candidateProgId, cat,
+                                  (int)candidateSubType});
+            }
+        }
+
+        GlobalUnlock(buf);
+        GlobalFree(buf);
+    }
+
+    return result;
+}
+
+void TsDevLib::traverseReverseDependents(
+    ComponentType rootType, int rootProgId,
+    void* compilerMem,
+    bool contractChanged,
+    std::set<int>& visited,
+    int traversalDepth) {
+
+    int rootCategory = getCategory(rootType);
+    int rootComponentType = static_cast<int>(rootType);
+
+    // Fire traversal-started sentinel ONLY at depth 0.
+    if (traversalDepth == 0 && m_onReverseDependentRevalidationReady) {
+        m_onReverseDependentRevalidationReady(
+            rootComponentType, rootProgId, rootCategory,
+            0, 0, 0,  // dependent fields = 0 for sentinel
+            -1,  // revalidationTriggered = -1 (sentinel)
+            -1,  // revalidationResult = -1
+            -1); // traversalDepth = -1
+    }
+
+    // If exports not resolved, cannot enumerate.
+    if (!m_linkerRaw || !m_ord28 || !m_ord70 || !m_loadMasterRecsEx) {
+        return;
+    }
+
+    // Enumerate reverse dependents.
+    auto dependents = enumerateReverseDependents(rootProgId, rootCategory);
+
+    char* compilerBase = static_cast<char*>(compilerMem);
+
+    for (const auto& dep : dependents) {
+        // Cycle safety: check visited-set.
+        if (visited.count(dep.progId)) {
+            if (!contractChanged) {
+                // Already visited AND contract did NOT change -> skip.
+                if (m_onReverseDependentRevalidationReady) {
+                    m_onReverseDependentRevalidationReady(
+                        rootComponentType, rootProgId, rootCategory,
+                        dep.category, dep.progId, dep.category,
+                        0,   // revalidationTriggered = 0 (skipped)
+                        -1,  // revalidationResult = -1 (not run)
+                        traversalDepth);
+                }
+                continue;
+            }
+            // Contract changed -> reverify even if visited.
+        }
+
+        // Mark as visited BEFORE reverifying (prevents infinite recursion).
+        visited.insert(dep.progId);
+
+        // Reverify via _VerifyModule_New@20 with flag=0 (non-primary).
+        // The compiler object's +0x08/+0x0C/+0x10 stay as the root's values.
+        // The dependent's (category, progId) are passed as args.
+        VerifySehResult vSeh;
+        bool ok = callVerify(
+            reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
+            m_editorHwnd, dep.category, dep.progId,
+            compilerMem, &vSeh);
+
+        int revalidationTriggered = 1;
+        int revalidationResult = -1;
+        if (!ok) {
+            // SEH exception during verify -- treat as failure.
+            revalidationResult = 0;
+        } else {
+            revalidationResult = (vSeh.verifyResult == 1) ? 1 : 0;
+        }
+
+        // AND the dependent result into compiler+0x04 (aggregate).
+        // compiler+0x00 (root result) is NOT touched (flag=0, not primary).
+        int currentAggregate = *(reinterpret_cast<int*>(compilerBase + 0x04));
+        *(reinterpret_cast<int*>(compilerBase + 0x04)) =
+            currentAggregate & revalidationResult;
+
+        // Fire per-dependent hook event.
+        if (m_onReverseDependentRevalidationReady) {
+            m_onReverseDependentRevalidationReady(
+                rootComponentType, rootProgId, rootCategory,
+                dep.category, dep.progId, dep.category,
+                revalidationTriggered,
+                revalidationResult,
+                traversalDepth);
+        }
+
+        // Recurse into the dependent (find its reverse dependents).
+        // Only recurse for categories 0/1/4 (matching TSDev's gate).
+        if (dep.category == 0 || dep.category == 1 || dep.category == 4) {
+            ComponentType depType = ComponentType::Function;  // default
+            if (dep.category == 0) depType = ComponentType::Strategy;
+            else if (dep.category == 4) depType = ComponentType::Function;
+            // category 1 is also Function subtype
+            traverseReverseDependents(depType, dep.progId, compilerMem,
+                                      contractChanged, visited,
+                                      traversalDepth + 1);
+        }
+    }
 }
 
 void TsDevLib::closeWarehouse() {
