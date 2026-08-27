@@ -1,11 +1,18 @@
-﻿# TVS-L.7 RED Fault-Injection Evidence
+﻿# TVS-L.7 RED Fault-Injection Evidence — Historical/Transient Recorded Run
 
-> Tracked durable summary produced by `tests/test_unknown_link_regression.ps1 -IncludeRedFaultInjection`.
+> This tracked file records one historical/transient recorded run only; it is not a current run and not current production-acceptance proof.
+> Exact ProgIds, hashes, exit codes, and outcomes below are unverified outside that recorded run.
+> Routine `-IncludeRedFaultInjection` runs write run-specific gitignored `tmp/` evidence; `-UpdateTrackedEvidence` authorizes selecting this tracked destination, but an existing destination is never overwritten.
+> This evidence document is assembled after cleanup. Operation-state measurements are retained as recorded and are explicitly measurements from before sanitation; the legacy fields identified below were not captured in the required order.
+> Qualification: the legacy `*ExistedBeforeSanitation`, `OrphanExistedBeforeSanitation`, `Read-only attribute restored in finally`, and `Cleanup verdict (pre-sanitation)` fields below were populated after restore/delete by the old ordering. They are invalid as pre-sanitation evidence and are not acceptance evidence. No replacement values are inferred here.
+> The current harness records guarded pre-sanitation production state, sanitation actions, and post-sanitation hygiene as separate fields. This historical record does not contain those correctly ordered fields; the per-case placeholders below remain explicitly unverified rather than reconstructing values.
+> Textual stdout/stderr in this retained/generated Markdown is PowerShell-rendered and may contain encoding artifacts; it is not a byte-exact transcript. Underlying native bytes are not verified.
+> Produced by `tests/test_unknown_link_regression.ps1 -IncludeRedFaultInjection`.
 > Handoff §6 Evidence: exit codes, hashes, GUID occurrence counts, get-source output,
 > read-only-command capture, and invariant failures. Raw logs remain transient.
 > Generated: 2026-08-24T11:35:31.9100338+02:00
 
-## L7.1 -- Modify / read-only ELL (Fault A: stale-ELL modify; detect-and-fail; GREEN after L.9)
+## L7.1 -- Modify / read-only ELL (Fault A: stale-ELL modify; detect-and-fail; historical/transient recorded run)
 
 - **Disposable item identifier:** TS_AUTO_L7_MOD_RO_20260824_113226
 - **Component type:** strategy
@@ -19,7 +26,7 @@
 - Stdout: ``
 - Stderr: ``
 
-### Pre/post-operation ELL/XML SHA-256 hashes
+### Operation measurements captured before sanitation (pre/post-operation ELL/XML SHA-256 hashes)
 | Artifact | Pre SHA-256 | Post SHA-256 | Changed |
 |----------|-------------|--------------|---------|
 | ELL | 98CB0271CFDC8A70B6B4E6D2C797569EA41FABB9B8C1B63F387DF9ACF7A748A1 | 98CB0271CFDC8A70B6B4E6D2C797569EA41FABB9B8C1B63F387DF9ACF7A748A1 | False |
@@ -42,20 +49,25 @@
 - Stderr: `tsdev: TS install path resolved via registry (Installing): C:\Program Files (x86)\TradeStation 9.5`
 - Stdout: `{"op":"modify","type":"strategy","name":"TS_AUTO_L7_MOD_RO_20260824_113226","success":false,"exit_code":9,"error":{"code":"artifact_missing","message":"persistence integrity check FAILED ΓÇö stale .ell (Fault A): the .ell hash is unchanged or the post-op XML GUID is not present exactly once (mixed-endian) in the .ell; the artifacts are inconsistent and the item is runtime-unlinkable [verdict=FaultA_StaleEll, type=strategy, name=\"TS_AUTO_L7_MOD_RO_20260824_113226\", ProgId=7677, .ell=C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_7677.ell, .xml=C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_7677.xml]"}}`
 
-### Desired-state invariant result
-- Desired-state passed: **True**
+### Production operation desired-state invariant result (recorded before finally sanitation)
+- Production desired-state passed: **True**
 - Invariant failures: 
 
-### Production vs sanitation state before cleanup
-- ELL existed before sanitation: False
-- XML existed before sanitation: False
-- Orphan existed before sanitation: False
-- Read-only attribute restored in finally: True
-- Cleanup verdict (pre-sanitation): True
+### Legacy pre-sanitation fields (invalid; old ordering; not acceptance evidence)
+- ELL existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- XML existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- Orphan existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- Read-only attribute restored in finally: **UNVERIFIED (legacy value retained: True; captured after the old ordering; not a measurement)**
+- Cleanup verdict (pre-sanitation): **UNVERIFIED (legacy value retained: True; computed after the old ordering; not a measurement)**
+
+### Correctly ordered sanitation lifecycle fields
+- Pre-sanitation guarded production snapshot (ELL/XML existence, read-only state, SHA-256, warehouse state): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Sanitation-action fields (read-only restoration, sanitation delete, and artifact-removal outcomes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Post-sanitation hygiene fields (warehouse/artifact presence, read-only state, and hashes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
 
 ---
 
-## L7.2 -- Upsert-existing / read-only ELL (Fault A variant; detect-and-fail; GREEN after L.9)
+## L7.2 -- Upsert-existing / read-only ELL (Fault A variant; detect-and-fail; historical/transient recorded run)
 
 - **Disposable item identifier:** TS_AUTO_L7_UPS_RO_20260824_113226
 - **Component type:** strategy
@@ -69,7 +81,7 @@
 - Stdout: ``
 - Stderr: ``
 
-### Pre/post-operation ELL/XML SHA-256 hashes
+### Operation measurements captured before sanitation (pre/post-operation ELL/XML SHA-256 hashes)
 | Artifact | Pre SHA-256 | Post SHA-256 | Changed |
 |----------|-------------|--------------|---------|
 | ELL | 2B3126F157DB243919BF83E52A48C3CA5C6A8E0F5B063CD721600F58AFDA1A9C | 2B3126F157DB243919BF83E52A48C3CA5C6A8E0F5B063CD721600F58AFDA1A9C | False |
@@ -92,20 +104,25 @@
 - Stderr: `tsdev: TS install path resolved via registry (Installing): C:\Program Files (x86)\TradeStation 9.5`
 - Stdout: `{"op":"upsert","type":"strategy","name":"TS_AUTO_L7_UPS_RO_20260824_113226","success":false,"exit_code":9,"error":{"code":"artifact_missing","message":"persistence integrity check FAILED ΓÇö stale .ell (Fault A): the .ell hash is unchanged or the post-op XML GUID is not present exactly once (mixed-endian) in the .ell; the artifacts are inconsistent and the item is runtime-unlinkable [verdict=FaultA_StaleEll, type=strategy, name=\"TS_AUTO_L7_UPS_RO_20260824_113226\", ProgId=7678, .ell=C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_7678.ell, .xml=C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_7678.xml]"}}`
 
-### Desired-state invariant result
-- Desired-state passed: **True**
+### Production operation desired-state invariant result (recorded before finally sanitation)
+- Production desired-state passed: **True**
 - Invariant failures: 
 
-### Production vs sanitation state before cleanup
-- ELL existed before sanitation: False
-- XML existed before sanitation: False
-- Orphan existed before sanitation: False
-- Read-only attribute restored in finally: True
-- Cleanup verdict (pre-sanitation): True
+### Legacy pre-sanitation fields (invalid; old ordering; not acceptance evidence)
+- ELL existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- XML existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- Orphan existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- Read-only attribute restored in finally: **UNVERIFIED (legacy value retained: True; captured after the old ordering; not a measurement)**
+- Cleanup verdict (pre-sanitation): **UNVERIFIED (legacy value retained: True; computed after the old ordering; not a measurement)**
+
+### Correctly ordered sanitation lifecycle fields
+- Pre-sanitation guarded production snapshot (ELL/XML existence, read-only state, SHA-256, warehouse state): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Sanitation-action fields (read-only restoration, sanitation delete, and artifact-removal outcomes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Post-sanitation hygiene fields (warehouse/artifact presence, read-only state, and hashes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
 
 ---
 
-## L7.3 -- Delete / read-only ELL (Fault B: orphan ELL false success; detect-and-report; GREEN after L.12)
+## L7.3 -- Delete / read-only ELL (Fault B: orphan ELL false success; detect-and-report; historical/transient recorded run)
 
 - **Disposable item identifier:** TS_AUTO_L7_DEL_RO_20260824_113226
 - **Component type:** strategy
@@ -119,7 +136,7 @@
 - Stdout: ``
 - Stderr: ``
 
-### Pre/post-operation ELL/XML SHA-256 hashes
+### Operation measurements captured before sanitation (pre/post-operation ELL/XML SHA-256 hashes)
 | Artifact | Pre SHA-256 | Post SHA-256 | Changed |
 |----------|-------------|--------------|---------|
 | ELL | 4D641712ABB9A3356302769C87ABFC229A0BBE0F6EB24AC74CE17174C7F53A5C | 4D641712ABB9A3356302769C87ABFC229A0BBE0F6EB24AC74CE17174C7F53A5C | False |
@@ -132,22 +149,27 @@
 tsdev: WARNING ΓÇö failed to delete C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin\elmodule_0_7679.ell (error=5)`
 - Stdout: `{"op":"delete","type":"strategy","name":"TS_AUTO_L7_DEL_RO_20260824_113226","success":false,"exit_code":6,"error":{"code":"entry_op_failure","message":"deleteEntry partially failed for strategy \"TS_AUTO_L7_DEL_RO_20260824_113226\" (ProgId=7679): warehouse entry was removed, but disk cleanup failed ΓÇö failed to delete C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_7679.ell (Windows error=5)"}}`
 
-### Warehouse / XML / ELL presence after delete (Fault B)
+### Warehouse / XML / ELL presence after production delete, before sanitation (Fault B)
 - Warehouse entry present after delete: False
 - XML present after delete: False
 - ELL present after delete (orphan): True
 - Exact `failed to delete ... error=5` line captured: `tsdev: WARNING ΓÇö failed to delete C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin\elmodule_0_7679.ell (error=5)`
 
-### Desired-state invariant result
-- Desired-state passed: **True**
+### Production operation desired-state invariant result (recorded before finally sanitation)
+- Production desired-state passed: **True**
 - Invariant failures: 
 
-### Production vs sanitation state before cleanup
-- ELL existed before sanitation: True
-- XML existed before sanitation: False
-- Orphan existed before sanitation: True
-- Read-only attribute restored in finally: True
-- Cleanup verdict (pre-sanitation): False
+### Legacy pre-sanitation fields (invalid; old ordering; not acceptance evidence)
+- ELL existed before sanitation: **UNVERIFIED (legacy value retained: True; old ordering; not a measurement)**
+- XML existed before sanitation: **UNVERIFIED (legacy value retained: False; old ordering; not a measurement)**
+- Orphan existed before sanitation: **UNVERIFIED (legacy value retained: True; old ordering; not a measurement)**
+- Read-only attribute restored in finally: **UNVERIFIED (legacy value retained: True; captured after the old ordering; not a measurement)**
+- Cleanup verdict (pre-sanitation): **UNVERIFIED (legacy value retained: False; computed after the old ordering; not a measurement)**
+
+### Correctly ordered sanitation lifecycle fields
+- Pre-sanitation guarded production snapshot (ELL/XML existence, read-only state, SHA-256, warehouse state): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Sanitation-action fields (read-only restoration, sanitation delete, and artifact-removal outcomes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
+- Post-sanitation hygiene fields (warehouse/artifact presence, read-only state, and hashes): **UNVERIFIED** — not captured in this historical run; no replacement values inferred.
 
 ---
 

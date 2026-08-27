@@ -1,16 +1,12 @@
 // test_get_source.cpp
 //
-// Integration test (RED-GREEN) for the library-level getSource() primitive that
-// the future `get-source` CLI subcommand will wrap. getSource() retrieves the
-// EasyLanguage source text of an existing warehouse item by name + component
-// type.
+// Integration test for the library-level getSource() primitive used by the
+// `get-source` CLI subcommand. getSource() retrieves the EasyLanguage source
+// text of an existing warehouse item by name + component type.
 //
-// TVS-F.4 subtask 1 (RED step): this test exercises the library-level
-// source-retrieval primitive that the future `get-source` CLI subcommand will
-// wrap. getSource() does NOT exist yet in tsdev_lib.h / tsdev_lib.cpp, so this
-// test FAILS TO COMPILE (RED) until the method is implemented. Once
-// implemented, the library-level assertions should PASS (GREEN). The CLI-level
-// E2E test (tests/test_get_source.ps1) is the other half of the TDD scaffold.
+// TVS-F.4: this test exercises the implemented source-retrieval primitive.
+// The library-level assertions and the CLI-level E2E test
+// (tests/test_get_source.ps1) cover the current `get-source` implementation.
 //
 // The test is self-cleaning: it inserts probe entries (a strategy and a
 // function) with KNOWN source text, calls getSource() to retrieve the source,
@@ -35,7 +31,7 @@
 //      key substrings from the inserted source (G3 function type)
 //  13. deleteEntry(Strategy, strategyName) — cleanup
 //  14. deleteEntry(Function, funcName) — cleanup
-//  15. closeWarehouse() — best-effort flush
+//  15. closeWarehouse() — assert explicit flush status
 //  16. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -64,22 +60,25 @@ namespace {
 // sorts it to the end of the warehouse and signals a test entry.
 const char* kStrategyName = "zzz_test_get_source_strategy";
 
-// Function probe name (function name must match the EL function name).
+// Function probe name (the source identifier must match for compiler syntax).
 const char* kFuncName = "zzz_test_get_source_func";
 
 // A name that is guaranteed not to exist in the warehouse.
 const char* kNonExistentName = "NonExistentName_GetSrcTest";
 
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
-// multi-line COMMENT block, so the actual code must be OUTSIDE it. The leading
-// comment names the strategy (TSDev convention); the body issues a simple
-// market buy order. This mirrors the proven source from test_exists.cpp.
+// multi-line COMMENT block, so the actual code must be OUTSIDE it. The brace
+// text is arbitrary fixture source content only; it is not a metadata
+// convention or lookup mechanism. The name and ProgId come from warehouse
+// records/APIs. This mirrors the proven source from test_exists.cpp.
 const char* kStrategySource =
     "{ zzz_test_get_source_strategy }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
 
 // Minimal valid EasyLanguage function source. The function name must match
-// the component name. This mirrors the pattern from test_upsert.cpp U5.
+// the component name for compiler syntax, independently of stored metadata;
+// names/types/ProgIds come from warehouse records/APIs. This mirrors the
+// pattern from test_upsert.cpp U5.
 const char* kFuncSource =
     "zzz_test_get_source_func = 1;\r\n";
 
@@ -375,10 +374,14 @@ DWORD WINAPI runTest(LPVOID param) {
         st->exitCode = fail("cleanup deleteEntry failed for function", 120);
     }
 
-    // --- Step 15: closeWarehouse (best-effort flush) ---
+    // --- Step 15: closeWarehouse ---
     std::fprintf(stdout, "\n[15] closeWarehouse()...\n");
-    lib->closeWarehouse();
-    std::fprintf(stdout, "    closeWarehouse done\n");
+    bool closed = lib->closeWarehouse();
+    std::fprintf(stdout, "    closeWarehouse = %s\n",
+                 closed ? "true" : "false");
+    if (!closed) {
+        st->exitCode = fail("closeWarehouse returned false", 125);
+    }
 
     // --- Step 16: Result ---
     if (st->exitCode == 0) {

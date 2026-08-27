@@ -42,6 +42,11 @@
 
     Cleanup: deletes all inserted/upserted probe items in a finally block.
 
+    Prerequisites:
+      - Run this procedure from an elevated administrator process because it
+        invokes `tsdev_cli` directly. Otherwise, the CLI returns exit code 11
+        (`not_elevated`).
+
 .PARAMETER CliPath
     Path to the tsdev_cli.exe executable. Defaults to
     "$PSScriptRoot\..\build\Release\tsdev_cli.exe".
@@ -344,9 +349,9 @@ $probeNameU4   = "E2E_UpsertTest_${runId}_U4"
 $probeNameU5   = "E2E_UpsertTest_${runId}_U5"
 
 # Minimal valid EasyLanguage strategy source (compiles successfully).
-# The leading "{ name }" comment block is the EasyLanguage convention for
-# naming a strategy/function; it is required for enumerateRecords to
-# extract the verbatim stored name.
+# The leading "{ name }" text is arbitrary fixture source content only; it is
+# not a required naming convention or an enumerateRecords lookup mechanism.
+# The CLI supplies the item name, and stored metadata comes from warehouse APIs.
 function Write-NamedSource {
     param(
         [Parameter(Mandatory)] [string]$FileName,
@@ -491,8 +496,9 @@ try {
     # =====================================================================
     Write-Host "--- U5: upsert (absent -> insert, function) ---" -ForegroundColor Cyan
 
-    # Function source: the function name must match the component name.
-    # Include the EasyLanguage "{ name }" comment block for enumerateRecords.
+    # Function source: use the component identifier in the function body as
+    # required by EasyLanguage function syntax. The "{ name }" text remains
+    # arbitrary fixture content; stored metadata comes from warehouse APIs.
     $funcSrc = "{ $probeNameU5 }`r`n$probeNameU5 = 1;"
     $fU5 = Write-SourceFile "u5_func" $funcSrc
 

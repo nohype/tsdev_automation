@@ -5,6 +5,12 @@
 **Decompilation tools used:** `decompile_function`, `disassemble_function`, `get_function_variables`, `get_function_xrefs`, `decompile_function` on callees (`0x10153ad0`, `0x101a39e0`, `0x101cff60`, `0x101d43a0`, `0x101d4280`, `0x1015df30`, `0x1014f630`, `0x1001c890`).
 **Task scope:** Read-only RE verification of the ABI. No source code modified.
 
+> **Use note:** This is an ABI/reference record for the forward-dependency export,
+> not the current M.4 reverse-dependent implementation. The M.4 evidence found
+> that this export checks `0xFA4` while compiler-written function references use
+> `0xFA3`; production therefore uses the linker-based path documented in
+> `docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md` §8.7.
+
 ---
 
 ## 1. Confirmed ABI (C signature)

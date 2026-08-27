@@ -24,6 +24,7 @@ import pytest
 
 from tsdev_automation import (
     AlreadyExistsError,
+    ArtifactMissingError,
     BatchItem,
     CompileError,
     NotFoundError,
@@ -34,7 +35,14 @@ from tsdev_automation import (
 )
 from tsdev_automation import exceptions as exc
 from tsdev_automation import _pipe
-from tsdev_automation.client import _ServeBroker, _detect_elevation, _is_crash_exit, _SHELLEXECUTEINFOW
+from tsdev_automation.client import (
+    _ServeBroker,
+    _SHELLEXECUTEINFOW,
+    _build_serve_parameters,
+    _detect_elevation,
+    _is_crash_exit,
+    _wait_for_exit,
+)
 from unittest.mock import MagicMock
 
 
@@ -138,6 +146,49 @@ class TestSingleItem:
         assert ei.value.result.error.compile_errors == "Line 1: oops"
         # For compile errors the CLI nests prog_id inside error (exit 8).
         assert ei.value.result.error.prog_id == 9
+
+    def test_insert_artifact_missing_raises_typed_error(self, client: TsDevClient, monkeypatch) -> None:
+        message = (
+            "persistence integrity check FAILED: artifacts are inconsistent "
+            "at C:/items/missing.ell"
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("insert", "strategy", "Broken", "artifact_missing", message, exit_code=9)
+            ),
+        )
+        with pytest.raises(ArtifactMissingError) as ei:
+            client.insert("strategy", "Broken", "garbage code")
+        assert ei.value.result is not None
+        assert ei.value.result.error is not None
+        assert ei.value.result.error.code == "artifact_missing"
+        assert ei.value.result.error.message == message
+        assert str(ei.value) == message
+
+    def test_insert_ell_missing_preserves_legacy_mapping(self, client: TsDevClient, monkeypatch) -> None:
+        """Historical compatibility coverage for the legacy ``.ell``-only code.
+
+        The current exit-9 contract is ``artifact_missing`` for missing or
+        inconsistent persistence artifacts; this keeps the older payload
+        mapping covered without presenting it as the current CLI label.
+        """
+        message = "compilation succeeded but .ell file not found at C:/items/missing.ell"
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("insert", "strategy", "Legacy", "ell_missing", message, exit_code=9)
+            ),
+        )
+        with pytest.raises(exc.EllMissingError) as ei:
+            client.insert("strategy", "Legacy", "garbage code")
+        assert ei.value.result is not None
+        assert ei.value.result.error is not None
+        assert ei.value.result.error.code == "ell_missing"
+        assert ei.value.result.error.message == message
+        assert str(ei.value) == message
 
     def test_unknown_type_raises_valueerror(self, client: TsDevClient) -> None:
         with pytest.raises(ValueError):
@@ -1027,9 +1078,8 @@ class TestCliNewSubcommands:
     so we can assert on the dispatched method calls, and ``_main`` is invoked
     directly with an explicit ``argv`` so the integer exit code is observable.
 
-    The subcommands themselves are implemented in a later subtask; these tests
-    are expected to FAIL (red) until the dispatch lands in :func:`_main` and
-    :func:`_build_parser`.
+    The subcommands are implemented; these tests verify the current dispatch
+    through :func:`_main` and :func:`_build_parser`.
     """
 
     def test_cli_exists_found(self, monkeypatch, capsys) -> None:
@@ -1330,6 +1380,7 @@ class TestExceptionHierarchy:
             "EntryOpError",
             "SaveSourceError",
             "CompileError",
+            "ArtifactMissingError",
             "EllMissingError",
             "ThreadFailure",
             "TsDevCrashError",
@@ -1540,22 +1591,174 @@ class TestServeBrokerStart:
         assert broker._process_handle == fake_handle
         assert broker._pipe_handle == 7777
 
+    def test_start_quotes_paths_and_cleans_handshake_file(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """ShellExecuteExW receives correctly quoted path arguments."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe, ts_path=str(tmp_path / "Trade Station" / "Install"))
+        handshake_dir = tmp_path / "broker handshake directory"
+        handshake_dir.mkdir()
+        handshake = handshake_dir / "handshake path.pipe"
+        unrelated = tmp_path / "unrelated.txt"
+        unrelated.write_text("keep", encoding="utf-8")
+        pipe_name = r"\\.\pipe\tsdev_test_quoted"
+        fake_handle = 4243
+        captured: dict[str, str] = {}
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            captured["parameters"] = info.lpParameters
+            info.hProcess = fake_handle
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7778)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker.start()
+
+        assert captured["parameters"] == _build_serve_parameters(
+            broker._ts_path, str(handshake)
+        )
+        assert captured["parameters"] == subprocess.list2cmdline(
+            [
+                "--ts-path",
+                str(tmp_path / "Trade Station" / "Install"),
+                "serve",
+                "--serve-pipe-file",
+                str(handshake),
+            ]
+        )
+        assert not handshake.exists(), "handshake must be removed after normal startup"
+        assert unrelated.exists(), "startup cleanup must not touch unrelated paths"
+
+        # Avoid a real CloseHandle/pipe cleanup when this mocked broker is
+        # finalized after the test.
+        broker._started = False
+        broker._pipe_handle = None
+        broker._process_handle = None
+
     def test_start_raises_permission_error_on_uac_decline(self, monkeypatch, tmp_path: Path) -> None:
-        """When ShellExecuteExW returns False, ``PermissionError`` is raised."""
+        """ShellExecuteExW failure preserves the error and removes the handshake."""
         cli_exe = tmp_path / "tsdev_cli.exe"
         cli_exe.write_bytes(b"")  # start() validates the CLI path exists first.
         broker = _ServeBroker(cli_exe)
+        handshake = tmp_path / "uac failure handshake.pipe"
+        handshake.write_text("placeholder", encoding="utf-8")
+        fd = os.open(handshake, os.O_RDWR)
+        real_close = os.close
+        real_unlink = os.unlink
+        unlink_calls: list[str] = []
+
+        def fake_unlink(path):
+            unlink_calls.append(os.fspath(path))
+            if len(unlink_calls) == 1:
+                return None  # Leave the placeholder for the outer finally.
+            return real_unlink(path)
+
         monkeypatch.setattr(
             ctypes.windll.shell32, "ShellExecuteExW", lambda sei: False
         )
         monkeypatch.setattr(
             "tsdev_automation.client.tempfile.mkstemp",
-            lambda *a, **k: (999, str(tmp_path / "x.pipe")),
+            lambda *a, **k: (fd, str(handshake)),
         )
-        monkeypatch.setattr("tsdev_automation.client.os.close", lambda fd: None)
-        monkeypatch.setattr("tsdev_automation.client.os.unlink", lambda p: None)
-        with pytest.raises(PermissionError):
+        monkeypatch.setattr("tsdev_automation.client.os.close", lambda value: real_close(value))
+        monkeypatch.setattr("tsdev_automation.client.os.unlink", fake_unlink)
+        monkeypatch.setattr("tsdev_automation.client._kernel32.GetLastError", lambda: 5)
+        with pytest.raises(PermissionError, match="err=5"):
             broker.start()
+        assert unlink_calls == [str(handshake), str(handshake)]
+        assert not handshake.exists()
+
+    def test_start_missing_process_handle_still_cleans_handshake(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A successful ShellExecuteExW call without hProcess still cleans up."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe)
+        handshake = tmp_path / "missing process handshake.pipe"
+        handshake.write_text("placeholder", encoding="utf-8")
+        fd = os.open(handshake, os.O_RDWR)
+        real_close = os.close
+        real_unlink = os.unlink
+        unlink_calls: list[str] = []
+
+        def fake_unlink(path):
+            unlink_calls.append(os.fspath(path))
+            if len(unlink_calls) == 1:
+                return None
+            return real_unlink(path)
+
+        monkeypatch.setattr(
+            "tsdev_automation.client.tempfile.mkstemp",
+            lambda *a, **k: (fd, str(handshake)),
+        )
+        monkeypatch.setattr("tsdev_automation.client.os.close", lambda value: real_close(value))
+        monkeypatch.setattr("tsdev_automation.client.os.unlink", fake_unlink)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", lambda sei: True)
+
+        with pytest.raises(PermissionError, match="no process handle"):
+            broker.start()
+
+        assert unlink_calls == [str(handshake), str(handshake)]
+        assert not handshake.exists()
+
+    def test_start_polling_exception_cleans_handshake_and_preserves_error(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Polling failures clean up while preserving the original exception."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe)
+        handshake = tmp_path / "polling exception handshake.pipe"
+        handshake.write_text("placeholder", encoding="utf-8")
+        fd = os.open(handshake, os.O_RDWR)
+        real_close = os.close
+        real_unlink = os.unlink
+        unlink_calls: list[str] = []
+
+        def fake_unlink(path):
+            unlink_calls.append(os.fspath(path))
+            if len(unlink_calls) == 1:
+                return None
+            return real_unlink(path)
+
+        def fake_shell_execute(sei):
+            ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents.hProcess = 4244
+            return True
+
+        monkeypatch.setattr(
+            "tsdev_automation.client.tempfile.mkstemp",
+            lambda *a, **k: (fd, str(handshake)),
+        )
+        monkeypatch.setattr("tsdev_automation.client.os.close", lambda value: real_close(value))
+        monkeypatch.setattr("tsdev_automation.client.os.unlink", fake_unlink)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(
+            broker,
+            "_process_exited",
+            lambda: (_ for _ in ()).throw(RuntimeError("poll failed")),
+        )
+        monkeypatch.setattr("tsdev_automation.client._wait_for_exit", lambda *a, **k: True)
+        monkeypatch.setattr("tsdev_automation.client._kernel32.CloseHandle", lambda handle: True)
+
+        with pytest.raises(RuntimeError, match="poll failed"):
+            broker.start()
+
+        assert unlink_calls == [str(handshake), str(handshake)]
+        assert not handshake.exists()
+        assert broker._process_handle is None
 
     def test_shutdown_sends_quit_and_closes_handles(self, monkeypatch, tmp_path: Path) -> None:
         """``shutdown`` sends ``{"op":"quit"}`` over the pipe and closes handles."""
@@ -1581,6 +1784,83 @@ class TestServeBrokerStart:
         assert sent == [{"op": "quit"}]
         assert broker._pipe_handle is None
         assert broker._process_handle is None
+        assert broker._started is False
+
+
+class TestServeBrokerTermination:
+    """Unit tests for confirmed broker process termination."""
+
+    def test_wait_for_exit_reports_terminate_api_failure(self, monkeypatch) -> None:
+        """TerminateProcess=False must not be reported as successful."""
+        wait_results = iter([0x00000102])  # WAIT_TIMEOUT
+        terminate_calls: list[tuple] = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda *args: next(wait_results),
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda *args: terminate_calls.append(args) or False,
+        )
+
+        assert _wait_for_exit(222, timeout_ms=5000) is False
+        assert len(terminate_calls) == 1
+
+    def test_wait_for_exit_reports_process_still_alive(self, monkeypatch) -> None:
+        """A successful terminate request still requires a terminal wait."""
+        wait_results = iter([0x00000102, 0x00000102])  # timeout, timeout
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda *args: next(wait_results),
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda *args: True,
+        )
+
+        assert _wait_for_exit(222, timeout_ms=5000) is False
+
+    def test_shutdown_retains_handle_when_termination_is_unconfirmed(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """shutdown must not close or discard a live process handle."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._process_handle = 222
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda *args, **kwargs: False
+        )
+        close_calls: list[int] = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle",
+            lambda handle: close_calls.append(handle.value) or True,
+        )
+
+        with pytest.raises(TimeoutError, match="did not terminate"):
+            broker.shutdown()
+
+        assert broker._process_handle == 222
+        assert close_calls == []
+        assert broker._started is True
+
+    def test_reset_retains_handle_when_termination_is_unconfirmed(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Reconnect cleanup must not discard a broker that is still alive."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda *args, **kwargs: False
+        )
+
+        with pytest.raises(TimeoutError, match="did not terminate"):
+            broker._reset_pipe()
+
+        assert broker._pipe_handle is None
+        assert broker._process_handle == 222
         assert broker._started is False
 
 
@@ -2213,11 +2493,14 @@ class TestServeBatchDirRouting:
 class TestElevationGuard:
     """Tests for the ``use_serve=False`` / non-elevated hard-error guard.
 
-    When ``use_serve=False`` and the Python session is NOT elevated, the CLI
-    (``requireAdministrator`` manifest) cannot be launched via
-    ``subprocess.run`` — it would fail with ``ERROR_ELEVATION_REQUIRED``
-    (Windows error 740).  The wrapper raises
-    :class:`ElevationRequiredError` *before* attempting the subprocess call.
+    When ``use_serve=False`` and the Python session is NOT elevated, the
+    wrapper raises :class:`ElevationRequiredError` *before* attempting the
+    subprocess call. The default CLI build's ``requireAdministrator``
+    manifest is otherwise subject to normal Windows UAC/manifest handling;
+    a non-elevated direct launch that cannot be elevated may fail at process
+    creation with ``ERROR_ELEVATION_REQUIRED`` (Windows error 740). An
+    ``asInvoker`` build reaches the CLI's runtime guard instead and reports
+    exit 11 (``not_elevated``).
     """
 
     def test_single_op_raises_when_not_elevated_and_use_serve_false(
@@ -2549,7 +2832,9 @@ _UNIQUE = "PyAutoTest"
 
 # Valid EasyLanguage sources per component type (verified against the real
 # EasyLanguage compiler via tsdev_cli -- all five compile to exit 0).
-# Function source MUST assign to a variable named exactly like the component.
+# Function source MUST assign to a variable named exactly like the component
+# for compiler syntax; this is not a metadata lookup convention. Stored names,
+# types, and ProgIds come from warehouse records/APIs.
 _SOURCES: dict[str, dict[str, str]] = {
     "strategy": {
         "insert": 'Inputs: Length(10); If Close > Average(Close, Length) Then Buy next bar at Market;\n',
@@ -2854,14 +3139,13 @@ class TestE2E:
         """E2E: case-insensitive ``exists`` returns the verbatim stored name
         and a non-zero ProgId; case-sensitive mode respects exact casing.
 
-        The source includes a ``{ name }`` EasyLanguage comment block (the
-        convention used by ``enumerateRecords`` Phase 2 to extract the verbatim
-        stored name when the warehouse record is not yet visible to the
-        enumeration API).
+        The source includes a ``{ name }`` EasyLanguage comment only as
+        arbitrary fixture content. It is not a naming convention, a required
+        source shape, or a lookup mechanism; the stored name and ProgId must
+        come from the warehouse/API-backed CLI result.
         """
         name = "zzz_py_ci_probe"
-        # Source with the { name } comment block so enumerateRecords Phase 2
-        # can extract the verbatim stored name.
+        # Include arbitrary brace-comment content; no metadata lookup depends on it.
         src = "{ " + name + " }\n" + _src("strategy", "insert", name)
         r = self.c.insert("strategy", name, src)
         assert r.success, r

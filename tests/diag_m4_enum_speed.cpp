@@ -2,50 +2,49 @@
 //
 // DIAGNOSTIC ONLY (not part of the regression suite).
 //
-// Purpose: measure why enumerateReverseDependents() in src/tsdev_lib.cpp is
-// too slow (the M.4 integration test hung for 10+ minutes during Case 1).
+// Historical diagnostic purpose: measure the rejected GetDependencies-based
+// M.4 enumeration approach, which was observed to be too slow (the M.4
+// integration test hung for 10+ minutes during Case 1). This is not the
+// current production path.
 //
-// enumerateReverseDependents iterates all 8 categories (0-7), loads all master
-// records for each category via _LoadMasterRecsEX@16, and for EACH record calls
-// GetDependencies for EACH element index (0..elemCount-1). This is potentially
-// O(categories x records x elements x depCount) calls to GetDependencies.
+// The current enumerateReverseDependents implementation uses the linker
+// (ordinal 85) and linked per-element dep-lists. The historical approach below
+// iterates all 8 categories (0-7), loads all master records for each category
+// via _LoadMasterRecsEX@16, and for EACH record calls GetDependencies for EACH
+// element index (0..elemCount-1).
 //
-// This diagnostic:
+// This historical diagnostic:
 //   1. Constructs a real TsDevLib via the test-only ctor (real ComApi, no
-//      hooks) on a 64 MB-stack worker thread. This performs the full init
-//      sequence (SetDllDirectoryW, OrlibResolver, support DLLs, thread-check
-//      patches, OrlibInit, hidden EDIT control) — exactly what production does.
+//      hooks) on a 64 MB-stack worker thread.
 //   2. Constructs a SEPARATE OrlibResolver on the same orlib20.dll to resolve
-//      the two exports we need to measure: _LoadMasterRecsEX@16 and
-//      GetDependencies. The patches applied by TsDevLib's resolver modify the
-//      in-memory code of the shared orlib20.dll image, so they are visible to
-//      this resolver too (LoadLibraryW just bumps the refcount on the same
-//      image). OrlibInit globals are already initialized by TsDevLib.
-//   3. For each category 0-7, calls _LoadMasterRecsEX@16 (filterMode=1, same
-//      as enumerateReverseDependents) and prints the record count.
+//      the old measurement exports: _LoadMasterRecsEX@16 and GetDependencies.
+//   3. For each category 0-7, calls _LoadMasterRecsEX@16 (filterMode=1) and
+//      prints the record count.
 //   4. For the first 5 records of each category, reads the element count at
 //      +0x29 and prints it.
 //   5. Times a single GetDependencies call (element 0 of the first record of
 //      the first non-empty category).
-//   6. Prints a summary: total records across all categories, min/max/avg
-//      element count, time for one GetDependencies call, and an estimated
-//      total time for a full enumeration.
+//   6. Prints a summary of that historical API path. These measurements are
+//      unverified historical/transient diagnostics, not M.4 acceptance
+//      evidence.
 //
 // NOTE on refreshCache(): enumerateReverseDependents calls refreshCache() first.
 // refreshCache() is a private method and cannot be called from this diagnostic
 // without modifying production headers. refreshCache() dispatches only two
 // commands (0x0F + 0x4E) and is fast; it makes newly-created in-session
 // records visible to _LoadMasterRecsEX but does not affect the per-record /
-// per-element enumeration cost that this diagnostic measures. The timing
-// numbers below therefore characterize the steady-state enumeration cost on
-// the current warehouse, which is the dominant factor in the hang.
+// per-element cost of the historical API path measured here. Any timing
+// numbers produced by this diagnostic are unverified historical/transient
+// diagnostics, not current linker-path timings or M.4 acceptance evidence.
 //
 // This diagnostic does NOT modify any production code and does NOT add debug
-// code to production files. It completes in under 30 seconds or is killed.
+// code to production files. Its 30-second limit is an operational timeout, not
+// a measured completion time.
 
 #include "../src/orlib_resolver.h"   // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"  // internal/test-only header (NOT public)
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <chrono>
 #include <cstdio>
@@ -55,8 +54,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // --- SEH-protected call wrappers (replicate the POD-only wrappers in
 // tsdev_lib.cpp so we can call the resolved exports without touching
@@ -383,6 +402,14 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
+
     // Run on a 64 MB-stack worker thread (EasyLanguage compiler / hidden EDIT
     // control need this, and TsDevLib is thread-affine).
     DiagState st;
@@ -393,9 +420,35 @@ int main() {
                      GetLastError());
         return 11;
     }
-    WaitForSingleObject(hThread, INFINITE);
+    // 30-second hard timeout — report a hang without terminating the worker.
+    DWORD wait = WaitForSingleObject(hThread, 30000);
+    if (wait == WAIT_TIMEOUT) {
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 30s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
+        CloseHandle(hThread);
+        return 98;
+    }
     DWORD exitCode = 0;
     GetExitCodeThread(hThread, &exitCode);
     CloseHandle(hThread);
+
+    // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
+
     return st.exitCode;
 }

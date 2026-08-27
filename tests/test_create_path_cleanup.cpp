@@ -1,39 +1,32 @@
 // test_create_path_cleanup.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-L.10: a SINGLE ownership decision that
-// covers create-path partial-entry cleanup after a successful createEntry for
-// EVERY failure stage — saveSource failure AND verifyModule early-return /
-// SEH / OOM — instead of cleanup being scattered (only inside verifyModule's
-// compile-error branch) or absent (saveSource failure path).
+// Unit test for TVS-L.10: a SINGLE ownership decision that covers create-path
+// partial-entry cleanup after a successful createEntry for EVERY failure stage
+// — saveSource failure AND verifyModule early-return / SEH / OOM — rather than
+// leaving cleanup scattered across failure branches.
 //
 // This is a PURE UNIT TEST. It does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, does NOT construct TsDevLib, and does NOT need a
-// 64 MB stack. It calls the ownership decision declared in
+// 64 MB stack. It calls the implemented ownership decision declared in
 // src/create_path_cleanup.h, which is a pure function of (progId, stage).
 //
-// TDD RED step:
-//   src/create_path_cleanup.h DECLARES requiresCreatePathCleanup() but there
-//   is NO src/create_path_cleanup.cpp yet. This test calls the symbol, so the
-//   test executable FAILS TO LINK (unresolved external) until the GREEN step
-//   adds the implementation. That link failure IS the RED signal. No
-//   assertion can run until the symbol resolves; the test is written so that
-//   once the GREEN implementation exists, the assertions below pin the
-//   contract documented in the header.
+// The implementation in src/create_path_cleanup.cpp is linked into this test.
+// The assertions below pin the contract documented in the header.
 //
-// Why this test exists (the defect it targets):
-//   After createEntry succeeds (ProgId > 0), a partial warehouse entry exists
-//   in the in-memory BST. The create-path can then fail at several points:
-//     * saveSource returns false          -> doInsert exit 7, NO cleanup today.
-//     * verifyModule early-return / OOM   -> cleanup only incidentally via the
-//     * verifyModule SEH (ctor / Start-      !errors.empty() branch INSIDE
-//       Compiling / VerifyModule_New)        verifyModule (written for the
-//                                             compile-error case, TD-001).
-//     * verifyModule compile errors       -> the only explicitly-cleaned case.
-//   "Did we clean up?" therefore depends on WHICH step failed and on an
-//   incidental property (error-string emptiness), not on a single ownership
-//   decision. This test pins the intended single owner: for progId > 0 it
-//   MUST require cleanup for ALL stages; for progId <= 0 it MUST NOT
-//   require cleanup for any stage (no partial entry was created).
+// Why this test exists (historical pre-TVS-L.10 defect):
+//   Before TVS-L.10, after createEntry succeeded (ProgId > 0), a partial
+//   warehouse entry existed in the in-memory BST. Cleanup of that partial
+//   entry on a subsequent failure was not owned by one local path:
+//     * saveSource returned false       -> doInsert exit 7, no cleanup.
+//     * verifyModule early-return / OOM -> cleanup only incidentally via the
+//       !errors.empty() branch inside verifyModule.
+//     * verifyModule SEH (ctor / StartCompiling / VerifyModule_New) ->
+//       cleanup through that same branch.
+//     * verifyModule compile errors    -> the only explicitly-cleaned case.
+//   The implemented single owner removes that step-dependent behavior. This
+//   test pins the owner contract: for progId > 0 it MUST require cleanup for
+//   ALL stages; for progId <= 0 it MUST NOT require cleanup for any stage (no
+//   partial entry was created).
 //
 //   TVS-L.11 extends the stage list with three post-verify failure branches
 //   (after successful create+verify): .ell missing on disk, .xml missing on
@@ -44,8 +37,6 @@
 //   those three new stages are covered by the single owner's contract.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
-// (Until the GREEN step links the owner, the executable does not build, so
-//  no exit code is produced — that is the RED.)
 
 #include "../src/create_path_cleanup.h"
 
@@ -131,7 +122,7 @@ int runTests() {
     // Group 2: createEntry did NOT succeed (progId <= 0).
     //   No partial entry exists. The single owner MUST NOT require cleanup
     //   for any stage — there is nothing to clean up. This guards against a
-    //   GREEN implementation that blindly returns true and would attempt to
+    //   implementation that blindly returns true and would attempt to
     //   delete a non-existent / unrelated entry.
     // -------------------------------------------------------------------
     {

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    TVS-D.2: --json structured output flag test for tsdev_cli (TDD red-green).
+    TVS-D.2: --json structured output behavior test for the implemented tsdev_cli.
 
 .DESCRIPTION
     Validates the --json global flag on the single-item insert/delete/modify

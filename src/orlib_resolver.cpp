@@ -36,8 +36,8 @@
 // signatures/v9.50.01.3344.json catalog), the SignatureSetId enum, and the
 // version manifest arrays. It includes orlib_resolver.h after defining the
 // enum so that OrlibVersionManifestEntry (which has a SignatureSetId member
-// by value) can use it. This replaces the old tmp/re_artifacts/b1_signatures.h
-// dependency.
+// by value) can use it. This replaces the old gitignored
+// tmp/re_artifacts/b1_signatures.h dependency (historical/unavailable).
 #include "signatures.gen.h"
 
 namespace tsdev {
@@ -127,7 +127,7 @@ struct SigBackingData {
     std::vector<uint8_t> replacementBytes;
 };
 
-/// \brief Build the OrlibSignatureDef catalog from kSignatures[] (13 entries).
+/// \brief Build the OrlibSignatureDef catalog from kSignatures[] (22 entries).
 ///
 /// The backing byte data is stored in function-local static vectors so the
 /// pointers in the returned OrlibSignatureDef objects remain valid
@@ -659,7 +659,7 @@ const OrlibSignatureDef& OrlibResolver::getSignatureByIndex(size_t index) const 
 }
 
 // ===========================================================================
-// Specific internal-function resolvers (8 CALL_TARGETs)
+// Specific internal-function resolvers (11 CALL_TARGETs)
 // ===========================================================================
 
 StartCompilingProcessFn OrlibResolver::resolveStartCompilingProcess() {
@@ -678,8 +678,8 @@ EndCompilingProcessFn OrlibResolver::resolveEndCompilingProcess() {
 // signature scan (raw ctor/dtor at RVA 0x165A00 / 0x165AC0) to ordinal-based
 // resolution (orlib20 ordinal exports 66 / 67). TSDev reaches the ctor/dtor
 // EXCLUSIVELY through the ordinal wrappers (FUN_10165f70 / FUN_10165fd0),
-// never via a direct call to the raw ctor/dtor — see tmp/m1_ghidra_findings.md
-// §1b (no direct static CALL from TSDev.exe to 0x10165A00 / 0x10165AC0).
+// never via a direct call to the raw ctor/dtor — see docs/M1_HANDOFF.md
+// §R-M.1.1 (the underlying raw Ghidra note is transient/unavailable).
 CELCompilerAllocFn OrlibResolver::resolveCELCompilerAlloc() {
     // Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
     return reinterpret_cast<CELCompilerAllocFn>(resolveExportByOrdinal(66));
@@ -770,7 +770,7 @@ void* OrlibResolver::resolveVerbatimNameGetter() {
 }
 
 // ===========================================================================
-// Export resolution (8 exports + generic)
+// Export resolution (13 tracked exports plus generic/ad-hoc lookups)
 // ===========================================================================
 
 OrlibInitFn OrlibResolver::resolveOrlibInit() {
@@ -824,9 +824,10 @@ FARPROC OrlibResolver::resolveExport(const char* decoratedName) {
     return proc;
 }
 
-// Workstream M slice M.1: ordinal-based export resolution. orlib20 exports
-// the CELCompiler alloc/destroy wrappers as ordinal-only ([NONAME]) exports
-// 66 and 67 — they have NO entry in the export name table, so the name-based
+// Workstream M slices M.1/M.3: ordinal-based export resolution. orlib20
+// exports the CELCompiler alloc/destroy wrappers as ordinal-only ([NONAME])
+// exports 66/67 and the 0x40A sender as ordinal-only export 57 — they have NO
+// entry in the export name table, so the name-based
 // resolveExport() cannot find them. This method resolves by ordinal:
 //   - Production: GetProcAddress accepts MAKEINTRESOURCEA(ordinal) for
 //     ordinal-by-number lookup (the Windows loader supports this for both
@@ -862,7 +863,7 @@ FARPROC OrlibResolver::resolveExportByOrdinal(int ordinal) {
 }
 
 // ===========================================================================
-// Patch-site resolution & validation (5 PATCH_SITEs)
+// Patch-site resolution & validation (11 current PATCH_SITEs)
 // ===========================================================================
 
 PatchSiteDescriptor OrlibResolver::resolvePatchSite(const std::string& name) {
@@ -1017,7 +1018,8 @@ PatchSiteDescriptor OrlibResolver::resolveThreadCheck3() {
 //   that function. The absolute address is image-base-relative; subtracting
 //   m_base yields the RVA.
 //
-//   Evidence: tmp/re_artifacts/b1_ghidra_evidence.md §Target 1.
+//   Evidence summary: docs/SIGNATURE_CATALOG.md §6 and the generated catalog;
+//   the original b1_ghidra_evidence.md record was transient/unavailable.
 //
 //   StartCompilingProcess references two of the globals:
 //     - offset 0x19: 8B 0D <imm32>  → MOV ECX,[<error array ptr>]
@@ -1030,8 +1032,8 @@ PatchSiteDescriptor OrlibResolver::resolveThreadCheck3() {
 //   instruction offset 0x6C: MOV ECX,[imm32] (opcode 8B 0D), imm32 at
 //   function-offset 0x6E. Resolved by export name (not
 //   signature) — see resolveErrorHinstRva below. The data-global RVAs
-//   are recorded in signatures/v9.50.01.3344.json. Evidence:
-//   tmp/re_artifacts/b4_5_hinst_xref.md.
+//   are recorded in signatures/v9.50.01.3344.json. The original
+//   b4_5_hinst_xref.md evidence was transient/unavailable.
 // ---------------------------------------------------------------------------
 
 uintptr_t OrlibResolver::resolveErrorArrayPtrRva() {

@@ -2,19 +2,21 @@
 
 > **Document status:** Durable tracked RE evidence (promoted from
 > `tmp/unknown_link_ghidra_evidence.md`). Research complete and adversarially
-> approved (Round 2 APPROVED). **Production fix not implemented** — this
-> document records static evidence only; no production source, signatures,
-> tests, or documentation were changed as part of this research deliverable.
+> approved (Round 2 APPROVED). The production fix is outside this research
+> deliverable; this document records static evidence only. No production source,
+> signatures, tests, or documentation were changed as part of this research
+> deliverable.
 > **Final PM review:** Hands-on adversarial PM review APPROVED on 2026-08-23; all load-bearing control-flow, ABI, loader, and COM-ordering claims were rechecked against this appendix.
 > **Relationship to workstreams:** This appendix is the durable static
 > evidence base for **Workstream L** (`docs/workstream_unknown_link_fix_plan.md`,
 > the immediate runtime-link root-cause fix) and a cited source authority for
 > **Workstream M** (`docs/workstream_tsdev_parity_plan.md`, TSDev verify/library
 > parity follow-ups). It is referenced by
-> `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. Promotion of this artifact satisfies
+> `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. Promotion of this artifact satisfied
 > Workstream M's durable-evidence prerequisite gate for the static-evidence
-> citations it carries; it does **not** weaken Workstream M's hard dependency
-> on Workstream L being approved and merged.
+> citations it carries. The original hard-dependency wording was recorded
+> before Workstream L's closure; current M statuses are maintained in
+> `docs/PM_WORKING_MEMORY.md` §2 and `docs/workstream_tsdev_parity_plan.md`.
 
 ## Scope, programs, and address convention
 
@@ -28,7 +30,11 @@ This appendix records instructions and decompiler output obtained from the insta
 | `/receivers/ELDebugger.dll` (`ELDebugger.dll`) | `0x10000000` | debugger symbol XML reader |
 | `/TSDev.exe` (`TSDev.exe`) | `0x00400000` | UI command chain and COM initialization |
 
-All addresses below are preferred virtual addresses, not ASLR runtime addresses. `orlib20.dll` is the committed version `9.50.01.3344`; `../../signatures/v9.50.01.3344.json` (lines 3-13) records SHA-256 `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18` and image base `0x10000000`.
+All addresses below are preferred virtual addresses, not ASLR runtime addresses.
+`orlib20.dll` is the committed version `9.50.01.3344`; the `dll` metadata object
+in `../../signatures/v9.50.01.3344.json` records SHA-256
+`318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18` and image
+base `0x10000000`.
 
 ## 1. `CompileText` -> `FUN_10011230`: actual cleanup contract
 
@@ -91,17 +97,24 @@ The unpatched `FUN_10011230` entry is `0x10011230`. Its original epilogue is:
 
 Thus the original function does **not** execute `RET 0x0C`.
 
-### Current project replacement bytes
+### Historical pre-L.3 replacement bytes (retired; not current)
 
-The authoritative signature entry is `../../signatures/v9.50.01.3344.json` (lines 156-168):
+Before TVS-L.3 removed target #9, the persistence-bypass source snapshot used the
+following replacement bytes. The retired target is documented in
+[`../SIGNATURE_CATALOG.md` §4.9](../SIGNATURE_CATALOG.md#49-target-9-retired-fun_10011230-persistence-patch--removed-in-tvs-l3),
+and the historical source snapshot is documented in
+[`RE_UNKNOWN_LINK_ROOT_CAUSE.md` §C.1](RE_UNKNOWN_LINK_ROOT_CAUSE.md#c1-historical-pre-l3-source-snapshot-superseded-not-current-behavior).
+The current `../../signatures/v9.50.01.3344.json` has no
+`FUN_10011230_persistence_patch` entry, and current
+`src/tsdev_lib.cpp` (`TsDevLib::initAfterCom`) leaves `FUN_10011230`
+unpatched; current resolver code has no persistence-patch resolver. This
+historical replacement is not current production behavior.
 
 ```text
 expectedRva:      0x11230
 originalBytes:    55 8B EC 6A FF 68 CD D3
 replacementBytes: B8 01 00 00 00 C2 0C 00
 ```
-
-The same replacement is present in source at `../../src/tsdev_lib.cpp` (lines 44-59):
 
 ```asm
 B8 01 00 00 00    MOV EAX,1
@@ -110,9 +123,20 @@ C2 0C 00          RET 0x0C
 
 ### Calling-convention conclusion and stale contradiction
 
-The instruction-level contract is unambiguous: ECX and EDX carry two register arguments, three values are pushed, the original callee returns with plain `RET`, and the caller immediately executes `ADD ESP,0x0C`. Therefore the original ABI is fastcall-like register passing with **caller cleanup for these 12 stack bytes**. The current replacement's `RET 0x0C` changes that cleanup contract; on return, `CompileText` still adds another `0x0C`.
+The instruction-level contract is unambiguous: ECX and EDX carry two register arguments, three values are pushed, the original callee returns with plain `RET`, and the caller immediately executes `ADD ESP,0x0C`. Therefore the original ABI is fastcall-like register passing with **caller cleanup for these 12 stack bytes**. The historical replacement's `RET 0x0C` changed that cleanup contract; on return, `CompileText` still added another `0x0C`.
 
-`../SIGNATURE_CATALOG.md` (lines 106, 380, 386, 404) is stale where it says the function/patch uses `RET 0x0C` because the callee cleans 12 bytes. The same stale assumption appears in `../FEASIBILITY.md` (lines 338-340). Those statements contradict both `0x10011454 RET` and `0x1001E0C1 ADD ESP,0x0C`.
+The historical catalog narrative that labeled the function/patch as callee-cleanup
+is superseded; see the retired target note in
+[`../SIGNATURE_CATALOG.md` §4.9](../SIGNATURE_CATALOG.md#49-target-9-retired-fun_10011230-persistence-patch--removed-in-tvs-l3)
+and the historical source snapshot in
+[`RE_UNKNOWN_LINK_ROOT_CAUSE.md` §C.1](RE_UNKNOWN_LINK_ROOT_CAUSE.md#c1-historical-pre-l3-source-snapshot-superseded-not-current-behavior).
+The pre-L.3 feasibility pseudocode is retained under `../FEASIBILITY.md` §5.3
+("Proposed call sequences (pseudocode)"), where its supersession notice marks
+that patch step as historical and not executed by the current CLI. Current
+source evidence is `../../src/tsdev_lib.cpp` (`TsDevLib::initAfterCom`, which
+leaves `FUN_10011230` unpatched) and `TsDevLib::verifyModule`; no obsolete
+source line range is used. The superseded statements contradict both
+`0x10011454 RET` and `0x1001E0C1 ADD ESP,0x0C`.
 
 ## 2. Complete direct-call inventory and the skipped work
 
@@ -477,4 +501,4 @@ The `0x004D94A0` frame is therefore statically proven even if a dynamic trace om
 4. **XML limit.** XML creation/save is ordered before ELL persistence in the compiler path, but ELRte/ELMDCore runtime loading uses `.ell`, not XML. XML loading shown here belongs to `ELDebugger.dll!SymReader`. No claim is made that runtime consumes XML.
 5. **Byte-comparison limit.** A byte comparison between working and failing `.ell` files can locate differences, but it does **not** establish that method bodies, class tables, or any other particular table bodies are missing. Such an interpretation requires identified section/table writers and xrefs; this appendix does not claim it.
 6. **Mismatch limit.** The static loader proves a GUID comparison and rejection edge. It does not by itself prove that a specific observed failure is a “warehouse GUID mismatch,” identify which GUID producer is wrong, or exclude another earlier load failure. No exact internal mismatch is asserted without direct runtime values.
-7. **Patch safety finding.** Independently of the persistence hypothesis, the current `RET 0x0C` replacement is inconsistent with the original callee's plain `RET` plus the caller's `ADD ESP,0x0C`. That stale cleanup assumption should not be used as evidence for the original ABI.
+7. **Patch safety finding.** Independently of the persistence hypothesis, the historical pre-L.3 `RET 0x0C` replacement was inconsistent with the original callee's plain `RET` plus the caller's `ADD ESP,0x0C`. That stale cleanup assumption should not be used as evidence for the original ABI.

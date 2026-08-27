@@ -5,9 +5,9 @@
 // entry creation, source save, compile/verify, warehouse close) behind a clean,
 // RAII C++ API.
 //
-// All findings are CONFIRMED and documented in
-// tmp/re_artifacts/orlib_param_orders.md (gitignored). The reference probe is
-// archive/elevated_test20.cpp.
+// The historical findings are preserved in the feasibility report and current
+// catalog; the original raw record is gitignored and unavailable in a fresh
+// checkout. See docs/FEASIBILITY.md §5.1 and archive/elevated_test20.cpp.
 //
 // This module is 32-bit only (orlib20.dll is a 32-bit PE).
 
@@ -42,9 +42,9 @@ namespace tsdev {
 
 class OrlibResolver;       // forward declaration (defined in orlib_resolver.h)
 
-// Confirmed warehouse types (see orlib_param_orders.md §1 and
-// tradingapp_whtype.md). The enum value is the EXPANDED whType
-// (= (subType << 8) | category). For types with sub-type 0
+// Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md §Mapping to
+// orlib20 warehouse types and §Encoding formula). The enum value is the
+// EXPANDED whType (= (subType << 8) | category). For types with sub-type 0
 // (Strategy, Indicator, Function), expanded whType == category.
 // For TradingApp, expanded whType (5122) != category (2).
 enum class ComponentType : int {
@@ -238,21 +238,26 @@ public:
 
     // Close/flush the warehouse for the current thread. Safe to call once at
     // the end of a batch of operations; the destructor does NOT call this.
+    // Returns false when the underlying close call raises an SEH exception;
+    // callers must not report a successful operation/session after that
+    // failure. A true result means the close call completed; it is not a
+    // separate persistence guarantee.
     // NOTE: When called with NULL (0), the warehouse may not actually be
     // closed due to an internal path-mismatch in orlib20. This is acceptable
     // for the delete flow — the deletion is persisted via OrlibExit (in the
     // destructor) and the in-memory BST is updated via DeleteFromTree.
-    void closeWarehouse();
+    bool closeWarehouse();
 
     // Delete an existing component. Returns true if deleted, false if not
-    // found OR if a delete-path disk-cleanup failure occurred (TVS-L.12). The
+    // found, if the explicit warehouse close raises SEH, OR if a delete-path
+    // disk-cleanup failure occurred (TVS-L.12). The
     // flow (confirmed via Frida trace of live TSDev.exe):
     //   FindExistPos(name, whType) →
     //   FUN_101a8360 (delete orchestrator: __fastcall ECX=whType, EDX=progId)
     //     — loads program, marks deleted, runs CELProgramWriter cleanup,
     //       sends command 0x4E (cache reset) and command 0x17 (save/commit) →
     //   InitGlobalLookup → DeleteFromTree(globalLookup, whType, progId, 3) →
-    //   closeWarehouse (best-effort flush) →
+    //   closeWarehouse (explicit flush; failure returns false) →
     //   OrlibExit (in destructor, persists the deletion) →
     //   delete .ell/.xml files via Windows API.
     //
@@ -387,18 +392,18 @@ private:
     // FUN_101d15c0_thread_check_INT3 patch.
     typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
                                                   int index, void* outBuf);
-    // Workstream M slice M.4: GetDependencies (orlib20 ordinal 487,
-    // RVA 0x153F00). __stdcall, 4 args, RET 0x10.
-    // Returns HGLOBAL (GMEM_MOVEABLE) containing a packed array of int
-    // (dependency ProgIds), or NULL. Count delivered via *outDepCount.
-    // Caller must GlobalLock to read, GlobalFree to free.
-    // See docs/RE/RE_M4_GETDEPENDENCIES_ABI.md.
+    // Historical M.4 diagnostics: GetDependencies (orlib20 ordinal 487,
+    // RVA 0x153F00) is a forward-dependency export (__stdcall, 4 args,
+    // RET 0x10). The M.4 evidence found its 0xFA4 type-code check does not
+    // match the 0xFA3 entries written by the compiler, so the production
+    // reverse-dependent path does not use it. These typedefs remain only for
+    // the resolver/diagnostic surface; enumerateReverseDependents uses the
+    // linker and linked per-element dep-lists below.
     typedef HGLOBAL (__stdcall *GetDependenciesFn)(int whType, int progId,
                                                     int elementIndex,
                                                     int* outDepCount);
-    // _DeleteDependencyList@4 (orlib20 ordinal 397, RVA 0x1A9150).
-    // __stdcall, 1 arg (void* list), RET 0x4. Frees via operator delete.
-    // Used to free lists from _GetStaticDependencyList@12 (NOT GetDependencies).
+    // Historical diagnostic cleanup export: _DeleteDependencyList@4 (orlib20
+    // ordinal 397, RVA 0x1A9150), __stdcall, 1 arg, RET 0x4.
     typedef void (__stdcall *DeleteDependencyListFn)(void* list);
     // Workstream M slice M.4: linker-based reverse-dependency helpers.
     // Ordinal_28 (RVA 0x1A03F0): __stdcall, 4 args (category, progId,
@@ -438,7 +443,8 @@ private:
     // raw ctor/dtor. The typedefs are declared locally here (structurally
     // identical to tsdev::CELCompilerAllocFn / tsdev::CELCompilerDestroyFn
     // in orlib_resolver.h — function pointer types with the same signature
-    // convert implicitly). See tmp/m1_ghidra_findings.md §1 (R-M.1.1).
+    // convert implicitly). See docs/M1_HANDOFF.md §R-M.1.1; the underlying raw
+    // Ghidra note is historical/transient and unavailable in a fresh checkout.
     //   Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
     //   Ordinal 67: __stdcall, one arg (void* p), returns void (dtor + free).
     typedef void* (__cdecl *CELCompilerAlloc_t)(void);
@@ -570,11 +576,14 @@ private:
     // Signature:
     //   void(*)(const unsigned int* flags, const char* passwordBuf,
     //           int passwordBufSize, int componentType, int progId)
-    //   flags          — pointer to the flags word (arg3); NULL in the
-    //                    current production code (RED state).
-    //   passwordBuf    — pointer to the 64-byte password buffer (arg5);
-    //                    NULL in the current production code (RED state).
-    //   passwordBufSize— buffer size (0 while production passes NULL).
+    //   flags          — pointer to the non-NULL flags word passed as arg3 by
+    //                    current production saveSource(): category bits plus
+    //                    0x60, with 0x10 added when re-saving a verified item.
+    //   passwordBuf    — pointer to the non-NULL 64-byte buffer passed as arg5;
+    //                    it is zero-initialized first, then the 10-byte
+    //                    internal default string is copied into its leading
+    //                    bytes, leaving only the unused tail zero.
+    //   passwordBufSize— buffer size (64 in current production).
     //   componentType  — static_cast<int>(type) being saved.
     //   progId         — the ProgId passed to saveSource.
     void (*m_onSaveModuleNewReady)(const unsigned int*, const char*,
@@ -607,15 +616,17 @@ private:
     // Optional callback populated from
     // TsDevLibTestConfig::onReverseDependentRevalidationReady during
     // construction via the private test-only ctor. nullptr in production
-    // (public ctor leaves it unset). Invoked by verifyModule() during
-    // reverse-dependent revalidation (M.4). RED STATE: stored but never
-    // invoked because no traversal code exists yet.
+    // (public ctor leaves it unset). Invoked by verifyModule() during the
+    // linker-based reverse-dependent revalidation path (M.4). CLI-created
+    // object-code version=0 can block dependency discovery; see M.3b.
     void (*m_onReverseDependentRevalidationReady)(
         int, int, int, int, int, int, int, int, int) = nullptr;
 
     // M.4: Old master record capture for contract-change detection.
-    // The old record is captured before saveSource() and compared against
-    // the new record after verifyModule() to determine if the contract changed.
+    // Intended contract: capture the old record before saveSource() and compare
+    // it with the new record after verifyModule(). The capture is currently
+    // missing from saveSource() and is an escalated M.4 blocker; verifyModule()
+    // only consumes m_oldMasterRec when m_hasOldMasterRec is true.
     bool m_hasOldMasterRec = false;
     unsigned char m_oldMasterRec[0x10A] = {};
 
@@ -635,11 +646,11 @@ private:
     // construction paths behaviorally identical past the COM-init step.
     void initAfterCom(const wchar_t* tsPathOverride);
 
-    // M.4: Enumerate reverse dependents of a root module by inverting forward
-    // dependency lists. Returns a list of (progId, category, subtype) for each
-    // warehouse record whose forward dependencies include rootProgId.
-    // Uses the linker (ordinal 85) + Ordinal_28/70 + _LoadMasterRecsEX@16.
-    // SEH-protected. Does NOT modify warehouse state.
+    // M.4: Enumerate reverse dependents of a root module by scanning linked
+    // per-element dependency lists. Returns a list of (progId, category,
+    // subtype) for each warehouse record whose linked dep-list includes
+    // rootProgId. Uses the linker (ordinal 85) + Ordinal_28/70 +
+    // _LoadMasterRecsEX@16. SEH-protected. Does NOT modify warehouse state.
     struct ReverseDependent {
         int progId;
         int category;
@@ -650,7 +661,8 @@ private:
 
     // M.4: Reverse-dependent revalidation traversal. Recursively revalidates
     // all reverse dependents of the root module, matching TSDev FUN_004D91E0.
-    // Uses an explicit visited-set for cycle safety (stricter than TSDev).
+    // Uses an explicit visited-set, but cycle termination is not established
+    // when contractChanged=true; cycle safety remains an M.4 blocker.
     void traverseReverseDependents(
         ComponentType rootType, int rootProgId,
         void* compilerMem,

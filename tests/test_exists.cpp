@@ -1,15 +1,11 @@
 // test_exists.cpp
 //
-// Integration test (RED-GREEN) for the `exists` subcommand's underlying
-// primitive: TsDevLib::findExistPos(name, type).
+// Integration test for the `exists` subcommand's underlying primitive:
+// TsDevLib::findExistPos(name, type).
 //
-// TVS-F.1 subtask 1 (RED step): this test exercises the library-level
-// existence-query primitive that the future `exists` CLI subcommand will
-// wrap. findExistPos is already implemented in tsdev_lib.cpp, so the
-// library-level assertions in this test PASS today. The test is included
-// in the unit-test inventory as the TDD scaffold for the `exists` feature;
-// the CLI-level E2E test (tests/test_exists.ps1) is the part that FAILS
-// (RED) until the `exists` subcommand is implemented in tsdev_cli.cpp.
+// TVS-F.1: this test exercises the implemented library-level
+// existence-query primitive. The library assertions and the CLI-level E2E
+// test (tests/test_exists.ps1) cover the current `exists` implementation.
 //
 // The test is self-cleaning: it inserts a probe strategy, queries
 // findExistPos for the existing name (expects ProgId > 0) and for a
@@ -56,9 +52,10 @@ const char* kTestName = "zzz_test_exists_probe";
 const char* kNonExistentName = "NonExistentNameXYZ";
 
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
-// multi-line COMMENT block, so the actual code must be OUTSIDE it. The leading
-// comment names the strategy (TSDev convention); the body issues a simple
-// market buy order. This mirrors the proven source from test_insert.cpp.
+// multi-line COMMENT block, so the actual code must be OUTSIDE it. The brace
+// text is arbitrary fixture source content only; it is not a metadata
+// convention or lookup mechanism. The name and ProgId come from warehouse
+// records/APIs. This mirrors the proven source from test_insert.cpp.
 const char* kTestSource =
     "{ zzz_test_exists_probe }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";

@@ -1,8 +1,6 @@
 // test_delete_diag.cpp — deterministic DELETE diagnostic test harness
 //
-// Verifies the DELETE flow end-to-end with full pre/post checks:
-//   PRE:   Check for stale TSDev.exe/WHServer.exe/test processes (report,
-//          do NOT kill).
+// Verifies the DELETE flow end-to-end with post-run checks:
 //   SETUP: Ensure test component (zzz_cli_delete_test, Strategy) exists;
 //          INSERT it (createEntry + saveSource + verifyModule) if absent.
 //   RUN:   Capture MWRKArea.wrk state, deleteEntry, destroy TsDevLib
@@ -39,8 +37,10 @@ namespace {
 
 const char* kTestName = "zzz_cli_delete_test";
 
-// Minimal valid EasyLanguage strategy source. The leading comment names the
-// strategy (TSDev convention); the body issues a simple market buy order.
+// Minimal valid EasyLanguage strategy source. The brace text is arbitrary
+// fixture source content only, not a metadata convention or lookup mechanism;
+// the item name and warehouse metadata come from the test/API inputs. The body
+// issues a simple market buy order.
 const char* kTestSource =
     "{ zzz_cli_delete_test }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -84,23 +84,6 @@ int scanProcesses(const char* when, const char* const* names, int nameCount,
         std::fprintf(stderr, "  (none of the target processes found)\n");
     }
     return found;
-}
-
-// Pre-run: check for TSDev.exe, WHServer.exe, stale test processes.
-// Reports findings but does NOT kill anything. Informational only — does
-// not affect the pass/fail exit code.
-void preRunProcessCheck() {
-    const char* names[] = {
-        "TSDev.exe",
-        "WHServer.exe",
-        "test_delete_diag.exe"
-    };
-    int found = scanProcesses("pre-run", names, 3, true);
-    if (found > 0) {
-        std::fprintf(stderr,
-                     "  WARNING: Stale/conflicting processes found. "
-                     "Not killing them.\n");
-    }
 }
 
 // Post-run: check for WerFault and stale test processes.
@@ -426,9 +409,6 @@ int main() {
     std::fprintf(stdout,
                  "=== test_delete_diag: DELETE flow diagnostic ===\n");
     std::fprintf(stdout, "Strategy name: %s\n", kTestName);
-
-    // --- Pre-run: check for stale/conflicting processes (report only) ---
-    preRunProcessCheck();
 
     // --- Run the test on a 64 MB-stack worker thread ---
     // The EasyLanguage compiler (invoked via the delete orchestrator) needs

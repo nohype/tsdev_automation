@@ -4,8 +4,10 @@
 // to production code: this file does NOT modify any src/ file.
 //
 // Purpose: Dump the FULL dep-list content for existing Strategies and
-// Indicators, to verify 0xfa4 entries are present with valid function
-// references (function reference at entry+0xd, hopefully a ProgId).
+// Indicators. This historical diagnostic probes only 0xfa4 entries; the later
+// M.4 evidence found compiler-written function references use 0xfa3 instead.
+// It is retained to document the rejected expectation and is not current
+// production or M.4 acceptance logic.
 //
 // Background (confirmed by prior diagnostics):
 //   - The linker (ordinal 85) populates element arrays for existing items.
@@ -14,8 +16,9 @@
 //       {type dword, length byte, sourceLine int, sourceCol int, payload}
 //     i.e. type at +0x00 (4 bytes), length at +0x04 (1 byte), sourceLine at
 //     +0x05 (4 bytes), sourceCol at +0x09 (4 bytes), payload at +0x0d.
-//   - Type 0xfa4 = function dependency, with function reference (a ProgId)
-//     at entry+0x0d (4-byte int).
+//   - Historical expected type 0xfa4 = function dependency, with function
+//     reference (a ProgId) at entry+0x0d (4-byte int). The M.4 evidence found
+//     compiler-written function references use 0xfa3.
 //   - Strategies and Indicators have populated dep-lists; Functions do not.
 //
 // Flow:
@@ -39,22 +42,24 @@
 //                   Dump the FULL dep-list buffer (up to 4096 bytes,
 //                   SEH-protected).
 //                   Parse the entries: for each entry, print type (dword at
-//                   +0), length (byte at +4), and if type == 0xfa4, print
-//                   the function reference (dword at +0xd).
+//                   +0), length (byte at +4), and, for the historical 0xfa4
+//                   expectation, print the function reference (dword at +0xd).
 //                   Print: "ProgId=X elem[Y] depListSize=S entries:
 //                   [type=0xT len=L ref=R]..."
 //             - Release via Ordinal_70(rec, 0).
 //   6. Also test 10 existing Indicators (category 2) with the same approach.
-//   7. Also test 5 existing Functions (category 4) — even though we expect
-//      empty dep-lists, verify and print for completeness.
+//   7. Also test 5 existing Functions (category 4) — although empty dep-lists
+//      were the historical expectation, verify and print for completeness.
 //   8. Check for TSCrashReport.exe after all operations.
 //
 // All orlib20 calls are SEH-protected (__try/__except). READ-ONLY — does NOT
-// insert/modify/delete any items. Completes in < 240 sec or is killed.
+// insert/modify/delete any items. Its 240-second limit is an operational
+// timeout, not a measured completion time or M.4 acceptance evidence.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <cstring>
@@ -64,8 +69,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // -------------------------------------------------------------------------
 // Function pointer typedefs.
@@ -324,8 +349,8 @@ std::vector<ExistingRec> enumerateExisting(LoadMasterRecsExFn loadFn,
 //   +0x04: length (byte, 1 byte)  — total entry length INCLUDING this header
 //   +0x05: sourceLine (int, 4 bytes)
 //   +0x09: sourceCol  (int, 4 bytes)
-//   +0x0d: payload    (variable; for type 0xfa4 the first 4 bytes are the
-//                      function reference / ProgId)
+//   +0x0d: payload    (variable; under the historical 0xfa4 expectation, the
+//                      first 4 bytes are the function reference / ProgId)
 //
 // We walk the buffer from offset 0, advancing by the length byte at +0x04
 // each iteration. If length is 0, we break to avoid an infinite loop. We
@@ -336,7 +361,7 @@ struct ParsedEntry {
     unsigned char length;
     int sourceLine;
     int sourceCol;
-    int funcRef;  // valid only when type == 0xfa4
+    int funcRef;  // historical field: used only for type == 0xfa4
 };
 
 struct ParseResult {
@@ -553,7 +578,7 @@ void testItem(int category, int progId, const char* name,
             }
             std::printf("\n");
 
-            // Detailed per-entry print for 0xfa4 entries.
+            // Detailed per-entry print for the historical 0xfa4 expectation.
             for (size_t k = 0; k < pr.entries.size(); k++) {
                 const ParsedEntry& e = pr.entries[k];
                 if (e.type == 0xfa4) {
@@ -830,11 +855,13 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // Pre-check: is TSCrashReport.exe already running?
-    std::printf("[PRE] Checking for TSCrashReport.exe...\n");
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [PRE] TSCrashReport.exe IS "
-           "running || echo [PRE] TSCrashReport.exe NOT running");
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
 
     // Run on a 64 MB-stack worker thread (TsDevLib is thread-affine and
     // orlib20 calls need a large stack).
@@ -846,14 +873,23 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 240-second hard timeout — enumeration of 3 categories + linker calls
-    // on up to 25 items may take longer than 180s.
+    // 240-second hard timeout — report a hang without terminating the worker.
+    // Enumeration of 3 categories + linker calls on up to 25 items may take
+    // longer than 180 seconds.
     DWORD wait = WaitForSingleObject(hThread, 240000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 240s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 240s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
@@ -862,11 +898,12 @@ int main() {
     CloseHandle(hThread);
 
     // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
-    std::printf("\n[POST] Checking for TSCrashReport.exe...\n");
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [POST] TSCrashReport.exe IS "
-           "running (crash occurred) || echo [POST] TSCrashReport.exe NOT "
-           "running (no crash)");
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
 
     return st.exitCode;
 }

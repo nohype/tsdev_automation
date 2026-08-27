@@ -2,16 +2,18 @@
 //
 // DIAGNOSTIC ONLY (not part of the regression suite). Read-only with respect
 // to production code: this file does NOT modify any src/ file.
+// Historical investigation of the rejected GetDependencies/Option B2 path;
+// current production reverse-dependent enumeration uses the linker and linked
+// per-element dep-lists.
 //
-// Purpose: test whether GetDependencies (orlib20 ord 487) and
+// Purpose: test whether the historical GetDependencies (orlib20 ord 487) and
 // _GetStaticDependencyList@12 (ord 531) work correctly when a module
 // ACTUALLY HAS dependencies — i.e. a Strategy that calls a Function.
 //
 // Prior diagnostics tested GetDependencies on a standalone Function with NO
-// dependencies (it returned empty, correctly). This is the critical test for
-// M.4's Option B2 (reverse-by-inverting-forward): we need GetDependencies to
-// return the Function's ProgId when called on a Strategy that calls the
-// Function.
+// dependencies (it returned empty, correctly). This was the historical test
+// for M.4's Option B2 (reverse-by-inverting-forward). It is retained as a
+// rejected-path investigation; it is not the current M.4 implementation.
 //
 // This diagnostic:
 //   1. Constructs a TsDevLib (test-only ctor, real COM, no hooks) on a 64MB
@@ -39,13 +41,17 @@
 //  14. CRITICAL: tries GetDependencies with multiple calling conventions
 //      (__stdcall 4 args, __cdecl 4 args, __stdcall 3 args, __cdecl 3 args)
 //      to determine the actual ABI.
-//  15. Cleanup: deletes both items. Kills TSCrashReport.exe if it spawned.
+//  15. Cleanup: deletes both items. Reports TSCrashReport.exe if it spawned
+//      without terminating it.
 //
-// All orlib20 calls are SEH-protected. Completes in < 90 sec or is killed.
+// All orlib20 calls are SEH-protected. The 90-second limit is an operational
+// timeout for this historical diagnostic, not a measured result or M.4
+// acceptance evidence.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <cstring>
@@ -55,8 +61,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // -------------------------------------------------------------------------
 // Function pointer typedefs.
@@ -1058,23 +1084,23 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("_GetStaticDepList(Function-key) empty?         %s\n",
                 st->staticDepFuncEmpty ? "YES" : "NO (unexpected)");
 
-    std::printf("\n=== DIAGNOSIS ===\n");
+    std::printf("\n=== HISTORICAL DIAGNOSTIC OBSERVATION (not current M.4) ===\n");
     if (st->getDepsStratFoundFunc) {
-        std::printf("  - GetDependencies DOES return the Function's ProgId "
-                    "in the Strategy's dep list.\n");
-        std::printf("  - M.4 Option B2 (reverse-by-inverting-forward) is "
-                    "VIABLE via GetDependencies.\n");
+        std::printf("  - Historical probe: GetDependencies returned the "
+                    "Function's ProgId in the Strategy's dep list.\n");
+        std::printf("  - Do not treat this as current Option B2 viability; M.4 "
+                    "uses the linker-based path documented in section 8.7.\n");
     } else {
-        std::printf("  - GetDependencies does NOT return the Function's "
-                    "ProgId in the Strategy's dep list.\n");
-        std::printf("  - M.4 Option B2 via GetDependencies is NOT viable "
-                    "as-is.\n");
+        std::printf("  - Historical probe: GetDependencies did not return the "
+                    "Function's ProgId in the Strategy's dep list.\n");
+        std::printf("  - The rejected Option B2 probe was not viable as-is; M.4 "
+                    "uses the linker-based path documented in section 8.7.\n");
     }
     if (st->staticDepStratFoundFunc) {
-        std::printf("  - _GetStaticDependencyList@12 DOES return the "
-                    "Function's ProgId when keyed on the Strategy.\n");
-        std::printf("  - This API is an alternative forward-dep source "
-                    "for M.4 Option B2.\n");
+        std::printf("  - Historical probe: _GetStaticDependencyList@12 returned "
+                    "the Function's ProgId when keyed on the Strategy.\n");
+        std::printf("  - This does not establish current M.4 viability; the "
+                    "production path uses the linker.\n");
     }
 
     st->exitCode = (st->getDepsStratFoundFunc || st->staticDepStratFoundFunc)
@@ -1087,10 +1113,13 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // Pre-check: is TSCrashReport.exe already running?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [PRE] TSCrashReport.exe IS "
-           "running || echo [PRE] TSCrashReport.exe NOT running");
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
 
     // Run on a 64 MB-stack worker thread (EasyLanguage compiler / hidden
     // EDIT control need this, and TsDevLib is thread-affine).
@@ -1102,14 +1131,22 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 90-second hard timeout — multiple Ordinal_69 + Ordinal_28 +
-    // GetDependencies probes may take longer than 60s.
+    // 90-second hard timeout — report a hang without terminating the worker.
+    // Multiple dependency probes may take longer than 60 seconds.
     DWORD wait = WaitForSingleObject(hThread, 90000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 90s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 90s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
@@ -1118,10 +1155,12 @@ int main() {
     CloseHandle(hThread);
 
     // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [POST] TSCrashReport.exe IS "
-           "running (crash occurred) || echo [POST] TSCrashReport.exe NOT "
-           "running (no crash)");
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
 
     return st.exitCode;
 }

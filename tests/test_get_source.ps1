@@ -1,13 +1,10 @@
 <#
 .SYNOPSIS
-    E2E CLI test for the `get-source` subcommand of tsdev_cli (TVS-F.4, RED step).
+    E2E CLI test for the `get-source` subcommand of tsdev_cli (TVS-F.4).
 
 .DESCRIPTION
-    End-to-end test for the `get-source` subcommand that retrieves EasyLanguage
-    source code by name + component type. This test is written TDD-red-green:
-    it is expected to FAIL (RED) right now because the `get-source` subcommand
-    has NOT yet been implemented in tsdev_cli.cpp. Once implemented, it should
-    PASS (GREEN).
+    End-to-end test for the implemented `get-source` subcommand that retrieves
+    EasyLanguage source code by name + component type.
 
     The `get-source` op retrieves the raw EL source text of an existing item.
     Exit codes:
@@ -39,9 +36,13 @@
 
     Cleanup: deletes the inserted probe item in a finally block.
 
-    NOTE: This test currently FAILS (RED) because `tsdev_cli get-source` is not
-    implemented — the CLI will return a usage error (exit 1) or similar. That
-    is the expected TDD red state.
+    Prerequisites:
+      - Direct `tsdev_cli` requires an elevated administrator process. Run this
+        procedure elevated; otherwise, the CLI returns exit code 11
+        (`not_elevated`).
+
+    NOTE: This test invokes the current `tsdev_cli get-source` implementation
+    and reports failures from its actual exit code and output.
 
 .PARAMETER CliPath
     Path to the tsdev_cli.exe executable. Defaults to
@@ -484,6 +485,5 @@ if ($failureCount -eq 0) {
 }
 else {
     Write-Host "$failureCount TEST(S) FAILED" -ForegroundColor Red
-    Write-Host "(Expected RED: the 'get-source' subcommand is not yet implemented.)" -ForegroundColor DarkYellow
     exit 1
 }

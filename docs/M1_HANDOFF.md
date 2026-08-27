@@ -1,11 +1,11 @@
 # M.1 Handoff — Workstream M, Slice M.1 (TSDev Parity: Compiler-Object Lifecycle)
 
-> **Status:** APPROVED (adversarial review, round 3). Implemented and verified.
+> **Status:** APPROVED historical slice (adversarial review, round 3); implementation recorded. Dated test/E2E results below are unverified historical/transient and not current acceptance evidence.
 > **Date:** 2026-08-24
 > **Workstream:** M (TSDev parity) — slice M.1
 > **Plan reference:** `docs/workstream_tsdev_parity_plan.md`
-> **RE evidence:** `tmp/m1_ghidra_findings.md` (§1–§3), `tmp/m1_trace_reanalysis.md`
-> **Catalog impact:** `docs/SIGNATURE_CATALOG.md` (see the 2026-08-24 correction notice at the top of that file)
+> **RE evidence (historical/transient):** `tmp/m1_ghidra_findings.md` (§1–§3), `tmp/m1_trace_reanalysis.md` (gitignored raw artifacts; unavailable in a fresh tracked checkout and not current acceptance evidence)
+> **Catalog impact:** `docs/SIGNATURE_CATALOG.md` (see the current correction notice at the top of that file)
 
 This document is the durable findings/handoff note for Workstream M slice M.1. It records the research answers (R-M.1.1 through R-M.1.5), the implementation summary, test and E2E results, signature/catalog impact, residual limitations, follow-up work for M.2–M.5, and the adversarial review outcome. It is intended to survive context compaction and to be the authoritative reference for downstream M-slices and for any future re-validation of the M.1 changes.
 
@@ -32,7 +32,7 @@ The CELCompiler object fields are written as follows:
 
 These fields are written by `FUN_00451800` at instruction range `0x00451ac4`–`0x00451af9` (TSDev.exe). The `+0x00` and `+0x04` fields are zeroed by `FUN_004D9480` after `StartCompilingProcess`, before the verify call.
 
-**Evidence:** `tmp/m1_ghidra_findings.md` §2.
+**Historical/transient evidence (unavailable in tracked checkout):** `tmp/m1_ghidra_findings.md` §2.
 
 ### R-M.1.3 — Field +0x28 is NOT written by TSDev (uninitialized heap)
 
@@ -40,7 +40,7 @@ The CELCompiler constructor (`FUN_10165a00`) does **NOT** zero `+0x28`. The ctor
 
 This finding retired the pre-M.1 production write that set `+0x28 = 6` after construction. M.1 removed that write. The retired `+0x10 = 0xA02` write was also removed (replaced by `+0x10 = progId` per R-M.1.2).
 
-**Evidence:** `tmp/m1_ghidra_findings.md` §3 (ctor disassembly showing the zeroed-offset set excludes +0x28).
+**Historical/transient evidence (unavailable in tracked checkout):** `tmp/m1_ghidra_findings.md` §3 (ctor disassembly showing the zeroed-offset set excludes +0x28).
 
 ### R-M.1.4 — Field +0x18 = notification HWND
 
@@ -48,13 +48,14 @@ This finding retired the pre-M.1 production write that set `+0x28 = 6` after con
 
 TSDev does **not** import `_SaveModule_New` into the TSDev automation code path, so a direct save-chain comparison is not available statically. The `+0x18` value used by TSDev automation is `m_editorHwnd` (the same notification HWND), consistent with the captured Frida trace.
 
-**Evidence:** `tmp/m1_ghidra_findings.md` §2; `tmp/m1_trace_reanalysis.md`.
+**Historical/transient evidence (unavailable in tracked checkout):**
+`tmp/m1_ghidra_findings.md` §2; `tmp/m1_trace_reanalysis.md`.
 
 ### R-M.1.5 — Category/subtype source (warehouse type mapping, NOT source-text parsing)
 
 Category and subtype are obtained from the warehouse type mapping (`getCategory` / `getSubType`), **not** by parsing EasyLanguage source text. TSDev reads category from `CDocument+0x1e8` and subtype from `CDocument+0x1ea`. This is consistent with the project's hard rule that metadata must come from orlib20 warehouse records/APIs, never from item source content.
 
-**Evidence:** `tmp/m1_ghidra_findings.md` §2.
+**Historical/transient evidence (unavailable in tracked checkout):** `tmp/m1_ghidra_findings.md` §2.
 
 ---
 
@@ -114,7 +115,7 @@ Ordinal 67 frees the object internally (`dtor` + `operator delete(p, 0x58)`). Th
 - `CMakeLists.txt`
 - `tests/run_unit_tests.ps1`
 
-For larger changes, see the repository paths above and their current line numbers; code excerpts are intentionally kept short in this handoff. The authoritative per-target detail for the retired ctor/dtor signatures and the new ordinal 66/67 exports is in `docs/SIGNATURE_CATALOG.md` (§4.3, §4.4, §5.1, §5.2).
+For larger changes, see the repository paths above and the named functions/symbols in the current source; code excerpts are intentionally kept short in this handoff. The authoritative per-target detail for the retired ctor/dtor signatures and the new ordinal 66/67 exports is in `docs/SIGNATURE_CATALOG.md` (§4.3, §4.4, §5.1, §5.2).
 
 ---
 
@@ -160,7 +161,7 @@ The `test_compiler_layout` RED→GREEN transition is the key TDD evidence: with 
 | `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` | 24 | 22 |
 | `tools/sigcodegen.py` `EXPECTED_EXPORT_COUNT` | 10 | 12 |
 
-The two retired signatures are retained in `docs/SIGNATURE_CATALOG.md` §4.3/§4.4 with **RETIRED 2026-08-24 (M.1)** notes prepended (per the project rule that historical documentation is corrected with dated notices, not silently rewritten). The two new exports are documented in §5 (table rows 11–12) and §5.1/§5.2 (detail subsections). The catalog's top-of-file 2026-08-24 correction notice is the authoritative supersession statement for all prior 24/10 count references.
+The two retired signatures are retained in `docs/SIGNATURE_CATALOG.md` §4.3/§4.4 with **RETIRED 2026-08-24 (M.1)** notes prepended (per the project rule that historical documentation is corrected with dated notices, not silently rewritten). The two new exports are documented in the **historical M.1/pre-M.3 snapshot** in §5 (then table rows 11–12) and §5.1/§5.2 (detail subsections). The catalog's current top-of-file correction notice is authoritative; all prior 24/10 count references in this handoff are historical/superseded by the current 22-definition / 13-tracked-export catalog.
 
 ---
 
@@ -191,6 +192,8 @@ M.1 established the compiler-object lifecycle foundation (ordinal 66/67 resoluti
 ---
 
 ## 8. Evidence index
+
+The `tmp/` artifacts listed here are gitignored historical/transient evidence and are unavailable in a fresh tracked checkout; no replacement evidence or current acceptance result is implied.
 
 | Artifact | Section | Content |
 |---|---|---|

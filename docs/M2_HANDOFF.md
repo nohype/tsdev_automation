@@ -1,6 +1,6 @@
 # M.2 Handoff — Workstream M, Slice M.2 (TSDev Parity: Save-Side `_SaveModule_New` Flags & Password Buffer)
 
-> **Status:** Implemented and verified (TDD red→green; full regression PASS).
+> **Status:** APPROVED historical slice (TDD red→green implementation record). Dated test/E2E results below are unverified historical/transient and not current acceptance evidence.
 > **Date:** 2026-08-24
 > **Workstream:** M (TSDev parity) — slice M.2
 > **Plan reference:** `docs/workstream_tsdev_parity_plan.md`

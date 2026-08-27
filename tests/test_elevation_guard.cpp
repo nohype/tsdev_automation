@@ -1,14 +1,12 @@
 // test_elevation_guard.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-K.1: elevation guard for all subcommands.
+// Unit test for TVS-K.1: elevation guard for all subcommands.
 //
 // This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
-// only exercises two file-local symbols in src/tsdev_cli.cpp:
-//   - isElevated()           : the new elevation-check helper (does NOT exist
-//                              yet — this is the TDD RED point).
-//   - errorCodeString(11, ""): must return "not_elevated" for the new exit
-//                              code 11 (case 11 does NOT exist yet — RED).
+// exercises two file-local symbols in src/tsdev_cli.cpp:
+//   - isElevated()           : the elevation-check helper.
+//   - errorCodeString(11, ""): the "not_elevated" mapping for exit code 11.
 //
 // It runs on a worker thread with a 64 MB stack only to match the project's
 // test harness convention (all tests run on a large-stack worker thread); the
@@ -21,13 +19,10 @@
 //   .cpp directly so the test is part of the SAME translation unit. This pulls
 //   in tsdev_cli.cpp's int main(); the test #defines TSDEV_CLI_TEST before the
 //   include so main() is excluded (main() is wrapped in #ifndef TSDEV_CLI_TEST
-//   at line 1741 of tsdev_cli.cpp).
+//   in src/tsdev_cli.cpp).
 //
-// TDD RED step:
-//   - isElevated() does NOT exist yet in tsdev_cli.cpp.
-//   - errorCodeString() has no case 11 yet.
-//   This test is the RED step — it is expected to FAIL TO COMPILE until the
-//   implementer (Green step) adds isElevated() and case 11 in errorCodeString().
+// The historical TDD RED state is retained in Git history; this current test
+// verifies the implemented helper and exit-code mapping.
 //
 // Checks:
 //   1. isElevated() exists, returns a bool, and the value matches the test
@@ -43,7 +38,7 @@
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
-// (main() is wrapped in #ifndef TSDEV_CLI_TEST at line 1741 of tsdev_cli.cpp.)
+// (main() is wrapped in #ifndef TSDEV_CLI_TEST in src/tsdev_cli.cpp.)
 #define TSDEV_CLI_TEST
 
 // Include the CLI source directly so anonymous-namespace internals
@@ -101,7 +96,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // runner's actual elevation state (ground truth via Windows token APIs).
     // ------------------------------------------------------------------
     {
-        // Call isElevated() — does not exist yet (TDD RED: compile failure).
+        // Call the implemented isElevated() helper.
         bool elevated = isElevated();
         std::fprintf(stdout, "  isElevated() = %s\n",
                      elevated ? "true" : "false");
@@ -123,9 +118,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 2: errorCodeString(11, "") returns "not_elevated".
     // ------------------------------------------------------------------
     {
-        // case 11 does not exist yet in errorCodeString() (TDD RED: the
-        // default branch returns "unknown_error", so this assertion fails
-        // until the Green step adds case 11).
+        // Case 11 maps the non-elevated guard to "not_elevated".
         std::string s = errorCodeString(11, "");
         std::fprintf(stdout, "  errorCodeString(11, \"\") = \"%s\"\n",
                      s.c_str());

@@ -1,6 +1,6 @@
 // test_insert.cpp
 //
-// Integration test (RED-GREEN) for the INSERT flow through the tsdev_lib
+// Integration test for the implemented INSERT flow through the tsdev_lib
 // wrapper. This is the first end-to-end validation of the shared wrapper
 // module: it constructs a TsDevLib instance, creates a minimal valid
 // EasyLanguage strategy, compiles it, persists the .ell file, and verifies
@@ -9,13 +9,14 @@
 // The test is self-cleaning: it deletes the test entry's .ell file before
 // and after the run so it can be repeated idempotently.
 //
-// Flow (mirrors orlib_param_orders.md §15):
+// Flow (historical sequence summarized in docs/FEASIBILITY.md §5.3; the
+// underlying orlib_param_orders.md record is transient/unavailable):
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
 //   2. findExistPos(name, Strategy) — skip if already present (re-run ok)
 //   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
 //   4. saveSource(Strategy, progId, source) — assert success
 //   5. verifyModule(Strategy, progId) — assert error string empty
-//   6. closeWarehouse()
+//   6. closeWarehouse() — assert explicit flush status
 //   7. ellFileExists(Strategy, progId) — assert true
 //   8. Print SUCCESS with ProgId and .ell path
 //
@@ -42,9 +43,10 @@ namespace {
 const char* kTestName = "zzz_cli_insert_t2";
 
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
-// multi-line COMMENT block, so the actual code must be OUTSIDE it. The leading
-// comment names the strategy (TSDev convention); the body issues a simple
-// market buy order. This mirrors the proven source from archive/elevated_test20.cpp.
+// multi-line COMMENT block, so the actual code must be OUTSIDE it. The brace
+// text is arbitrary fixture source content only; it is not a metadata
+// convention or lookup mechanism. The name and ProgId come from warehouse
+// records/APIs. This mirrors the proven source from archive/elevated_test20.cpp.
 const char* kTestSource =
     "{ zzz_cli_insert_t2 }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -150,8 +152,14 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 6: closeWarehouse ---
     std::fprintf(stdout, "\n[6] closeWarehouse()...\n");
-    lib->closeWarehouse();
-    std::fprintf(stdout, "    closeWarehouse done\n");
+    bool closed = lib->closeWarehouse();
+    std::fprintf(stdout, "    closeWarehouse = %s\n",
+                 closed ? "true" : "false");
+    if (!closed) {
+        st->exitCode = fail("closeWarehouse returned false", 45);
+        delete lib;
+        return 0;
+    }
 
     // --- Step 7: ellFileExists ---
     std::string ellPath =

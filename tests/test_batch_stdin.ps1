@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    TVS-F.2: Batch stdin mode test for tsdev_cli (TDD red).
+    TVS-F.2: Batch stdin mode test for tsdev_cli.
 
 .DESCRIPTION
     Validates the --batch-stdin flag of the batch-insert / batch-modify /
@@ -41,11 +41,15 @@
     Prerequisites:
       - The project must be built: cmake --build build --config Release --target tsdev_cli
       - TradeStation 9.5 must be installed (or -TsPath provided)
-      - No TradeStation processes/services should be running
+      - The invoking PowerShell process must be an elevated administrator
+        process because this suite invokes tsdev_cli.exe directly. A
+        non-elevated direct CLI invocation returns exit code 11 (not_elevated).
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies; this suite does not use the Desktop UI
 
-    NOTE: This is a TDD red test. The --batch-stdin flag is NOT yet
-    implemented, so this test is EXPECTED to fail at this stage. That is
-    correct and intended.
+    NOTE: The --batch-stdin implementation is exercised here alongside the
+    existing manifest-file mode. This suite is an integration/regression check
+    for the stdin parser, batch results, and exit-code contract.
 #>
 
 param(

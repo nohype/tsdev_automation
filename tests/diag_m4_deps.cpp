@@ -1,17 +1,19 @@
 // diag_m4_deps.cpp
 //
 // DIAGNOSTIC ONLY (not part of the regression suite).
+// Historical investigation of the rejected GetDependencies/Option B2 path;
+// the current production implementation uses the linker and linked dep-lists.
 //
-// Purpose: investigate why enumerateReverseDependents() in src/tsdev_lib.cpp
+// Purpose: investigate why the historical enumerateReverseDependents() path in src/tsdev_lib.cpp
 // finds ZERO reverse dependents in the M.4 integration test, even though a
 // Strategy is inserted that calls a Function.
 //
-// enumerateReverseDependents inverts the FORWARD dependency list: for each
-// candidate record it calls GetDependencies(candidateWhType, candidateProgId,
-// elementIndex, &depCount) and checks if the root ProgId appears in the
-// returned int array. The M.4 test reports the sentinel fires (traversal
-// runs) but no per-dependent events fire — i.e. GetDependencies never
-// returns the Function's ProgId for any candidate.
+// Historical enumerateReverseDependents inverted the FORWARD dependency list: for each
+// candidate record it called GetDependencies(candidateWhType, candidateProgId,
+// elementIndex, &depCount) and checked if the root ProgId appeared in the
+// returned int array. The historical M.4 test reported the sentinel firing
+// (traversal ran) but no per-dependent events — i.e. GetDependencies never
+// returned the Function's ProgId for any candidate.
 //
 // This diagnostic:
 //   1. Constructs a real TsDevLib (test-only ctor, real ComApi, no hooks) on
@@ -31,9 +33,13 @@
 //   7. For the Function (callee), calls GetDependencies similarly (expected
 //      no deps).
 //   8. Cleans up: deletes both items.
+//   9. Reports TSCrashReport.exe status before and after; no process cleanup is
+//      attempted automatically.
 //
-// This diagnostic does NOT modify any production code. Completes in < 60 sec
-// or is killed.
+// This historical diagnostic does NOT modify production code. Its 60-second
+// limit is an operational timeout; a timeout is reported without forcibly
+// terminating the worker or any process. It is not a measured result or an
+// M.4 acceptance result.
 //
 // RE ABI reference: docs/RE/RE_M4_GETDEPENDENCIES_ABI.md
 //   HGLOBAL __stdcall GetDependencies(int whType, int progId,
@@ -42,14 +48,17 @@
 //     3=PaintBar,4=Function). FUN_101d43a0 switch only handles 0..4;
 //     expanded whTypes (e.g. 0x1402 for TradingApp) hit the default case
 //     and return no deps.
-//   - Returns a GMEM_MOVEABLE HGLOBAL: array of *outDepCount int32s
-//     (function ProgIds referenced by the element's compiled bytecode,
-//     opcode 0xFA4). NULL + *outDepCount==0 on no deps / out-of-range
-//     elementIndex. Caller must GlobalLock/GlobalUnlock/GlobalFree.
+//   - Historical diagnostic expectation: a GMEM_MOVEABLE HGLOBAL containing
+//     *outDepCount int32s (function ProgIds from the element's compiled
+//     bytecode), with opcode 0xFA4. The M.4 evidence later found the compiler
+//     writes 0xFA3 instead; this old probe is retained only for provenance.
+//     NULL + *outDepCount==0 means no deps / out-of-range elementIndex.
+//     Caller must GlobalLock/GlobalUnlock/GlobalFree.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <memory>
@@ -58,8 +67,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // --- SEH-protected call wrapper (POD-only so __try/__except is legal
 // under MSVC C2712). Mirrors the wrapper in tsdev_lib.cpp / diag_m4_enum_speed.
@@ -397,6 +426,15 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was "
+                     "terminated.\n");
+        return 97;
+    }
+
     // Run on a 64 MB-stack worker thread (EasyLanguage compiler / hidden
     // EDIT control need this, and TsDevLib is thread-affine).
     DiagState st;
@@ -407,19 +445,36 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — kill the thread if it hangs.
+    // 60-second hard timeout — report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 60s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        // Best-effort cleanup of any TSCrashReport spawned by a crash.
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 60s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
     DWORD exitCode = 0;
     GetExitCodeThread(hThread, &exitCode);
     CloseHandle(hThread);
+
+    // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected after the diagnostic; no process cleanup was "
+                     "attempted.\n");
+        return 97;
+    }
+
     return st.exitCode;
 }

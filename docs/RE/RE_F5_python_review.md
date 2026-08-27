@@ -1,7 +1,14 @@
-# Adversarial Review: Python `case_insensitive` exists implementation (TVS-F.5)
+# Historical/Superseded Adversarial Review: Python `case_insensitive` exists implementation (TVS-F.5)
+
+> **Status: historical/superseded review record.** This review includes an earlier
+> fixture and implementation description that treated `{ name }` source comments
+> as a stored-name convention. That was mutable source-text metadata lookup and is
+> not current guidance. Current names, types, and ProgIds must come from orlib20
+> warehouse records/APIs; source comments are arbitrary content. The remaining
+> Python/API review findings are retained for provenance.
 
 **Reviewer:** Independent adversarial subagent
-**Date:** 2025-01-30
+**Date:** 2025-01-30 *(unverified historical metadata; retained for provenance)*
 **Files reviewed:**
 - `src/tsdev_automation/client.py` — `TsDevClient.exists()` method (lines 152–176)
 - `src/tsdev_automation/results.py` — `TsDevResult.stored_name` field (lines 57, 86)
@@ -14,14 +21,16 @@ ran unit tests (`uv run pytest -m "not e2e"` → 50 passed, 10 deselected).
 
 ---
 
-## Verdict: APPROVE
+## Historical Verdict for the Reviewed Snapshot: APPROVE
 
-The implementation is correct, clean, well-tested, and backward-compatible.
-No blocking issues were found. The findings below are minor recommendations only.
+The reviewed Python/API snapshot was correct for its historical scope and
+backward-compatible. Its source-comment fixture dependency is superseded and is
+not approved as current behavior. The remaining findings below are retained as
+historical recommendations only.
 
 ---
 
-## Findings
+## Historical Findings
 
 ### 1. [LOW] `case_insensitive` is keyword-only — correct and well-chosen
 
@@ -111,13 +120,15 @@ Cleanup is proper: the test uses `try/finally` to delete the component, and the 
 included in `_TEST_NAMES` (line 1059) so `test_no_orphans_after_suite` verifies no
 orphan remains.
 
-### 8. [INFO] E2E test depends on C++ implementation detail (`{ name }` comment block)
+### 8. [HISTORICAL/SUPERSEDED] E2E fixture used a `{ name }` comment block
 
-The E2E test inserts source with a `{ zzz_py_ci_probe }` comment block, which is the
-convention used by `enumerateRecords` Phase 2 to extract the verbatim stored name. This
-is a C++ implementation detail leaking into the Python test. The dependency is documented
-in the test docstring, so it is acceptable, but if the C++ enumeration strategy changes,
-this test may need updating.
+The historical E2E test inserted source with a `{ zzz_py_ci_probe }` comment block
+because the then-current `enumerateRecords` Phase 2 parsed that source text for the
+stored name. This was a C++ implementation detail leaking into the Python fixture,
+and the dependency was not an acceptable metadata contract. The source text is
+arbitrary fixture content; current stored names, types, and ProgIds must come from
+orlib20 warehouse records/APIs, and current tests must not require or rely on the
+comment block.
 
 ### 9. [INFO] Code duplication between `exists()` and `_single()` is minimal and justified
 
@@ -138,13 +149,14 @@ The helper correctly models the C++ CLI schema:
 
 ---
 
-## Required fixes
+## Required fixes for the reviewed snapshot
 
-None. The implementation is correct and all tests pass.
+None for the historical Python/API snapshot. The source-comment fixture dependency
+is superseded as stated above and is not a current implementation requirement.
 
 ---
 
-## Recommendations (optional, non-blocking)
+## Historical recommendations (optional, non-blocking)
 
 1. **Add a unit test for `exists()` with a CLI error** (e.g., `init_failure` or
    `usage_error` returning `success=False`) to explicitly verify the

@@ -1,5 +1,7 @@
 # RE-F5: BST Node Structure & Verbatim Name Storage in orlib20.dll
 
+> **Status:** Current warehouse/API findings with a historical/superseded source-parsing section. The former `{ name }` source-comment approach is retained only as provenance; it is not current implementation guidance. Stored names, types, and ProgIds must come from orlib20 warehouse records/APIs. Source comments are arbitrary fixture/user content and must not be used for metadata lookup.
+
 ## Executive Summary
 
 **The BST node does NOT store the verbatim (original-case) name.** It stores only the lowercase-normalized name as its key. However, the BST node's value is a pointer to a **CELProgram** data node, which **does** store the verbatim name — but **lazily**, fetched from the server on first access via `FUN_101c36d0` (RVA `0x1c36d0`, server command `0x34`).
@@ -228,21 +230,32 @@ This function does BST search + `FUN_101c36d0` in one call, returning the verbat
 **Pros:** Single function call, handles all the lookup + lazy-fetch logic
 **Cons:** Calling convention is `__fastcall` with stack args; need to match the exact ABI
 
-### Option 3 (CURRENT): Parse `{ name }` from source code
+### Option 3 (HISTORICAL/SUPERSEDED): Parse `{ name }` from source code
 
-The current implementation uses `getSource` + regex parsing of `{ name }` comment blocks.
+An earlier implementation used `getSource` plus regex parsing of `{ name }`
+comment blocks. This section preserves that former approach and its failure modes
+for historical context only. It is not current implementation guidance.
 
-**Pros:** No additional RE needed, already implemented
-**Cons:**
-- Violates the AGENTS.md rule: "Item source text, comments, naming conventions inside source code, etc. are ARBITRARY user-controlled content"
-- Fails if the `{ name }` block is missing or doesn't match the stored name
-- Requires fetching the full source code just to get the name
+**Historical pros:** No additional RE was needed for that implementation.
+**Historical cons:**
+- It violated the AGENTS.md rule that source text, comments, and naming conventions
+  are arbitrary user-controlled content.
+- It failed if the `{ name }` block was missing or did not match the stored name.
+- It required fetching the full source code just to obtain metadata.
 
-### Recommendation
+### Current recommendation
 
-**Switch to Option 1 or Option 2** for production use. The current source-parsing approach (Option 3) violates the project's own rules about not relying on user-controlled source content. `FUN_101c36d0` is the official, reliable mechanism that TSDev itself uses to display item names in its UI.
+**Do not use Option 3.** Current implementation guidance obtains stored metadata
+from orlib20 warehouse records/APIs: Phase 1 reads the name and ProgId from the
+master-record buffer, and the direct BST fallback gets the data node with
+`FUN_101d05e0` and the stored name with `FUN_101c36d0`. The `{ name }` text in
+EasyLanguage source is arbitrary content; it is neither required nor a lookup
+mechanism.
 
-**Implementation note:** `FUN_101c36d0` is a `__thiscall` function taking the CELProgram data node in `ECX`. The data node is obtained from the BST search (inner node `+0x28`). The function returns a `char*` to the verbatim ANSI name. Remember to decrement the data node's refcount (`+0x210`) after use, following the pattern in `FindExistPos` / `FUN_101a42d0`.
+**Implementation note:** `FUN_101c36d0` is the warehouse-backed verbatim-name
+getter for the CELProgram data node obtained from the BST search (inner node
+`+0x28`). The function returns a `char*` to the stored ANSI name. Follow the
+current implementation's refcount/lifetime handling after use.
 
 ---
 

@@ -1,17 +1,21 @@
 # Workstream M — TSDev Verify/Library Parity Follow-ups
 
-**Status:** PLANNED. Documentation/planning only. No implementation, no new reverse engineering.
-**Review status:** Independent review loops APPROVED; final hands-on adversarial PM review APPROVED on 2026-08-23 after correcting evidence-gate ownership, receiver scope, encrypted-fixture safety, cycle testing, TSDev.exe coupling, resolver target classification, closure gating, and atomic subagent policy.
-**Priority:** Below Workstream L (the immediate causal fix: STA COM + remove `FUN_10011230` persistence patch). Workstream M must not start until L is approved and merged, and must not block or be bundled into L.
-**Dependency on L:** Hard. Every M slice assumes the L fix is in place — STA COM apartment owned by `TsDevLib`, original `FUN_10011230` bytes restored and running, ELL+XML pair produced, runtime-linkable Strategy confirmed in Desktop. M slices refine TSDev emulation parity on top of that confirmed baseline. If L regresses or is reverted, M is paused.
+**Status:** M.1/M.2/M.3 are approved historical slices; M.3b is planned;
+M.4 implementation exists but is manual/blocked by the CLI-created object-code
+defect and separate pre-existing review escalations; M.5 is pending. This is the active M
+plan; historical slice results are not
+current production-acceptance evidence.
+**Review status:** Independent review loops APPROVED; final hands-on adversarial PM review APPROVED on 2026-08-23 after correcting evidence-gate ownership, receiver scope, encrypted-fixture safety, cycle testing, TSDev.exe coupling, resolver target classification, closure gating, and atomic subagent policy. This historical plan review does not establish current acceptance.
+**Priority:** Follow-up parity work after Workstream L. M.3b is the next planned slice because its CLI-created object-code defect blocks the M.4 dependency test; M.5 follows M.4.
+**Dependency on L:** The Workstream L dependency is satisfied by the current Workstream L status above. M.1–M.3 remain approved historical slices; M.3b remains planned, M.4 remains manual/blocked by the CLI-created object-code defect and separate pre-existing review escalations, and M.5 remains pending.
 **Source authority (approved findings only):**
 - `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` — root cause, production fix design, and §L follow-up parity section (durable promotion of the former `tmp/unknown_link_root_cause_and_plan.md`).
 - `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` — durable static appendix (call chains, ABI, COM ordering, loader GUID check; durable promotion of the former `tmp/unknown_link_ghidra_evidence.md`).
-- Top of `docs/PM_WORKING_MEMORY.md` — confirmed root-cause and parity notes.
+- `docs/PM_WORKING_MEMORY.md` §§2–4 — current workstream status, gates, and audit ledger.
 - `AGENTS.md` — emulate-TSDev rule, no-hacks rule, no-source-text-metadata rule, TDD/TVS/adversarial-review rules, mandatory CLI E2E rule.
 - `docs/TS_COMPONENT_TYPES.md` — confirmed warehouse type mappings for the five supported component types.
 
-**Durable-evidence prerequisite (hard gate before M starts) — SATISFIED:**
+**Durable-evidence prerequisite (historical gate before M started) — SATISFIED:**
 - During the 2026-08-23 planning/documentation foundation, the approved
   `tmp/` research artifacts were promoted to tracked durable storage under
   `docs/RE/` (`RE_UNKNOWN_LINK_ROOT_CAUSE.md` and
@@ -20,9 +24,9 @@
   transient-artifact annotations, and path/anchor adjustments; conclusions
   and scope are unchanged. **This evidence gate is satisfied independently of
   Workstream L implementation status.**
-- This satisfaction does **not** weaken the hard dependency stated in the
-  document header: M slices must not start until Workstream L is approved and
-  merged.
+- This historical evidence gate is satisfied. The current Workstream L status is
+  stated in the document header. Neither fact establishes current M acceptance;
+  the current M slice statuses and blockers remain as stated above.
 - M slices must cite the durable `docs/RE/` paths, not former
   `tmp/unknown_link_*` document paths, in handoff notes and findings.
 - Raw experiment artifacts that remain under `tmp/` (Frida traces, probe
@@ -40,20 +44,20 @@
 ### Non-goals (hard)
 - M is **not** the confirmed immediate root cause. The immediate root cause (bypassed `FUN_10011230` finalization under missing STA COM) is Workstream L and is already confirmed. No M item may be presented, scoped, or accepted as a root-cause fix.
 - No M item may reintroduce source-text metadata parsing. Per `AGENTS.md` ("Never rely on mutable item internals for correctness"), names/types/ProgIds come from orlib20 warehouse records or APIs, never from item source content. Any slice that appears to need source parsing is out of scope and must be re-scoped to a warehouse/API source.
-- No M item may invent user-facing password protection. Per the corrected findings in `docs/PM_WORKING_MEMORY.md` ("PASSWORD PROTECTION" HYPOTHESIS IS WRONG), there is no user password protection for library items; TSDev may internally encrypt on disk, hidden from the user, and the user always sees plain text. M.2 deals with internal source encryption semantics only and must not fabricate a user password feature.
+- No M item may invent user-facing password protection. Per the corrected findings in `docs/RE/RE_M2_SAVEMODULE_NEW.md` §6, there is no user password protection for library items; TSDev may internally encrypt on disk, hidden from the user, and the user always sees plain text. M.2 deals with internal source encryption semantics only and must not fabricate a user password feature.
 - No M item may restore, conditionally re-add, or emulate the removed `FUN_10011230` bypass, nor add compensating stack manipulation for the removed patch.
 - No new reverse engineering of unrelated orlib20 subsystems. Slice-scoped RE is permitted only where explicitly delegated below.
 - No modification of the TradeStation installation directory (read-only per `AGENTS.md`).
 
 ### Confirmed facts (baseline for all M slices)
 - TSDev UI Verify command chain (static, every direct call cited): `WM_COMMAND 0x296A → FUN_0047B0E0 → FUN_00451800 → FUN_004D9480 → FUN_004D91E0 → orlib20!_VerifyModule_New@20` (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §6).
-- TSDev UI Verify flow ordering: save source (`_SaveModule_New@20` with non-NULL flags and an internal metadata/encryption buffer) → allocate/configure 0x58-byte `CELCompiler` → `StartCompilingProcess` → `_VerifyModule_New@20` → dependent-program handling → `EndCompilingProcess` → success event `0x40A` → properties/view refresh → compiler destruction (`docs/PM_WORKING_MEMORY.md` L13-L17).
-- TSDev configures `CELCompiler` fields: `+0x08`=category, `+0x0C`=subtype, `+0x10`=current ProgId, `+0x18`=notification HWND; clears `+0/+4` before compilation (`docs/PM_WORKING_MEMORY.md` L22-L23).
-- Current CLI diverges: `+0x10` hardcoded `0xA02`, omits `+0x08`/`+0x0C`, writes 6 at `+0x28` (unexplained; `+0x28` is inside an empty inline `std::wstring` buffer, size remains zero, compile path does not read it — unnecessary but not proven causal) (`docs/PM_WORKING_MEMORY.md` L24-L27; `src/tsdev_lib.cpp` L1187-L1192).
-- The `+0x10=0xA02` divergence is **not** the root cause for the current direct `_VerifyModule_New` call: `_VerifyModule_New` uses its explicit ProgId argument throughout; `+0x10` is consumed by TSDev's outer recursive wrapper, which CLI bypasses (`docs/PM_WORKING_MEMORY.md` L24-L27; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.1).
-- Post-success `0x40A` is a live-only notification for already-running clients; it is **not** the durable link fix (Desktop restart did not repair a broken CLI item) (`docs/PM_WORKING_MEMORY.md` L28-L30; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.3).
-- Reverse-dependent revalidation (TSDev `FUN_004D91E0` traversal) propagates signature/contract changes to reverse dependents/callers; it is **not** required to make the root Strategy itself linkable (`docs/PM_WORKING_MEMORY.md` L37-L40; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.5).
-- The non-NULL password-shaped/internal metadata argument in `_SaveModule_New` controls source encryption/protection behavior, not final linking; it is not a user password feature (`docs/PM_WORKING_MEMORY.md` L39-L40; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.6).
+- TSDev UI Verify flow ordering: save source (`_SaveModule_New@20` with non-NULL flags and an internal metadata/encryption buffer) → allocate/configure 0x58-byte `CELCompiler` → `StartCompilingProcess` → `_VerifyModule_New@20` → dependent-program handling → `EndCompilingProcess` → success event `0x40A` → properties/view refresh → compiler destruction (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §B ("Symptom and reproduction facts"); `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.5).
+- TSDev configures `CELCompiler` fields: `+0x08`=category, `+0x0C`=subtype, `+0x10`=current ProgId, `+0x18`=notification HWND; clears `+0/+4` before compilation (`docs/M1_HANDOFF.md` §R-M.1.2).
+- The pre-M.1 CLI diverged: `+0x10` was hardcoded `0xA02`, `+0x08`/`+0x0C` were omitted, and 6 was written at `+0x28` (unexplained; `+0x28` is inside an empty inline `std::wstring` buffer). M.1 records the correction of these field writes (`docs/M1_HANDOFF.md`; current implementation `TsDevLib::verifyModule` in `src/tsdev_lib.cpp`).
+- The former `+0x10=0xA02` divergence was **not** the root cause for the direct `_VerifyModule_New` call: `_VerifyModule_New` uses its explicit ProgId argument throughout; `+0x10` is consumed by TSDev's outer recursive wrapper, which the CLI does not call (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F ("Disproved or non-causal hypotheses")).
+- Post-success `0x40A` is a live-only notification for already-running clients; it is **not** the durable link fix (Desktop restart did not repair a broken CLI item) (`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §6; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- Reverse-dependent revalidation (TSDev `FUN_004D91E0` traversal) propagates signature/contract changes to reverse dependents/callers; it is **not** required to make the root Strategy itself linkable (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md` §1.2; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- The non-NULL password-shaped/internal metadata argument in `_SaveModule_New` controls source encryption/protection behavior, not final linking; it is not a user password feature (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §4; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
 - Runtime loader uses `.ell` (ELRte/ELMDCore), with expected-GUID vs loaded-ELL-GUID validation and null return on mismatch; XML is debugger/source-map only (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §4).
 - Five supported component types and their warehouse mappings: Strategy (whType 0), Indicator (whType 2), Function (whType 4), TradingApp (whType 5122 = `(subType 0x14 << 8) | category 0x02`), ShowMe (whType 1282 = `(subType 0x05 << 8) | category 0x02`). whType is packed as `(subType << 8) | category` for TradingApp/ShowMe (and any other composite type); API functions take category (low 8 bits); `.ell` filenames use expanded whType (`docs/TS_COMPONENT_TYPES.md`).
 
@@ -68,14 +72,19 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.1 — Exact CELCompiler allocation/setup/destruction parity
 
+**Current status:** APPROVED historical slice. The pre-implementation baseline
+and acceptance text in this subsection describe the M.1 plan and are not a
+current acceptance result; see `docs/M1_HANDOFF.md` for the retained slice
+record.
+
 **Objective:** Make CLI `CELCompiler` allocation, field setup, and destruction match TSDev's UI Verify path exactly, so that the compiler object presented to `_VerifyModule_New` is byte-for-byte equivalent in the fields TSDev sets.
 
 **Known factual baseline (approved findings only):**
-- TSDev allocates a 0x58-byte `CELCompiler` and sets `+0x08`=category, `+0x0C`=subtype, `+0x10`=current ProgId, `+0x18`=notification HWND; clears `+0/+4` before compilation (`docs/PM_WORKING_MEMORY.md` L22-L23).
-- Current CLI hardcodes `+0x10=0xA02`, omits `+0x08`/`+0x0C`, writes 6 at `+0x28` (`src/tsdev_lib.cpp` L1187-L1192).
-- `+0x28` write is unexplained; `+0x28` lies inside an empty inline `std::wstring` buffer; size stays zero; compile path does not read it (`docs/PM_WORKING_MEMORY.md` L27).
-- The `+0x10=0xA02` divergence is not causal for the current direct call (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.1), but it remains inaccurate TSDev emulation and must be corrected as parity, not as a root-cause fix.
-- Root-cause plan §L.1 references "ordinal 66/67 factory/destruction path" for TSDev's compiler allocation/destruction.
+- TSDev allocates a 0x58-byte `CELCompiler` and sets `+0x08`=category, `+0x0C`=subtype, `+0x10`=current ProgId, `+0x18`=notification HWND; clears `+0/+4` before compilation (`docs/M1_HANDOFF.md` §R-M.1.2).
+- The pre-M.1 CLI hardcoded `+0x10=0xA02`, omitted `+0x08`/`+0x0C`, and wrote 6 at `+0x28` (historical baseline recorded in `docs/M1_HANDOFF.md`); M.1 records the correction.
+- The former `+0x28` write was unexplained; `+0x28` is uninitialized heap and must not be relied upon; M.1 removed the write (`docs/M1_HANDOFF.md` §R-M.1.3).
+- The former `+0x10=0xA02` divergence was not causal for the direct call (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")); M.1 corrected it as a parity change, not as a root-cause fix.
+- Root-cause plan §L ("Historical follow-up TSDev parity work") references "ordinal 66/67 factory/destruction path" for TSDev's compiler allocation/destruction.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.1.1: Confirm the exact ordinal(s) TSDev uses for `CELCompiler` allocation and destruction. Is it ordinal 66 and 67 of orlib20, or a confirmed equivalent export pair? Cite Ghidra evidence (export table + xrefs from the UI Verify chain).
@@ -90,14 +99,19 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - Must not alter the explicit ProgId argument to `_VerifyModule_New` (already correct).
 
 **Likely files/systems:**
-- `src/tsdev_lib.cpp` (compiler setup around L1170-L1234; field writes at L1187-L1192).
+- `src/tsdev_lib.cpp` (`TsDevLib::verifyModule`, current compiler allocation,
+  TSDev-parity field writes, verification, and destruction flow).
 - `src/tsdev_lib.h` (compiler member declarations).
 - `src/orlib_resolver.h` / `src/orlib_resolver.cpp` (ordinal resolution if ordinals 66/67 are confirmed).
 - `signatures/*.json`, resolver code, and `docs/SIGNATURE_CATALOG.md` only if M.1 adds resolution metadata. Classify each target correctly: named/ordinal exports belong in export-resolution metadata and export counts; only non-exported internal targets use byte signatures (coordinate with §5).
-- Tests: `tests/test_tsdev_lib*.cpp` (or new focused compiler-setup test), E2E in `docs/E2E_TEST_SPEC.md`.
+- Tests: `tests/test_compiler_layout.cpp` (or another new focused
+  compiler-setup test), E2E in `docs/E2E_TEST_SPEC.md`.
 
 **TDD plan (red → green):**
-1. RED: Add a unit/introspection test that constructs `TsDevLib` and asserts the `CELCompiler` fields match TSDev's layout (`+0x08`=category, `+0x0C`=subtype, `+0x10`=current ProgId, `+0x18`=confirmed HWND value, `+0/+4` cleared, `+0x28` not written by CLI). Test fails on current code (`+0x10=0xA02`, missing category/subtype, `+0x28=6`).
+1. Historical RED baseline: the unit/introspection test constructed `TsDevLib`
+   and exposed the pre-M.1 field mismatches (`+0x10=0xA02`, missing
+   category/subtype, `+0x28=6`). The current M.1 implementation writes the
+   TSDev-parity fields.
 2. Research R-M.1.1–R-M.1.5 within this slice; record evidence in a slice-local findings note (e.g. `tmp/m1_*.md`).
 3. GREEN: Implement exact field setup using warehouse-derived category/subtype (from `docs/TS_COMPONENT_TYPES.md` mapping) and the confirmed ProgId; remove the `+0x28` write unless R-M.1.3 proves TSDev writes there; use the confirmed allocation/destruction ordinal or equivalent.
 4. Add regression assertions that the compiler object is destroyed exactly once per operation and that no field is left stale across batch/serve reuse.
@@ -121,14 +135,19 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.2 — `_SaveModule_New` flags and CELProperties before/after verify parity
 
+**Current status:** APPROVED historical slice. The pre-implementation baseline
+and acceptance text in this subsection describe the M.2 plan and are not a
+current acceptance result; see `docs/M2_HANDOFF.md` for the retained slice
+record.
+
 **Objective:** Reproduce TSDev's `_SaveModule_New` flags and CELProperties metadata before and after verify, including safe handling of internal source encryption semantics — without inventing user password protection.
 
 **Known factual baseline (approved findings only):**
-- TSDev UI Verify saves before compiling: `_SaveModule_New@20` enters/returns success, then `StartCompilingProcess`, then `_VerifyModule_New@20` (`docs/PM_WORKING_MEMORY.md` L17; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §B.4).
-- `_SaveModule_New@20` is called with non-NULL flags/password pointers in the TSDev UI path (`docs/PM_WORKING_MEMORY.md` L17; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §L.2).
-- Non-NULL password controls source encryption/protection behavior, not final linking (`docs/PM_WORKING_MEMORY.md` L39-L40; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.6).
-- There is no user password protection for library items; TSDev may internally encrypt on disk, hidden from the user; the user always sees plain text (`docs/PM_WORKING_MEMORY.md` "PASSWORD PROTECTION" HYPOTHESIS IS WRONG section).
-- `getSource()` already handles internal encryption: when the 0x400 flag is set, it passes a zeroed 64-byte buffer to trigger Branch C decryption and returns plain text (`docs/PM_WORKING_MEMORY.md` L96-L100). M.2 is concerned with the save-side parity, not the already-fixed get-side.
+- TSDev UI Verify saves before compiling: `_SaveModule_New@20` enters/returns success, then `StartCompilingProcess`, then `_VerifyModule_New@20` (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §2; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §B ("Symptom and reproduction facts")).
+- `_SaveModule_New@20` is called with non-NULL flags/password pointers in the TSDev UI path (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §2; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §L ("Historical follow-up TSDev parity work")).
+- Non-NULL password controls source encryption/protection behavior, not final linking (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §4; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- There is no user password protection for library items; TSDev may internally encrypt on disk, hidden from the user; the user always sees plain text (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §6).
+- `getSource()` already handles internal encryption: when the 0x400 flag is set, it passes a zeroed 64-byte buffer to trigger Branch C decryption and returns plain text (`docs/RE/RE_M2_SAVEMODULE_NEW.md` §4d). M.2 is concerned with the save-side parity, not the already-fixed get-side.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.2.1: Confirm the exact `_SaveModule_New@20` flag values TSDev passes before verify (the "non-NULL flags/password pointers" observed). Decompose the flags bitfield against Ghidra evidence.
@@ -146,7 +165,7 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - `src/tsdev_lib.cpp` (saveSource / save path; verifyModule ordering).
 - `src/tsdev_lib.h` (save/properties members).
 - `src/orlib_resolver.h` / `src/orlib_resolver.cpp` (`_SaveModule_New` and CELProperties export resolution).
-- Tests: `tests/test_tsdev_lib*.cpp`, get-source round-trip tests, E2E.
+- Tests: `tests/test_save_module.cpp`, `tests/test_get_source.cpp`, and E2E.
 
 **TDD plan (red → green):**
 1. RED: Add a test that performs an insert/modify and asserts the save flags and CELProperties match TSDev's confirmed values (placeholder asserts that fail until R-M.2.1/R-M.2.2 answers are encoded). Add a round-trip test: source saved by CLI, read back by `getSource()`, must equal the original plain text for both encrypted-flag-set and flag-clear items.
@@ -175,12 +194,16 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.3 — Post-success `0x40A` library-change notification for already-running clients
 
+**Current status:** APPROVED historical slice. The baseline and acceptance text
+in this subsection describe the M.3 plan and are not a current acceptance
+result; see `docs/M3_HANDOFF.md` for the retained slice record.
+
 **Objective:** Reproduce TSDev's post-success `0x40A` library-change notification so already-running registered TradeStation consumers refresh affected in-memory module/runtime state after a CLI operation that TSDev confirms sends `0x40A`, with correct category/ProgId packing, lifetime/error semantics, and receiver-aware tests. Do not assume TSDev.exe itself is a receiver; R-M.3.1 must identify the actual registered receiver set. The exact set of sending operations (insert, modify, delete, upsert, and/or others) is **not** precommitted here; R-M.3.2 confirms it from TSDev behavior. The CLI must neither send for an unconfirmed operation nor omit a confirmed send.
 
 **Known factual baseline (approved findings only):**
-- TSDev UI Verify flow includes success event `0x40A` after `EndCompilingProcess` (`docs/PM_WORKING_MEMORY.md` L17).
-- `0x40A` is a live-only notification for already-running consumers; it is **not** the durable link fix (Desktop restart did not repair a broken CLI item) (`docs/PM_WORKING_MEMORY.md` L28-L30; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.3).
-- Current CLI has only "partial equivalents" for post-success parity (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §D table row "Post-success parity").
+- TSDev UI Verify flow includes success event `0x40A` after `EndCompilingProcess` (`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.5).
+- `0x40A` is a live-only notification for already-running consumers; it is **not** the durable link fix (Desktop restart did not repair a broken CLI item) (`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §6; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- The pre-M.3 CLI had only "partial equivalents" for post-success parity (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §D table row "Post-success parity"); this is a historical baseline.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.3.1: Confirm the exact `0x40A` message format: which window/message target receives it (broadcast, specific TSDev window class, registered window message), and how category and ProgId are packed into wParam/lParam.
@@ -201,7 +224,11 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - Tests: a receiver-aware fixture (test-only window proc), E2E.
 
 **TDD plan (red → green):**
-1. RED: Add a receiver-aware test that registers a test window, performs a CLI operation from the R-M.3.2-confirmed set, and asserts the receiver gets `0x40A` with correct category/ProgId packing. Also add a negative test asserting operations outside the confirmed set do **not** send `0x40A`. Fails on current code (no `0x40A`).
+1. Historical RED baseline: the receiver-aware test registered a test window,
+   performed an operation from the R-M.3.2 set, and initially failed because
+   the pre-M.3 code emitted no `0x40A`. The current M.3 implementation sends
+   the notification with the confirmed category/ProgId packing; the negative
+   cases remain part of the regression contract.
 2. Research R-M.3.1–R-M.3.4 within this slice; record evidence in a slice-local findings note. R-M.3.2's confirmed operation set is the authoritative scope for both positive and negative tests.
 3. GREEN: Implement `0x40A` send with confirmed packing and lifetime/error semantics for exactly the R-M.3.2-confirmed operation set. Ensure send failure does not fail a successful durable operation (unless TSDev does otherwise, per R-M.3.3).
 4. Add regression: no receiver present → operation still succeeds; receiver present → notification received with correct packing for all five component types, for each operation in the confirmed set; operations outside the confirmed set emit no `0x40A`.
@@ -226,7 +253,7 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.3b — Fix CLI object-code version defect (version=0 blocking linker element-array population)
 
-> **Added 2026-08-26 by PM directive.** This slice was not in the original plan. It was inserted after M.4 investigation discovered that M.4's linker-based reverse-dependent enumeration cannot work for CLI-compiled items because CLI-compiled items have object-code version=0 (instead of the correct per-category version), which causes the linker's populators to return NULL, leaving element arrays empty. This defect must be fixed before M.4 can be fully tested and verified with CLI-created items. M.4's implementation is complete and verified for existing TSDev-created items (read-only diagnostic passed), but the M.4 regression test creates CLI-compiled items and will fail until this defect is fixed.
+> **Added 2026-08-26 by PM directive.** This slice was not in the original plan. It was inserted after M.4 investigation discovered that M.4's linker-based reverse-dependent enumeration cannot work for CLI-compiled items because CLI-compiled items have object-code version=0 (instead of the correct per-category version), which causes the linker's populators to return NULL, leaving element arrays empty. M.4's implementation exists and its read-only existing-record diagnostic is retained as historical implementation evidence, but the M.4 dependency test is blocked for CLI-created items. M.4 is not an acceptance result and must not be described as green until this defect is resolved.
 
 **Objective:** Fix the CLI compilation path so that CLI-compiled items produce object code with the correct version field (matching TSDev-created items), enabling the linker to populate element arrays and dep-lists. This unblocks M.4's reverse-dependent enumeration for CLI-compiled items.
 
@@ -240,7 +267,7 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - The .ell files are structurally identical between CLI-created and TSDev-created items (same RNAM header, same metadata tables), but the compiled object code WITHIN the .ell has version=0 for CLI-compiled items.
 - The object-code version is written during compilation (`_VerifyModule_New@20` / `CELBasicCompiler::CompileText` / the WHServer COM worker), NOT during linking.
 - M.1 (CELCompiler allocation/setup parity) is complete — the compiler object fields match TSDev. The version=0 defect persists despite M.1, so the cause is elsewhere in the compilation path.
-- Workstream L is CLOSED (2026-08-24). The version=0 defect is related to but distinct from the Workstream L stale-ELL issue. Workstream L closure was a documented-parity decision; it did not fix the version=0 defect.
+- Workstream L is closed because its team completed it and a final independent review was completed. The version=0 defect is related to but distinct from the Workstream L stale-ELL issue; Workstream L closure did not fix the version=0 defect.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.3b.1: What writes the object-code version field at `buffer+0x24`? Trace the compilation path from `_VerifyModule_New@20` through `CELBasicCompiler::CompileText` to the WHServer COM worker to find where the version is set. Cite Ghidra evidence (function addresses, field offsets, write instructions).
@@ -253,7 +280,7 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 **Implementation boundary:**
 - In scope: Investigating and fixing the CLI compilation path so that CLI-compiled items produce object code with the correct version field. This may involve changes to compiler setup, save flags, subtype handling, post-compilation steps, or other compilation-path code.
-- Out of scope: M.4 reverse-dependent traversal (already implemented, blocked by this defect). M.5 consolidation. Source-text parsing. User password. Bypass restoration. Workstream L recovery (closed).
+- Out of scope: M.4 reverse-dependent traversal (already implemented, blocked by this defect). M.5 consolidation. Source-text parsing. User password. Bypass restoration. Workstream L recovery work.
 - Must not modify orlib20.dll or any TradeStation installation file.
 - Must not introduce source-text-based metadata.
 - Must not suppress warnings or mask the real issue.
@@ -262,7 +289,9 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - `src/tsdev_lib.cpp` (compilation path: `verifyModule`, `createEntry`, `saveSource`, compiler setup).
 - `src/tsdev_lib.h` (compiler/save members if new fields are needed).
 - `src/orlib_resolver.h` / `src/orlib_resolver.cpp` (if additional orlib20 primitives are needed).
-- Tests: `tests/test_tsdev_lib*.cpp`, new diagnostic tests for object-code version verification.
+- Tests: `tests/test_finalization_lifecycle.cpp` and
+  `tests/test_reverse_dependent_revalidation.cpp`, plus new diagnostic tests
+  for object-code version verification.
 - Ghidra: decompilation of the compilation path (`_VerifyModule_New@20`, `CELBasicCompiler::CompileText`, WHServer COM worker).
 - Frida: read-only tracing of the compilation path in both TSDev and CLI processes (no UI interaction).
 
@@ -302,13 +331,37 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.4 — Reverse-dependent revalidation equivalent to TSDev `FUN_004D91E0`
 
+**Current status:** Implementation exists, but the CLI-created object-code
+version defect leaves linker element arrays empty and blocks the dependency
+test. M.4 also has separate pre-existing dependent-flag, old-master-record
+capture, and cycle-safety escalations. The intended capture is missing from
+`TsDevLib::saveSource()`, and `TsDevLib::verifyModule()` only consumes the
+record conditionally. M.4 remains manual/blocked, has no approved post-TVS
+production-E2E claim, and is not an acceptance result. The
+implementation uses the linker-based enumeration path; the earlier
+GetDependencies/Option B2 plan language is historical and is superseded by the
+M.4 evidence note's §8.7.
+
 **Objective:** Emulate TSDev's dependent-program traversal (`FUN_004D91E0`) so that when a Function (or other component) changes its signature/contract, its reverse dependents/callers are revalidated, with interface/contract-change detection and recursion safety.
 
 **Known factual baseline (approved findings only):**
 - TSDev UI Verify static chain includes `FUN_004D91E0` between `FUN_004D9480` and `_VerifyModule_New@20` (`docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §6).
-- `FUN_004D91E0` is the reverse-dependent reverify wrapper; it propagates signature/contract changes to reverse dependents/callers (`docs/PM_WORKING_MEMORY.md` L37-L40; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.5).
-- It is **not** required to make the root Strategy itself linkable (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.5).
-- `FUN_004D91E0` reads `+0x10` of the compiler object for root bookkeeping/primary-flag selection in TSDev's outer recursive wrapper (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F.1). The CLI currently bypasses this wrapper; M.4 must consider whether to enter the wrapper or replicate its traversal.
+- `FUN_004D91E0` is the reverse-dependent reverify wrapper; it propagates signature/contract changes to reverse dependents/callers (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md` §1.2; root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- It is **not** required to make the root Strategy itself linkable (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")).
+- `FUN_004D91E0` reads `+0x10` of the compiler object for root bookkeeping/primary-flag selection in TSDev's outer recursive wrapper (root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §F ("Disproved or non-causal hypotheses")). The CLI does not call this TSDev-private wrapper; the implemented M.4 path replicates the traversal with the linker and warehouse records, but CLI-created object-code version `0` currently leaves the linker element arrays empty and blocks its dependency test.
+- In the current CLI path, missing old-master-record capture leaves
+  `contractChanged=true` by default in `TsDevLib::verifyModule()`. The
+  visited-node check in `TsDevLib::traverseReverseDependents()` skips only
+  when `!contractChanged`, so an already-visited node can be reverified and
+  recursion can continue; this does not establish safe termination for a
+  reachable cycle, without claiming that an infinite loop definitely occurs.
+  The existing `tests/test_reverse_dependent_revalidation.cpp` Case 5
+  ("Cycle safety (unit-level contract pin)") only pins hook signatures and
+  `traversalDepth` and directly invokes synthetic hook events while deferring
+  a live warehouse cycle, rather than executing runtime cycle traversal. The
+  RE note's §3.2 ("No visited-set, no depth counter") and §3.5 ("No max
+  depth") say static analysis cannot establish a hard cycle bound. This is a
+  separate pre-existing M.4 blocker/escalation.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.4.1: Confirm the exact traversal `FUN_004D91E0` performs: which warehouse records enumerate reverse dependents, in what order, with what per-dependent work (reverify only? recompile? both?).
@@ -327,11 +380,15 @@ Each slice follows the same structure: objective, known factual baseline, resear
 - `src/orlib_resolver.h` / `src/orlib_resolver.cpp` only for any additional orlib20 primitives required by the confirmed replication; never for resolving TSDev.exe code.
 - Tests: a fixture with a known dependency graph (Function used by Indicator used by Strategy), E2E.
 
-**TDD plan (red → green):**
-1. RED: Add a test that inserts a Function, inserts a caller (Indicator/Strategy) that uses it, then modifies the Function's signature and asserts the caller is revalidated (reverify triggered, success/failure reported per dependent). Fails on current code (no traversal).
+**TDD plan (red → green; historical sequence):**
+1. Historical RED baseline: add a test that inserts a Function, inserts a
+   caller (Indicator/Strategy) that uses it, then modifies the Function's
+   signature and asserts caller revalidation. The old pre-implementation
+   baseline had no traversal; the current implementation exists, but the
+   CLI-created object-code version=0 defect blocks dependency discovery.
 2. Research R-M.4.1–R-M.4.5 within this slice; record evidence in a slice-local findings note.
-3. GREEN: Implement the confirmed traversal with contract-change detection, recursion/cycle safety, and failure reporting, using TSDev's confirmed guard or an evidence-justified equivalent.
-4. Add regression at the lowest safe boundary: use a synthetic dependency enumerator/graph to prove repeated nodes and cycles cannot hang or stack-overflow. Add a live warehouse cycle only if R-M.4.3 confirms such a graph is valid and can be created through supported APIs; do not force invalid EasyLanguage source or direct warehouse edits. Per-dependent failures must report warehouse-derived name and ProgId, and successful acyclic revalidation must complete.
+3. Historical GREEN action: implement the confirmed traversal with contract-change detection, recursion/cycle safety, and failure reporting, using TSDev's confirmed guard or an evidence-justified equivalent.
+4. Required regression, not satisfied by the current Case 5: use a synthetic dependency enumerator/graph to prove repeated nodes and cycles cannot hang or stack-overflow. Add a live warehouse cycle only if R-M.4.3 confirms such a graph is valid and can be created through supported APIs; do not force invalid EasyLanguage source or direct warehouse edits. Per-dependent failures must report warehouse-derived name and ProgId, and successful acyclic revalidation must complete.
 
 **Acceptance criteria:**
 - Reverse dependents of a changed component are revalidated per TSDev's confirmed traversal.
@@ -352,13 +409,16 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 ### M.5 — Consolidated parity/runtime verification and documentation closure
 
+**Current status:** PENDING. M.5 is not a current acceptance result; it follows
+resolution of the M.3b blocker and the M.4 dependency-test gate.
+
 **Objective:** Consolidate parity and runtime verification across all five supported component types (Strategy, Indicator, Function, TradingApp, ShowMe) and all operation modes (single CLI, manifest/stdin batch, directory batch, serve single, Python batch-over-serve), and close documentation gaps opened by M.1–M.4.
 
 **Known factual baseline (approved findings only):**
 - Five supported component types and warehouse mappings are confirmed (`docs/TS_COMPONENT_TYPES.md`).
 - Operation modes: single CLI, batch (manifest + stdin), directory batch, serve, Python batch-over-serve (`AGENTS.md`; `docs/workstream_serve_plan.md`).
 - The root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §I verification matrix enumerates the dimensions (component type, mutation, execution mode, compile failures, COM outcomes, artifact integrity, resolver/signatures, runtime, lifecycle/stress).
-- M.1–M.4 each produce handoff notes with confirmed parity details.
+- M.1–M.3 have retained handoff notes with confirmed parity details; M.4 has an implementation/evidence note but remains manual/blocked by the CLI-created object-code defect and separate pre-existing escalations.
 
 **Research questions delegated to this future TVS (slice-scoped only):**
 - R-M.5.1: Are there parity gaps remaining after M.1–M.4 that the verification matrix surfaces? (This slice runs the consolidated matrix and catalogs any residual gaps; it does not fix them — it opens follow-up slices if needed.)
@@ -368,7 +428,7 @@ Each slice follows the same structure: objective, known factual baseline, resear
 **Implementation boundary:**
 - In scope: consolidated E2E matrix execution, residual-gap catalog, documentation closure (correcting stale statements, adding M.1–M.4 outcomes), final runtime gate.
 - Out of scope: new parity concerns beyond cataloging (open follow-up slices instead), root-cause changes, source-text parsing, password fiction.
-- Must not retroactively edit history silently; per root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §K.9, prepend dated corrections to historical docs rather than rewriting events.
+- Must not retroactively edit history silently; per root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §K ("Historical pre-L.3 signatures, resolver, tests, and documentation plan"), prepend dated corrections to historical docs rather than rewriting events.
 - Must enforce the durable-path invariant from §5: any authoritative reference to the former `tmp/unknown_link_*` research docs in `docs/FEASIBILITY.md` or `docs/SIGNATURE_CATALOG.md` must use the durable `docs/RE/` paths (`RE_UNKNOWN_LINK_ROOT_CAUSE.md` / `RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`); M.5's closure review validates this and corrects any residual `tmp/unknown_link_*` reference.
 
 **Likely files/systems:**
@@ -403,11 +463,11 @@ Each slice follows the same structure: objective, known factual baseline, resear
 
 1. **Not the confirmed immediate root cause.** No M item may be presented, scoped, tested, or accepted as a root-cause fix. The root cause is Workstream L (STA COM + remove `FUN_10011230` bypass). Any conflation in a slice's tests, docs, or handoff is a DISAPPROVE finding.
 2. **No source-text metadata parsing.** Per `AGENTS.md`, names/types/ProgIds come from orlib20 warehouse records or APIs. Any slice that appears to require source parsing is out of scope and must be re-scoped to a warehouse/API source. This applies explicitly to M.4 contract-change detection.
-3. **No password-protection fiction.** Per the corrected findings in `docs/PM_WORKING_MEMORY.md`, there is no user password protection for library items. M.2 handles internal source encryption semantics only; it must not introduce any user-facing password concept, CLI flag, Python parameter, or error type.
+3. **No password-protection fiction.** Per the corrected findings in `docs/RE/RE_M2_SAVEMODULE_NEW.md` §6, there is no user password protection for library items. M.2 handles internal source encryption semantics only; it must not introduce any user-facing password concept, CLI flag, Python parameter, or error type.
 4. **No bypass restoration.** No M item may restore, conditionally re-add, or emulate the removed `FUN_10011230` bypass, nor add compensating stack manipulation.
 5. **No cross-slice bundling.** Each M.x is a separate TVS. One subagent → one narrowly scoped subtask (`AGENTS.md`). No multi-concern slices.
 6. **No TradeStation installation modification.** Read-only per `AGENTS.md`.
-7. **No holding L.** M does not block L. If L is not yet approved/merged, M remains planned-only.
+7. **Do not reopen or hold L.** The current Workstream L status is stated in the document header. M retains its independent statuses and blockers above.
 
 ---
 
@@ -448,8 +508,14 @@ Each M slice may touch signatures, the resolver, or the catalog. A decision gate
 - M.4: document traversal, contract-change detection, cycle handling, failure reporting in a durable note (likely `docs/RE/` or a slice-local findings note promoted to `docs/`).
 - M.5: close documentation gaps across `docs/SIGNATURE_CATALOG.md`, `docs/FEASIBILITY.md`, `docs/PROJECT_HISTORY.md`, `docs/E2E_TEST_SPEC.md`, `docs/TS_COMPONENT_TYPES.md` with dated corrections (do not silently rewrite history).
 
-**Stale-statement corrections (carried from root-cause plan (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`) §K.8, only if not already done by L):**
-- `docs/SIGNATURE_CATALOG.md` L106, L380, L386, L404 and `docs/FEASIBILITY.md` L338-L340 stale `__fastcall`/callee-cleanup statements must match the appendix evidence (caller `ADD ESP,0x0C`, original plain `RET`, patched `RET 0x0C`). If L has not corrected these, M.5 must. (L is expected to own these since they describe the removed patch; M.5 only corrects if residual.)
+**Stale-statement corrections (historical carry-forward; resolved):**
+- The current correction notices and retired-target notes in
+  `docs/SIGNATURE_CATALOG.md` and `docs/FEASIBILITY.md` record the removed
+  persistence bypass, the current catalog/codegen counts, and the caller-cleanup
+  ABI finding from `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §1. Their
+  pre-L.3 bodies remain explicitly labeled historical/superseded. This is not
+  an unresolved M.5 action; M.5 must not treat the historical text as current
+  guidance.
 
 **Durable-path references for former `tmp/unknown_link_*` research docs (current invariant + future validation):**
 - The former `tmp/unknown_link_root_cause_and_plan.md` and `tmp/unknown_link_ghidra_evidence.md` research artifacts are now durably promoted to `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` and `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. **Current invariant:** any authoritative reference to that former research in `docs/FEASIBILITY.md` or `docs/SIGNATURE_CATALOG.md` must cite the durable `docs/RE/` paths, not the transient `tmp/unknown_link_*` paths. **Future validation:** M.5's documentation-closure review must verify this invariant holds in `docs/FEASIBILITY.md` and `docs/SIGNATURE_CATALOG.md` and correct any residual `tmp/unknown_link_*` reference to its durable `docs/RE/` path (coordinating with L.3 item 12, which owns the same invariant on the L side).
@@ -471,14 +537,14 @@ Each M slice may touch signatures, the resolver, or the catalog. A decision gate
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | M slice conflated with L root cause in tests/docs/handoff | Medium | High (scope contamination) | §3 hard rules; adversarial review explicitly checks for conflation; DISAPPROVE on any conflation. |
-| M.4 traversal repeats/cycles or stack-overflows | Medium | High (CLI hang) | §4 safety properties; synthetic repeated-node/cycle test mandatory; live cycle only if supported construction is confirmed. |
+| M.4 cycle termination is not established when `contractChanged=true` by default | Medium | High (unsafe traversal; no claim that a hang definitely occurs) | Separate M.4 blocker; resolve old-record capture/gate behavior and execute synthetic/runtime cycle traversal coverage before acceptance. |
 | M.2 reintroduces user password fiction | Low | High (violates corrected findings) | §3 hard rule; adversarial review; no user-facing password CLI/Python/error surface. |
 | M.1 ordinal 66/67 unconfirmed or version-specific | Medium | Medium (parity gap) | R-M.1.1 must cite evidence; if unconfirmed, slice documents the gap and does not guess. |
 | M.3 `0x40A` packing wrong → receivers ignore/misbehave | Medium | Medium (live refresh gap) | R-M.3.1 must cite evidence; receiver fixture mandatory; controlled observation of an actual confirmed consumer where feasible. |
 | M.3b version=0 root cause not found or fix requires orlib20 modification | Medium | High (M.4 blocked) | R-M.3b.1–R-M.3b.7 must cite evidence; if the fix requires orlib20 modification (not allowed), document as a permanent limitation and adapt M.4 tests to use existing items only. |
 | M.5 documentation closure silently rewrites history | Low | Medium (loss of audit trail) | §5 requires dated corrections prepended, not silent edits; adversarial review checks. |
 | M slice expands scope into unrelated orlib20 subsystems | Medium | Medium (scope creep) | §3 hard rule; one subagent → one narrowly scoped subtask; adversarial review checks scope. |
-| L not yet approved/merged → M starts prematurely | Low | High (invalid baseline) | §1 hard dependency on L; M remains planned-only until L is merged. |
+| M.4 blocker overlooked → M.5 starts prematurely | Medium | High (invalid acceptance claim) | Header status and M.3b/M.4 blocker; no M.5 closure claim until the CLI-created object-code defect and M.4 dependency gate are resolved. |
 | Signature/catalog count drift after M.1/M.2/M.4 | Medium | Medium (resolver/test failures) | §5 gate; regenerate via build, not hand-edit; run all mismatch tests. |
 | Receiver-aware test (M.3) flaky due to window timing | Low | Low (test only) | Use a deterministic test-only window proc; do not rely on real TSDev for the unit gate. |
 

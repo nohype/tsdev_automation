@@ -1,13 +1,10 @@
 <#
 .SYNOPSIS
-    E2E CLI test for the `exists` subcommand of tsdev_cli (TVS-F.1, RED step).
+    E2E CLI test for the `exists` subcommand of tsdev_cli (TVS-F.1).
 
 .DESCRIPTION
-    End-to-end test for the `exists` subcommand that queries item existence by
-    name + component type (exact-match). This test is written TDD-red-green:
-    it is expected to FAIL (RED) right now because the `exists` subcommand has
-    NOT yet been implemented in tsdev_cli.cpp. Once implemented, it should PASS
-    (GREEN).
+    End-to-end test for the implemented `exists` subcommand that queries item
+    existence by name + component type (exact-match).
 
     The `exists` op uses exit code 0 for BOTH found and not-found (not-found is
     a valid query result, not an error). The `exists` boolean in the JSON
@@ -26,9 +23,13 @@
 
     Cleanup: deletes the inserted probe item in a finally block.
 
-    NOTE: This test currently FAILS (RED) because `tsdev_cli exists` is not
-    implemented — the CLI will return a usage error (exit 1) or similar. That
-    is the expected TDD red state.
+    Prerequisites:
+      - Direct `tsdev_cli` requires an elevated administrator process. Run this
+        procedure elevated; otherwise, the CLI returns exit code 11
+        (`not_elevated`).
+
+    NOTE: This test invokes the current `tsdev_cli exists` implementation and
+    reports failures from its actual exit code and output.
 
 .PARAMETER CliPath
     Path to the tsdev_cli.exe executable. Defaults to
@@ -317,9 +318,10 @@ New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 # Unique probe name for this run.
 $probeName = "E2E_${runId}_ExistsProbe"
 
-# Minimal valid EasyLanguage strategy source. The leading "{ name }" comment
-# block is the EasyLanguage convention for naming a strategy/function; it is
-# required for enumerateRecords to extract the verbatim stored name.
+# Minimal valid EasyLanguage strategy source. The leading "{ name }" text is
+# arbitrary fixture source content only; it is not a metadata convention or a
+# lookup mechanism. The CLI supplies the item name, and stored metadata comes
+# from orlib20 warehouse records/APIs.
 $probeSource = "{ $probeName }`r`nInputs: int x(0);`r`nif x > 0 then Buy next bar at market;"
 
 try {

@@ -50,9 +50,10 @@ const char* kTestName = "zzz_test_autocleanup";
 
 // Invalid EasyLanguage source — this will FAIL compilation. The body contains
 // a syntax error (`var x = ;` — missing RHS expression) that the EasyLanguage
-// compiler will reject. The leading comment names the strategy (TSDev
-// convention), matching the valid-source pattern from test_insert.cpp but with
-// a deliberately broken body.
+// compiler will reject. The brace text is arbitrary fixture source content only;
+// it is not a metadata convention or lookup mechanism. The item name is passed
+// through the API, and stored names/types/ProgIds come from orlib20 warehouse
+// records/APIs; the body is deliberately broken.
 const char* kInvalidSource =
     "{ zzz_test_autocleanup }\r\n"
     "using elsystem;\r\n"

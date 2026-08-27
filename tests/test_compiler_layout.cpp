@@ -3,8 +3,9 @@
 // Workstream M slice M.1 — TDD RED->GREEN integration test for the
 // CELCompiler allocation / setup / destruction parity with TSDev.exe.
 //
-// CONFIRMED FACTS (Ghidra static + Frida trace cross-check; see
-// tmp/m1_ghidra_findings.md and tmp/m1_trace_reanalysis.md):
+// Historical M.1 facts (Ghidra static + Frida trace cross-check; see the
+// tracked `docs/M1_HANDOFF.md` §§R-M.1.1–R-M.1.5). The underlying tmp/ notes are
+// transient and unavailable in a fresh tracked checkout:
 //
 //   R-M.1.1 — TSDev allocates+constructs the CELCompiler via orlib20 ordinal
 //   export 66 (FUN_10165f70 = operator_new(0x58) + ctor) and destructs+frees
@@ -40,12 +41,12 @@
 // and asserts the TSDev-parity layout.
 //
 // Two test cases:
-//   1. Strategy (category=0, subtype=0) — catches +0x10 (ProgId vs 0xA02) and
-//      +0x28 (0 vs 6) divergences.
-//   2. Indicator (category=2, subtype=0) — additionally catches the +0x08
-//      divergence (Strategy has category=0, so +0x08=0 passes even on the
-//      current code that does not write +0x08; Indicator has category=2, so
-//      +0x08 must be 2).
+//   1. Strategy (category=0, subtype=0) — the historical pre-M.1 case caught
+//      +0x10 (ProgId vs 0xA02) and +0x28 (0 vs 6) divergences.
+//   2. Indicator (category=2, subtype=0) — the historical pre-M.1 case also
+//      caught the +0x08 divergence (Strategy has category=0, so +0x08=0 could
+//      pass even when the field was omitted). The current M.1 implementation
+//      writes the TSDev-parity fields for both cases.
 //
 // Both cases insert a disposable Strategy/Indicator item, call verifyModule
 // (which fires the hook), assert the layout, then delete the disposable item.
@@ -53,9 +54,8 @@
 // REQUIRES TradeStation: this is an integration test that constructs a real
 // TsDevLib (loads orlib20.dll, applies patches, calls OrlibInit, creates the
 // hidden EDIT control) and inserts + verifies + deletes real warehouse
-// entries. Per the operational rule in docs/PM_WORKING_MEMORY.md, NO
-// TradeStation Desktop processes (TSDev.exe, TradeStation, ORPlat, etc.)
-// may be running when this test executes.
+// entries. This is a library-level test; Desktop/TSDev running state is not a
+// prerequisite because the test does not exercise the Desktop UI.
 //
 // Runs on a 64 MB-stack worker thread (EasyLanguage compiler needs far more
 // than the default 1 MB, and the hidden EDIT control is thread-affine so
@@ -293,8 +293,9 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
     int   f0C = *reinterpret_cast<int*>(base + 0x0C);
     int   f10 = *reinterpret_cast<int*>(base + 0x10);
     HWND  f18 = *reinterpret_cast<HWND*>(base + 0x18);
-    // +0x28 is intentionally NOT read or asserted here. Per the Ghidra
-    // findings (tmp/m1_ghidra_findings.md), +0x28 is NOT written by TSDev's
+    // +0x28 is intentionally NOT read or asserted here. Per the historical M.1
+    // handoff (`docs/M1_HANDOFF.md` §R-M.1.3; raw note unavailable), +0x28 is
+    // NOT written by TSDev's
     // CELCompiler constructor nor by operator_new inside ordinal 66, so it
     // "remains uninitialized" — its runtime value is indeterminate garbage
     // (observed as 0 in one run and 71704709 in another). The M.1 parity for
@@ -456,7 +457,7 @@ int main() {
     std::printf("=== test_compiler_layout: M.1 CELCompiler field-layout parity ===\n");
     std::printf("Asserts the 0x58-byte CELCompiler object written by verifyModule()\n");
     std::printf("matches the TSDev.exe field layout (Ghidra + Frida confirmed).\n");
-    std::printf("Requires NO TradeStation Desktop processes running.\n");
+    std::printf("Desktop/TSDev running state is not a prerequisite for this library-level test.\n");
 
     // Run the entire test on a worker thread with a 64 MB stack. The
     // EasyLanguage compiler needs far more than the default 1 MB, and the

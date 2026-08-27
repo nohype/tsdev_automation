@@ -45,7 +45,11 @@
     Prerequisites:
       - The project must be built: cmake --build build --config Release --target tsdev_cli
       - TradeStation 9.5 must be installed (or -TsPath provided)
-      - No TradeStation processes/services should be running
+      - The invoking PowerShell process must be an elevated administrator
+        process because this suite invokes tsdev_cli.exe directly. A
+        non-elevated direct CLI invocation returns exit code 11 (not_elevated).
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies; this suite does not use the Desktop UI
 
     E2E test suite for the `batch-upsert` CLI subcommand (manifest file +
     --batch-stdin modes).

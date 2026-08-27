@@ -3,10 +3,12 @@
 // DIAGNOSTIC ONLY (not part of the regression suite). Read-only with respect
 // to production code: this file does NOT modify any src/ file.
 //
-// Purpose: Test the Ghidra finding that the linker (FUN_101a3340, ordinal 85)
-// writes the dep-list to record+0x6f (ptr) and record+0x73 (size), while
-// GetDependencies reads from element+0x7b (a different location) — which may
-// be why GetDependencies returns empty.
+// Purpose: Historical diagnostic for the linker/dep-list layout. Its original
+// hypothesis was that the linker wrote dep-lists at record+0x6f/+0x73 while
+// GetDependencies read element+0x7b. Later M.4 evidence corrected that
+// interpretation: production scans linked per-element dep-lists at
+// element+0x7b/+0x73. This diagnostic is retained to compare both locations;
+// it is not current M.4 acceptance logic.
 //
 // This diagnostic:
 //   1. Constructs a TsDevLib (test-only ctor, real ComApi, no hooks) on a 64MB
@@ -37,11 +39,13 @@
 //   5. Check for TSCrashReport.exe before and after.
 //
 // All orlib20 calls are SEH-protected (__try/__except). READ-ONLY — does NOT
-// insert/modify/delete any items. Completes in < 180 sec or is killed.
+// insert/modify/delete any items. Its 180-second limit is an operational
+// timeout, not a measured completion time or M.4 acceptance evidence.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <cstring>
@@ -51,8 +55,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // -------------------------------------------------------------------------
 // Function pointer typedefs.
@@ -640,11 +664,13 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // Pre-check: is TSCrashReport.exe already running?
-    std::printf("[PRE] Checking for TSCrashReport.exe...\n");
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [PRE] TSCrashReport.exe IS "
-           "running || echo [PRE] TSCrashReport.exe NOT running");
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
 
     // Run on a 64 MB-stack worker thread (TsDevLib is thread-affine and
     // orlib20 calls need a large stack).
@@ -656,14 +682,23 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 180-second hard timeout — enumeration of 3 categories + linker calls
-    // on 15 items may take longer than 120s.
+    // 180-second hard timeout — report a hang without terminating the worker.
+    // Enumeration of 3 categories + linker calls on 15 items may take longer
+    // than 120 seconds.
     DWORD wait = WaitForSingleObject(hThread, 180000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 180s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 180s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
@@ -672,11 +707,12 @@ int main() {
     CloseHandle(hThread);
 
     // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
-    std::printf("\n[POST] Checking for TSCrashReport.exe...\n");
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [POST] TSCrashReport.exe IS "
-           "running (crash occurred) || echo [POST] TSCrashReport.exe NOT "
-           "running (no crash)");
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
 
     return st.exitCode;
 }

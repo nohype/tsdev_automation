@@ -40,6 +40,11 @@
 
     Cleanup: deletes all created probe items in a finally block.
 
+    Prerequisites:
+      - Run this procedure from an elevated administrator process because it
+        invokes `tsdev_cli` directly. Otherwise, the CLI returns exit code 11
+        (`not_elevated`).
+
 .PARAMETER CliPath
     Path to the tsdev_cli.exe executable. Defaults to
     "$PSScriptRoot\..\build\Release\tsdev_cli.exe".
@@ -369,9 +374,10 @@ $probeMixed    = "zzz_Mixed_Case_Probe"
 $probeExact    = "zzz_ci_exact"
 $probeExact2   = "zzz_ci_exact_2"
 
-# Minimal valid EasyLanguage strategy source. The leading "{ name }" comment
-# block is the EasyLanguage convention for naming a strategy/function; it is
-# required for enumerateRecords Phase 2 to extract the verbatim stored name.
+# Minimal valid EasyLanguage strategy source. The leading "{ name }" text is
+# arbitrary fixture source content only; it is not a metadata convention or a
+# lookup mechanism. The CLI supplies the item name, and stored metadata comes
+# from orlib20 warehouse records/APIs.
 function Write-StrategySource {
     param([Parameter(Mandatory)] [string]$ProbeName)
     $source = "{ $ProbeName }`r`nInputs: int x(0);`r`nif x > 0 then Buy next bar at market;"

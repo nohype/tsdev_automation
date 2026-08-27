@@ -36,6 +36,11 @@
     Cleanup: deletes any remaining test items and removes temp files in a
     finally block (always runs, even on failure).
 
+    Prerequisites:
+      - Run this procedure from an elevated administrator process because it
+        invokes `tsdev_cli` directly. Otherwise, the CLI returns exit code 11
+        (`not_elevated`).
+
 .PARAMETER CliPath
     Path to the tsdev_cli.exe executable. Defaults to
     "$PSScriptRoot\..\build\Release\tsdev_cli.exe".

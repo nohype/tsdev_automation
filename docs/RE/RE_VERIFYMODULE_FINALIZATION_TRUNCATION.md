@@ -6,7 +6,15 @@
 **Binary analyzed:** `orlib20.dll` (image base `0x10000000`), plus `ELMDCore.dll`, `ELDebugger.dll`, `ECL.dll` (loaded into Ghidra project `TSDevAnalysis`)
 **Tool:** Ghidra MCP (static decompilation, cross-references, vtable resolution)
 
-> **Workstream L is NOT YET CLOSED — see `docs/PM_WORKING_MEMORY.md`.** The TVS-L.4/L.5 completion claim was FALSIFIED by persistence and deletion fault injection and is **superseded by the L.6–L.15 recovery**, which is **implemented on branch `workstream-L-recovery`** (L.1–L.3 remain COMPLETE; L.4/L.5 are NOT complete — their DONE text is retained as dated/superseded; L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are necessary but not sufficient; the `FUN_10011230` persistence bypass is removed). **No new Desktop runtime re-gate is claimed without an L.17 result.** Workstream M remains BLOCKED until L.17 independent final verification. The analysis body below is unchanged and remains correct for the finalization-truncation scenario it analyzes; only this current-truth pointer banner is updated.
+> **Current status:** Workstream L is closed because its team completed it and a
+> final independent review was completed.
+>
+> The TVS-L.4/L.5 completion claim and the recovery chronology below are retained
+> as historical provenance. The analysis body below is unchanged and remains
+> correct for the finalization-truncation scenario it analyzes. Current
+> Workstream M status is: M.1/M.2/M.3 are approved historical slices; M.3b is
+> planned; M.4 implementation exists but is blocked by the CLI-created object-code
+> defect; M.5 is pending. No approved post-TVS production-E2E claim exists for M.4.
 
 > **CORRECTION (2026-08-23):** The original version of this report swapped the .ell and .xml file extensions throughout. The corrected mapping (proven by L.3 dynamic A/B evidence) is: SymWriter::Save writes .xml (XML symbol file), MDVault::SaveModule writes .ell (binary metadata). The original conclusion that .ell can be truncated on a failed modify was WRONG. In the finalization-truncation scenario analyzed here, the `.ell` is structurally guaranteed to be unchanged because `MDVault::SaveModule` is skipped when `FUN_10011230` returns false. Only the `.xml` (debugger data) can be rewritten, which is not a runtime linkability risk. (The universal form of this ELL-safety claim is scoped by the TVS-L.8 notice immediately below.)
 
@@ -320,7 +328,7 @@ For the **finalization-truncation scenario**, no backup/restore is needed: the `
 > A class, which passes both existence checks while reporting success with a stale `.ell`.
 > Fault A recovery is BLOCKED pending a TSDev-equivalent recovery mechanism — see
 > [`RE_L8_STALE_WRITE_FAULT_A.md`](./RE_L8_STALE_WRITE_FAULT_A.md) §7. No production
-> workaround is authorized by this report.
+> workaround is supported by this report.
 
 ---
 

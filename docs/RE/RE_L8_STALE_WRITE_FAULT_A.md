@@ -6,32 +6,37 @@
 **Binary analyzed:** `orlib20.dll` (image base `0x10000000`), `ELMDCore.dll`, `ELDebugger.dll`, `ECL.dll`
 **Tools:** Ghidra MCP (static decompilation), Frida CLI (dynamic trace of `tsdev_cli.exe`)
 
-> **Workstream L recovery pointer (current truth).** Fault A **detect-and-fail is
+> **Historical Workstream L recovery pointer.** Fault A **detect-and-fail is
 > implemented by TVS-L.9** (stale-ELL modify/upsert detect-and-fail production fix), which is
 > part of the **L.6–L.15 recovery implemented on branch `workstream-L-recovery`**.
 >
-> **TVS-L.8 is closed as a DOCUMENTED-PARITY DECISION (2026-08-24) -- NOT as a recovery.** The
-> `TSDev.exe`-equivalent save-failure observation has NOW been established (2026-08-24,
-> user-supervised Frida trace of `TSDev.exe` PID 23012 -- see Sec. 7.1). It establishes that
-> `TSDev.exe` exhibits the SAME silent false-success suppression chain as the CLI: TSDev does
-> NOT detect the `.ell` write failure, does NOT roll back / unverify / retry / warn, and
-> reports success while leaving the identical inconsistent state (stale ELL + rewritten XML +
-> new GUID + updated warehouse source). Because TSDev itself has no such recovery, **no
-> invented rollback / unverify / retry is authorized**. The selected L.8 policy is therefore
-> **remain BLOCKED -- documented parity (decision)** (see Sec. 7). This is a DECISION, not a
-> fake recovery. The L.9 detect-and-fail does **not** invent a recovery; it detects the
-> stale-ELL condition and fails the operation rather than reporting false success. **L.9's
-> detect-and-fail is in fact STRICTER than TSDev** (TSDev silently reports success; our CLI
-> detects and fails). This is acceptable and intentional -- we do not propagate the false
-> success that TSDev propagates. Existence checks are necessary but not sufficient.
+> **Historical TVS-L.8 record (2026-08-24):** L.8 was closed as a
+> DOCUMENTED-PARITY DECISION, not as a recovery. The `TSDev.exe`-equivalent
+> save-failure observation was established by a user-supervised Frida trace of
+> `TSDev.exe` PID 23012 (see §7.1). It establishes that `TSDev.exe` exhibits the
+> same silent false-success suppression chain as the CLI: TSDev does NOT detect
+> the `.ell` write failure, roll back, unverify, retry, or warn, and reports
+> success while leaving the identical inconsistent state (stale ELL + rewritten
+> XML + new GUID + updated warehouse source). Because TSDev itself has no such
+> recovery, the evidence does not support invented rollback, unverify, or retry.
+> The selected L.8 policy was therefore **BLOCKED — documented parity** (see §7).
+> This is a decision, not a fake recovery. L.9 detect-and-fail does **not** invent
+> a recovery; it detects the stale-ELL condition and fails the operation rather than
+> reporting false success. **L.9's detect-and-fail is STRICTER than TSDev** (TSDev
+> silently reports success; the CLI detects and fails). Existence checks are
+> necessary but not sufficient.
 >
-> **L.8 is closed as a DECISION, NOT as a recovery.** Workstream L is CLOSED (2026-08-24,
-> explicit user decision) -- L.8's documented-parity DECISION plus L.9/L.12
-> detect-and-fail/report plus L.17 automated gates PASS under PS 5.1 plus the Desktop
-> restart gate SATISFIED (2026-08-24) constitute the complete closure basis; the user issued
-> the explicit close decision on 2026-08-24. Workstream M remains BLOCKED until an explicit
-> unblocking decision (Workstream L closure does not automatically unblock M). See
-> `docs/PM_WORKING_MEMORY.md`. The evidence body in Sec. 1 -- Sec. 6, Sec. 8 -- Sec. 10 is
+> **Current status:** Workstream L is closed because its team completed it and a
+> final independent review was completed.
+>
+> This L.8 evidence record is retained as historical
+> provenance; its gate figures are not current acceptance evidence. The L-suite
+> scripts support both Windows PowerShell 5.1 and `pwsh` 7; routine L7 evidence
+> writes go to gitignored `tmp\`, and only `-UpdateTrackedEvidence` selects the
+> tracked evidence file. Current Workstream M status is: M.1/M.2/M.3 are
+> approved historical slices; M.3b is planned; M.4 implementation exists but
+> is blocked by the CLI-created object-code defect; M.5 is pending. No approved
+> post-TVS production-E2E claim exists for M.4. The evidence body in Sec. 1 -- Sec. 6, Sec. 8 -- Sec. 10 is
 > unchanged; only this current-truth pointer banner and Sec. 7 / Sec. 7.1 change.
 >
 > **Scope of this file.** This is a *durable evidence record* for a distinct fault class
@@ -39,7 +44,7 @@
 > finalization-truncation analysis in
 > [`RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md`](./RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md).
 > It records static + dynamic evidence, distinguishes Fault A from finalization-truncation,
-> and selects the L.8 decision-gate policy. It does **not** authorize any production
+> and selects the L.8 decision-gate policy. It does **not** support any production
 > recovery action (see §7).
 
 ---
@@ -79,8 +84,8 @@ called**, the write **is attempted and fails at the OS level**, and the failure 
 
 **Decision-gate policy (selected — see §7):** **BLOCKED.** No `TSDev.exe`-equivalent
 save-failure observation or per-item rollback / unverify / retry API was established as a
-basis for authorizing a recovery action. No ELL/XML backup-restore, no invented TSDev
-recovery, and no production code are authorized by this finding.
+basis for a recovery action. The evidence does not support ELL/XML backup-restore,
+an invented TSDev recovery, or production code changes based on this finding.
 
 ---
 
@@ -263,8 +268,8 @@ proceeds to `AddATVerified`/`UpdateProperties` when `param_6 == 0`.
    finalization-truncation analysis is **not weakened** by this finding; only its
    *universal* generalization ("on ANY modify failure") and the existence-check-sufficiency
    claim are scoped (see §8).
-2. **Not authorization for ELL/XML backup-restore.** No byte-level backup/restore of `.ell`
-   or `.xml` is authorized by this finding. Direct artifact restoration remains prohibited
+2. **Not a basis for ELL/XML backup-restore.** No byte-level backup/restore of `.ell`
+   or `.xml` is supported by this finding. Direct artifact restoration remains unsupported
    unless evidence establishes a TSDev-equivalent, cross-store-consistent recovery sequence
    (none established here — see §7).
 3. **Not an invented TSDev recovery.** No `TSDev.exe` recovery, reverify, unverify, or
@@ -292,11 +297,12 @@ leaving the identical inconsistent state (stale ELL + rewritten XML + new GUID +
 warehouse source).
 
 **Selected policy.** Because `TSDev.exe` itself has no recovery for Fault A (it silently
-reports success and leaves the inconsistent state in place), **no invented rollback /
-unverify / retry is authorized** -- there is no TSDev-equivalent recovery to emulate. The
-L.8 decision gate therefore **remains BLOCKED**, but now as a **DOCUMENTED-PARITY DECISION**,
-not as a pending-recovery item. This is a DECISION, not a fake recovery. No invented TSDev
-recovery sequence is authorized because TSDev itself has no such recovery.
+reports success and leaves the inconsistent state in place), the evidence does not support
+invented rollback, unverify, or retry -- there is no TSDev-equivalent recovery to emulate.
+The L.8 decision gate therefore **remains BLOCKED**, but now as a
+**DOCUMENTED-PARITY DECISION**, not as a pending-recovery item. This is a DECISION, not a
+fake recovery. No TSDev recovery sequence is proposed because TSDev itself has no such
+recovery.
 
 **L.9 detect-and-fail is STRICTER than TSDev.** The L.9 production fix (stale-ELL
 modify/upsert detect-and-fail) detects the stale-ELL condition and fails the operation rather
@@ -306,20 +312,22 @@ acceptable and intentional -- we do not propagate the false success that TSDev p
 Emulating TSDev does not require us to inherit TSDev's silent false-success behavior on a
 fault class that we can detect.
 
-**Specifically prohibited by this finding (unchanged):**
+**Specifically outside the evidence in this finding (unchanged):**
 
-- Authorizing ELL/XML backup-restore as a recovery mechanism.
+- Using ELL/XML backup-restore as a recovery mechanism.
 - Inventing a TSDev recovery sequence not present in the binary.
 - Shipping production code that masks or works around Fault A.
 - Weakening the original finalization-truncation analysis in the prior doc.
 
-**L.8 closure status.** L.8 is **closed as a DECISION (documented parity, no recovery)**,
-NOT as a recovery. Workstream L is CLOSED (2026-08-24, explicit user decision) -- L.8's
-documented-parity DECISION plus L.9/L.12 detect-and-fail/report plus L.17 automated gates
-PASS under PS 5.1 plus the Desktop restart gate SATISFIED (2026-08-24) constitute the
-complete closure basis; the user issued the explicit close decision on 2026-08-24.
-Workstream M remains BLOCKED until an explicit unblocking decision (Workstream L closure
-does not automatically unblock M). See `docs/PM_WORKING_MEMORY.md`.
+**L.8 closure status (historical record).** L.8 was closed as a DECISION (documented
+parity, no recovery), not as a recovery. The L.8 documented-parity decision, L.9/L.12
+detect-and-fail/report behavior, the retained L.17 automated-gate record, and the
+Desktop restart gate satisfied on 2026-08-24 are historical closure records; their
+figures are not current acceptance evidence. Workstream L is closed because its team
+completed it and a final independent review was completed. Current Workstream M status
+is: M.1/M.2/M.3 are approved historical slices; M.3b is planned; M.4 implementation
+exists but is blocked by the CLI-created object-code defect; M.5 is pending. See
+`docs/PM_WORKING_MEMORY.md` §§2–4.
 
 ### 7.1 TSDev.exe parity evidence (2026-08-24)
 

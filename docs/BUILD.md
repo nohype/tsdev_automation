@@ -62,13 +62,17 @@ on your `PATH` (or set the `Python_EXECUTABLE` CMake variable).
 
 ```
 tsdev_automation/
-├── src/            Production source code (8 files)
-│   ├── tsdev_lib.cpp / tsdev_lib.h       orlib20 wrapper engine (RAII API)
-│   ├── orlib_resolver.cpp / orlib_resolver.h   signature-scan resolver layer
-│   ├── com_apartment_guard.cpp / com_apartment_guard.h   STA COM apartment RAII guard (CoInitializeEx/CoUninitialize)
-│   ├── tsdev_cli.cpp                     production CLI (insert/modify/delete/exists/get-source/upsert/batch-insert/batch-modify/batch-delete/batch-upsert/batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir)
-│   └── sigtool.cpp                       signature-verification CLI
-├── tests/          Test files (28 .cpp + 18 .ps1 + 2 .py + 1 .psm1)
+├── src/            Production C++ + Python source (22 tracked files: 8 .cpp + 7 .h + 7 .py)
+│   ├── tsdev_lib.cpp / tsdev_lib.h / tsdev_lib_test_hooks.h   orlib20 wrapper engine and test-only seam
+│   ├── orlib_resolver.cpp / orlib_resolver.h                   signature-scan resolver layer
+│   ├── com_apartment_guard.cpp / com_apartment_guard.h         STA COM apartment RAII guard
+│   ├── persistence_integrity.cpp / persistence_integrity.h     .ell/.xml persistence-integrity validator
+│   ├── create_path_cleanup.cpp / create_path_cleanup.h         create-path cleanup decision helper
+│   ├── delete_disk_cleanup.cpp / delete_disk_cleanup.h         delete-path disk-cleanup decision helper
+│   ├── tsdev_cli.cpp                                           production CLI
+│   ├── sigtool.cpp                                             signature-verification CLI
+│   └── tsdev_automation/                                      Python wrapper package (7 .py files)
+├── tests/          Test/diagnostic files (74 tracked files: 52 .cpp + 18 .ps1 + 2 .py + 1 .psm1 + 1 .dll fixture)
 ├── archive/        Archived experimental probes (27 files, NOT built)
 ├── signatures/     JSON signature data — the single source of truth
 │   ├── v9.50.01.3344.json                per-version signatures + patch sites
@@ -84,15 +88,24 @@ tsdev_automation/
 └── build/          CMake build output (generated)
 ```
 
-### Source files (`src/`)
+The `src/` and `tests/` figures above are the current git-tracked path counts by
+extension; the `tests/` total includes the committed baseline DLL fixture. They
+are repository inventories, not build or test results.
 
-| File                  | Purpose                                                        |
-|-----------------------|---------------------------------------------------------------|
-| `tsdev_lib.cpp/.h`    | RAII wrapper around orlib20.dll: init, lookup, create, save, compile/verify, close, delete, modify. |
-| `orlib_resolver.cpp/.h` | Encapsulates all version-specific orlib20.dll knowledge: loads the DLL, detects the version, resolves internal functions by signature scan, validates and applies patch sites. |
-| `com_apartment_guard.cpp/.h` | RAII guard that initializes STA COM (`CoInitializeEx` with `COINIT_APARTMENTTHREADED`) on construction and balances it with `CoUninitialize` on destruction. Injectable `ComApi` seam for unit testing. Used by `tsdev_lib` to ensure every operation worker thread enters an STA COM apartment before orlib init. |
-| `tsdev_cli.cpp`       | Production CLI exposing `insert`, `modify`, `delete`, `exists`, `get-source`, `upsert`, `batch-insert`, `batch-modify`, `batch-delete`, `batch-upsert`, `batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, `batch-upsert-dir`, and `serve` subcommands. Also includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
-| `sigtool.cpp`         | CLI for verifying signatures against a DLL on disk, validating patch sites, inspecting DLL info, and ad-hoc pattern scanning. |
+### Source files (`src/`, 22 tracked files)
+
+| File                                  | Purpose                                                        |
+|---------------------------------------|---------------------------------------------------------------|
+| `tsdev_lib.cpp/.h`                    | RAII wrapper around orlib20.dll: init, lookup, create, save, compile/verify, close, delete, modify. |
+| `tsdev_lib_test_hooks.h`              | Internal test-only construction seam for injecting COM initialization behavior. |
+| `orlib_resolver.cpp/.h`               | Encapsulates all version-specific orlib20.dll knowledge: loads the DLL, detects the version, resolves internal functions by signature scan, validates and applies patch sites. |
+| `com_apartment_guard.cpp/.h`          | RAII guard that initializes STA COM (`CoInitializeEx` with `COINIT_APARTMENTTHREADED`) on construction and balances it with `CoUninitialize` on destruction. Injectable `ComApi` seam for unit testing. Used by `tsdev_lib` to ensure every operation worker thread enters an STA COM apartment before orlib init. |
+| `persistence_integrity.cpp/.h`        | Shared `.ell`/`.xml` persistence-integrity validator used by insert/modify post-verify checks and its pure unit test. |
+| `create_path_cleanup.cpp/.h`          | Pure create-path partial-entry cleanup ownership decision helper used by the CLI and its unit test. |
+| `delete_disk_cleanup.cpp/.h`          | Pure delete-path disk-cleanup failure decision helper used by `TsDevLib` and its unit test. |
+| `tsdev_cli.cpp`                       | Production CLI exposing `insert`, `modify`, `delete`, `exists`, `get-source`, `upsert`, `batch-insert`, `batch-modify`, `batch-delete`, `batch-upsert`, `batch-insert-dir`, `batch-modify-dir`, `batch-delete-dir`, `batch-upsert-dir`, and `serve` subcommands. Also includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
+| `sigtool.cpp`                         | CLI for verifying signatures against a DLL on disk, validating patch sites, inspecting DLL info, and ad-hoc pattern scanning. |
+| `tsdev_automation/*.py` (7 files)     | Python wrapper package (`__init__`, `__main__`, `_cli`, `_pipe`, `client`, `exceptions`, `results`). |
 
 ## Build instructions
 
@@ -197,62 +210,31 @@ and builds end-to-end with just the commands above.
 
 ### C++ test executables
 
-The test executables are built by the same `cmake --build` command above. Run
-them directly from the build output directory:
-
-```cmd
-build\Release\test_insert.exe
-build\Release\test_insert_tradingapp.exe
-build\Release\test_auto_cleanup.exe
-build\Release\test_delete.exe
-build\Release\test_delete_tradingapp.exe
-build\Release\test_delete_check.exe
-build\Release\test_delete_diag.exe
-build\Release\test_modify.exe
-build\Release\test_modify_tradingapp.exe
-build\Release\test_tradingapp_type.exe
-build\Release\test_path_discovery.exe
-build\Release\test_finalization_lifecycle.exe
-build\Release\test_no_hardcoded_rvas.exe
-build\Release\test_orlib_resolver.exe
-build\Release\test_exists.exe
-build\Release\test_enumerate.exe
-build\Release\test_upsert.exe
-build\Release\test_batch_upsert.exe
-build\Release\test_get_source.exe
-build\Release\test_directory_batch.exe
-build\Release\test_elevation_guard.exe
-build\Release\test_json_serialize.exe
-build\Release\test_serve_dispatch.exe
-build\Release\test_serve_framing.exe
-build\Release\test_crash_handler.exe
-build\Release\test_showme_type.exe
-build\Release\test_com_apartment_guard.exe
-```
+The test executables are built by the same `cmake --build` command above. The
+authoritative ordered C++ unit-test inventory (the full runner command list
+plus the TS/non-TS classification) lives in
+`tests/run_unit_tests.ps1` (`$TestDefinitions`); this BUILD.md does not
+restate that list or its count. `CMakeLists.txt` defines the `test_*`
+executable targets (see the [CMake targets](#cmake-targets) section below);
+two of those targets, `test_reverse_dependent_revalidation` and
+`test_stress_batch`, are manual-only and are not in the PowerShell runner or
+`test_regression`. The inventory is a build/test definition, not a test
+result.
 
 Each test exits `0` on success and non-zero on failure.
 
-**TS dependency:** the integration tests (`test_insert`, `test_insert_tradingapp`,
-`test_auto_cleanup`, `test_delete`, `test_delete_tradingapp`, `test_delete_check`,
-`test_delete_diag`, `test_modify`, `test_modify_tradingapp`, `test_exists`,
-`test_enumerate`, `test_upsert`, `test_batch_upsert`, `test_get_source`,
-`test_directory_batch`) require a TradeStation 9.5 installation
-on the machine — they load the real `orlib20.dll` and exercise the live warehouse.
-`test_path_discovery` and `test_finalization_lifecycle` also require a TradeStation
-install: they construct `TsDevLib`, which loads `orlib20.dll`. The following tests do **not** require a live TradeStation install:
-
-- `test_no_hardcoded_rvas` — static check against the generated signature header.
-- `test_tradingapp_type` — pure unit test for the `TradingApp` enum entry and
-  `getCategory`/`getSubType` helpers (no orlib20 dependency).
-- `test_orlib_resolver` — operates on an in-memory PE image (a copied
-  `orlib20_baseline.dll`); no live TradeStation install needed.
-- `test_elevation_guard` — pure unit test for the `isElevated()` helper and `errorCodeString(11)` (no orlib20 dependency).
-- `test_json_serialize` — pure unit test for `cliResultToJson()` serialization (no orlib20 dependency).
-- `test_serve_dispatch` — pure unit test for `parseServeRequest()` validation logic (no orlib20 dependency).
-- `test_serve_framing` — pure unit test for `writeFramed`/`readFramed` helpers (no orlib20 dependency).
-- `test_crash_handler` — tests the VEH crash handler in both normal mode (exit 0) and `--crash` mode (deliberately triggers an access violation; the VEH catches it and calls `TerminateProcess` with the NT status code). No orlib20 dependency. **Note:** the `--crash` mode test deliberately crashes the process — run it in isolation, not alongside other tests.
-- `test_showme_type` — pure unit test for the `ShowMe` enum entry and `getCategory`/`getSubType` helpers (no orlib20 dependency).
-- `test_com_apartment_guard` — pure unit test for the `ComApartmentGuard` RAII STA COM apartment guard (S_OK/S_FALSE/RPC_E_CHANGED_MODE/E_FAIL paths, exactly-once balancing, constructor-unwind balancing, non-copyable/non-movable contract). Exercises the guard exclusively through the injectable `ComApi` seam with mock function pointers; the real `CoInitializeEx`/`CoUninitialize` are never called (no orlib20 dependency, no real COM apartment state touched).
+**TS dependency:** the TS-dependent integration tests (those that load the
+real `orlib20.dll` and exercise the live warehouse, plus `test_path_discovery`
+and `test_finalization_lifecycle`, which construct `TsDevLib`) require a
+TradeStation 9.5 installation on the machine. The authoritative TS/non-TS
+classification of the unit-test inventory lives in
+`tests/run_unit_tests.ps1` (`$TestDefinitions`); the `-NoTs` switch selects
+the non-TS subset. The non-TS tests are pure unit tests or operate on an
+in-memory PE image (`test_orlib_resolver`) and do not require a live
+TradeStation install. One operational note: `test_crash_handler`'s `--crash`
+mode deliberately triggers an access violation (the VEH catches it and calls
+`TerminateProcess` with the NT status code) — run it in isolation, not
+alongside other tests.
 
 ### Test runner scripts
 
@@ -262,56 +244,56 @@ invokes all sub-suites in a single command; the individual runners are
 documented below for developers who want to run a single sub-suite
 independently.
 
-> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15.**
-
-> **Current-status caveat (Workstream L):** The regression and E2E
-> suites below verify **CLI/library behavior** (process exit codes, warehouse
-> persistence, `.ell` file write, ProgId preservation, compile-error surfacing)
-> — they do **not** verify **Desktop runtime linkability.** The known Unknown
-> link defect means a passing run is **not** production-runtime acceptance:
-> CLI-produced strategies still fail in TradeStation Desktop with "Unknown link
-> error occurred" despite TSDev reporting them VERIFIED. **Workstream L**
-> (Runtime-Link Root-Cause Fix) is not yet CLOSED: L.1–L.3 remain COMPLETE; the
-> L.4/L.5 completion claim was FALSIFIED by persistence and deletion fault
-> injection and is superseded by the L.6–L.15 recovery, which is implemented on
-> branch `workstream-L-recovery` (L.8 BLOCKED — no invented TSDev recovery;
-> L.9 detect-and-fail stale-ELL modify/upsert; L.12 detect-and-report
-> orphan-ELL delete; existence checks are necessary but not sufficient; the
-> `FUN_10011230` persistence bypass is removed). No new Desktop runtime re-gate
-> is claimed without an L.17 result. Workstream M remains BLOCKED until L.17
-> independent final verification — see
-> [`docs/workstream_unknown_link_fix_plan.md`](workstream_unknown_link_fix_plan.md)
-> and the E2E spec at
-> [`docs/E2E_TEST_SPEC.md`](E2E_TEST_SPEC.md). Until Workstream L is closed
-> under L.17, treat a green regression/E2E run as library/CLI acceptance only.
+> **Workstream status:** the authoritative current Workstream L/M status
+> (closure of L, the M.1–M.5 slice states, and the M.4 blocker posture) lives
+> in `AGENTS.md` §"Current state and TODO"; this BUILD.md does not restate it.
+>
+> The L.1–L.17 claims, results, and fault records below are retained for provenance.
+>
+> The regression and E2E suites below verify **CLI/library behavior** (process
+> exit codes, warehouse persistence, `.ell` file write, ProgId preservation, and
+> compile-error surfacing). The historical L.4/L.5 completion claim was
+> falsified by persistence and deletion fault injection; those historical
+> records remain in the linked plan and E2E specification and are not silently
+> rewritten.
+>
+> L-suite scripts support Windows PowerShell 5.1 and `pwsh` 7. Routine
+> `-IncludeRedFaultInjection` runs write L7 evidence to gitignored `tmp\`;
+> only `-UpdateTrackedEvidence` selects the tracked
+> `docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md` file. These rules do not imply
+> a current green run.
 
 #### `tests/run_regression.ps1` — master regression runner
 
-The single-command regression runner orchestrates **all 14 registered
-sub-suites** (13 default; Suite 14 stress opt-in via `-ExtendedStress`)
-— 136 test cases across the case-counting suites — in the order required
-by the B.6 acceptance criteria:
+The single-command regression runner orchestrates all registered sub-suites
+(Suite 14 stress is opt-in via `-ExtendedStress`). The authoritative suite
+list, ordering, and per-suite case counts live in
+`tests/run_regression.ps1`; the suite names below are descriptive orientation
+only and do not restate those counts. Aggregate historical result counts are
+not current acceptance evidence. Suites run in the order required by the B.6
+acceptance criteria:
 
-1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — 12 sigtool CLI tests
+1. **sigtool verify gate** (`tests/test_sigtool.ps1`) — sigtool CLI tests
    against the baseline DLL. Fast; no live TradeStation install needed.
-2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — 33 C++ test executables
-   (or 14 with `-NoTs`). Medium duration.
-3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — 34 E2E CLI test cases per
+2. **C++ unit tests** (`tests/run_unit_tests.ps1`) — the C++ unit-test
+   inventory from `tests/run_unit_tests.ps1` (or its `-NoTs` non-TS subset).
+   Medium duration; this is an inventory, not a result.
+3. **E2E CLI tests** (`tests/run_e2e_tests.ps1`) — E2E CLI test cases per
    `docs/E2E_TEST_SPEC.md`. Slowest; creates and deletes real warehouse entries.
-4. **exists tests** (`tests/test_exists.ps1`) — 5 exists CLI test cases.
-5. **batch-stdin tests** (`tests/test_batch_stdin.ps1`) — 8 inline batch test
+4. **exists tests** (`tests/test_exists.ps1`) — exists CLI test cases.
+5. **batch-stdin tests** (`tests/test_batch_stdin.ps1`) — inline batch test
    cases via stdin pipe.
-6. **upsert tests** (`tests/test_upsert.ps1`) — 9 upsert CLI test cases.
-7. **get-source tests** (`tests/test_get_source.ps1`) — 7 get-source CLI test
+6. **upsert tests** (`tests/test_upsert.ps1`) — upsert CLI test cases.
+7. **get-source tests** (`tests/test_get_source.ps1`) — get-source CLI test
    cases.
-8. **exists-ci tests** (`tests/test_exists_ci.ps1`) — 9 case-insensitive exists
+8. **exists-ci tests** (`tests/test_exists_ci.ps1`) — case-insensitive exists
    CLI test cases.
-9. **batch-upsert tests** (`tests/test_batch_upsert.ps1`) — 5 batch-upsert CLI test cases (manifest file + --batch-stdin modes, mixed insert/modify paths, ProgId preservation, compile-error, empty manifest, no-args).
-10. **directory-batch tests** (`tests/test_directory_batch.ps1`) — 9 directory-batch CLI test cases (DB1–DB9: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir with ProgId preservation, `-t` extension override, empty dir, unknown type, non-existent dir, missing `-t` arg). Requires live TS; skipped under `-NoTs` or `-SkipDirectoryBatch`.
-11. **serve E2E tests** (`tests/run_serve_e2e.ps1` → `tests/test_serve_e2e.py`) — 2 serve-mode end-to-end pytest cases. Requires live TS AND an elevated parent shell; skipped under `-NoTs` or `-SkipServeE2e`.
-12. **ShowMe E2E tests** (`tests/test_showme_e2e.ps1`) — 9 ShowMe-component E2E test cases (SM1–SM9). Requires live TS; skipped under `-NoTs` or `-SkipShowMeE2e`.
-13. **Unknown Link regression** (`tests/test_unknown_link_regression.ps1`) — 253 assertions across all 5 component types (TVS-L.1+L.4+L.5: artifact invariants, mutations, semantic errors). Requires live TS; skipped under `-NoTs`. Mandatory in normal mode (no dedicated skip flag).
-14. **Unknown Link stress** (`tests/test_unknown_link_stress.ps1`) — 600 insert/delete cycles (120 per type × 5 types). Requires live TS; skipped under `-NoTs` or when `-ExtendedStress` is not set. Opt-in only — not run by default.
+9. **batch-upsert tests** (`tests/test_batch_upsert.ps1`) — batch-upsert CLI test cases (manifest file + --batch-stdin modes, mixed insert/modify paths, ProgId preservation, compile-error, empty manifest, no-args).
+10. **directory-batch E2E tests** (`tests/test_directory_batch.ps1`) — directory-batch CLI test cases (DB1–DB9: batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir with ProgId preservation, `-t` extension override, empty dir, unknown type, non-existent dir, missing `-t` arg). This PowerShell suite drives live warehouse operations and requires live TS; it is distinct from the non-TS C++ `test_directory_batch` parser unit test. Skipped under `-NoTs` or `-SkipDirectoryBatch`.
+11. **serve E2E tests** (`tests/run_serve_e2e.ps1` → `tests/test_serve_e2e.py`) — three default tests plus one opt-in stress test gated by `TS_SERVE_STRESS=1`. Requires live TS AND an elevated parent shell; skipped under `-NoTs` or `-SkipServeE2e`.
+12. **ShowMe E2E tests** (`tests/test_showme_e2e.ps1`) — ShowMe-component E2E test cases (SM1–SM9). Requires live TS; skipped under `-NoTs` or `-SkipShowMeE2e`.
+13. **Unknown Link regression** (`tests/test_unknown_link_regression.ps1`) — artifact invariants, mutations, and semantic-error checks across all 5 component types (TVS-L.1+L.4+L.5). Historical aggregate counts are not current acceptance evidence. Requires live TS; skipped under `-NoTs`. Mandatory in normal mode (no dedicated skip flag).
+14. **Unknown Link stress** (`tests/test_unknown_link_stress.ps1`) — insert/delete stress cycles across the 5 types. Requires live TS; skipped under `-NoTs` or when `-ExtendedStress` is not set. Opt-in only — not run by default.
 
 Each sub-suite runs in its own child PowerShell process so a crash or hang in
 one suite cannot affect the others. After all suites run, a grand summary table
@@ -321,7 +303,7 @@ is printed and a single aggregated exit code is returned.
 |-----------------|---------|------------------|--------------------------------------------------------------------------|
 | `$BuildDir`     | string  | `build\Release`  | Directory containing the built executables; passed to `run_unit_tests`. |
 | `$TsPath`       | string  | (none)           | TradeStation install dir; passed to E2E runner as `-TsPath`.            |
-| `-NoTs`         | switch  | —                | Skip all TS-dependent suites (3–14); pass `-NoTs` to unit tests (14 non-TS tests only); still run sigtool. |
+| `-NoTs`         | switch  | —                | Skip all TS-dependent suites (3–14); pass `-NoTs` to unit tests (non-TS subset only); still run sigtool. |
 | `-SkipSigtool`  | switch  | —                | Skip the sigtool verify gate suite.                                      |
 | `-SkipUnit`     | switch  | —                | Skip the C++ unit test suite.                                            |
 | `-SkipE2e`      | switch  | —                | Skip the E2E CLI test suite.                                             |
@@ -334,7 +316,7 @@ is printed and a single aggregated exit code is returned.
 | `-SkipDirectoryBatch` | switch | —           | Skip the directory-batch E2E test suite.                                 |
 | `-SkipServeE2e` | switch  | —                | Skip the serve E2E test suite.                                           |
 | `-SkipShowMeE2e` | switch | —                | Skip the ShowMe E2E test suite.                                          |
-| `-ExtendedStress` | switch | —              | Opt-in for the Unknown Link stress suite (Suite 14, 600 cycles). When set, Suite 14 runs after Suite 13; otherwise it is skipped without affecting the overall result. Requires live TS. |
+| `-ExtendedStress` | switch | —              | Opt-in for the Unknown Link stress suite (Suite 14). When set, Suite 14 runs after Suite 13; otherwise it is skipped without affecting the overall result. Requires live TS. |
 | `-Verbose`      | switch  | —                | Passed through to all sub-scripts (full output for every test).         |
 
 Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
@@ -355,48 +337,62 @@ Exit codes: `0` = all executed suites passed, `1` = one or more suites failed
   [Interactive baseline DLL prompting](#interactive-baseline-dll-prompting)
   below). See [Updating the baseline DLL](#updating-the-baseline-dll) below
   for how to replace it when a new TradeStation version is released.
-- No TradeStation processes/services running (for the TS-dependent suites 3–14).
+- For any run that executes a suite invoking `tsdev_cli.exe` directly, start
+  the runner from an elevated administrator process. Child PowerShell
+  processes inherit that token. The default `requireAdministrator` manifest
+  uses normal Windows UAC/manifest handling; a non-elevated direct launch that
+  cannot be elevated may fail at process creation with
+  `ERROR_ELEVATION_REQUIRED` (Windows error 740) before the CLI starts. An
+  `asInvoker` build reaches the runtime guard and returns exit code **11**
+  (`not_elevated`).
+- No general TradeStation Desktop/TSDev running-state prerequisite applies;
+  any suite that explicitly exercises Desktop state documents that state in its
+  own procedure.
 
 ```powershell
-# Full run — all 14 registered suites (13 default; Suite 14 stress opt-in via -ExtendedStress).
-# 142 test cases across case-counting suites: sigtool 12 + 33 unit + 34 E2E + 5 exists + 8 batch-stdin + 9 upsert + 7 get-source + 9 exists-ci + 5 batch-upsert + 9 directory-batch + 2 serve E2E + 9 ShowMe E2E; plus Suite 13 (253 assertions) and Suite 14 (600 cycles):
+# Full run — all registered suites (Suite 14 stress opt-in via -ExtendedStress).
+# Per-suite definitions above are descriptive only; this command does not imply a current green result:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 
-# Full run including the opt-in stress suite (Suite 14, 600 cycles):
+# Full run including the opt-in stress suite (Suite 14):
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -ExtendedStress
 
-# No-TradeStation run — sigtool + 14 non-TS unit tests; skips all TS-dependent suites:
+# No-TradeStation run — sigtool + the non-TS unit-test subset; skips all TS-dependent suites:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
 
 # Non-default TradeStation install path:
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -TsPath "D:\TradeStation 9.5"
 
 # Selective runs:
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all 27 unit tests + sub-suites 4–14
+powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e   # sigtool + all unit tests + sub-suites 4–14
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipUnit  # sigtool + E2E + sub-suites 4–14 (no C++ unit tests)
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose   # full output for every test
 ```
 
 #### `tests/run_unit_tests.ps1` — C++ unit test runner
 
-Runs all 27 C++ test executables in sequence (not in parallel — the shared
-warehouse file `MWRKArea.wrk` is not process-safe), captures exit codes, measures
-per-test duration, and returns a single aggregated exit code.
+Runs the C++ unit-test inventory defined by the runner in sequence (not in
+parallel — the shared warehouse file `MWRKArea.wrk` is not process-safe), captures
+exit codes, measures per-test duration, and returns a single aggregated exit code.
+The authoritative inventory (ordered list and TS/non-TS classification) lives in
+`tests/run_unit_tests.ps1` (`$TestDefinitions`); the count is an inventory, not a
+result. The CMake `test_regression` dependency target and the PowerShell runner
+use the same unit-test inventory.
 
 | Parameter    | Type    | Default          | Description                                                  |
 |--------------|---------|------------------|--------------------------------------------------------------|
 | `$BuildDir`  | string  | `build\Release`  | Directory containing the test executables.                   |
-| `-NoTs`      | switch  | —                | Run only the 14 non-TS-dependent tests; skip the rest.        |
+| `-NoTs`      | switch  | —                | Run only the non-TS-dependent subset; skip the rest.          |
 | `-Verbose`   | switch  | —                | Print full stdout/stderr for every test, not just failures.  |
 
 Exit codes: `0` = all executed tests passed, `1` = one or more failed (or the
 build directory is missing).
 
 ```powershell
-# Run all 33 tests:
+# Run all unit tests:
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
 
-# Run only the 14 non-TS tests (no TradeStation install needed):
+# Run only the non-TS tests (no TradeStation install needed):
 powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -NoTs
 
 # Run all tests with full output:
@@ -405,12 +401,12 @@ powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1 -Verbose
 
 #### `tests/run_e2e_tests.ps1` — E2E CLI test runner
 
-Implements the 34-test-case E2E CLI test specification in
+Implements the E2E CLI test specification in
 `docs/E2E_TEST_SPEC.md`, covering 4 of the 5 supported component types
-(Strategy, Indicator, Function, TradingApp) across three parts: Part A (16 tests,
-insert/modify/delete lifecycle), Part B (8 tests, type-specific semantic
-errors), Part C (10 tests, general errors). This runner contains **no ShowMe
-cases** — ShowMe end-to-end coverage lives in the separate
+(Strategy, Indicator, Function, TradingApp) across its multi-part structure.
+The authoritative case list and part breakdown (case counts per part) live in
+`docs/E2E_TEST_SPEC.md`; this BUILD.md does not restate them. This runner
+contains **no ShowMe cases** — ShowMe end-to-end coverage lives in the separate
 `tests/test_showme_e2e.ps1` script (cases SM1–SM9), which the master
 regression runner (`tests/run_regression.ps1`) executes as Suite 12. Each test
 writes ASCII-encoded
@@ -425,12 +421,18 @@ re-deletes every test name and verifies no orphaned `.ell` files remain.
 | `$TsPath`   | string  | (none)                                    | TradeStation install dir, passed to the CLI as `--ts-path <dir>`. |
 | `-Verbose`  | switch  | —                                         | Print full CLI output for every test, not just failures.          |
 
-Exit codes: `0` = all 34 tests passed, `1` = one or more failed (or a
+Exit codes: `0` = all E2E tests passed, `1` = one or more failed (or a
 prerequisite was not met). Requires a TradeStation 9.5 install (or `--ts-path`
-provided) and no TradeStation processes/services running.
+provided); Desktop/TSDev running state is not a general prerequisite. The
+invoking PowerShell process must be elevated because this runner invokes the
+default `requireAdministrator` `tsdev_cli.exe` directly. A non-elevated launch
+may fail during normal Windows UAC/manifest handling with
+`ERROR_ELEVATION_REQUIRED` (Windows error 740) before the CLI starts; an
+`asInvoker` build reaches the runtime guard and returns exit code **11**
+(`not_elevated`).
 
 ```powershell
-# Run all 34 E2E tests:
+# Run all E2E tests:
 powershell -ExecutionPolicy Bypass -File tests\run_e2e_tests.ps1
 
 # Use a non-default TradeStation install path:
@@ -443,9 +445,10 @@ powershell -ExecutionPolicy Bypass -File tests\run_e2e_tests.ps1 -Verbose
 ### sigtool test script
 
 A PowerShell-based test for `sigtool` lives at `tests/test_sigtool.ps1`. It
-exercises every `sigtool` subcommand (12 test cases) against the baseline DLL
-and the committed `v9.50.01.3344` signature set. Run it from the project root
-after building:
+exercises every `sigtool` subcommand against the baseline DLL
+and the committed `v9.50.01.3344` signature set. The authoritative case count
+lives in `tests/run_regression.ps1` (sigtool verify gate suite). Run it from
+the project root after building:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\test_sigtool.ps1
@@ -461,7 +464,7 @@ installation** (see
 below). See [Updating the baseline DLL](#updating-the-baseline-dll) below for
 how to replace it when a new TradeStation version is released.
 
-Exit codes: `0` = all 12 tests passed, `1` = at least one failed (or a
+Exit codes: `0` = all sigtool tests passed, `1` = at least one failed (or a
 prerequisite fixture was missing).
 
 ### Interactive baseline DLL prompting
@@ -515,9 +518,17 @@ cannot be found), the dependent tests fail loudly:
 It loads a signature set from the committed JSON, scans the DLL's `.text`
 section, and reports whether each target matched uniquely. It also supports
 patch-site validation, DLL info inspection, ad-hoc pattern scanning, and
-version-manifest lookup. Run `sigtool --help` for the full command reference.
+version-manifest lookup. `sigtool` has no `--help` flag; its supported forms are
+printed by `PrintUsage()` in `src/sigtool.cpp` when no subcommand or an invalid
+or incomplete command is supplied.
 
 ## CMake targets
+
+This is the current CMake target-definition inventory, not a build or test
+result. The authoritative `test_*` target list lives in `CMakeLists.txt`; the
+`test_regression` target's build dependencies mirror the unit-test inventory
+defined by `tests/run_unit_tests.ps1`. Manual-only test and diagnostic
+targets are marked below.
 
 | Target                          | Type     | Description                                                        |
 |---------------------------------|----------|--------------------------------------------------------------------|
@@ -526,7 +537,7 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `tsdev_lib`                     | library  | Static library wrapping the orlib20 operation set (links `orlib_resolver`). Explicitly links `Ole32` for `CoInitializeEx`/`CoUninitialize` (used by `ComApartmentGuard` to enter an STA COM apartment on each operation worker thread before orlib init). |
 | `tsdev_cli`                     | exec     | Production CLI (`insert`/`modify`/`delete`/`exists`/`get-source`/`upsert`/`batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert`/`batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir`/`serve`). Includes VEH crash handler, elevation guard, serve dispatch, and named pipe server. |
 | `sigtool`                       | exec     | Signature-verification CLI.                                        |
-| `test_regression`               | custom   | Build-only dependency target: builds all 33 test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
+| `test_regression`               | custom   | Build-only dependency target: builds the unit-test executables + `tsdev_cli` + `sigtool`. Test execution is performed by `tests/run_regression.ps1`. |
 | `test_insert`                   | exec     | INSERT integration test (requires TS).                            |
 | `test_insert_tradingapp`        | exec     | TradingApp INSERT integration test (requires TS).                 |
 | `test_auto_cleanup`             | exec     | Auto-cleanup of partial warehouse entry on compile failure (requires TS — constructs TsDevLib). |
@@ -546,7 +557,10 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `test_upsert`                   | exec     | UPSERT integration test — insert-or-update by name + type (requires TS). |
 | `test_batch_upsert`             | exec     | BATCH-UPSERT integration test — multi-item upsert on shared TsDevLib, single closeWarehouse, ProgId preservation (requires TS). |
 | `test_get_source`               | exec     | GET-SOURCE integration test — retrieve EL source by name + type (requires TS). |
-| `test_directory_batch`          | exec     | DIRECTORY-BATCH unit test — parseDirectory() filesystem logic: extension filtering, stem extraction, empty dir, subdirectory skipping, source reading (requires TS — constructs TsDevLib via included tsdev_cli.cpp). |
+| `test_directory_batch`          | exec     | DIRECTORY-BATCH pure parser/filesystem unit test — parseDirectory() logic: extension filtering, stem extraction, empty dir, subdirectory skipping, source reading (no live TS, no TsDevLib construction, no orlib20 access). |
+| `test_compiler_layout`          | exec     | M.1 compiler-object layout integration test (requires TS). |
+| `test_save_module`              | exec     | M.2 SaveModule/CELProperties metadata integration test (requires TS). |
+| `test_0x40a_notification`      | exec     | M.3 post-success `0x40A` notification integration test (requires TS). |
 | `test_elevation_guard`          | exec     | Elevation guard unit test — isElevated() helper + errorCodeString(11) (no TS dependency). |
 | `test_json_serialize`           | exec     | JSON serialization unit test — cliResultToJson() (no TS dependency). |
 | `test_serve_dispatch`           | exec     | Serve dispatch unit test — parseServeRequest() validation (no TS dependency). |
@@ -554,15 +568,36 @@ version-manifest lookup. Run `sigtool --help` for the full command reference.
 | `test_crash_handler`            | exec     | VEH crash handler test — normal mode (exit 0) + --crash mode (deliberate access violation, VEH catches + TerminateProcess). No TS dependency. Run --crash mode in isolation. |
 | `test_showme_type`              | exec     | ShowMe ComponentType unit test — enum entry, getCategory/getSubType helpers (no TS dependency). |
 | `test_com_apartment_guard`      | exec     | ComApartmentGuard RAII STA COM guard unit test — S_OK/S_FALSE/RPC_E_CHANGED_MODE/E_FAIL paths, exactly-once balancing, constructor-unwind balancing, non-copyable/non-movable contract (no TS dependency; uses injectable ComApi seam with mocks, never calls real CoInitializeEx/CoUninitialize). |
+| `test_tsdev_com_init_seam`      | exec     | Pure unit test for the test-only `TsDevLib` COM-initialization seam (no live TS dependency). |
+| `test_persistence_integrity`    | exec     | Pure unit test for `.ell`/`.xml` persistence-integrity classification (no live TS dependency). |
+| `test_create_path_cleanup`      | exec     | Pure unit test for create-path cleanup ownership decisions (no live TS dependency). |
+| `test_delete_disk_cleanup`      | exec     | Pure unit test for delete-path disk-cleanup failure decisions (no live TS dependency). |
+| `test_reverse_dependent_revalidation` | exec | Manual/blocked TVS-M.4 reverse-dependent revalidation integration test; requires TS + admin and is not in `test_regression` or `run_regression.ps1`. |
 | `test_stress_batch`             | exec     | Opt-in batch feasibility stress test (TVS-D.1) — N sequential insert+compile+verify ops then delete all N on ONE TsDevLib instance/worker thread (`STRESS_BATCH_N` env var, default 600). Not run by `run_regression.ps1`; build/run explicitly via `--target test_stress_batch`. Requires TS + admin. |
+
+CMake also defines these 16 manual M.4 diagnostic executable targets. They are
+historical/provenance probes, require TradeStation, and are not dependencies of
+`test_regression` or suites run by `run_regression.ps1`:
+
+`diag_m4_enum_speed`, `diag_m4_deps`, `diag_m4_deps2`, `diag_m4_raw_rec`,
+`diag_m4_ord69`, `diag_m4_fwd_deps`, `diag_m4_subtype`,
+`diag_m4_existing_link`, `diag_m4_deplist_dump`, `diag_m4_reverse_enum`,
+`diag_m4_ord71`, `diag_m4_linker`, `diag_m4_frida_linker`,
+`diag_m4_linker_internals`, `diag_m4_objcode`, `diag_m4_whserver`.
+
+CMake also defines two manual-only `test_*` targets that are not part of the
+`test_regression` build dependency set or the PowerShell runner:
+`test_reverse_dependent_revalidation` and `test_stress_batch`. The full
+`test_*` target list lives in `CMakeLists.txt`; the diagnostic executables
+above are separate from the `test_*` targets.
 
 ## Verification (confirm the binary is 32-bit)
 
 ### Run the CLI
 
-```
-> build\Release\tsdev_cli.exe --help
-```
+`tsdev_cli.exe` has no `--help` flag. Its supported invocation forms are
+printed by `printUsage()` in `src/tsdev_cli.cpp` when arguments are missing or
+invalid; use those source-backed forms above when invoking the CLI.
 
 ### Confirm the PE header (dumpbin)
 
@@ -613,20 +648,26 @@ to be updated:
 The CMake option `TSDEV_REQUIRE_ADMIN` (default **ON**) controls whether
 **all TS-accessing executables** require administrator privileges to start.
 This covers `tsdev_cli.exe` plus the TS-dependent test executables that
-load `orlib20.dll`. The 14 non-TS unit tests
-(`test_no_hardcoded_rvas`, `test_tradingapp_type`, `test_orlib_resolver`,
-`test_elevation_guard`, `test_json_serialize`, `test_serve_dispatch`,
-`test_serve_framing`, `test_crash_handler`, `test_showme_type`,
-`test_com_apartment_guard`) and
-`sigtool` are excluded — they do not access the TSDev Library and must run
-non-elevated in CI.
+load `orlib20.dll`. Every direct `tsdev_cli.exe` subcommand, including
+`serve`, therefore requires an elevated administrator process to execute. On
+the default `requireAdministrator` build, a non-elevated launch follows normal
+Windows UAC/manifest handling and may fail with
+`ERROR_ELEVATION_REQUIRED` (Windows error 740) before the CLI reaches its
+runtime guard. An `asInvoker` build reaches that guard without an elevated
+process and returns exit code **11** (`not_elevated`). The non-TS unit tests
+(see the `-NoTs` subset in `tests/run_unit_tests.ps1` for the authoritative
+list) and `sigtool` are excluded — they do not access the TSDev Library and
+must run non-elevated in CI.
 
 - **When ON (default):** each TS-accessing executable embeds
   `requestedExecutionLevel="requireAdministrator"` in its application manifest.
   Windows refuses to start them without an elevated token.
-- **When OFF:** the manifests default to `asInvoker` (no elevation
-  requirement). Pass `-DTSDEV_REQUIRE_ADMIN=OFF` at configure time to
-  produce a non-elevated build variant:
+- **When OFF:** the manifests default to `asInvoker`, removing the automatic
+  manifest elevation prompt for development/testing. The direct `tsdev_cli`
+  runtime guard still requires an elevated process and returns exit 11 when it
+  executes non-elevated; this option does not change the direct-CLI contract.
+  Pass `-DTSDEV_REQUIRE_ADMIN=OFF` at configure time to produce an asInvoker
+  build variant:
   ```cmd
   cmake -S . -B build -A Win32 -DTSDEV_REQUIRE_ADMIN=OFF
   ```
@@ -642,7 +683,7 @@ spawned by that parent inherit the elevated token silently, so there are **no
 per-invocation UAC prompts**. You get exactly one UAC prompt per session (to
 elevate the parent), then silent inheritance for every CLI child.
 
-**CI:** CI builds with the default ON. The 14 non-TS unit tests and `sigtool`
+**CI:** CI builds with the default ON. The non-TS unit tests and `sigtool`
 are excluded from the admin manifest (they do not access the TSDev Library),
 so they run non-elevated in CI. Non-e2e Python tests mock `subprocess.run`, so
 CI is unaffected by the elevation requirement.
@@ -668,6 +709,15 @@ request is received.
 ```
 tsdev_cli serve [--serve-pipe-file <path>]
 ```
+
+A direct `tsdev_cli serve` invocation must run from an elevated administrator
+process. On the default `requireAdministrator` build, a non-elevated launch
+follows normal Windows UAC/manifest handling and may fail with
+`ERROR_ELEVATION_REQUIRED` (Windows error 740) before the CLI starts. An
+`asInvoker` build that reaches the runtime guard returns exit code **11**
+(`not_elevated`). This is distinct from Python `TsDevClient(use_serve=True)`,
+where a non-elevated Python process starts a separate elevated broker via
+`ShellExecuteExW`/`runas`.
 
 - **Pipe name:** `\\.\pipe\tsdev_cli_<PID>` where `<PID>` is the broker's
   process ID (unique per broker instance). The broker writes the full pipe
@@ -741,13 +791,21 @@ request and shuts down gracefully.
 
 ### Running the serve E2E test
 
-The serve-mode end-to-end test is `tests/run_serve_e2e.ps1`, which drives
-`tests/test_serve_e2e.py` (2 pytest cases). It **must be run from an elevated
-PowerShell session** — the script launches pytest unelevated via Task
-Scheduler (with `-RunLevel Limited`) so the test exercises the real
-non-elevated → broker auto-start path. It temporarily sets
-`ConsentPromptBehaviorAdmin=0` (auto-elevate, no UAC prompt) so the broker
-auto-start is silent, and restores the original value in a `finally` block.
+The serve-mode end-to-end suite is `tests/run_serve_e2e.ps1`, which drives
+`tests/test_serve_e2e.py` (three default tests plus one opt-in stress test gated
+by `TS_SERVE_STRESS=1`). It **must be run from an elevated PowerShell session**
+— the script launches pytest unelevated via Task Scheduler (with
+`-RunLevel Limited`) so the tests exercise the real non-elevated → broker
+auto-start path. The runner captures stdout/stderr for display, but requires
+that capture to be present and readable and determines status only from the
+child pytest exit-code file after confirmed task completion and a matching
+`LastTaskResult`; output text cannot establish success. Timeout and task errors
+fail closed. If the task remains `Running`/`Queued` or its state cannot be
+queried, the runner leaves the uniquely named task and all run artifacts for
+manual recovery. It unregisters only after a confirmed terminal state and
+successful artifact deletion; task or file cleanup failures are surfaced and
+prevent success. The broker's elevation request is handled through ordinary
+Windows UAC consent.
 
 ```powershell
 # From an ELEVATED PowerShell session:
@@ -773,11 +831,13 @@ and on version tag pushes (`v*`).
 
 - Sets up uv + Python 3.14, configures CMake (Win32), and builds all targets
   (Release).
-- Runs the regression suite in `-NoTs` mode (sigtool + 14 non-TradeStation
-  unit tests).
-- Runs non-e2e Python tests (`pytest -m "not e2e"`; pytest collects 154 tests,
-  of which the 15 e2e-marked tests are deselected without a live TradeStation
-  install, so 139 mocked tests run).
+- Runs the regression suite in `-NoTs` mode (sigtool + the non-TS unit-test
+  subset).
+- Runs non-e2e Python tests with `pytest -m "not e2e"`. The recorded pytest
+  baseline is **164 collected / 148 selected / 16 E2E deselected**; this is a
+  documented baseline, not a current execution result. A separate
+  historical/static source count for `tests/test_tsdev_client.py` records
+  **164 `def test_` methods**. This documentation update did not run pytest.
 - Uploads the assembled `dist/` bundle contents as a workflow artifact named
   `tsdev-automation-bundle` (`actions/upload-artifact` zips them once).
 

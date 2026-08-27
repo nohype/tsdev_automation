@@ -1,13 +1,15 @@
 // test_stress_batch.cpp
 //
-// TVS-D.1: Stress test for batch feasibility (TDD red-green gating test).
+// TVS-D.1: Stress test for batch feasibility (historical TDD transition; the
+// batch CLI it originally de-risked is implemented).
 // TVS-L.15: Extended with single-process resource-growth sampling and a
 //           mid-run compile-failure + recovery on the SAME TsDevLib.
 //
 // Validates that ONE TsDevLib instance (constructed once, in ONE process, on
 // ONE 64 MB-stack worker thread) can perform N sequential insert+compile+verify
 // operations without degradation, then delete all N and leave a clean
-// warehouse. This de-risks the batch CLI mode (TVS-D.3) BEFORE building it.
+// warehouse. This exercises the shared one-instance behavior used by the batch
+// CLI mode (TVS-D.3).
 //
 // TVS-L.15 additions (single-process long-lived leak detection — the
 // complement to tests/test_unknown_link_stress.ps1, which is repeated-instance
@@ -99,7 +101,9 @@ const char* kPrefix = "StressBatch_";
 const ComponentType kType = ComponentType::Strategy;
 
 // Minimal valid EasyLanguage strategy source (confirmed to compile, exit 0).
-// The leading { name } comment follows TSDev convention and aids traceability.
+// The generated source includes a `{ name }` header as arbitrary source content,
+// not metadata. The item name, type, and ProgId come from the test/API inputs
+// and warehouse records.
 const char* kSourceBody =
     "Inputs: Length(10);\r\n"
     "If Close > Average(Close, Length) Then Buy next bar at Market;\r\n";
@@ -134,7 +138,8 @@ std::string makeName(int i, int n) {
     return std::string(buf);
 }
 
-// Build the full source for a given name (comment header + body).
+// Build the full source for a given name. The brace-delimited header is
+// arbitrary source content, not metadata.
 std::string makeSource(const std::string& name) {
     std::string s = "{ ";
     s += name;

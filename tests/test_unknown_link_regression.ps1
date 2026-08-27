@@ -1,20 +1,19 @@
 <#
 .SYNOPSIS
-    Opt-in desired-state E2E harness for the Unknown Link defect
+    Desired-state E2E harness for the Unknown Link defect
     (TVS-L.1 + TVS-L.4 + TVS-L.5 + TVS-L.6 + TVS-L.7) covering all 5
     supported component types: Strategy, Indicator, Function, TradingApp,
     ShowMe. TVS-L.7 (read-only-ELL fault injection) is OPT-IN via
-    -IncludeRedFaultInjection and is NOT registered in the always-green
+    -IncludeRedFaultInjection and is NOT registered in the default regression
     suite (tests/run_regression.ps1 invokes this script without that
     switch).
 
 .DESCRIPTION
-    This is the RED regression/acceptance harness for Workstream L (Unknown
-    Link Defect Fix) extended to all supported component types. It is an
-    OPT-IN test: it is NOT registered in tests/run_regression.ps1 and is
-    invoked directly. It exists to prove that today's production CLI does
-    NOT complete the original finalization path, while explicitly
-    distinguishing:
+    This harness retains the historical RED baseline and exercises the
+    Workstream L artifact and fault-injection checks across all supported
+    component types. The L7 read-only-ELL fault-injection cases are opt-in;
+    the normal L1/L4/L5/L6 cases are invoked by tests/run_regression.ps1.
+    It explicitly distinguishes:
 
       * XML evidence  -- a completion marker / debugger source-map artifact.
                          Presence of <prefix><ProgId>.xml with the expected
@@ -23,23 +22,23 @@
       * Runtime linkability -- what TradeStation Desktop actually links at
                          runtime. This harness does NOT assert runtime
                          linkability and does NOT substitute a fake runtime
-                         proxy. The existing durable user/runtime evidence
-                         (Strategies fail in Desktop with "Unknown link error
-                         occurred") is the L.1 runtime-failure baseline and is
-                         recorded separately in
+                         proxy. The durable user/runtime evidence that
+                         Strategies failed in Desktop with "Unknown link error
+                         occurred" is a historical L.1 runtime-failure baseline
+                         and is recorded separately in
                          docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md.
 
     Test flow (per supported component type):
       1. Generate a unique name (TS_AUTO_L1_<TYPE>_<timestamp>).
       2. Insert a minimal valid component through the production CLI with
          --json. Parse the ProgId from the JSON output.
-      3. Desired-state assertions (EXPECTED TO FAIL on current pre-L.3 code,
-         which is the RED baseline):
+      3. Desired-state assertions:
          a. ELL exists at <MyWork>\Bin\<prefix><ProgId>.ell and is fresh
             (mtime after the insert operation).
          b. XML exists at <MyWork>\Bin\<prefix><ProgId>.xml and is fresh.
-            Current code is EXPECTED TO FAIL here because the bypass skips
-            SymWriter::Save.
+            The pre-L.3 RED baseline recorded XML absence because the bypass
+            skipped SymWriter::Save; that is historical, not current expected
+            behavior.
          c. Parse the XML as
             <symbols file="<prefix><ProgId>" version="{GUID}"> and extract
             the GUID string.
@@ -51,7 +50,8 @@
               Data3 (2 bytes): little-endian WORD
               Data4 (8 bytes): big-endian (as-is)
             Do NOT use "last 16 bytes" -- search the entire ELL. See
-            tmp/com_nopatch_guid_analysis.json for the authoritative analysis.
+            the historical/transient tmp/com_nopatch_guid_analysis.json for the
+           recorded analysis (the file is not tracked and may be unavailable).
          e. Source round-trips: tsdev_cli get-source <type> <name> --json
             returns source matching the inserted source unchanged.
       4. Cleanup (MANDATORY, even after assertion failure): try/finally
@@ -65,11 +65,11 @@
     an Indicator).
 
     Output: PASS/FAIL per assertion, a summary table, and a final exit code
-    (0 = all assertions passed, nonzero = one or more failed). On current
-    pre-L.3 code the harness is EXPECTED to exit nonzero (the XML/GUID
-    assertions fail because the bypass skips SymWriter::Save). That nonzero
-    exit is the recorded RED baseline. L.3 turns this GREEN and registers it
-    in tests/run_regression.ps1.
+    (0 = all assertions passed, nonzero = one or more failed). The pre-L.3
+    nonzero run is retained as the historical RED baseline. The current
+    default regression runner invokes the normal L1/L4/L5/L6 cases; the L7
+    fault-injection cases remain opt-in via -IncludeRedFaultInjection. A run
+    result is not implied by this header.
 
     IMPORTANT: XML evidence is NOT runtime acceptance. A passing XML/GUID
     assertion proves the original finalization path ran; it does NOT prove
@@ -81,30 +81,33 @@
 
 .PARAMETER TsPath
     Optional. TradeStation install directory passed through to the CLI as
-    "--ts-path <dir>" BEFORE the subcommand. When supplied, the MyWork\Bin
-    directory used for artifact checks is derived as <TsPath>\MyWork\Bin.
-    When omitted, the default install path
-    "C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin" is used.
+    "--ts-path <dir>" BEFORE each subcommand. The MyWork\Bin directory used
+    for artifact checks is always derived as <effective TsPath>\MyWork\Bin.
+    When omitted, the existing default install root
+    "C:\Program Files (x86)\TradeStation 9.5" is selected and passed explicitly.
 
 .PARAMETER BinPath
-    Optional. Explicit override for the MyWork\Bin directory used for .ell
-    and .xml artifact checks. Use this only if the CLI auto-discovers a
-    different TS root than the default and --ts-path is not sufficient.
+    Compatibility parameter. If supplied, it must resolve exactly to the
+    derived <effective TsPath>\MyWork\Bin path. It cannot select a separate
+    artifact directory; omit it unless it names that canonical path.
 
 .PARAMETER Verbose
     Switch. When set, print full CLI output for every step.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\test_unknown_link_regression.ps1
-    Runs the opt-in RED baseline harness with the default CLI path. Must be
-    run from an elevated (administrator) terminal.
+    Runs the normal L1/L4/L5/L6 harness with the default CLI path. The direct
+    CLI requires an elevated (administrator) process; L7 fault injection is
+    opt-in via -IncludeRedFaultInjection.
 
 .NOTES
     Exit codes (returned by this script):
-      0 = all desired-state assertions passed (GREEN -- expected only after L.3)
-      1 = one or more desired-state assertions failed (RED -- expected on
-          current pre-L.3 production code)
+      0 = all executed desired-state assertions passed
+      1 = one or more executed desired-state assertions failed
       2 = environment/prerequisite error (not elevated, CLI missing, etc.)
+
+    Historical L.1 RED results and any recorded aggregate counts are
+    unverified historical/transient evidence, not a current acceptance result.
 #>
 
 param(
@@ -114,11 +117,11 @@ param(
     [switch]$Verbose,
     # TVS-L.7 (handoff Sec.6): opt-in fault-injection acceptance harness.
     # When set, the L7.* fault-injection cases (read-only-ELL modify /
-    # upsert-existing / delete) run AFTER the always-green L1/L4/L5/L6 cases.
+    # upsert-existing / delete) run AFTER the default regression L1/L4/L5/L6 cases.
     # The registered suite (tests/run_regression.ps1) invokes this script
     # WITHOUT this switch, so the opt-in fault-injection cases are NOT
-    # registered in the always-green suite (handoff Sec.6: "Do not register
-    # intentionally RED cases in the always-green suite yet"). L6 oracles
+    # registered in the default regression suite (handoff Sec.6: "Do not register
+    # intentionally RED cases in the default regression suite yet"). L6 oracles
     # and all L1/L4/L5 normal-path assertions above are preserved unchanged.
     # Post-L.9 (L.9 APPROVED) status: L7.1/L7.2 desired-state (non-success +
     # retain) is GREEN detect-and-fail. Post-L.12 (L.12 GREEN) status: L7.3
@@ -132,28 +135,58 @@ param(
     # capture, invariant failures) to this path.
     #
     # WRITE-GUARD: routine -IncludeRedFaultInjection runs are nondeterministic
-    # (ProgIds, hashes, timestamps vary per run), so a content-equality check
-    # would still dirty the tracked file every time. To avoid overwriting the
-    # tracked durable evidence on routine re-runs, the DEFAULT is a gitignored
-    # path under tmp/ (tmp/ is gitignored via .gitignore). Only when the
-    # operator explicitly passes -UpdateTrackedEvidence is the durable path
-    # overridden back to the tracked docs/RE/ file, signalling an intentional
-    # refresh of the committed evidence.
-    [string]$RedFaultInjectionDurablePath = (Join-Path (Split-Path -Parent $PSScriptRoot) "tmp\RE_L7_RED_FAULT_INJECTION_EVIDENCE.md"),
-    # WRITE-GUARD switch: when set, override $RedFaultInjectionDurablePath back
-    # to the tracked docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md so the
-    # operator explicitly opts in to refreshing the tracked durable evidence.
-    # When NOT set, routine runs write only to the gitignored tmp/ default and
-    # the tracked docs/RE/ file is left untouched.
+    # (ProgIds, hashes, timestamps vary per run). An omitted destination is
+    # assigned a run-specific gitignored tmp/ path after the run ID is created,
+    # so FileMode.CreateNew remains safe on the second opt-in run. A caller-
+    # supplied destination is preserved and is always written exclusively.
+    [string]$RedFaultInjectionDurablePath,
+    # WRITE-GUARD switch: when set, permit the tracked
+    # docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md destination. This switch
+    # authorizes selecting the tracked path; it never authorizes overwriting an
+    # existing destination.
     [switch]$UpdateTrackedEvidence
 )
 
 $ErrorActionPreference = 'Stop'
 
+# WRITE-GUARD: Windows does not expose hard-link count through FileAttributes.
+# Use the native file-information query for existing regular files so an exact
+# artifact/evidence path that is also linked elsewhere fails closed rather than
+# deleting or replacing the other link target.
+if (-not ('TsDevL7.NativeMethods' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace TsDevL7 {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ByHandleFileInformation {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    public static class NativeMethods {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetFileInformationByHandle(
+            IntPtr hFile, out ByHandleFileInformation lpFileInformation);
+    }
+}
+'@
+}
+
 # ---------------------------------------------------------------------------
 # Resolve paths and run ID.
 # ---------------------------------------------------------------------------
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
+$runId = Get-Date -Format "yyyyMMdd_HHmmss"
 $resolved = Resolve-Path -Path $CliPath -ErrorAction SilentlyContinue
 if ($resolved) {
     $CliPath = $resolved.Path
@@ -161,25 +194,372 @@ if ($resolved) {
     $CliPath = Join-Path $ProjectRoot "build\Release\tsdev_cli.exe"
 }
 
-# WRITE-GUARD: -UpdateTrackedEvidence overrides the durable evidence path back
-# to the tracked docs/RE/ file so the operator explicitly opts in to refreshing
-# the committed evidence. Without it, routine -IncludeRedFaultInjection runs
-# write only to the gitignored tmp/ default and never touch the tracked file.
-if ($UpdateTrackedEvidence) {
-    $RedFaultInjectionDurablePath = (Join-Path $ProjectRoot "docs\RE\RE_L7_RED_FAULT_INJECTION_EVIDENCE.md")
+# WRITE-GUARD: -UpdateTrackedEvidence is the only switch that may select the
+# tracked docs/RE/ file. Without it, canonicalize the caller-provided (or
+# run-specific default) path and reject anything outside the project tmp
+# subtree (including traversal paths) before any evidence write can occur. This
+# lexical guard works for paths whose destination file does not exist yet on
+# both Windows PowerShell 5.1 and pwsh 7.
+$trackedEvidencePath = Join-Path $ProjectRoot "docs\RE\RE_L7_RED_FAULT_INJECTION_EVIDENCE.md"
+$tmpEvidenceRoot = Join-Path $ProjectRoot "tmp"
+try {
+    $tmpEvidenceRootFull = [System.IO.Path]::GetFullPath($tmpEvidenceRoot)
+    $trackedEvidencePathFull = [System.IO.Path]::GetFullPath($trackedEvidencePath)
+    $script:trackedEvidencePathFull = $trackedEvidencePathFull
+} catch {
+    throw "Unable to resolve the L7 evidence roots: $($_.Exception.Message)"
 }
 
-# Resolve the MyWork\Bin directory used for .ell/.xml artifact checks.
-# Precedence: -BinPath > -TsPath > default install path.
-if ($BinPath) {
-    $MyWorkBin = $BinPath
-} elseif ($TsPath) {
-    $MyWorkBin = Join-Path $TsPath "MyWork\Bin"
-} else {
-    $MyWorkBin = "C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin"
+$evidenceDestinationSupplied = -not [string]::IsNullOrWhiteSpace($RedFaultInjectionDurablePath)
+if (-not $evidenceDestinationSupplied) {
+    if ($UpdateTrackedEvidence) {
+        # With no destination supplied, the explicit switch selects the tracked
+        # file. A caller-supplied tmp destination is never replaced by this
+        # switch.
+        $RedFaultInjectionDurablePath = $trackedEvidencePathFull
+    } else {
+        # Include both the visible run ID and a per-invocation token so two
+        # opt-in runs started within one clock second still cannot collide.
+        $evidenceRunToken = [System.Guid]::NewGuid().ToString('N')
+        $RedFaultInjectionDurablePath = Join-Path $tmpEvidenceRoot ("RE_L7_RED_FAULT_INJECTION_EVIDENCE_{0}_{1}.md" -f $runId, $evidenceRunToken)
+    }
 }
 
-$runId  = Get-Date -Format "yyyyMMdd_HHmmss"
+try {
+    $providerPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RedFaultInjectionDurablePath)
+    $candidateEvidencePath = [System.IO.Path]::GetFullPath($providerPath)
+} catch {
+    throw "Unsafe L7 evidence path '$RedFaultInjectionDurablePath': it could not be resolved under the project evidence roots."
+}
+
+$tmpEvidencePrefix = $tmpEvidenceRootFull.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+$isUnderProjectTmp = $candidateEvidencePath.StartsWith($tmpEvidencePrefix, [System.StringComparison]::OrdinalIgnoreCase)
+$isTrackedEvidencePath = [System.String]::Equals($candidateEvidencePath, $trackedEvidencePathFull, [System.StringComparison]::OrdinalIgnoreCase)
+if ($isTrackedEvidencePath) {
+    if (-not $UpdateTrackedEvidence) {
+        throw "Unsafe L7 evidence path '$RedFaultInjectionDurablePath' (resolved to '$candidateEvidencePath'). Selecting the tracked evidence file requires -UpdateTrackedEvidence."
+    }
+} elseif (-not $isUnderProjectTmp) {
+    throw "Unsafe L7 evidence path '$RedFaultInjectionDurablePath' (resolved to '$candidateEvidencePath'). Without a tracked-evidence authorization, L7 evidence must remain under '$tmpEvidenceRootFull'."
+}
+$RedFaultInjectionDurablePath = $candidateEvidencePath
+
+# WRITE-GUARD: reject any existing reparse-point component in the selected
+# destination before creating its parent or writing the evidence. File.GetAttributes
+# reports the reparse-point bit without following the link and is available in
+# both Windows PowerShell 5.1 and pwsh 7. Inspection failures are unsafe and fail
+# closed. This applies to both the tracked destination and the tmp destination.
+function Test-L7EvidencePathHasReparsePoint {
+    param([Parameter(Mandatory)] [string]$Path)
+    try {
+        $current = [System.IO.Path]::GetFullPath($Path)
+        while ($null -ne $current) {
+            $attributes = $null
+            $componentExists = $true
+            try {
+                # GetAttributes examines the component itself, so a link is
+                # identified by ReparsePoint rather than followed to its target.
+                $attributes = [System.IO.File]::GetAttributes($current)
+            } catch [System.IO.FileNotFoundException] {
+                $componentExists = $false
+            } catch [System.IO.DirectoryNotFoundException] {
+                $componentExists = $false
+            } catch {
+                throw "Unable to inspect evidence path component '$current': $($_.Exception.Message)"
+            }
+            if ($componentExists -and (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+                throw "Evidence destination contains a reparse-point component: '$current'"
+            }
+
+            $parent = [System.IO.Directory]::GetParent($current)
+            if ($null -eq $parent) { break }
+            $parentPath = $parent.FullName
+            if ([System.String]::Equals($parentPath, $current, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+            $current = $parentPath
+        }
+        return $false
+    } catch {
+        throw "Unsafe L7 evidence path '$Path': reparse-point validation failed. $($_.Exception.Message)"
+    }
+}
+
+Test-L7EvidencePathHasReparsePoint -Path $RedFaultInjectionDurablePath | Out-Null
+
+function Get-L7PathState {
+    param([Parameter(Mandatory)] [string]$Path)
+    $state = @{
+        QuerySucceeded = $false
+        Exists         = $false
+        IsRegularFile  = $false
+        IsDirectory    = $false
+        IsReadOnly     = $false
+        Error          = ""
+    }
+    try {
+        Test-L7EvidencePathHasReparsePoint -Path $Path | Out-Null
+        try {
+            $attributes = [System.IO.File]::GetAttributes($Path)
+        } catch [System.IO.FileNotFoundException] {
+            $state.QuerySucceeded = $true
+            return $state
+        } catch [System.IO.DirectoryNotFoundException] {
+            $state.QuerySucceeded = $true
+            return $state
+        }
+        $state.Exists = $true
+        $state.IsDirectory = (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0)
+        $state.IsRegularFile = -not $state.IsDirectory
+        $state.IsReadOnly = (($attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0)
+        $state.QuerySucceeded = $true
+    } catch {
+        $state.Error = $_.Exception.Message
+    }
+    return $state
+}
+
+# WRITE-GUARD: returns whether an existing regular file has exactly one hard
+# link. Opening the path read-only and querying its handle avoids following a
+# reparse point (the caller has already run the reparse guard); failures are
+# unknown and therefore unsafe.
+function Get-L7HardLinkState {
+    param([Parameter(Mandatory)] [string]$Path)
+    $stream = $null
+    try {
+        $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+        $info = New-Object TsDevL7.ByHandleFileInformation
+        $ok = [TsDevL7.NativeMethods]::GetFileInformationByHandle($stream.SafeFileHandle.DangerousGetHandle(), [ref]$info)
+        if (-not $ok) {
+            throw "GetFileInformationByHandle failed with Win32 error $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        }
+        return @{ QuerySucceeded = $true; LinkCount = [uint32]$info.NumberOfLinks; IsSingleLink = ([uint32]$info.NumberOfLinks -eq 1); Error = "" }
+    } catch {
+        return @{ QuerySucceeded = $false; LinkCount = $null; IsSingleLink = $false; Error = $_.Exception.Message }
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
+# Remove-L7ExactFile -- removes one already-validated single-link regular file.
+# With Type/ProgId/Extension supplied, both the pre-delete and post-delete state
+# checks use Get-L7ArtifactState; without them it retains the generic safe-file
+# behavior used by the L6.3 temporary self-check and recovery-marker cleanup.
+# Hard-linked files are refused before deletion.
+function Remove-L7ExactFile {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [string]$Type = "",
+        [int]$ProgId = 0,
+        [ValidateSet('ell','xml')]
+        [string]$Extension = ""
+    )
+    $hasArtifactIdentity = ($Type -or $ProgId -ne 0 -or $Extension)
+    if ($hasArtifactIdentity -and (-not $Type -or $ProgId -le 0 -or -not $Extension)) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "refused_incomplete_artifact_identity path=$Path type=$Type prog_id=$ProgId extension=$Extension" }
+    }
+
+    $getState = {
+        param([string]$StatePath)
+        if ($hasArtifactIdentity) {
+            return (Get-L7ArtifactState -Path $StatePath -Type $Type -ProgId $ProgId -Extension $Extension)
+        }
+        return (Get-L7PathState -Path $StatePath)
+    }
+
+    $before = & $getState $Path
+    if (-not $before.QuerySucceeded) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "inspection_failed path=$Path error=$($before.Error)" }
+    }
+    if ($hasArtifactIdentity -and -not $before.PathValidated) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "refused_unvalidated_artifact_path path=$Path error=$($before.Error)" }
+    }
+    if (-not $before.Exists) {
+        return @{ Succeeded = $true; ExistsAfter = $false; Detail = "absent path=$Path" }
+    }
+    if (-not $before.IsRegularFile) {
+        return @{ Succeeded = $false; ExistsAfter = $true; Detail = "refused_non_file path=$Path" }
+    }
+    $hardLinkState = Get-L7HardLinkState -Path $Path
+    if (-not $hardLinkState.QuerySucceeded) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "hard_link_inspection_failed path=$Path error=$($hardLinkState.Error)" }
+    }
+    if (-not $hardLinkState.IsSingleLink) {
+        return @{ Succeeded = $false; ExistsAfter = $true; Detail = "refused_hard_link path=$Path link_count=$($hardLinkState.LinkCount)" }
+    }
+    try {
+        [System.IO.File]::Delete($Path)
+    } catch {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "delete_failed path=$Path error=$($_.Exception.Message)" }
+    }
+    $after = & $getState $Path
+    if (-not $after.QuerySucceeded) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "post_delete_inspection_failed path=$Path error=$($after.Error)" }
+    }
+    if ($hasArtifactIdentity -and -not $after.PathValidated) {
+        return @{ Succeeded = $false; ExistsAfter = $null; Detail = "post_delete_unvalidated_artifact_path path=$Path error=$($after.Error)" }
+    }
+    if ($after.Exists) {
+        return @{ Succeeded = $false; ExistsAfter = $true; Detail = "still_exists path=$Path" }
+    }
+    return @{ Succeeded = $true; ExistsAfter = $false; Detail = "deleted path=$Path" }
+}
+
+function Get-L7ExistsState {
+    param(
+        [Parameter(Mandatory)] [string]$Type,
+        [Parameter(Mandatory)] [string]$Name
+    )
+    $state = @{
+        QuerySucceeded = $false
+        Exists         = $false
+        ExitCode       = -1
+        Detail         = ""
+    }
+    try {
+        $cliEx = Invoke-Cli -Arguments @("--json","exists",$Type,$Name)
+    } catch {
+        $state.Detail = "exists_exception=$($_.Exception.Message)"
+        return $state
+    }
+    $state.ExitCode = $cliEx.ExitCode
+    if ($cliEx.ExitCode -ne 0) {
+        $state.Detail = "exists_exit=$($cliEx.ExitCode) stderr='$($cliEx.Stderr)' stdout='$($cliEx.Stdout)'"
+        return $state
+    }
+    try {
+        $json = $cliEx.Stdout | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $json.PSObject.Properties['exists']) {
+            $state.Detail = "exists_json_missing_exists_field"
+            return $state
+        }
+        if ($json.exists -isnot [bool]) {
+            $state.Detail = "exists_json_exists_field_not_boolean"
+            return $state
+        }
+        $state.Exists = $json.exists
+        $state.QuerySucceeded = $true
+        $state.Detail = "exists_exit=0 exists=$($state.Exists)"
+    } catch {
+        $state.Detail = "exists_json_parse_failed=$($_.Exception.Message)"
+    }
+    return $state
+}
+
+function Invoke-L7WarehouseCleanup {
+    param(
+        [Parameter(Mandatory)] [string]$Type,
+        [Parameter(Mandatory)] [string]$Name
+    )
+    $result = @{
+        CleanupSucceeded = $false
+        ExistsGone       = $false
+        EntryExisted     = $false
+        DeleteAttempted  = $false
+        DeleteSucceeded  = $false
+        DeleteExitCode   = -1
+        DeleteJsonSuccess = $false
+        DeleteStderr     = ""
+        DeleteStdout     = ""
+        Detail           = ""
+    }
+    $before = Get-L7ExistsState -Type $Type -Name $Name
+    if (-not $before.QuerySucceeded) {
+        $result.Detail = "warehouse_before_unknown $($before.Detail)"
+        return $result
+    }
+    $requiresDelete = $before.Exists
+    $result.EntryExisted = $before.Exists
+    if (-not $requiresDelete) {
+        $confirmed = Get-L7ExistsState -Type $Type -Name $Name
+        if (-not $confirmed.QuerySucceeded) {
+            $result.Detail = "warehouse_confirmation_unknown $($confirmed.Detail)"
+            return $result
+        }
+        if (-not $confirmed.Exists) {
+            $result.CleanupSucceeded = $true
+            $result.ExistsGone = $true
+            $result.DeleteSucceeded = $true
+            $result.Detail = "warehouse_absent delete_not_needed"
+            return $result
+        }
+        $result.EntryExisted = $true
+        $requiresDelete = $true
+    }
+
+    $result.DeleteAttempted = $true
+    try {
+        $cliDel = Invoke-Cli -Arguments @("--json","delete",$Type,$Name)
+        $result.DeleteExitCode = $cliDel.ExitCode
+        $result.DeleteStderr = $cliDel.Stderr
+        $result.DeleteStdout = $cliDel.Stdout
+    } catch {
+        $result.Detail = "warehouse_delete_exception=$($_.Exception.Message)"
+        return $result
+    }
+    if ($result.DeleteExitCode -ne 0) {
+        $result.Detail = "warehouse_delete_failed exit=$($result.DeleteExitCode)"
+        return $result
+    }
+    try {
+        $deleteJson = $cliDel.Stdout | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $deleteJson.PSObject.Properties['success'] -or $deleteJson.success -isnot [bool] -or -not $deleteJson.success) {
+            $result.Detail = "warehouse_delete_json_not_success"
+            return $result
+        }
+        $result.DeleteJsonSuccess = $true
+    } catch {
+        $result.Detail = "warehouse_delete_json_parse_failed=$($_.Exception.Message)"
+        return $result
+    }
+    $after = Get-L7ExistsState -Type $Type -Name $Name
+    if (-not $after.QuerySucceeded) {
+        $result.Detail = "warehouse_after_unknown $($after.Detail)"
+        return $result
+    }
+    if ($after.Exists) {
+        $result.Detail = "warehouse_entry_still_exists after_delete"
+        return $result
+    }
+    $result.CleanupSucceeded = $true
+    $result.ExistsGone = $true
+    $result.DeleteSucceeded = $true
+    $result.Detail = "warehouse_deleted exit=$($result.DeleteExitCode) exists_gone=true"
+    return $result
+}
+
+# Resolve the effective TradeStation root and the one MyWork\Bin directory
+# used for all artifact checks/cleanup. -BinPath is retained as a compatibility
+# parameter, but it cannot select a second artifact root: when supplied it must
+# resolve exactly to <effective TsPath>\MyWork\Bin.
+$defaultTsPath = "C:\Program Files (x86)\TradeStation 9.5"
+$effectiveTsPath = if ($TsPath) { $TsPath } else { $defaultTsPath }
+try {
+    $effectiveTsPathProvider = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveTsPath)
+    $effectiveTsPathFull = [System.IO.Path]::GetFullPath($effectiveTsPathProvider)
+    $canonicalBinPath = [System.IO.Path]::GetFullPath((Join-Path $effectiveTsPathFull "MyWork\Bin"))
+
+    if ($BinPath) {
+        $binPathProvider = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BinPath)
+        $binPathFull = [System.IO.Path]::GetFullPath($binPathProvider)
+        if (-not [System.String]::Equals($binPathFull, $canonicalBinPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "-BinPath '$BinPath' resolves to '$binPathFull', but the CLI artifact root for the effective TsPath is '$canonicalBinPath'. -BinPath must be omitted or exactly equal to that canonical path; it cannot select a separate artifact directory."
+        }
+    }
+
+    $script:EffectiveTsPath = $effectiveTsPathFull
+    $script:MyWorkBin = $canonicalBinPath
+    $MyWorkBin = $canonicalBinPath
+} catch {
+    Write-Host "ERROR: Invalid TradeStation artifact path configuration: $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
+try {
+    Test-L7EvidencePathHasReparsePoint -Path $script:MyWorkBin | Out-Null
+} catch {
+    Write-Host "ERROR: Unsafe TradeStation artifact root '$script:MyWorkBin': $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
+
 $tmpDir = Join-Path $ProjectRoot "tmp\e2e_unknown_link_$runId"
 
 # Results collector: one object per assertion / step.
@@ -204,8 +584,172 @@ $TypeCode = @{
 }
 
 # ---------------------------------------------------------------------------
-# Is-Elevated check. The CLI has a requireAdministrator manifest; running it
-# from a non-elevated shell would either UAC-prompt or fail with exit 11
+# Get-L7ArtifactState -- validates one exact, type-specific artifact path and
+# then inspects that path without following reparse points. Cleanup callers pass
+# the warehouse type, ProgId, and extension so a path outside the canonical
+# MyWork\Bin, a mismatched basename, a directory, a reparse point, or a
+# multi-link file fails closed before any delete is attempted. The optional
+# generic Get-L7PathState
+# path remains available for non-artifact self-check fixtures and marker files.
+# ---------------------------------------------------------------------------
+function Get-L7ArtifactState {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$Type,
+        [Parameter(Mandatory)] [int]$ProgId,
+        [Parameter(Mandatory)] [ValidateSet('ell','xml')] [string]$Extension
+    )
+    $state = @{
+        QuerySucceeded = $false
+        Exists         = $false
+        IsRegularFile  = $false
+        IsDirectory    = $false
+        IsReadOnly     = $false
+        PathValidated  = $false
+        Error          = ""
+    }
+    try {
+        if ($ProgId -le 0) { throw "artifact ProgId must be positive" }
+        $typeKey = $Type.ToLowerInvariant()
+        if (-not $script:TypeInfo.ContainsKey($typeKey)) { throw "unsupported artifact type '$Type'" }
+        $typeInfo = $script:TypeInfo[$typeKey]
+        $expectedLeaf = "$($typeInfo.prefix)$ProgId.$Extension"
+
+        $pathFull = [System.IO.Path]::GetFullPath($Path)
+        $parent = Split-Path -Parent $pathFull
+        if (-not $parent) { throw "artifact path has no parent directory" }
+        $parentFull = [System.IO.Path]::GetFullPath($parent).TrimEnd([char[]]@('\', '/'))
+        $binFull = [System.IO.Path]::GetFullPath($script:MyWorkBin).TrimEnd([char[]]@('\', '/'))
+        if (-not [System.String]::Equals($parentFull, $binFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "artifact parent '$parentFull' is not the canonical MyWork\Bin '$binFull'"
+        }
+        if (-not [System.String]::Equals((Split-Path -Leaf $pathFull), $expectedLeaf, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "artifact leaf '$(Split-Path -Leaf $pathFull)' is not the expected '$expectedLeaf'"
+        }
+
+        Test-L7EvidencePathHasReparsePoint -Path $pathFull | Out-Null
+        $state.PathValidated = $true
+        $observed = Get-L7PathState -Path $pathFull
+        $state.QuerySucceeded = $observed.QuerySucceeded
+        $state.Exists = $observed.Exists
+        $state.IsRegularFile = $observed.IsRegularFile
+        $state.IsDirectory = $observed.IsDirectory
+        $state.IsReadOnly = $observed.IsReadOnly
+        $state.Error = $observed.Error
+        if ($state.QuerySucceeded -and $state.Exists -and $state.IsRegularFile) {
+            $hardLinkState = Get-L7HardLinkState -Path $pathFull
+            if (-not $hardLinkState.QuerySucceeded) {
+                $state.QuerySucceeded = $false
+                $state.IsRegularFile = $false
+                $state.Error = "hard-link inspection failed: $($hardLinkState.Error)"
+            } elseif (-not $hardLinkState.IsSingleLink) {
+                $state.QuerySucceeded = $false
+                $state.IsRegularFile = $false
+                $state.Error = "refused hard-linked artifact path (link_count=$($hardLinkState.LinkCount))"
+            }
+        }
+    } catch {
+        $state.Error = $_.Exception.Message
+    }
+    return $state
+}
+
+# ---------------------------------------------------------------------------
+# Helper: Get-L7SanitationSnapshot -- captures one guarded production snapshot
+# before any L7 sanitation action. The snapshot includes exact ELL/XML path
+# validation, existence, regular-file/read-only state, SHA-256 hashes, and
+# warehouse existence/query state. Missing paths are an incomplete snapshot,
+# not a clean/absent assertion. Hash capture is successful for a verified
+# absence (there is no hash to capture) and fails closed for an existing file
+# whose hash cannot be read.
+# ---------------------------------------------------------------------------
+function Get-L7SanitationSnapshot {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Type,
+        [int]$ProgId = 0,
+        [string]$EllPath = "",
+        [string]$XmlPath = ""
+    )
+    $invalidArtifactState = @{
+        QuerySucceeded = $false
+        Exists         = $false
+        IsRegularFile  = $false
+        IsDirectory    = $false
+        IsReadOnly     = $null
+        PathValidated  = $false
+        Error          = "artifact path not supplied"
+    }
+    $ellState = if ($EllPath -and $ProgId -gt 0) {
+        Get-L7ArtifactState -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell'
+    } else {
+        $invalidArtifactState.Clone()
+    }
+    $xmlState = if ($XmlPath -and $ProgId -gt 0) {
+        Get-L7ArtifactState -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml'
+    } else {
+        $invalidArtifactState.Clone()
+    }
+    $warehouseState = Get-L7ExistsState -Type $Type -Name $Name
+
+    $ellStateKnown = ($ellState.QuerySucceeded -and $ellState.PathValidated -and (-not $ellState.Exists -or $ellState.IsRegularFile))
+    $xmlStateKnown = ($xmlState.QuerySucceeded -and $xmlState.PathValidated -and (-not $xmlState.Exists -or $xmlState.IsRegularFile))
+    $warehouseStateKnown = [bool]$warehouseState.QuerySucceeded
+
+    $ellHash = $null
+    $xmlHash = $null
+    $ellHashCaptured = $false
+    $xmlHashCaptured = $false
+    if ($ellStateKnown) {
+        if (-not $ellState.Exists) {
+            $ellHashCaptured = $true
+        } else {
+            try {
+                $ellHash = (Get-FileHash -Path $EllPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                $ellHashCaptured = ($null -ne $ellHash)
+            } catch {
+                $ellHashCaptured = $false
+            }
+        }
+    }
+    if ($xmlStateKnown) {
+        if (-not $xmlState.Exists) {
+            $xmlHashCaptured = $true
+        } else {
+            try {
+                $xmlHash = (Get-FileHash -Path $XmlPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                $xmlHashCaptured = ($null -ne $xmlHash)
+            } catch {
+                $xmlHashCaptured = $false
+            }
+        }
+    }
+
+    return @{
+        EllState             = $ellState
+        XmlState             = $xmlState
+        WarehouseState       = $warehouseState
+        EllStateKnown        = $ellStateKnown
+        XmlStateKnown        = $xmlStateKnown
+        WarehouseStateKnown  = $warehouseStateKnown
+        EllExists             = if ($ellStateKnown) { [bool]$ellState.Exists } else { $null }
+        XmlExists             = if ($xmlStateKnown) { [bool]$xmlState.Exists } else { $null }
+        EllReadOnly           = if ($ellStateKnown -and $ellState.Exists) { [bool]$ellState.IsReadOnly } else { $null }
+        XmlReadOnly           = if ($xmlStateKnown -and $xmlState.Exists) { [bool]$xmlState.IsReadOnly } else { $null }
+        WarehouseEntryExists  = if ($warehouseStateKnown) { [bool]$warehouseState.Exists } else { $null }
+        EllHash               = $ellHash
+        EllHashCaptured       = $ellHashCaptured
+        XmlHash               = $xmlHash
+        XmlHashCaptured       = $xmlHashCaptured
+        StateComplete         = ($ellStateKnown -and $xmlStateKnown -and $warehouseStateKnown -and $ellHashCaptured -and $xmlHashCaptured)
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Is-Elevated check. Every direct CLI subcommand requires an elevated
+# administrator process. With the default requireAdministrator manifest, a
+# non-elevated launch can prompt before main(); if the elevation guard executes
+# (for example in a manifest-disabled build), the CLI returns exit 11
 # (not_elevated). Fail fast with a clear message instead.
 # ---------------------------------------------------------------------------
 function Test-IsElevated {
@@ -237,10 +781,7 @@ function Invoke-Cli {
     param(
         [Parameter(Mandatory)] [string[]]$Arguments
     )
-    $fullArgs = @()
-    if ($script:TsPath) {
-        $fullArgs += @("--ts-path", $script:TsPath)
-    }
+    $fullArgs = @("--ts-path", $script:EffectiveTsPath)
     $fullArgs += $Arguments
 
     $stderrFile = Join-Path $script:tmpDir "stderr_$([System.Guid]::NewGuid().ToString('N')).txt"
@@ -410,7 +951,9 @@ function Test-DeleteSucceeded {
 # ---------------------------------------------------------------------------
 # Pure helper: Get-ArtifactSanitationState -- captures PRE-SANITATION
 # production artifact state (whether .ell/.xml still exist AFTER the CLI
-# delete but BEFORE any best-effort Remove-Item). Returns a hashtable with
+# delete but BEFORE any best-effort sanitation). When Type/ProgId are supplied,
+# both paths must pass exact basename, canonical MyWork\Bin, regular-file, and
+# reparse-safe validation. Returns a hashtable with
 # EllExistedBeforeSanitation, XmlExistedBeforeSanitation,
 # OrphanExistedBeforeSanitation, EllGone (pre-sanitation absence),
 # XmlGone (pre-sanitation absence). This is the ACTUAL production-test-script
@@ -421,18 +964,53 @@ function Test-DeleteSucceeded {
 function Get-ArtifactSanitationState {
     param(
         [string]$EllPath = "",
-        [string]$XmlPath = ""
+        [string]$XmlPath = "",
+        [string]$Type = "",
+        [int]$ProgId = 0
     )
-    $ellExisted = $false
-    $xmlExisted = $false
-    if ($EllPath -and (Test-Path -Path $EllPath -PathType Leaf)) { $ellExisted = $true }
-    if ($XmlPath -and (Test-Path -Path $XmlPath -PathType Leaf)) { $xmlExisted = $true }
+    $strictArtifactIdentity = ($Type -or $ProgId -ne 0)
+    $ellState = @{ QuerySucceeded = $true; Exists = $false; IsRegularFile = $false; PathValidated = $true; Error = "" }
+    $xmlState = @{ QuerySucceeded = $true; Exists = $false; IsRegularFile = $false; PathValidated = $true; Error = "" }
+
+    if ($EllPath) {
+        if ($strictArtifactIdentity) {
+            if (-not $Type -or $ProgId -le 0) {
+                $ellState = @{ QuerySucceeded = $false; Exists = $false; IsRegularFile = $false; PathValidated = $false; Error = "exact ELL artifact identity was not supplied" }
+            } else {
+                $ellState = Get-L7ArtifactState -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell'
+            }
+        } else {
+            $ellState = Get-L7PathState -Path $EllPath
+            $ellState.PathValidated = $true
+        }
+    }
+    if ($XmlPath) {
+        if ($strictArtifactIdentity) {
+            if (-not $Type -or $ProgId -le 0) {
+                $xmlState = @{ QuerySucceeded = $false; Exists = $false; IsRegularFile = $false; PathValidated = $false; Error = "exact XML artifact identity was not supplied" }
+            } else {
+                $xmlState = Get-L7ArtifactState -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml'
+            }
+        } else {
+            $xmlState = Get-L7PathState -Path $XmlPath
+            $xmlState.PathValidated = $true
+        }
+    }
+
+    $ellKnown = ($ellState.QuerySucceeded -and $ellState.PathValidated)
+    $xmlKnown = ($xmlState.QuerySucceeded -and $xmlState.PathValidated)
+    $ellExisted = ($ellKnown -and [bool]$ellState.Exists)
+    $xmlExisted = ($xmlKnown -and [bool]$xmlState.Exists)
     return @{
         EllExistedBeforeSanitation    = $ellExisted
         XmlExistedBeforeSanitation    = $xmlExisted
-        OrphanExistedBeforeSanitation = ($ellExisted -or $xmlExisted)
-        EllGone                       = -not $ellExisted
-        XmlGone                       = -not $xmlExisted
+        OrphanExistedBeforeSanitation = ((-not $ellKnown) -or (-not $xmlKnown) -or $ellExisted -or $xmlExisted)
+        EllGone                       = ($ellKnown -and -not $ellExisted)
+        XmlGone                       = ($xmlKnown -and -not $xmlExisted)
+        EllStateKnown                 = $ellKnown
+        XmlStateKnown                 = $xmlKnown
+        EllStateError                 = $ellState.Error
+        XmlStateError                 = $xmlState.Error
     }
 }
 
@@ -483,21 +1061,21 @@ function Get-CleanupVerdict {
 # ===========================================================================
 
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "TSDev Automation - Unknown Link RED Harness"      -ForegroundColor Cyan
+Write-Host "TSDev Automation - Unknown Link Regression Harness" -ForegroundColor Cyan
 Write-Host "TVS-L.1 + TVS-L.4 + L5 (all 5 component types)"   -ForegroundColor Cyan
-Write-Host "Opt-in; NOT in run_regression.ps1"                -ForegroundColor Cyan
+Write-Host "L7 fault injection is opt-in; normal cases run in run_regression.ps1" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "Run ID       : $runId"
 Write-Host "Project root : $ProjectRoot"
 Write-Host "CLI path     : $CliPath"
-Write-Host "TS path      : $(if ($TsPath) { $TsPath } else { 'auto-discovered' })"
+Write-Host "TS path      : $script:EffectiveTsPath"
 Write-Host "MyWork\Bin   : $MyWorkBin"
 Write-Host "Verbose      : $Verbose"
 Write-Host "Temp dir     : $tmpDir"
 Write-Host ""
 Write-Host "NOTE: XML evidence is NOT runtime acceptance."    -ForegroundColor Yellow
-Write-Host "      This harness proves artifact-completion failure, not runtime" -ForegroundColor Yellow
-Write-Host "      failure. It does not fake runtime success/failure."            -ForegroundColor Yellow
+Write-Host "      This harness checks artifact completion and fault handling, not" -ForegroundColor Yellow
+Write-Host "      runtime linkability. It does not fake runtime success/failure."  -ForegroundColor Yellow
 Write-Host ""
 
 # ---------------------------------------------------------------------------
@@ -515,9 +1093,11 @@ if (-not (Test-Path -Path $CliPath -PathType Leaf)) {
     exit 2
 }
 
-if (-not (Test-Path -Path $MyWorkBin -PathType Container)) {
-    Write-Host "ERROR: MyWork\Bin directory not found: $MyWorkBin" -ForegroundColor Red
-    Write-Host "       Override with -BinPath or -TsPath." -ForegroundColor Yellow
+$myWorkBinState = Get-L7PathState -Path $MyWorkBin
+if (-not $myWorkBinState.QuerySucceeded -or -not $myWorkBinState.Exists -or -not $myWorkBinState.IsDirectory) {
+    $rootDetail = if (-not $myWorkBinState.QuerySucceeded) { $myWorkBinState.Error } elseif (-not $myWorkBinState.Exists) { "directory not found" } else { "path is not a directory" }
+    Write-Host "ERROR: MyWork\Bin root is not a verified directory: $MyWorkBin ($rootDetail)" -ForegroundColor Red
+    Write-Host "       Set -TsPath to the intended installation root (and omit -BinPath or pass its canonical MyWork\Bin path)." -ForegroundColor Yellow
     exit 2
 }
 
@@ -527,9 +1107,10 @@ New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 # Unique probe name for this run.
 $probeName = "TS_AUTO_L1_RED_${runId}"
 
-# Minimal valid EasyLanguage strategy source. The leading "{ name }" comment
-# block is the EasyLanguage convention for naming a strategy/function; it is
-# required for enumerateRecords to extract the verbatim stored name.
+# Minimal valid EasyLanguage strategy source. The leading "{ name }" text is
+# arbitrary fixture source content only; it is not a metadata convention or a
+# lookup mechanism. The CLI supplies the item name, and stored metadata comes
+# from orlib20 warehouse records/APIs.
 $probeSource = "{ $probeName }`r`nInputs: int x(0);`r`nif x > 0 then Buy next bar at market;"
 
 # State carried across the try/finally so cleanup always knows what to remove.
@@ -627,9 +1208,9 @@ try {
         -Passed ($ellExists -and $ellFresh) -Detail $ellDetail | Out-Null
 
     # =====================================================================
-    # STEP 2b: XML exists and is fresh (EXPECTED RED on current code).
+    # STEP 2b: XML exists and is fresh (historical pre-L.3 RED baseline was missing XML).
     # =====================================================================
-    Write-Host "--- Step 2b: XML exists and is fresh (EXPECTED RED on pre-L.3) ---" -ForegroundColor Cyan
+    Write-Host "--- Step 2b: XML exists and is fresh ---" -ForegroundColor Cyan
 
     $xmlExists = Test-Path -Path $xmlPath -PathType Leaf
     $xmlFresh  = $false
@@ -685,7 +1266,7 @@ try {
     # =====================================================================
     # STEP 2d: GUID byte match -- search the COMPLETE ELL for the 16 Windows
     # mixed-endian layout bytes of the GUID; assert exactly one occurrence.
-    # (EXPECTED RED on current code, since XML is absent.)
+    # (The missing-XML result belongs to the historical pre-L.3 RED baseline.)
     # =====================================================================
     Write-Host "--- Step 2d: GUID byte match in COMPLETE ELL (Windows mixed-endian) ---" -ForegroundColor Cyan
 
@@ -780,7 +1361,7 @@ finally {
     #    (same as Invoke-CleanupForName). A production delete that left an
     #    orphan must not be mutated into a PASS by the best-effort safety-net
     #    removal.
-    $state = Get-ArtifactSanitationState -EllPath $ellPath -XmlPath $xmlPath
+    $state = Get-ArtifactSanitationState -EllPath $ellPath -XmlPath $xmlPath -Type 'strategy' -ProgId $progId
     $ellExistedBeforeSanitation = $state.EllExistedBeforeSanitation
     $xmlExistedBeforeSanitation = $state.XmlExistedBeforeSanitation
     $orphanExistedBeforeSanitation = $state.OrphanExistedBeforeSanitation
@@ -813,15 +1394,15 @@ finally {
 
     # 8. Best-effort sanitation (test hygiene only; does not affect the
     #    verdict). Removes any orphan the production delete left behind.
-    $sanitizedEllGone = $true
-    $sanitizedXmlGone = $true
+    $sanitizedEllGone = [bool]$ellGone
+    $sanitizedXmlGone = [bool]$xmlGone
     if ($ellExistedBeforeSanitation) {
-        Remove-Item -Path $ellPath -Force -ErrorAction SilentlyContinue
-        $sanitizedEllGone = -not (Test-Path -Path $ellPath -PathType Leaf)
+        $ellRemoval = Remove-L7ExactFile -Path $ellPath -Type 'strategy' -ProgId $progId -Extension 'ell'
+        $sanitizedEllGone = ($ellRemoval.Succeeded -and $ellRemoval.ExistsAfter -eq $false)
     }
     if ($xmlExistedBeforeSanitation) {
-        Remove-Item -Path $xmlPath -Force -ErrorAction SilentlyContinue
-        $sanitizedXmlGone = -not (Test-Path -Path $xmlPath -PathType Leaf)
+        $xmlRemoval = Remove-L7ExactFile -Path $xmlPath -Type 'strategy' -ProgId $progId -Extension 'xml'
+        $sanitizedXmlGone = ($xmlRemoval.Succeeded -and $xmlRemoval.ExistsAfter -eq $false)
     }
     $cleanupStatus += "artifacts after cleanup: ell_gone(pre-san)=$ellGone xml_gone(pre-san)=$xmlGone sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone"
     Write-Host "  artifacts after cleanup: ell_gone(pre-san)=$ellGone xml_gone(pre-san)=$xmlGone orphan_before=$orphanExistedBeforeSanitation sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone" -ForegroundColor $(if ($cleanupOk) { 'DarkGray' } else { 'Yellow' })
@@ -832,7 +1413,7 @@ finally {
 
 # ===========================================================================
 # TVS-L.4 EXTENSIONS -- persistence validation + partial-artifact
-# cleanup/rollback hardening (RED baseline).
+# cleanup/rollback hardening (historical baseline; current checks are retained).
 #
 # Each L4.* section is a self-contained try/finally with its own cleanup.
 # Cleanup is MANDATORY and escalates cleanup failure to a test failure
@@ -913,7 +1494,8 @@ function Extract-XmlGuid {
         [Parameter(Mandatory)] [int]$ProgId,
         [string]$Prefix = "elmodule_0_"
     )
-    if (-not (Test-Path -Path $XmlPath -PathType Leaf)) { return $null }
+    $xmlState = Get-L7PathState -Path $XmlPath
+    if (-not $xmlState.QuerySucceeded -or -not $xmlState.Exists -or -not $xmlState.IsRegularFile) { return $null }
     try {
         $xmlText = [System.IO.File]::ReadAllText($XmlPath)
         $progIdFileAttr = [regex]::Escape("$Prefix$ProgId")
@@ -937,7 +1519,8 @@ function Test-GuidBytesInEll {
         [Parameter(Mandatory)] [string]$EllPath,
         [Parameter(Mandatory)] [string]$GuidString
     )
-    if (-not (Test-Path -Path $EllPath -PathType Leaf)) { return $false }
+    $ellState = Get-L7PathState -Path $EllPath
+    if (-not $ellState.QuerySucceeded -or -not $ellState.Exists -or -not $ellState.IsRegularFile) { return $false }
     if (-not $GuidString) { return $false }
     try {
         $ellBytes = [System.IO.File]::ReadAllBytes($EllPath)
@@ -953,12 +1536,12 @@ function Test-GuidBytesInEll {
 # verifies via exists, and removes any orphan .ell/.xml for the given ProgId.
 #
 # TVS-L.6 GREEN repair (handoff Sec.3 defects 3 + 4): the prior helper removed
-# the .ell/.xml via Remove-Item and ONLY THEN reported EllGone/XmlGone, so a
-# production delete that left an orphan artifact was mutated away before the
-# verdict was fixed -- the cleanup verdict passed and the production failure
-# evidence was gone. The repaired helper:
+# the .ell/.xml and ONLY THEN reported EllGone/XmlGone, so a production delete
+# that left an orphan artifact was mutated away before the verdict was fixed --
+# the cleanup verdict passed and the production failure evidence was gone. The
+# repaired helper:
 #   1. Captures PRE-SANITATION production state (whether the .ell/.xml still
-#      existed AFTER the CLI delete but BEFORE any best-effort Remove-Item).
+#      existed AFTER the CLI delete but BEFORE any best-effort sanitation).
 #   2. Computes the verdict BEFORE sanitation, so orphan evidence cannot be
 #      erased. EllGone/XmlGone now mean "the production delete already
 #      removed the artifact (no orphan)" -- i.e. pre-sanitation absence.
@@ -1017,8 +1600,9 @@ function Invoke-CleanupForName {
     #    exit code (e.g. 6) is a genuine delete failure.
     $deletedEntry = Test-DeleteSucceeded -ExitCode $cliDel.ExitCode -ExistsGone $existsGone
 
-    # 4. Capture PRE-SANITATION production state via the shared pure helper.
-    $state = Get-ArtifactSanitationState -EllPath $EllPath -XmlPath $XmlPath
+    # 4. Capture PRE-SANITATION production state via the shared exact-path,
+    #    type-aware, reparse-safe artifact helper.
+    $state = Get-ArtifactSanitationState -EllPath $EllPath -XmlPath $XmlPath -Type $Type -ProgId $ProgId
     $ellExistedBeforeSanitation = $state.EllExistedBeforeSanitation
     $xmlExistedBeforeSanitation = $state.XmlExistedBeforeSanitation
     $orphanExistedBeforeSanitation = $state.OrphanExistedBeforeSanitation
@@ -1041,17 +1625,17 @@ function Invoke-CleanupForName {
     $verdictOk = Get-CleanupVerdict -DeletedEntry $deletedEntry -ExistsGone $existsGone -EllGone $ellGone -XmlGone $xmlGone
 
     # 7. Best-effort sanitation (test hygiene only; does not affect the
-    #    verdict). Removes any orphan the production delete left behind so the
-    #    test run does not pollute MyWork\Bin.
-    $sanitizedEllGone = $true
-    $sanitizedXmlGone = $true
+    #    verdict). Removes any orphan the production delete left behind through
+    #    the same exact-path, type-aware, reparse-safe helper used by L7.
+    $sanitizedEllGone = [bool]$ellGone
+    $sanitizedXmlGone = [bool]$xmlGone
     if ($ellExistedBeforeSanitation) {
-        Remove-Item -Path $EllPath -Force -ErrorAction SilentlyContinue
-        $sanitizedEllGone = -not (Test-Path -Path $EllPath -PathType Leaf)
+        $ellRemoval = Remove-L7ExactFile -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell'
+        $sanitizedEllGone = ($ellRemoval.Succeeded -and $ellRemoval.ExistsAfter -eq $false)
     }
     if ($xmlExistedBeforeSanitation) {
-        Remove-Item -Path $XmlPath -Force -ErrorAction SilentlyContinue
-        $sanitizedXmlGone = -not (Test-Path -Path $XmlPath -PathType Leaf)
+        $xmlRemoval = Remove-L7ExactFile -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml'
+        $sanitizedXmlGone = ($xmlRemoval.Succeeded -and $xmlRemoval.ExistsAfter -eq $false)
     }
     Write-Host "  cleanup artifacts: ell_gone(pre-san)=$ellGone xml_gone(pre-san)=$xmlGone orphan_before=$orphanExistedBeforeSanitation sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone" -ForegroundColor $(if ($verdictOk) { 'DarkGray' } else { 'Yellow' })
 
@@ -1105,7 +1689,10 @@ function Remove-PreExistingArtifacts {
         $prefix = $script:TypeInfo[$Type].prefix
         $ell = Join-Path $MyWorkBin "$prefix$existingProgId.ell"
         $xml = Join-Path $MyWorkBin "$prefix$existingProgId.xml"
-        Invoke-CleanupForName -Name $Name -Type $Type -WhType $WhType -ProgId $existingProgId -EllPath $ell -XmlPath $xml | Out-Null
+        $cleanup = Invoke-CleanupForName -Name $Name -Type $Type -WhType $WhType -ProgId $existingProgId -EllPath $ell -XmlPath $xml
+        if (-not $cleanup.VerdictOk) {
+            throw "Pre-existing cleanup refused to proceed for $Type '$Name': $($cleanup.Detail)"
+        }
     }
 }
 
@@ -1221,8 +1808,8 @@ $l63VerdictPreSan = Get-CleanupVerdict -DeletedEntry $l63DeletedEntry -ExistsGon
 # Sanitation happens AFTER the verdict is fixed:
 $l63SanitizedEllGone = $true
 if ($l63OrphanState.EllExistedBeforeSanitation) {
-    Remove-Item -Path $l63Orphan -Force -ErrorAction SilentlyContinue
-    $l63SanitizedEllGone = -not (Test-Path -Path $l63Orphan -PathType Leaf)
+    $l63OrphanRemoval = Remove-L7ExactFile -Path $l63Orphan
+    $l63SanitizedEllGone = ($l63OrphanRemoval.Succeeded -and $l63OrphanRemoval.ExistsAfter -eq $false)
 }
 
 # --- Repaired contract on a NON-ORPHAN (file absent before sanitation) ---
@@ -1238,7 +1825,7 @@ Record-Result -StepId "L6.3" -Description "Get-ArtifactSanitationState + Get-Cle
     -Passed ($l63OrphanOk -and $l63CleanOk -and $l63DistinguishOk) `
     -Detail "orphan: existed_before=$l63OrphanExisted ell_gone_pre_san=$l63EllGonePreSan verdict_pre_san=$l63VerdictPreSan sanitized=$l63SanitizedEllGone | clean: existed_before=$l63CleanOrphanExisted ell_gone_pre_san=$l63CleanEllGonePreSan verdict_artifacts=$l63CleanVerdictArtifacts (real helpers; verdict fixed before sanitation)" | Out-Null
 # Safety sanitation in case the contract block did not remove the file.
-if (Test-Path -Path $l63Orphan -PathType Leaf) { Remove-Item -Path $l63Orphan -Force -ErrorAction SilentlyContinue }
+$l63SafetyRemoval = Remove-L7ExactFile -Path $l63Orphan
 
 # ---------------------------------------------------------------------------
 # L6.4 -- every generic cleanup verdict now includes DeletedEntry AND
@@ -2543,11 +3130,11 @@ Run-SemanticCase -Type 'showme' -Case 'BUY' -Id 'L5.SEM.SHOWME_BUY' -Name "TS_AU
 # ===========================================================================
 # TVS-L.7 -- OPT-IN RED FAULT-INJECTION ACCEPTANCE HARNESS (handoff Sec.6).
 #
-# Gated by -IncludeRedFaultInjection. The registered always-green suite
+# Gated by -IncludeRedFaultInjection. The registered default regression suite
 # (tests/run_regression.ps1) invokes this script WITHOUT that switch, so the
-# opt-in fault-injection cases below are NOT registered in the always-green
+# opt-in fault-injection cases below are NOT registered in the default regression
 # suite (handoff Sec.6: "Do not register intentionally RED cases in the
-# always-green suite yet"). All L6 oracles and L1/L4/L5 normal-path
+# default regression suite yet"). All L6 oracles and L1/L4/L5 normal-path
 # assertions above are preserved unchanged; this block only APPENDS opt-in
 # fault-injection cases.
 #
@@ -2568,7 +3155,8 @@ Run-SemanticCase -Type 'showme' -Case 'BUY' -Id 'L5.SEM.SHOWME_BUY' -Name "TS_AU
 #   - CLI exit code, JSON success field, stderr/stdout
 #   - for Fault B: warehouse-entry presence, XML presence, ELL presence
 #     (orphan), and the exact "failed to delete ... error=5" line
-#   - production vs sanitation state before cleanup
+#   - production state captured before sanitation, sanitation actions/results,
+#     and post-sanitation hygiene state (kept as separate evidence fields)
 #
 # Desired-state (handoff Sec.6):
 #   L7.1/L7.2: non-success, no false verified success, existing component
@@ -2596,12 +3184,13 @@ Run-SemanticCase -Type 'showme' -Case 'BUY' -Id 'L5.SEM.SHOWME_BUY' -Name "TS_AU
 #     therefore NOT the L.12 success criterion; detect-and-report is.
 #
 # Durable evidence: a markdown summary is written to
-# $RedFaultInjectionDurablePath (default gitignored
-# tmp/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md; overridden to the tracked
-# docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md only when -UpdateTrackedEvidence
-# is set) capturing exit codes, hashes, GUID occurrence counts, get-source
-# output, the read-only-command capture, and invariant failures (handoff Sec.6
-# Evidence).
+# $RedFaultInjectionDurablePath (an omitted destination becomes a run-specific
+# gitignored tmp/RE_L7_RED_FAULT_INJECTION_EVIDENCE_<run-id>_<token>.md; the tracked
+# docs/RE/RE_L7_RED_FAULT_INJECTION_EVIDENCE.md may be selected only when
+# -UpdateTrackedEvidence is set). Every destination is exclusive-create; an
+# existing destination is never overwritten. The summary captures exit codes,
+# hashes, GUID occurrence counts, get-source output, the read-only-command
+# capture, and invariant failures (handoff Sec.6 Evidence).
 # ===========================================================================
 
 # Script-scoped registry of all L7 disposable items created, so the final
@@ -2622,16 +3211,18 @@ if (-not (Get-Variable -Name L7Evidence -Scope Script -ErrorAction SilentlyConti
 # persists the EXACT disposable item identifier (name/type/ProgId/ELL/XML
 # paths) under a project tmp recovery directory. At L7 startup, stale markers
 # from prior crashed runs are processed: each marker is strictly validated
-# (TS_AUTO_L7_* name, expected elmodule_0_<ProgId>.ell/.xml basename, path
-# under the configured MyWork\Bin), then read-only is cleared, the warehouse
-# entry is deleted via the CLI if it still exists, the EXACT orphan artifacts
-# are removed (no directory scanning), absence is verified, and the marker is
-# deleted ONLY on success. The current run's finally removes its own marker
-# only after verified sanitation. The recovery directory is the ONLY path
+# (TS_AUTO_L7_* name, type-specific <prefix><ProgId>.ell/.xml basenames from
+# $script:TypeInfo, path under the configured MyWork\Bin), then read-only is
+# cleared, the warehouse entry is deleted via the CLI if it still exists, the
+# EXACT orphan artifacts are removed (no directory scanning), absence is
+# verified, and the marker is deleted ONLY on success. The current run's finally
+# removes its own marker only after verified sanitation. The recovery directory is
+# the ONLY path
 # scanned, and only for *.json marker files; MyWork\Bin and any other
 # directory are NEVER scanned or bulk-deleted.
 # ---------------------------------------------------------------------------
 $script:L7RecoveryDir = Join-Path $ProjectRoot "tmp\l7_recovery"
+Test-L7EvidencePathHasReparsePoint -Path $script:L7RecoveryDir | Out-Null
 
 # Helper: New-L7RecoveryMarker -- atomically persists a recovery marker for
 # one disposable L7 item. Writes to a .tmp sibling then renames (atomic on a
@@ -2648,8 +3239,26 @@ function New-L7RecoveryMarker {
         [Parameter(Mandatory)] [string]$CaseId,
         [Parameter(Mandatory)] [string]$RunId
     )
-    if (-not (Test-Path -Path $script:L7RecoveryDir -PathType Container)) {
+    Test-L7EvidencePathHasReparsePoint -Path $script:L7RecoveryDir | Out-Null
+    $recoveryState = Get-L7PathState -Path $script:L7RecoveryDir
+    if (-not $recoveryState.QuerySucceeded) {
+        throw "Unable to inspect L7 recovery directory '$script:L7RecoveryDir': $($recoveryState.Error)"
+    }
+    if (-not $recoveryState.Exists) {
         New-Item -ItemType Directory -Force -Path $script:L7RecoveryDir | Out-Null
+        Test-L7EvidencePathHasReparsePoint -Path $script:L7RecoveryDir | Out-Null
+        $recoveryState = Get-L7PathState -Path $script:L7RecoveryDir
+    }
+    if (-not $recoveryState.QuerySucceeded -or -not $recoveryState.Exists -or -not $recoveryState.IsDirectory) {
+        throw "L7 recovery directory is not a verified directory: '$script:L7RecoveryDir'"
+    }
+    $ellArtifactState = Get-L7ArtifactState -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell'
+    $xmlArtifactState = Get-L7ArtifactState -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml'
+    if (-not $ellArtifactState.QuerySucceeded -or -not $ellArtifactState.PathValidated -or -not $ellArtifactState.Exists -or -not $ellArtifactState.IsRegularFile) {
+        throw "ELL recovery-marker path is not a verified exact regular artifact: '$EllPath' ($($ellArtifactState.Error))"
+    }
+    if (-not $xmlArtifactState.QuerySucceeded -or -not $xmlArtifactState.PathValidated -or -not $xmlArtifactState.Exists -or -not $xmlArtifactState.IsRegularFile) {
+        throw "XML recovery-marker path is not a verified exact regular artifact: '$XmlPath' ($($xmlArtifactState.Error))"
     }
     $marker = [pscustomobject]@{
         RunId     = $RunId
@@ -2662,18 +3271,47 @@ function New-L7RecoveryMarker {
         CreatedAt = (Get-Date -Format 'o')
     }
     $json = $marker | ConvertTo-Json -Compress
-    # Sanitize the marker filename (Name is already TS_AUTO_L7_* validated, but
-    # defend against any path separators just in case).
     $safeName = ($Name -replace '[^A-Za-z0-9_]', '_')
     $markerPath = Join-Path $script:L7RecoveryDir "${RunId}_${CaseId}_${safeName}.json"
-    $tmpPath = "$markerPath.tmp"
-    [System.IO.File]::WriteAllText($tmpPath, $json, [System.Text.Encoding]::UTF8)
-    # Atomic move on the same volume. Use .NET Move so a stale .tmp from a
-    # prior crash is overwritten cleanly only after the new write succeeds.
-    if (Test-Path -Path $markerPath -PathType Leaf) {
-        Remove-Item -Path $markerPath -Force -ErrorAction SilentlyContinue
+    Test-L7EvidencePathHasReparsePoint -Path $markerPath | Out-Null
+    $markerState = Get-L7PathState -Path $markerPath
+    if (-not $markerState.QuerySucceeded) {
+        throw "Unable to inspect L7 recovery marker path '$markerPath': $($markerState.Error)"
+    }
+    if ($markerState.Exists) {
+        throw "L7 recovery marker already exists; refusing to replace durable state: '$markerPath'"
+    }
+
+    $tmpPath = Join-Path $script:L7RecoveryDir (".{0}.{1}.tmp" -f ([System.IO.Path]::GetFileName($markerPath)), ([System.Guid]::NewGuid().ToString('N')))
+    Test-L7EvidencePathHasReparsePoint -Path $tmpPath | Out-Null
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::Open($tmpPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $bytes = (New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false).GetBytes($json)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    Test-L7EvidencePathHasReparsePoint -Path $tmpPath | Out-Null
+    $tmpState = Get-L7PathState -Path $tmpPath
+    if (-not $tmpState.QuerySucceeded -or -not $tmpState.Exists -or -not $tmpState.IsRegularFile) {
+        throw "L7 temporary recovery marker could not be verified: '$tmpPath'"
+    }
+    Test-L7EvidencePathHasReparsePoint -Path $markerPath | Out-Null
+    $markerState = Get-L7PathState -Path $markerPath
+    if (-not $markerState.QuerySucceeded) {
+        throw "Unable to recheck L7 recovery marker path '$markerPath': $($markerState.Error)"
+    }
+    if ($markerState.Exists) {
+        throw "L7 recovery marker appeared before commit; refusing to replace durable state: '$markerPath'"
     }
     [System.IO.File]::Move($tmpPath, $markerPath)
+    Test-L7EvidencePathHasReparsePoint -Path $markerPath | Out-Null
+    $markerState = Get-L7PathState -Path $markerPath
+    if (-not $markerState.QuerySucceeded -or -not $markerState.Exists -or -not $markerState.IsRegularFile) {
+        throw "L7 recovery marker commit could not be verified: '$markerPath'"
+    }
     return $markerPath
 }
 
@@ -2682,9 +3320,17 @@ function New-L7RecoveryMarker {
 # leaves artifacts behind for the next run's stale-marker recovery.
 function Remove-L7RecoveryMarker {
     param([Parameter(Mandatory)] [string]$MarkerPath)
-    if ($MarkerPath -and (Test-Path -Path $MarkerPath -PathType Leaf)) {
-        Remove-Item -Path $MarkerPath -Force -ErrorAction SilentlyContinue
+    $state = Get-L7PathState -Path $MarkerPath
+    if (-not $state.QuerySucceeded) {
+        return @{ Succeeded = $false; Detail = "marker_inspection_failed path=$MarkerPath error=$($state.Error)" }
     }
+    if (-not $state.Exists) {
+        return @{ Succeeded = $false; Detail = "marker_absence_not_expected path=$MarkerPath" }
+    }
+    if (-not $state.IsRegularFile) {
+        return @{ Succeeded = $false; Detail = "marker_is_not_regular_file path=$MarkerPath" }
+    }
+    return (Remove-L7ExactFile -Path $MarkerPath)
 }
 
 # Helper: Test-L7MarkerValid -- strict validation of a parsed marker object.
@@ -2693,8 +3339,8 @@ function Remove-L7RecoveryMarker {
 #   - Name matches ^TS_AUTO_L7_[A-Z0-9_]+$
 #   - Type is one of the 5 supported CLI types in $script:TypeInfo
 #   - ProgId is a positive integer
-#   - EllPath basename is exactly elmodule_0_<ProgId>.ell
-#   - XmlPath basename is exactly elmodule_0_<ProgId>.xml
+#   - EllPath basename is exactly <type-prefix><ProgId>.ell
+#   - XmlPath basename is exactly <type-prefix><ProgId>.xml
 #   - EllPath and XmlPath parent directories resolve to the configured
 #     $script:MyWorkBin (defense-in-depth: never act on a path outside the
 #     configured bin, even if the marker was tampered with).
@@ -2705,24 +3351,32 @@ function Test-L7MarkerValid {
     if ($Marker.Name -notmatch '^TS_AUTO_L7_[A-Z0-9_]+$') { return $false }
     if (-not ($Marker.Type -is [string])) { return $false }
     if (-not $script:TypeInfo.ContainsKey($Marker.Type)) { return $false }
+    $typeInfo = $script:TypeInfo[$Marker.Type]
+    if ($null -eq $typeInfo -or -not ($typeInfo.prefix -is [string]) -or [string]::IsNullOrEmpty($typeInfo.prefix)) { return $false }
     $progId = 0
     try { $progId = [int]$Marker.ProgId } catch { return $false }
     if ($progId -le 0) { return $false }
     if (-not ($Marker.EllPath -is [string])) { return $false }
     if (-not ($Marker.XmlPath -is [string])) { return $false }
-    $expectedEllBasename = "elmodule_0_${progId}.ell"
-    $expectedXmlBasename = "elmodule_0_${progId}.xml"
+    $expectedEllBasename = "$($typeInfo.prefix)$progId.ell"
+    $expectedXmlBasename = "$($typeInfo.prefix)$progId.xml"
     if ((Split-Path -Leaf $Marker.EllPath) -ne $expectedEllBasename) { return $false }
     if ((Split-Path -Leaf $Marker.XmlPath) -ne $expectedXmlBasename) { return $false }
     # Verify both paths resolve under the configured MyWork\Bin.
     $myWorkBinFull = $null
-    try { $myWorkBinFull = (Get-Item -Path $script:MyWorkBin -ErrorAction Stop).FullName.TrimEnd('\') } catch { return $false }
+    try {
+        Test-L7EvidencePathHasReparsePoint -Path $script:MyWorkBin | Out-Null
+        $myWorkBinFull = [System.IO.Path]::GetFullPath($script:MyWorkBin).TrimEnd([char[]]@('\', '/'))
+    } catch { return $false }
     foreach ($p in @($Marker.EllPath, $Marker.XmlPath)) {
         $parent = Split-Path -Parent $p
         if (-not $parent) { return $false }
-        $parentFull = $null
-        try { $parentFull = (Get-Item -Path $parent -ErrorAction Stop).FullName.TrimEnd('\') } catch { return $false }
-        if ($parentFull -ne $myWorkBinFull) { return $false }
+        try {
+            Test-L7EvidencePathHasReparsePoint -Path $p | Out-Null
+            $pathFull = [System.IO.Path]::GetFullPath($p)
+            $parentFull = [System.IO.Path]::GetFullPath((Split-Path -Parent $pathFull)).TrimEnd([char[]]@('\', '/'))
+        } catch { return $false }
+        if (-not [System.String]::Equals($parentFull, $myWorkBinFull, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
     }
     return $true
 }
@@ -2734,77 +3388,194 @@ function Test-L7MarkerValid {
 # if it still exists, removes the EXACT orphan ELL/XML artifacts (no glob,
 # no recursion), verifies absence, and deletes the marker ONLY on success.
 # Invalid / unparseable / out-of-bin markers are skipped (left in place for
-# manual inspection) and reported. Returns @{ Recovered; Skipped } arrays.
+# manual inspection) and reported. Returns @{ Recovered; Skipped; Records } arrays;
+# Records retain separate pre-sanitation, sanitation-action, and post-hygiene fields.
 function Invoke-L7StaleMarkerRecovery {
     $recovered = @()
     $skipped = @()
-    if (-not (Test-Path -Path $script:L7RecoveryDir -PathType Container)) {
-        return @{ Recovered = $recovered; Skipped = $skipped }
+    $records = @()
+    $recoveryState = Get-L7PathState -Path $script:L7RecoveryDir
+    if (-not $recoveryState.QuerySucceeded) {
+        $skipped += "recovery_directory_inspection_failed:$script:L7RecoveryDir $($recoveryState.Error)"
+        return @{ Recovered = $recovered; Skipped = $skipped; Records = $records }
     }
-    # Enumerate ONLY marker JSON files in the recovery directory.
-    $markerFiles = @(Get-ChildItem -Path $script:L7RecoveryDir -Filter '*.json' -File -ErrorAction SilentlyContinue)
+    if (-not $recoveryState.Exists) {
+        return @{ Recovered = $recovered; Skipped = $skipped; Records = $records }
+    }
+    if (-not $recoveryState.IsDirectory) {
+        $skipped += "recovery_directory_not_directory:$script:L7RecoveryDir"
+        return @{ Recovered = $recovered; Skipped = $skipped; Records = $records }
+    }
+    try {
+        Test-L7EvidencePathHasReparsePoint -Path $script:L7RecoveryDir | Out-Null
+        $markerFiles = @(Get-ChildItem -Path $script:L7RecoveryDir -Filter '*.json' -File -ErrorAction Stop)
+    } catch {
+        $skipped += "recovery_directory_enumeration_failed:$script:L7RecoveryDir $($_.Exception.Message)"
+        return @{ Recovered = $recovered; Skipped = $skipped; Records = $records }
+    }
     foreach ($mf in $markerFiles) {
         $markerPath = $mf.FullName
+        $markerState = Get-L7PathState -Path $markerPath
+        if (-not $markerState.QuerySucceeded -or -not $markerState.Exists -or -not $markerState.IsRegularFile) {
+            $detail = if (-not $markerState.QuerySucceeded) { $markerState.Error } elseif (-not $markerState.Exists) { "marker_disappeared" } else { "marker_is_not_regular_file" }
+            $skipped += "marker_inspection_failed:$markerPath $detail"
+            continue
+        }
         $marker = $null
         try {
+            Test-L7EvidencePathHasReparsePoint -Path $markerPath | Out-Null
             $marker = ([System.IO.File]::ReadAllText($markerPath)) | ConvertFrom-Json -ErrorAction Stop
         } catch {
             $skipped += "unparseable_marker:$markerPath"
             continue
         }
-        if (-not (Test-L7MarkerValid -Marker $marker)) {
+        $markerValid = $false
+        try { $markerValid = Test-L7MarkerValid -Marker $marker } catch { $markerValid = $false }
+        if (-not $markerValid) {
             $skipped += "invalid_marker:$markerPath (strict validation failed; left for manual inspection)"
             continue
+        }
+
+        $record = @{
+            CaseId = "L7.0.$($marker.Name)"
+            ItemIdentifier = $marker.Name
+            ComponentType = $marker.Type
+            ProgId = [int]$marker.ProgId
+            PreSanitationSnapshotComplete = $false
+            PreSanitationWarehouseQuerySucceeded = $false
+            PreSanitationWarehouseEntryExists = $null
+            PreSanitationEllExists = $null
+            PreSanitationEllReadOnly = $null
+            PreSanitationEllHash = $null
+            PreSanitationEllHashCaptured = $false
+            PreSanitationXmlExists = $null
+            PreSanitationXmlReadOnly = $null
+            PreSanitationXmlHash = $null
+            PreSanitationXmlHashCaptured = $false
+            SanitationReadOnlyRestored = $false
+            SanitationWarehouseCleanupSucceeded = $false
+            SanitationArtifactRemovalAttempted = $false
+            SanitationArtifactEllGoneBeforeRemoval = $null
+            SanitationArtifactXmlGoneBeforeRemoval = $null
+            PostSanitationSnapshotComplete = $false
+            PostSanitationWarehouseQuerySucceeded = $false
+            PostSanitationWarehouseEntryExists = $null
+            PostSanitationEllExists = $null
+            PostSanitationEllReadOnly = $null
+            PostSanitationEllHash = $null
+            PostSanitationEllHashCaptured = $false
+            PostSanitationXmlExists = $null
+            PostSanitationXmlReadOnly = $null
+            PostSanitationXmlHash = $null
+            PostSanitationXmlHashCaptured = $false
+            PostSanitationHygienePassed = $false
+            Detail = ""
         }
         $detail = ""
         $success = $false
         try {
-            # 1. Clear read-only on the ELL if it still exists.
-            if (Test-Path -Path $marker.EllPath -PathType Leaf) {
-                Clear-ReadOnlyAttributeExact -Path $marker.EllPath | Out-Null
+            $markerProgId = [int]$marker.ProgId
+
+            # Capture all guarded production state before changing the ELL
+            # attribute, invoking the sanitation CLI delete, or removing any
+            # exact artifact. Unknown/incomplete state fails closed.
+            $preSnapshot = Get-L7SanitationSnapshot -Name $marker.Name -Type $marker.Type -ProgId $markerProgId -EllPath $marker.EllPath -XmlPath $marker.XmlPath
+            $record.PreSanitationSnapshotComplete = $preSnapshot.StateComplete
+            $record.PreSanitationWarehouseQuerySucceeded = $preSnapshot.WarehouseStateKnown
+            $record.PreSanitationWarehouseEntryExists = $preSnapshot.WarehouseEntryExists
+            $record.PreSanitationEllExists = $preSnapshot.EllExists
+            $record.PreSanitationEllReadOnly = $preSnapshot.EllReadOnly
+            $record.PreSanitationEllHash = $preSnapshot.EllHash
+            $record.PreSanitationEllHashCaptured = $preSnapshot.EllHashCaptured
+            $record.PreSanitationXmlExists = $preSnapshot.XmlExists
+            $record.PreSanitationXmlReadOnly = $preSnapshot.XmlReadOnly
+            $record.PreSanitationXmlHash = $preSnapshot.XmlHash
+            $record.PreSanitationXmlHashCaptured = $preSnapshot.XmlHashCaptured
+            if (-not $preSnapshot.StateComplete) {
+                throw "incomplete guarded pre-sanitation snapshot"
             }
-            # 2. Delete the warehouse entry via the CLI if it still exists.
-            $entryExisted = $false
-            $cliEx = Invoke-Cli -Arguments @("--json","exists",$marker.Type,$marker.Name)
-            if ($cliEx.ExitCode -eq 0) { $entryExisted = Get-ExistsFromJson -Json $cliEx.Stdout }
-            if ($entryExisted) {
-                Invoke-Cli -Arguments @("--json","delete",$marker.Type,$marker.Name) | Out-Null
-            }
-            # 3. Remove the EXACT orphan artifacts (no scanning, no glob).
-            if (Test-Path -Path $marker.EllPath -PathType Leaf) {
-                Remove-Item -Path $marker.EllPath -Force -ErrorAction SilentlyContinue
-            }
-            if (Test-Path -Path $marker.XmlPath -PathType Leaf) {
-                Remove-Item -Path $marker.XmlPath -Force -ErrorAction SilentlyContinue
-            }
-            # 4. Verify absence of the entry and both artifacts.
-            $ellGone = -not (Test-Path -Path $marker.EllPath -PathType Leaf)
-            $xmlGone = -not (Test-Path -Path $marker.XmlPath -PathType Leaf)
-            $entryGone = $true
-            if ($entryExisted) {
-                $cliEx2 = Invoke-Cli -Arguments @("--json","exists",$marker.Type,$marker.Name)
-                if ($cliEx2.ExitCode -eq 0) {
-                    $entryGone = -not (Get-ExistsFromJson -Json $cliEx2.Stdout)
-                }
-            }
-            if ($ellGone -and $xmlGone -and $entryGone) {
-                # 5. Delete the marker ONLY on verified success.
-                Remove-Item -Path $markerPath -Force -ErrorAction SilentlyContinue
-                $success = $true
-                $detail = "ell_gone=$ellGone xml_gone=$xmlGone entry_gone=$entryGone entry_existed=$entryExisted"
+
+            $readOnlyRestored = $false
+            $roRestore = $null
+            if (-not $preSnapshot.EllState.Exists) {
+                $readOnlyRestored = $true
+            } elseif ($preSnapshot.EllReadOnly) {
+                $roRestore = Clear-ReadOnlyAttributeExact -Path $marker.EllPath
+                $readOnlyRestored = ($roRestore.ExitCode -eq 0 -and $roRestore.IsReadOnlyAfter -eq $false)
             } else {
-                $detail = "incomplete ell_gone=$ellGone xml_gone=$xmlGone entry_gone=$entryGone entry_existed=$entryExisted"
+                $readOnlyRestored = $true
             }
+            $record.SanitationReadOnlyRestored = $readOnlyRestored
+            if (-not $readOnlyRestored) {
+                throw "read-only restoration failed: exit=$($roRestore.ExitCode) isReadOnly=$($roRestore.IsReadOnlyAfter)"
+            }
+
+            $warehouse = Invoke-L7WarehouseCleanup -Type $marker.Type -Name $marker.Name
+            $record.SanitationWarehouseCleanupSucceeded = [bool]$warehouse.CleanupSucceeded
+            $entryGone = $warehouse.ExistsGone
+            if (-not $warehouse.CleanupSucceeded) {
+                throw "warehouse cleanup not verified: $($warehouse.Detail)"
+            }
+
+            # Separate sanitation-stage observation, after warehouse action and
+            # before artifact removal.
+            $artifactBeforeRemovalEllState = Get-L7ArtifactState -Path $marker.EllPath -Type $marker.Type -ProgId $markerProgId -Extension 'ell'
+            $artifactBeforeRemovalXmlState = Get-L7ArtifactState -Path $marker.XmlPath -Type $marker.Type -ProgId $markerProgId -Extension 'xml'
+            $artifactBeforeRemovalEllKnown = ($artifactBeforeRemovalEllState.QuerySucceeded -and $artifactBeforeRemovalEllState.PathValidated -and (-not $artifactBeforeRemovalEllState.Exists -or $artifactBeforeRemovalEllState.IsRegularFile))
+            $artifactBeforeRemovalXmlKnown = ($artifactBeforeRemovalXmlState.QuerySucceeded -and $artifactBeforeRemovalXmlState.PathValidated -and (-not $artifactBeforeRemovalXmlState.Exists -or $artifactBeforeRemovalXmlState.IsRegularFile))
+            $record.SanitationArtifactEllGoneBeforeRemoval = ($artifactBeforeRemovalEllKnown -and -not $artifactBeforeRemovalEllState.Exists)
+            $record.SanitationArtifactXmlGoneBeforeRemoval = ($artifactBeforeRemovalXmlKnown -and -not $artifactBeforeRemovalXmlState.Exists)
+            if (-not $artifactBeforeRemovalEllKnown -or -not $artifactBeforeRemovalXmlKnown) {
+                throw "artifact state before removal was not verified"
+            }
+
+            $record.SanitationArtifactRemovalAttempted = $true
+            $ellRemoval = Remove-L7ExactFile -Path $marker.EllPath -Type $marker.Type -ProgId $markerProgId -Extension 'ell'
+            $xmlRemoval = Remove-L7ExactFile -Path $marker.XmlPath -Type $marker.Type -ProgId $markerProgId -Extension 'xml'
+            $ellGone = ($ellRemoval.Succeeded -and $ellRemoval.ExistsAfter -eq $false)
+            $xmlGone = ($xmlRemoval.Succeeded -and $xmlRemoval.ExistsAfter -eq $false)
+            if (-not $ellGone -or -not $xmlGone) {
+                throw "artifact cleanup not verified: ell=$($ellRemoval.Detail) xml=$($xmlRemoval.Detail)"
+            }
+
+            # Post-sanitation production hygiene is separate from the snapshot
+            # and action fields. The marker is removed only after this state is
+            # verified, so an incomplete recovery remains recoverable.
+            $postSnapshot = Get-L7SanitationSnapshot -Name $marker.Name -Type $marker.Type -ProgId $markerProgId -EllPath $marker.EllPath -XmlPath $marker.XmlPath
+            $record.PostSanitationSnapshotComplete = $postSnapshot.StateComplete
+            $record.PostSanitationWarehouseQuerySucceeded = $postSnapshot.WarehouseStateKnown
+            $record.PostSanitationWarehouseEntryExists = $postSnapshot.WarehouseEntryExists
+            $record.PostSanitationEllExists = $postSnapshot.EllExists
+            $record.PostSanitationEllReadOnly = $postSnapshot.EllReadOnly
+            $record.PostSanitationEllHash = $postSnapshot.EllHash
+            $record.PostSanitationEllHashCaptured = $postSnapshot.EllHashCaptured
+            $record.PostSanitationXmlExists = $postSnapshot.XmlExists
+            $record.PostSanitationXmlReadOnly = $postSnapshot.XmlReadOnly
+            $record.PostSanitationXmlHash = $postSnapshot.XmlHash
+            $record.PostSanitationXmlHashCaptured = $postSnapshot.XmlHashCaptured
+            $record.PostSanitationHygienePassed = ($postSnapshot.StateComplete -and -not $postSnapshot.WarehouseEntryExists -and -not $postSnapshot.EllExists -and -not $postSnapshot.XmlExists -and $readOnlyRestored)
+            if (-not $record.PostSanitationHygienePassed) {
+                throw "post-sanitation hygiene state was not verified"
+            }
+
+            $markerRemoval = Remove-L7RecoveryMarker -MarkerPath $markerPath
+            if (-not $markerRemoval.Succeeded) {
+                throw "recovery marker removal not verified: $($markerRemoval.Detail)"
+            }
+            $success = $true
+            $detail = "pre_complete=$($record.PreSanitationSnapshotComplete) pre_warehouse=$($record.PreSanitationWarehouseEntryExists) pre_ell=$($record.PreSanitationEllExists) pre_xml=$($record.PreSanitationXmlExists) ro_restored=$readOnlyRestored warehouse_cleanup=$($warehouse.CleanupSucceeded) ell_gone=$ellGone xml_gone=$xmlGone post_hygiene=$($record.PostSanitationHygienePassed) entry_gone=$entryGone"
         } catch {
-            $detail = "exception: $($_.Exception.Message)"
+            $detail = "incomplete: $($_.Exception.Message)"
         }
+        $record.Detail = $detail
+        $records += $record
         if ($success) {
             $recovered += "$($marker.Name):$detail"
         } else {
             $skipped += "incomplete_recovery:$markerPath $detail"
         }
     }
-    return @{ Recovered = $recovered; Skipped = $skipped }
+    return @{ Recovered = $recovered; Skipped = $skipped; Records = $records }
 }
 
 # ---------------------------------------------------------------------------
@@ -2825,6 +3596,10 @@ function Invoke-L7StaleMarkerRecovery {
 # ---------------------------------------------------------------------------
 function Set-ReadOnlyAttributeExact {
     param([Parameter(Mandatory)] [string]$Path)
+    $initialState = Get-L7PathState -Path $Path
+    if (-not $initialState.QuerySucceeded -or -not $initialState.Exists -or -not $initialState.IsRegularFile) {
+        throw "Cannot set read-only on an unverified regular file '$Path'"
+    }
     $cmd = "attrib +R `"$Path`""
     $roStderrFile = Join-Path $script:tmpDir "ro_set_stderr_$([System.Guid]::NewGuid().ToString('N')).txt"
     $roStdout = ""
@@ -2847,9 +3622,12 @@ function Set-ReadOnlyAttributeExact {
         $roStderr = ([System.IO.File]::ReadAllText($roStderrFile)).TrimEnd()
         Remove-Item -Path $roStderrFile -Force -ErrorAction SilentlyContinue
     }
-    $isReadOnlyAfter = $false
-    if (Test-Path -Path $Path -PathType Leaf) {
-        $isReadOnlyAfter = (Get-Item -Path $Path).IsReadOnly
+    $postState = Get-L7PathState -Path $Path
+    $isReadOnlyAfter = $null
+    if ($postState.QuerySucceeded -and $postState.Exists -and $postState.IsRegularFile) {
+        $isReadOnlyAfter = $postState.IsReadOnly
+    } elseif ($roExit -eq 0) {
+        $roExit = -3
     }
     return @{
         Command           = $cmd
@@ -2872,8 +3650,15 @@ function Set-ReadOnlyAttributeExact {
 # ---------------------------------------------------------------------------
 function Clear-ReadOnlyAttributeExact {
     param([Parameter(Mandatory)] [string]$Path)
-    if (-not (Test-Path -Path $Path -PathType Leaf)) {
+    $initialState = Get-L7PathState -Path $Path
+    if (-not $initialState.QuerySucceeded) {
+        return @{ Command = "attrib -R `"$Path`" (inspection failed)"; Stdout = ""; Stderr = $initialState.Error; ExitCode = -3; IsReadOnlyAfter = $null }
+    }
+    if (-not $initialState.Exists) {
         return @{ Command = "attrib -R `"$Path`" (skipped: file absent)"; Stdout = ""; Stderr = ""; ExitCode = 0; IsReadOnlyAfter = $false }
+    }
+    if (-not $initialState.IsRegularFile) {
+        return @{ Command = "attrib -R `"$Path`" (refused: not a regular file)"; Stdout = ""; Stderr = ""; ExitCode = -3; IsReadOnlyAfter = $null }
     }
     $cmd = "attrib -R `"$Path`""
     $roStderrFile = Join-Path $script:tmpDir "ro_clr_stderr_$([System.Guid]::NewGuid().ToString('N')).txt"
@@ -2897,9 +3682,12 @@ function Clear-ReadOnlyAttributeExact {
         $roStderr = ([System.IO.File]::ReadAllText($roStderrFile)).TrimEnd()
         Remove-Item -Path $roStderrFile -Force -ErrorAction SilentlyContinue
     }
-    $isReadOnlyAfter = $false
-    if (Test-Path -Path $Path -PathType Leaf) {
-        $isReadOnlyAfter = (Get-Item -Path $Path).IsReadOnly
+    $postState = Get-L7PathState -Path $Path
+    $isReadOnlyAfter = $null
+    if ($postState.QuerySucceeded -and $postState.Exists -and $postState.IsRegularFile) {
+        $isReadOnlyAfter = $postState.IsReadOnly
+    } elseif ($roExit -eq 0) {
+        $roExit = -3
     }
     return @{
         Command         = $cmd
@@ -2916,8 +3704,10 @@ function Clear-ReadOnlyAttributeExact {
 # ---------------------------------------------------------------------------
 function Get-FileHashOrNull {
     param([string]$Path)
-    if ($Path -and (Test-Path -Path $Path -PathType Leaf)) {
-        return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    if ($Path) {
+        $pathState = Get-L7PathState -Path $Path
+        if (-not $pathState.QuerySucceeded -or -not $pathState.Exists -or -not $pathState.IsRegularFile) { return $null }
+        try { return (Get-FileHash -Path $Path -Algorithm SHA256 -ErrorAction Stop).Hash } catch { return $null }
     }
     return $null
 }
@@ -2930,8 +3720,9 @@ function Get-FileHashOrNull {
 # ---------------------------------------------------------------------------
 function Get-GuidOccurrenceCountInEll {
     param([string]$EllPath, [string]$GuidString)
-    if (-not $EllPath -or -not (Test-Path -Path $EllPath -PathType Leaf)) { return 0 }
-    if (-not $GuidString) { return 0 }
+    if (-not $EllPath -or -not $GuidString) { return 0 }
+    $ellState = Get-L7PathState -Path $EllPath
+    if (-not $ellState.QuerySucceeded -or -not $ellState.Exists -or -not $ellState.IsRegularFile) { return 0 }
     try {
         $ellBytes = [System.IO.File]::ReadAllBytes($EllPath)
         $guidBytes = Convert-GuidToWindowsBytes -GuidString $GuidString
@@ -2942,13 +3733,63 @@ function Get-GuidOccurrenceCountInEll {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: Invoke-L7Sanitation -- the per-case finally cleanup for L7. ALWAYS
-# restores the read-only attribute first (handoff Sec.6: "always restore the
-# attribute in finally"), then deletes the warehouse entry via the CLI,
-# verifies via exists, captures PRE-SANITATION production state (so the
-# durable record shows production vs sanitation state before cleanup), and
-# performs best-effort artifact removal. Escalates cleanup failure to a test
-# failure. Returns a hashtable with the full cleanup + state capture.
+# Helper: New-L7EvidenceRecord -- creates an honest evidence skeleton before a
+# case's mutable operations begin. If a case throws before its normal evidence
+# assignment, the sanitation helper can still attach its guarded pre/action/post
+# fields instead of silently dropping the lifecycle record.
+# ---------------------------------------------------------------------------
+function New-L7EvidenceRecord {
+    param(
+        [Parameter(Mandatory)] [string]$CaseId,
+        [Parameter(Mandatory)] [string]$CaseTitle,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Type,
+        [Parameter(Mandatory)] [int]$ProgId,
+        [Parameter(Mandatory)] [string]$Operation,
+        [hashtable]$ReadOnlyCapture = $null
+    )
+    return @{
+        CaseId = $CaseId
+        CaseTitle = $CaseTitle
+        ItemIdentifier = $Name
+        ComponentType = $Type
+        ProgId = $ProgId
+        Operation = $Operation
+        ReadOnlyCommand = if ($ReadOnlyCapture) { $ReadOnlyCapture.Command } else { "" }
+        ReadOnlyExitCode = if ($ReadOnlyCapture) { $ReadOnlyCapture.ExitCode } else { $null }
+        ReadOnlyIsReadOnlyAfter = if ($ReadOnlyCapture) { $ReadOnlyCapture.IsReadOnlyAfter } else { $null }
+        ReadOnlyStdout = if ($ReadOnlyCapture) { $ReadOnlyCapture.Stdout } else { "" }
+        ReadOnlyStderr = if ($ReadOnlyCapture) { $ReadOnlyCapture.Stderr } else { "" }
+        PreEllHash = $null
+        PreXmlHash = $null
+        PostEllHash = $null
+        PostXmlHash = $null
+        OpExitCode = $null
+        OpJsonSuccess = $null
+        OpStderr = ""
+        OpStdout = ""
+        DesiredStatePassed = $false
+        InvariantFailures = "case interrupted before operation evidence was assembled"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Helper: Invoke-L7Sanitation -- the per-case finally cleanup for L7.
+#
+# Ordering is deliberate and is part of the evidence contract:
+#   1. Capture the guarded production snapshot (ELL/XML state and hashes, plus
+#      warehouse state) before changing attributes, invoking the sanitation
+#      delete, or removing any artifact.
+#   2. Perform sanitation actions: restore ELL read-only, clean the warehouse,
+#      then remove only the exact validated artifacts.
+#   3. Capture the post-sanitation hygiene state and keep it separate from the
+#      production snapshot. In particular, post-cleanup values are never put in
+#      a *BeforeSanitation field.
+#
+# The intermediate artifact state after the sanitation warehouse operation and
+# before artifact removal is used only for the sanitation delete verdict. A
+# residual observed there remains a failed production/sanitation observation;
+# the later hygiene removal does not rewrite that verdict as clean.
 # ---------------------------------------------------------------------------
 function Invoke-L7Sanitation {
     param(
@@ -2956,94 +3797,285 @@ function Invoke-L7Sanitation {
         [Parameter(Mandatory)] [string]$Type,
         [int]$ProgId = 0,
         [string]$EllPath = "",
-        [string]$XmlPath = ""
+        [string]$XmlPath = "",
+        [hashtable]$Evidence = $null
     )
-    # 1. ALWAYS restore the read-only attribute first, even on failure/crash.
+
+    # -----------------------------------------------------------------------
+    # Production state snapshot. This call must remain before every sanitation
+    # action below (Clear-ReadOnlyAttributeExact, Invoke-L7WarehouseCleanup,
+    # and Remove-L7ExactFile). It is a guarded snapshot of the production
+    # ELL/XML and warehouse state; it is not reconstructed after cleanup.
+    # -----------------------------------------------------------------------
+    $invalidArtifactState = @{
+        QuerySucceeded = $false
+        Exists         = $false
+        IsRegularFile  = $false
+        IsDirectory    = $false
+        IsReadOnly     = $null
+        PathValidated  = $false
+        Error          = "artifact path not supplied"
+    }
+    $productionSnapshot = Get-L7SanitationSnapshot -Name $Name -Type $Type -ProgId $ProgId -EllPath $EllPath -XmlPath $XmlPath
+    $productionEllState = $productionSnapshot.EllState
+    $productionXmlState = $productionSnapshot.XmlState
+    $productionWarehouseState = $productionSnapshot.WarehouseState
+    $productionEllStateKnown = $productionSnapshot.EllStateKnown
+    $productionXmlStateKnown = $productionSnapshot.XmlStateKnown
+    $productionWarehouseStateKnown = $productionSnapshot.WarehouseStateKnown
+    $productionEllExists = $productionSnapshot.EllExists
+    $productionXmlExists = $productionSnapshot.XmlExists
+    $productionWarehouseEntryExists = $productionSnapshot.WarehouseEntryExists
+    $productionEllReadOnly = $productionSnapshot.EllReadOnly
+    $productionXmlReadOnly = $productionSnapshot.XmlReadOnly
+    $productionEllHash = $productionSnapshot.EllHash
+    $productionEllHashCaptured = $productionSnapshot.EllHashCaptured
+    $productionXmlHash = $productionSnapshot.XmlHash
+    $productionXmlHashCaptured = $productionSnapshot.XmlHashCaptured
+    $productionStateComplete = $productionSnapshot.StateComplete
+
+    if ($Evidence) {
+        # Populate production evidence while the guarded snapshot is still the
+        # current state. Later blocks add sanitation actions and post-hygiene
+        # state under separate field names; no post-cleanup value is assigned
+        # to a production-before-sanitation field.
+        $Evidence.ProductionWarehouseQuerySucceeded = $productionWarehouseState.QuerySucceeded
+        $Evidence.ProductionWarehouseEntryExistsBeforeSanitation = $productionWarehouseEntryExists
+        $Evidence.ProductionWarehouseDetailBeforeSanitation = $productionWarehouseState.Detail
+        $Evidence.ProductionEllExistsBeforeSanitation = $productionEllExists
+        $Evidence.ProductionEllReadOnlyBeforeSanitation = $productionEllReadOnly
+        $Evidence.ProductionEllHashBeforeSanitation = $productionEllHash
+        $Evidence.ProductionEllHashCapturedBeforeSanitation = $productionEllHashCaptured
+        $Evidence.ProductionEllStateKnownBeforeSanitation = $productionEllStateKnown
+        $Evidence.ProductionXmlExistsBeforeSanitation = $productionXmlExists
+        $Evidence.ProductionXmlReadOnlyBeforeSanitation = $productionXmlReadOnly
+        $Evidence.ProductionXmlHashBeforeSanitation = $productionXmlHash
+        $Evidence.ProductionXmlHashCapturedBeforeSanitation = $productionXmlHashCaptured
+        $Evidence.ProductionXmlStateKnownBeforeSanitation = $productionXmlStateKnown
+        $Evidence.ProductionStateCompleteBeforeSanitation = $productionStateComplete
+    }
+
+    # -----------------------------------------------------------------------
+    # Sanitation actions/results: restore the attribute, then clean the
+    # warehouse. Artifact deletion remains withheld unless every required
+    # state/guard is verified, preserving fail-closed behavior.
+    # -----------------------------------------------------------------------
     $roRestore = $null
-    if ($EllPath -and (Test-Path -Path $EllPath -PathType Leaf)) {
-        $roRestore = Clear-ReadOnlyAttributeExact -Path $EllPath
-        Write-Host "  L7 sanitation: restored read-only attribute on $EllPath (exit=$($roRestore.ExitCode) isReadOnly=$($roRestore.IsReadOnlyAfter))" -ForegroundColor DarkGray
+    $readOnlyRestored = $true
+    $readOnlyAction = if ($EllPath) { "not_attempted" } else { "not_attempted_path_not_supplied" }
+    if (-not $productionStateComplete) {
+        $readOnlyRestored = $false
+        $readOnlyAction = "withheld_incomplete_production_snapshot"
+    } elseif ($EllPath) {
+        if (-not $productionEllStateKnown) {
+            $readOnlyRestored = $false
+            $readOnlyAction = "withheld_state_unknown"
+        } elseif ($productionEllState.Exists) {
+            if ($productionEllState.IsReadOnly) {
+                $readOnlyAction = "attempted_attrib_minus_R"
+                try {
+                    $roRestore = Clear-ReadOnlyAttributeExact -Path $EllPath
+                    $readOnlyRestored = ($roRestore.ExitCode -eq 0 -and $roRestore.IsReadOnlyAfter -eq $false)
+                } catch {
+                    $roRestore = @{ Command = "attrib -R `"$EllPath`""; Stdout = ""; Stderr = $_.Exception.Message; ExitCode = -3; IsReadOnlyAfter = $null }
+                    $readOnlyRestored = $false
+                }
+                Write-Host "  L7 sanitation: restored read-only attribute on $EllPath (exit=$($roRestore.ExitCode) isReadOnly=$($roRestore.IsReadOnlyAfter))" -ForegroundColor DarkGray
+            } else {
+                $readOnlyAction = "not_needed_already_clear"
+            }
+        } else {
+            $readOnlyAction = "not_needed_absent"
+        }
     }
 
-    # 2. Delete the warehouse entry via the CLI.
-    $cliDel = Invoke-Cli -Arguments @("--json","delete",$Type,$Name)
-    Write-Host "  L7 sanitation delete($Type $Name): exit=$($cliDel.ExitCode)" -ForegroundColor DarkGray
+    $warehouse = Invoke-L7WarehouseCleanup -Type $Type -Name $Name
+    $existsGone = $warehouse.ExistsGone
+    $deletedEntry = $warehouse.CleanupSucceeded
+    Write-Host "  L7 sanitation warehouse cleanup($Type $Name): delete_attempted=$($warehouse.DeleteAttempted) delete_exit=$($warehouse.DeleteExitCode) exists_gone=$existsGone" -ForegroundColor $(if ($warehouse.CleanupSucceeded) { 'DarkGray' } else { 'Yellow' })
 
-    # 3. Verify the entry is gone via exists.
-    $existsGone = $false
-    $cliEx = Invoke-Cli -Arguments @("--json","exists",$Type,$Name)
-    if ($cliEx.ExitCode -eq 0) {
-        $existsGone = -not (Get-ExistsFromJson -Json $cliEx.Stdout)
+    # This is an explicitly separate sanitation-stage observation: it is after
+    # the warehouse action but before any artifact removal. It is never called
+    # a production-before-sanitation value.
+    $artifactBeforeRemovalEllState = if ($EllPath) { Get-L7ArtifactState -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell' } else { $invalidArtifactState.Clone() }
+    $artifactBeforeRemovalXmlState = if ($XmlPath) { Get-L7ArtifactState -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml' } else { $invalidArtifactState.Clone() }
+    $artifactBeforeRemovalEllKnown = ($artifactBeforeRemovalEllState.QuerySucceeded -and $artifactBeforeRemovalEllState.PathValidated -and (-not $artifactBeforeRemovalEllState.Exists -or $artifactBeforeRemovalEllState.IsRegularFile))
+    $artifactBeforeRemovalXmlKnown = ($artifactBeforeRemovalXmlState.QuerySucceeded -and $artifactBeforeRemovalXmlState.PathValidated -and (-not $artifactBeforeRemovalXmlState.Exists -or $artifactBeforeRemovalXmlState.IsRegularFile))
+    $ellGoneBeforeArtifactRemoval = ($artifactBeforeRemovalEllKnown -and -not $artifactBeforeRemovalEllState.Exists)
+    $xmlGoneBeforeArtifactRemoval = ($artifactBeforeRemovalXmlKnown -and -not $artifactBeforeRemovalXmlState.Exists)
+    $orphanBeforeArtifactRemoval = if ($artifactBeforeRemovalEllKnown -and $artifactBeforeRemovalXmlKnown) { ([bool]$artifactBeforeRemovalEllState.Exists -or [bool]$artifactBeforeRemovalXmlState.Exists) } else { $null }
+
+    $verdictOk = Get-CleanupVerdict -DeletedEntry $deletedEntry -ExistsGone $existsGone -EllGone $ellGoneBeforeArtifactRemoval -XmlGone $xmlGoneBeforeArtifactRemoval
+
+    $sanitizedEllGone = $false
+    $sanitizedXmlGone = $false
+    $ellRemovalDetail = "not_attempted"
+    $xmlRemovalDetail = "not_attempted"
+    $ellRemoval = $null
+    $xmlRemoval = $null
+    if ($productionStateComplete -and $warehouse.CleanupSucceeded -and $readOnlyRestored -and $artifactBeforeRemovalEllKnown -and $artifactBeforeRemovalXmlKnown) {
+        $ellRemoval = if ($EllPath) { Remove-L7ExactFile -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell' } else { @{ Succeeded = $true; ExistsAfter = $false; Detail = "path_not_supplied" } }
+        $xmlRemoval = if ($XmlPath) { Remove-L7ExactFile -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml' } else { @{ Succeeded = $true; ExistsAfter = $false; Detail = "path_not_supplied" } }
+        $sanitizedEllGone = ($ellRemoval.Succeeded -and $ellRemoval.ExistsAfter -eq $false)
+        $sanitizedXmlGone = ($xmlRemoval.Succeeded -and $xmlRemoval.ExistsAfter -eq $false)
+        $ellRemovalDetail = $ellRemoval.Detail
+        $xmlRemovalDetail = $xmlRemoval.Detail
+    } elseif (-not $productionStateComplete) {
+        $ellRemovalDetail = "withheld_incomplete_production_snapshot"
+        $xmlRemovalDetail = "withheld_incomplete_production_snapshot"
+    } elseif (-not $warehouse.CleanupSucceeded) {
+        $ellRemovalDetail = "withheld_warehouse_state_unknown"
+        $xmlRemovalDetail = "withheld_warehouse_state_unknown"
+    } elseif (-not $readOnlyRestored) {
+        $ellRemovalDetail = "withheld_read_only_restore_unverified"
+        $xmlRemovalDetail = "withheld_read_only_restore_unverified"
+    } else {
+        $ellRemovalDetail = "withheld_artifact_state_unknown"
+        $xmlRemovalDetail = "withheld_artifact_state_unknown"
     }
-    Write-Host "  L7 sanitation exists after delete: gone=$existsGone" -ForegroundColor $(if ($existsGone) { 'DarkGray' } else { 'Yellow' })
+    Write-Host "  L7 sanitation artifacts: gone_before_removal=$ellGoneBeforeArtifactRemoval/$xmlGoneBeforeArtifactRemoval orphan_before_removal=$orphanBeforeArtifactRemoval sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone" -ForegroundColor $(if ($sanitizedEllGone -and $sanitizedXmlGone) { 'DarkGray' } else { 'Yellow' })
 
-    # 4. Capture PRE-SANITATION production state (production vs sanitation
-    #    state BEFORE any best-effort Remove-Item). Reuses the shared pure
-    #    helper (L6 oracle preserved).
-    $state = Get-ArtifactSanitationState -EllPath $EllPath -XmlPath $XmlPath
-    $ellExistedBeforeSanitation = $state.EllExistedBeforeSanitation
-    $xmlExistedBeforeSanitation = $state.XmlExistedBeforeSanitation
-    $orphanExistedBeforeSanitation = $state.OrphanExistedBeforeSanitation
-    $ellGonePreSan = $state.EllGone
-    $xmlGonePreSan = $state.XmlGone
+    # -----------------------------------------------------------------------
+    # Post-sanitation hygiene state. These queries are guarded and are kept
+    # separate from the production snapshot and sanitation-stage verdict.
+    # -----------------------------------------------------------------------
+    $postEllState = if ($EllPath) { Get-L7ArtifactState -Path $EllPath -Type $Type -ProgId $ProgId -Extension 'ell' } else { $invalidArtifactState.Clone() }
+    $postXmlState = if ($XmlPath) { Get-L7ArtifactState -Path $XmlPath -Type $Type -ProgId $ProgId -Extension 'xml' } else { $invalidArtifactState.Clone() }
+    $postWarehouseState = Get-L7ExistsState -Type $Type -Name $Name
+    $postEllStateKnown = ($postEllState.QuerySucceeded -and $postEllState.PathValidated -and (-not $postEllState.Exists -or $postEllState.IsRegularFile))
+    $postXmlStateKnown = ($postXmlState.QuerySucceeded -and $postXmlState.PathValidated -and (-not $postXmlState.Exists -or $postXmlState.IsRegularFile))
+    $postWarehouseStateKnown = [bool]$postWarehouseState.QuerySucceeded
+    $postEllExists = if ($postEllStateKnown) { [bool]$postEllState.Exists } else { $null }
+    $postXmlExists = if ($postXmlStateKnown) { [bool]$postXmlState.Exists } else { $null }
+    $postWarehouseEntryExists = if ($postWarehouseStateKnown) { [bool]$postWarehouseState.Exists } else { $null }
+    $postEllHash = if ($postEllStateKnown -and $postEllState.Exists -and $postEllState.IsRegularFile) { Get-FileHashOrNull -Path $EllPath } else { $null }
+    $postXmlHash = if ($postXmlStateKnown -and $postXmlState.Exists -and $postXmlState.IsRegularFile) { Get-FileHashOrNull -Path $XmlPath } else { $null }
+    $postEllHashCaptured = if ($postEllStateKnown -and -not $postEllState.Exists) { $true } elseif ($postEllStateKnown -and $postEllState.Exists) { $null -ne $postEllHash } else { $false }
+    $postXmlHashCaptured = if ($postXmlStateKnown -and -not $postXmlState.Exists) { $true } elseif ($postXmlStateKnown -and $postXmlState.Exists) { $null -ne $postXmlHash } else { $false }
+    $postHygieneOk = ($productionStateComplete -and $warehouse.CleanupSucceeded -and $readOnlyRestored -and $postEllStateKnown -and -not $postEllState.Exists -and $postXmlStateKnown -and -not $postXmlState.Exists -and $postWarehouseStateKnown -and -not $postWarehouseState.Exists)
 
-    # 5. Best-effort sanitation (test hygiene only; does not affect the
-    #    verdict, which is fixed above by the pre-sanitation state).
-    $sanitizedEllGone = $true
-    $sanitizedXmlGone = $true
-    if ($ellExistedBeforeSanitation) {
-        Remove-Item -Path $EllPath -Force -ErrorAction SilentlyContinue
-        $sanitizedEllGone = -not (Test-Path -Path $EllPath -PathType Leaf)
+    if ($Evidence) {
+        # Sanitation actions/results.
+        $Evidence.ReadOnlyRestored = $readOnlyRestored
+        $Evidence.ReadOnlyRestoreAction = $readOnlyAction
+        $Evidence.ReadOnlyRestoreCommand = if ($roRestore) { $roRestore.Command } else { "" }
+        $Evidence.ReadOnlyRestoreExitCode = if ($roRestore) { $roRestore.ExitCode } else { 0 }
+        $Evidence.ReadOnlyRestoreStdout = if ($roRestore) { $roRestore.Stdout } else { "" }
+        $Evidence.ReadOnlyRestoreStderr = if ($roRestore) { $roRestore.Stderr } else { "" }
+        $Evidence.SanitationWarehouseCleanupSucceeded = $warehouse.CleanupSucceeded
+        $Evidence.SanitationWarehouseDetail = $warehouse.Detail
+        $Evidence.SanitationWarehouseDeleteAttempted = $warehouse.DeleteAttempted
+        $Evidence.SanitationWarehouseDeleteExitCode = $warehouse.DeleteExitCode
+        $Evidence.SanitationWarehouseDeleteJsonSuccess = $warehouse.DeleteJsonSuccess
+        $Evidence.SanitationWarehouseExistsGone = $warehouse.ExistsGone
+        $Evidence.SanitationArtifactEllGoneBeforeRemoval = $ellGoneBeforeArtifactRemoval
+        $Evidence.SanitationArtifactXmlGoneBeforeRemoval = $xmlGoneBeforeArtifactRemoval
+        $Evidence.SanitationArtifactOrphanBeforeRemoval = $orphanBeforeArtifactRemoval
+        $Evidence.SanitationEllRemovalSucceeded = if ($ellRemoval) { $ellRemoval.Succeeded } else { $false }
+        $Evidence.SanitationXmlRemovalSucceeded = if ($xmlRemoval) { $xmlRemoval.Succeeded } else { $false }
+        $Evidence.SanitationEllRemovalDetail = $ellRemovalDetail
+        $Evidence.SanitationXmlRemovalDetail = $xmlRemovalDetail
+        $Evidence.SanitationDeleteVerdictBeforeArtifactRemoval = $verdictOk
+
+        # Post-sanitation hygiene state.
+        $Evidence.PostSanitationWarehouseQuerySucceeded = $postWarehouseState.QuerySucceeded
+        $Evidence.PostSanitationWarehouseEntryPresent = $postWarehouseEntryExists
+        $Evidence.PostSanitationEllPresent = $postEllExists
+        $Evidence.PostSanitationXmlPresent = $postXmlExists
+        $Evidence.PostSanitationEllReadOnly = if ($postEllStateKnown -and $postEllState.Exists) { [bool]$postEllState.IsReadOnly } else { $null }
+        $Evidence.PostSanitationXmlReadOnly = if ($postXmlStateKnown -and $postXmlState.Exists) { [bool]$postXmlState.IsReadOnly } else { $null }
+        $Evidence.PostSanitationEllHash = $postEllHash
+        $Evidence.PostSanitationEllHashCaptured = $postEllHashCaptured
+        $Evidence.PostSanitationXmlHash = $postXmlHash
+        $Evidence.PostSanitationXmlHashCaptured = $postXmlHashCaptured
+        $Evidence.PostSanitationHygienePassed = $postHygieneOk
     }
-    if ($xmlExistedBeforeSanitation) {
-        Remove-Item -Path $XmlPath -Force -ErrorAction SilentlyContinue
-        $sanitizedXmlGone = -not (Test-Path -Path $XmlPath -PathType Leaf)
-    }
-    Write-Host "  L7 sanitation artifacts: ell_gone(pre-san)=$ellGonePreSan xml_gone(pre-san)=$xmlGonePreSan orphan_before=$orphanExistedBeforeSanitation sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone" -ForegroundColor $(if ($ellGonePreSan -and $xmlGonePreSan) { 'DarkGray' } else { 'Yellow' })
-
-    $deletedEntry = Test-DeleteSucceeded -ExitCode $cliDel.ExitCode -ExistsGone $existsGone
-    $verdictOk = Get-CleanupVerdict -DeletedEntry $deletedEntry -ExistsGone $existsGone -EllGone $ellGonePreSan -XmlGone $xmlGonePreSan
 
     return @{
-        DeleteExitCode                = $cliDel.ExitCode
-        DeleteStderr                  = $cliDel.Stderr
-        DeleteStdout                  = $cliDel.Stdout
-        DeletedEntry                  = $deletedEntry
-        ExistsGone                    = $existsGone
-        EllExistedBeforeSanitation    = $ellExistedBeforeSanitation
-        XmlExistedBeforeSanitation    = $xmlExistedBeforeSanitation
-        OrphanExistedBeforeSanitation = $orphanExistedBeforeSanitation
-        EllGonePreSanitation          = $ellGonePreSan
-        XmlGonePreSanitation          = $xmlGonePreSan
-        SanitizedEllGone              = $sanitizedEllGone
-        SanitizedXmlGone              = $sanitizedXmlGone
-        ReadOnlyRestored              = if ($roRestore) { -not $roRestore.IsReadOnlyAfter } else { $true }
-        ReadOnlyRestoreCommand        = if ($roRestore) { $roRestore.Command } else { "" }
-        ReadOnlyRestoreExitCode       = if ($roRestore) { $roRestore.ExitCode } else { 0 }
-        VerdictOk                     = $verdictOk
-        Detail                        = "deleted=$deletedEntry delete_exit=$($cliDel.ExitCode) exists_gone=$existsGone ell_gone_pre_san=$ellGonePreSan xml_gone_pre_san=$xmlGonePreSan orphan_before=$orphanExistedBeforeSanitation sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone ro_restored=$(if ($roRestore) { -not $roRestore.IsReadOnlyAfter } else { $true })"
+        # Production state captured before any sanitation action.
+        ProductionWarehouseState          = $productionWarehouseState
+        ProductionWarehouseQuerySucceeded  = $productionWarehouseStateKnown
+        ProductionWarehouseEntryExists     = $productionWarehouseEntryExists
+        ProductionEllState                 = $productionEllState
+        ProductionXmlState                 = $productionXmlState
+        ProductionEllExists                = $productionEllExists
+        ProductionEllReadOnly              = $productionEllReadOnly
+        ProductionXmlExists                = $productionXmlExists
+        ProductionXmlReadOnly              = $productionXmlReadOnly
+        ProductionEllHash                  = $productionEllHash
+        ProductionEllHashCaptured          = $productionEllHashCaptured
+        ProductionXmlHash                  = $productionXmlHash
+        ProductionXmlHashCaptured          = $productionXmlHashCaptured
+        ProductionStateComplete            = $productionStateComplete
+
+        # Sanitation actions/results.
+        DeleteExitCode                     = $warehouse.DeleteExitCode
+        DeleteStderr                       = $warehouse.DeleteStderr
+        DeleteStdout                       = $warehouse.DeleteStdout
+        DeleteJsonSuccess                  = $warehouse.DeleteJsonSuccess
+        WarehouseCleanupSucceeded          = $warehouse.CleanupSucceeded
+        WarehouseCleanupDetail             = $warehouse.Detail
+        DeletedEntry                       = $deletedEntry
+        ExistsGone                         = $existsGone
+        ArtifactEllGoneBeforeRemoval       = $ellGoneBeforeArtifactRemoval
+        ArtifactXmlGoneBeforeRemoval       = $xmlGoneBeforeArtifactRemoval
+        ArtifactOrphanBeforeRemoval        = $orphanBeforeArtifactRemoval
+        SanitizedEllGone                   = $sanitizedEllGone
+        SanitizedXmlGone                   = $sanitizedXmlGone
+        ReadOnlyRestored                   = $readOnlyRestored
+        ReadOnlyRestoreAction               = $readOnlyAction
+        ReadOnlyRestoreCommand             = if ($roRestore) { $roRestore.Command } else { "" }
+        ReadOnlyRestoreExitCode            = if ($roRestore) { $roRestore.ExitCode } else { 0 }
+        ReadOnlyRestoreStdout              = if ($roRestore) { $roRestore.Stdout } else { "" }
+        ReadOnlyRestoreStderr              = if ($roRestore) { $roRestore.Stderr } else { "" }
+        SanitationVerdictOk                = $verdictOk
+        VerdictOk                          = $verdictOk
+
+        # Post-sanitation hygiene state.
+        PostSanitationWarehouseState       = $postWarehouseState
+        PostSanitationWarehouseEntryExists = $postWarehouseEntryExists
+        PostSanitationEllState             = $postEllState
+        PostSanitationXmlState             = $postXmlState
+        PostSanitationEllExists            = $postEllExists
+        PostSanitationXmlExists            = $postXmlExists
+        PostSanitationEllReadOnly          = if ($postEllStateKnown -and $postEllState.Exists) { [bool]$postEllState.IsReadOnly } else { $null }
+        PostSanitationXmlReadOnly          = if ($postXmlStateKnown -and $postXmlState.Exists) { [bool]$postXmlState.IsReadOnly } else { $null }
+        PostSanitationEllHash              = $postEllHash
+        PostSanitationEllHashCaptured      = $postEllHashCaptured
+        PostSanitationXmlHash              = $postXmlHash
+        PostSanitationXmlHashCaptured      = $postXmlHashCaptured
+        PostSanitationHygieneOk            = $postHygieneOk
+        Detail                             = "production_warehouse=$productionWarehouseEntryExists production_ell=$productionEllExists production_xml=$productionXmlExists deleted=$deletedEntry delete_attempted=$($warehouse.DeleteAttempted) delete_exit=$($warehouse.DeleteExitCode) exists_gone=$existsGone artifact_ell_gone_before_removal=$ellGoneBeforeArtifactRemoval artifact_xml_gone_before_removal=$xmlGoneBeforeArtifactRemoval sanitation_verdict=$verdictOk sanitized_ell=$sanitizedEllGone sanitized_xml=$sanitizedXmlGone post_warehouse=$postWarehouseEntryExists post_ell=$postEllExists post_xml=$postXmlExists post_hygiene=$postHygieneOk ell_cleanup='$ellRemovalDetail' xml_cleanup='$xmlRemovalDetail' ro_restored=$readOnlyRestored"
     }
 }
 
 # ---------------------------------------------------------------------------
 # Helper: Write-L7DurableEvidence -- writes the complete RED reproduction
-# evidence (handoff Sec.6 Evidence) to the supplied $Path. The default path is the
-# gitignored tmp/ copy; the tracked docs/RE/ file is written only when the
-# operator passes -UpdateTrackedEvidence (see the param-block write-guard).
+# evidence (handoff Sec.6 Evidence) to the supplied $Path. The omitted default
+# is a run-specific gitignored tmp/ copy; the tracked docs/RE/ file may be
+# selected only when the operator passes -UpdateTrackedEvidence (see the
+# param-block write-guard).
 # Raw logs remain transient; this summary includes exit codes, hashes, GUID
 # occurrence counts, get-source output, the read-only-command capture, and
-# invariant failures. Overwrites the destination on each run with the latest
-# complete evidence.
+# invariant failures. Selecting the tracked path requires
+# -UpdateTrackedEvidence, but that switch does not permit overwriting; every
+# destination uses exclusive create and an existing destination fails closed.
 # ---------------------------------------------------------------------------
 function Write-L7DurableEvidence {
     param(
         [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] [System.Collections.Generic.List[hashtable]]$Evidence
+        [Parameter(Mandatory)] [System.Collections.Generic.List[hashtable]]$Evidence,
+        [switch]$AllowTrackedPath
     )
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("# TVS-L.7 RED Fault-Injection Evidence")
+    [void]$sb.AppendLine("# TVS-L.7 RED Fault-Injection Evidence - Historical/Transient Recorded Run")
     [void]$sb.AppendLine("")
-    [void]$sb.AppendLine("> Tracked durable summary produced by ``tests/test_unknown_link_regression.ps1 -IncludeRedFaultInjection``.")
+    [void]$sb.AppendLine("> This evidence records one historical/transient recorded run only; it is not a current run and not current production-acceptance proof.")
+    [void]$sb.AppendLine("> Exact ProgIds, hashes, exit codes, and outcomes below are unverified outside that recorded run.")
+    [void]$sb.AppendLine("> Routine ``-IncludeRedFaultInjection`` runs write run-specific gitignored ``tmp/`` evidence; ``-UpdateTrackedEvidence`` authorizes the tracked destination, but an existing destination is never overwritten.")
+    [void]$sb.AppendLine("> This evidence document is assembled after cleanup. The production-state snapshot is captured before sanitation begins (before attribute restore, the sanitation CLI delete, or artifact removal). Sanitation action/result fields and post-sanitation hygiene fields are reported separately; no post-cleanup value is labeled as production-before-sanitation.")
+    [void]$sb.AppendLine("> Textual stdout/stderr in this retained/generated Markdown is PowerShell-rendered and may contain encoding artifacts; it is not a byte-exact transcript. Underlying native bytes are not verified.")
+    [void]$sb.AppendLine("> Produced by ``tests/test_unknown_link_regression.ps1 -IncludeRedFaultInjection``.")
     [void]$sb.AppendLine("> Handoff Sec.6 Evidence: exit codes, hashes, GUID occurrence counts, get-source output,")
     [void]$sb.AppendLine("> read-only-command capture, and invariant failures. Raw logs remain transient.")
     [void]$sb.AppendLine("> Generated: $(Get-Date -Format 'o')")
@@ -3060,10 +4092,10 @@ function Write-L7DurableEvidence {
         [void]$sb.AppendLine("- Command: ``$($e.ReadOnlyCommand)``")
         [void]$sb.AppendLine("- Exit code: $($e.ReadOnlyExitCode)")
         [void]$sb.AppendLine("- IsReadOnly after: $($e.ReadOnlyIsReadOnlyAfter)")
-        [void]$sb.AppendLine("- Stdout: ``$($e.ReadOnlyStdout)``")
-        [void]$sb.AppendLine("- Stderr: ``$($e.ReadOnlyStderr)``")
+        [void]$sb.AppendLine("- Stdout (PowerShell-rendered text; encoding artifacts possible; not byte-exact): ``$($e.ReadOnlyStdout)``")
+        [void]$sb.AppendLine("- Stderr (PowerShell-rendered text; encoding artifacts possible; not byte-exact): ``$($e.ReadOnlyStderr)``")
         [void]$sb.AppendLine("")
-        [void]$sb.AppendLine("### Pre/post-operation ELL/XML SHA-256 hashes")
+        [void]$sb.AppendLine("### Operation measurements captured before sanitation (pre/post-operation ELL/XML SHA-256 hashes)")
         [void]$sb.AppendLine("| Artifact | Pre SHA-256 | Post SHA-256 | Changed |")
         [void]$sb.AppendLine("|----------|-------------|--------------|---------|")
         $ellChanged = if ($e.PreEllHash -and $e.PostEllHash) { ($e.PreEllHash -ne $e.PostEllHash) } else { 'n/a' }
@@ -3089,36 +4121,135 @@ function Write-L7DurableEvidence {
         [void]$sb.AppendLine("### CLI exit / JSON success / stderr / stdout")
         [void]$sb.AppendLine("- Exit code: $($e.OpExitCode)")
         [void]$sb.AppendLine("- JSON success: $($e.OpJsonSuccess)")
-        [void]$sb.AppendLine("- Stderr: ``$($e.OpStderr)``")
-        [void]$sb.AppendLine("- Stdout: ``$($e.OpStdout)``")
+        [void]$sb.AppendLine("- Stderr (PowerShell-rendered text; encoding artifacts possible; not byte-exact): ``$($e.OpStderr)``")
+        [void]$sb.AppendLine("- Stdout (PowerShell-rendered text; encoding artifacts possible; not byte-exact): ``$($e.OpStdout)``")
         [void]$sb.AppendLine("")
         if ($e.ContainsKey('WarehouseEntryPresent')) {
-            [void]$sb.AppendLine("### Warehouse / XML / ELL presence after delete (Fault B)")
-            [void]$sb.AppendLine("- Warehouse entry present after delete: $($e.WarehouseEntryPresent)")
-            [void]$sb.AppendLine("- XML present after delete: $($e.XmlPresentAfter)")
-            [void]$sb.AppendLine("- ELL present after delete (orphan): $($e.EllPresentAfter)")
+            [void]$sb.AppendLine("### Fault B production operation state before finally sanitation")
+            [void]$sb.AppendLine("- Warehouse entry present after production delete: $($e.WarehouseEntryPresent)")
+            [void]$sb.AppendLine("- XML present after production delete: $($e.XmlPresentAfter)")
+            [void]$sb.AppendLine("- ELL present after production delete (orphan observation): $($e.EllPresentAfter)")
             [void]$sb.AppendLine("- Exact ``failed to delete ... error=5`` line captured: ``$($e.DeleteError5Line)``")
             [void]$sb.AppendLine("")
         }
-        [void]$sb.AppendLine("### Desired-state invariant result")
-        [void]$sb.AppendLine("- Desired-state passed: **$($e.DesiredStatePassed)**")
+        [void]$sb.AppendLine("### Production operation desired-state invariant result (recorded before finally sanitation)")
+        [void]$sb.AppendLine("- Production desired-state passed: **$($e.DesiredStatePassed)**")
         [void]$sb.AppendLine("- Invariant failures: $($e.InvariantFailures)")
         [void]$sb.AppendLine("")
-        [void]$sb.AppendLine("### Production vs sanitation state before cleanup")
-        [void]$sb.AppendLine("- ELL existed before sanitation: $($e.EllExistedBeforeSanitation)")
-        [void]$sb.AppendLine("- XML existed before sanitation: $($e.XmlExistedBeforeSanitation)")
-        [void]$sb.AppendLine("- Orphan existed before sanitation: $($e.OrphanExistedBeforeSanitation)")
-        [void]$sb.AppendLine("- Read-only attribute restored in finally: $($e.ReadOnlyRestored)")
-        [void]$sb.AppendLine("- Cleanup verdict (pre-sanitation): $($e.CleanupVerdictOk)")
+        [void]$sb.AppendLine("### Production state captured before sanitation")
+        [void]$sb.AppendLine("- Warehouse query succeeded: $($e.ProductionWarehouseQuerySucceeded)")
+        [void]$sb.AppendLine("- Warehouse query detail: $($e.ProductionWarehouseDetailBeforeSanitation)")
+        [void]$sb.AppendLine("- Warehouse entry existed before sanitation: $($e.ProductionWarehouseEntryExistsBeforeSanitation)")
+        [void]$sb.AppendLine("- ELL existed before sanitation: $($e.ProductionEllExistsBeforeSanitation)")
+        [void]$sb.AppendLine("- ELL read-only before sanitation: $($e.ProductionEllReadOnlyBeforeSanitation)")
+        [void]$sb.AppendLine("- ELL SHA-256 before sanitation: $($e.ProductionEllHashBeforeSanitation)")
+        [void]$sb.AppendLine("- ELL hash captured before sanitation: $($e.ProductionEllHashCapturedBeforeSanitation)")
+        [void]$sb.AppendLine("- XML existed before sanitation: $($e.ProductionXmlExistsBeforeSanitation)")
+        [void]$sb.AppendLine("- XML read-only before sanitation: $($e.ProductionXmlReadOnlyBeforeSanitation)")
+        [void]$sb.AppendLine("- XML SHA-256 before sanitation: $($e.ProductionXmlHashBeforeSanitation)")
+        [void]$sb.AppendLine("- XML hash captured before sanitation: $($e.ProductionXmlHashCapturedBeforeSanitation)")
+        [void]$sb.AppendLine("- Complete guarded production snapshot: $($e.ProductionStateCompleteBeforeSanitation)")
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("### Sanitation actions/results")
+        [void]$sb.AppendLine("- Read-only restoration action: $($e.ReadOnlyRestoreAction)")
+        [void]$sb.AppendLine("- Read-only attribute restored: $($e.ReadOnlyRestored)")
+        [void]$sb.AppendLine("- Read-only restore command: ``$($e.ReadOnlyRestoreCommand)``")
+        [void]$sb.AppendLine("- Read-only restore exit code: $($e.ReadOnlyRestoreExitCode)")
+        [void]$sb.AppendLine("- Read-only restore stdout (PowerShell-rendered; not byte-exact): ``$($e.ReadOnlyRestoreStdout)``")
+        [void]$sb.AppendLine("- Read-only restore stderr (PowerShell-rendered; not byte-exact): ``$($e.ReadOnlyRestoreStderr)``")
+        [void]$sb.AppendLine("- Warehouse cleanup succeeded: $($e.SanitationWarehouseCleanupSucceeded)")
+        [void]$sb.AppendLine("- Warehouse cleanup detail: $($e.SanitationWarehouseDetail)")
+        [void]$sb.AppendLine("- Warehouse delete attempted: $($e.SanitationWarehouseDeleteAttempted)")
+        [void]$sb.AppendLine("- Warehouse delete exit code: $($e.SanitationWarehouseDeleteExitCode)")
+        [void]$sb.AppendLine("- Warehouse delete JSON success: $($e.SanitationWarehouseDeleteJsonSuccess)")
+        [void]$sb.AppendLine("- Warehouse entry gone after sanitation delete: $($e.SanitationWarehouseExistsGone)")
+        [void]$sb.AppendLine("- ELL gone before artifact removal: $($e.SanitationArtifactEllGoneBeforeRemoval)")
+        [void]$sb.AppendLine("- XML gone before artifact removal: $($e.SanitationArtifactXmlGoneBeforeRemoval)")
+        [void]$sb.AppendLine("- Artifact orphan before artifact removal: $($e.SanitationArtifactOrphanBeforeRemoval)")
+        [void]$sb.AppendLine("- ELL removal succeeded: $($e.SanitationEllRemovalSucceeded) ($($e.SanitationEllRemovalDetail))")
+        [void]$sb.AppendLine("- XML removal succeeded: $($e.SanitationXmlRemovalSucceeded) ($($e.SanitationXmlRemovalDetail))")
+        [void]$sb.AppendLine("- Sanitation delete verdict before artifact removal: $($e.SanitationDeleteVerdictBeforeArtifactRemoval)")
+        [void]$sb.AppendLine("- Recovery marker path: $($e.RecoveryMarkerPath)")
+        [void]$sb.AppendLine("- Recovery marker sanitation eligible: $($e.RecoveryMarkerSanitized)")
+        [void]$sb.AppendLine("- Recovery marker removal succeeded: $($e.RecoveryMarkerRemovalSucceeded)")
+        [void]$sb.AppendLine("- Recovery marker removal detail: $($e.RecoveryMarkerRemovalDetail)")
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("### Post-sanitation hygiene state")
+        [void]$sb.AppendLine("- Warehouse query succeeded: $($e.PostSanitationWarehouseQuerySucceeded)")
+        [void]$sb.AppendLine("- Warehouse entry present: $($e.PostSanitationWarehouseEntryPresent)")
+        [void]$sb.AppendLine("- ELL present: $($e.PostSanitationEllPresent)")
+        [void]$sb.AppendLine("- XML present: $($e.PostSanitationXmlPresent)")
+        [void]$sb.AppendLine("- ELL read-only: $($e.PostSanitationEllReadOnly)")
+        [void]$sb.AppendLine("- ELL SHA-256: $($e.PostSanitationEllHash)")
+        [void]$sb.AppendLine("- ELL hash captured: $($e.PostSanitationEllHashCaptured)")
+        [void]$sb.AppendLine("- XML read-only: $($e.PostSanitationXmlReadOnly)")
+        [void]$sb.AppendLine("- XML SHA-256: $($e.PostSanitationXmlHash)")
+        [void]$sb.AppendLine("- XML hash captured: $($e.PostSanitationXmlHashCaptured)")
+        [void]$sb.AppendLine("- Hygiene passed: **$($e.PostSanitationHygienePassed)**")
         [void]$sb.AppendLine("")
         [void]$sb.AppendLine("---")
         [void]$sb.AppendLine("")
     }
     $dir = Split-Path -Parent $Path
-    if ($dir -and -not (Test-Path -Path $dir -PathType Container)) {
-        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $isTrackedPath = [System.String]::Equals($Path, $script:trackedEvidencePathFull, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $AllowTrackedPath -and $isTrackedPath) {
+        throw "Selecting the tracked evidence path requires -UpdateTrackedEvidence: '$Path'"
     }
-    [System.IO.File]::WriteAllText($Path, $sb.ToString(), [System.Text.Encoding]::UTF8)
+    Test-L7EvidencePathHasReparsePoint -Path $Path | Out-Null
+    if ($dir) {
+        $dirState = Get-L7PathState -Path $dir
+        if (-not $dirState.QuerySucceeded) {
+            throw "Unable to inspect evidence parent '$dir': $($dirState.Error)"
+        }
+        if (-not $dirState.Exists) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        }
+        Test-L7EvidencePathHasReparsePoint -Path $dir | Out-Null
+        $dirState = Get-L7PathState -Path $dir
+        if (-not $dirState.QuerySucceeded -or -not $dirState.Exists -or -not $dirState.IsDirectory) {
+            throw "Evidence parent is not a verified directory: '$dir'"
+        }
+    }
+    Test-L7EvidencePathHasReparsePoint -Path $Path | Out-Null
+    $destinationState = Get-L7PathState -Path $Path
+    if (-not $destinationState.QuerySucceeded) {
+        throw "Unable to inspect evidence destination '$Path': $($destinationState.Error)"
+    }
+    if ($destinationState.Exists -and -not $destinationState.IsRegularFile) {
+        throw "Evidence destination is not a regular file: '$Path'"
+    }
+    if ($destinationState.Exists) {
+        if ($destinationState.IsRegularFile) {
+            $hardLinkState = Get-L7HardLinkState -Path $Path
+            if (-not $hardLinkState.QuerySucceeded) {
+                throw "Unable to inspect evidence destination hard-link state '$Path': $($hardLinkState.Error)"
+            }
+            if (-not $hardLinkState.IsSingleLink) {
+                throw "Refusing hard-linked evidence destination (link_count=$($hardLinkState.LinkCount)): '$Path'"
+            }
+        }
+        # This also rejects an existing hard-link destination; the evidence
+        # writer never replaces the file entry or its linked target.
+        throw "Refusing to overwrite existing evidence destination: '$Path'"
+    }
+    # CreateNew is retained for every destination, including the explicitly
+    # authorized tracked path. A race that creates/replaces the destination
+    # after inspection therefore fails closed instead of overwriting it.
+    $fileMode = [System.IO.FileMode]::CreateNew
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::Open($Path, $fileMode, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $bytes = (New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false).GetBytes($sb.ToString())
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    Test-L7EvidencePathHasReparsePoint -Path $Path | Out-Null
+    $writtenState = Get-L7PathState -Path $Path
+    if (-not $writtenState.QuerySucceeded -or -not $writtenState.Exists -or -not $writtenState.IsRegularFile) {
+        throw "L7 durable evidence write could not be verified: '$Path'"
+    }
     Write-Host "  L7 durable evidence written to: $Path" -ForegroundColor Cyan
 }
 
@@ -3172,6 +4303,11 @@ function Run-L7-ModifyReadOnly {
 
         $ellPath = Join-Path $script:MyWorkBin "$prefix$progId.ell"
         $xmlPath = Join-Path $script:MyWorkBin "$prefix$progId.xml"
+        $initialEllState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $initialXmlState = Get-L7ArtifactState -Path $xmlPath -Type $Type -ProgId $progId -Extension 'xml'
+        if (-not $initialEllState.QuerySucceeded -or -not $initialEllState.PathValidated -or -not $initialXmlState.QuerySucceeded -or -not $initialXmlState.PathValidated) {
+            throw "L7 artifact paths failed exact-path validation: ell=$($initialEllState.Error) xml=$($initialXmlState.Error)"
+        }
         $script:L7TrackedItems.Add(@{ Name=$Name; Type=$Type; ProgId=$progId; EllPath=$ellPath; XmlPath=$xmlPath; ReadOnlySet=$false }) | Out-Null
 
         # Pre-modify artifacts + hashes + GUID.
@@ -3204,14 +4340,31 @@ function Run-L7-ModifyReadOnly {
         # Modify with valid changed source.
         $cliMod = Invoke-Cli -Arguments @("--json","modify",$cliType,$Name,$modifySrcFile)
         $opExit = $cliMod.ExitCode
+        $opJsonValid = $false
         $opJsonSuccess = $null
+        $opJsonExitCode = $null
+        $opErrorCode = $null
         try {
             $jMod = $cliMod.Stdout | ConvertFrom-Json -ErrorAction Stop
-            $opJsonSuccess = [bool]$jMod.success
-        } catch { $opJsonSuccess = $null }
+            $successProperty = $jMod.PSObject.Properties['success']
+            $jsonExitProperty = $jMod.PSObject.Properties['exit_code']
+            $errorProperty = $jMod.PSObject.Properties['error']
+            if ($null -ne $successProperty -and $successProperty.Value -is [bool]) {
+                $opJsonSuccess = [bool]$successProperty.Value
+            }
+            if ($null -ne $jsonExitProperty -and ($jsonExitProperty.Value -is [int] -or $jsonExitProperty.Value -is [long])) {
+                $opJsonExitCode = [int]$jsonExitProperty.Value
+            }
+            if ($null -ne $errorProperty -and $null -ne $errorProperty.Value) {
+                $errorCodeProperty = $errorProperty.Value.PSObject.Properties['code']
+                if ($null -ne $errorCodeProperty) { $opErrorCode = [string]$errorCodeProperty.Value }
+            }
+            $opJsonValid = ($null -ne $successProperty -and $successProperty.Value -is [bool] -and
+                $null -ne $jsonExitProperty -and $null -ne $opJsonExitCode)
+        } catch { $opJsonValid = $false }
         $reportedSuccess = ($opExit -eq 0 -and $opJsonSuccess -eq $true)
         Record-Result -StepId "$($idBase)e" -Description "modify executed; captured exit/JSON success/stderr/stdout" `
-            -Passed $true -Detail "exit=$opExit json_success=$opJsonSuccess reported_success=$reportedSuccess stderr='$($cliMod.Stderr)' stdout='$($cliMod.Stdout)'" | Out-Null
+            -Passed $opJsonValid -Detail "exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode reported_success=$reportedSuccess stderr='$($cliMod.Stderr)' stdout='$($cliMod.Stdout)'" | Out-Null
 
         # Post-modify hashes + new XML GUID + GUID occurrence count in ELL.
         $postEllHash = Get-FileHashOrNull -Path $ellPath
@@ -3237,28 +4390,37 @@ function Run-L7-ModifyReadOnly {
             -Passed $true -Detail "exit=$($cliGs.ExitCode) success=$gsSuccess src_len=$(if ($gsSrc) { $gsSrc.Length } else { 0 }) matches_new=$gsMatchesNew matches_old=$gsMatchesOld" | Out-Null
 
         # DESIRED-STATE ASSERTIONS (handoff Sec.6 case 1). Post-L.9 (L.9
-        # APPROVED): GREEN detect-and-fail -- production returns non-success
-        # (exit 9 / success=false) and retains the existing component.
-        $nonSuccess = (-not $reportedSuccess)
+        # APPROVED): GREEN detect-and-fail -- production must return the
+        # specific persistence failure contract (exit 9 / success=false /
+        # artifact_missing), not merely any unrelated failure, and retain the
+        # existing component.
+        $operationContractSatisfied = ($opExit -eq 9 -and $opJsonValid -and
+            $opJsonExitCode -eq 9 -and $opJsonSuccess -eq $false -and
+            $opErrorCode -eq 'artifact_missing')
+        $nonSuccess = $operationContractSatisfied
         $ellHashUnchanged = ($preEllHash -ne $null -and $postEllHash -ne $null -and $preEllHash -eq $postEllHash)
-        $existingComponentRetained = ($ellHashUnchanged -and (Test-Path -Path $ellPath -PathType Leaf))
+        $ellPostState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $ellPresentAfterOperation = ($ellPostState.QuerySucceeded -and $ellPostState.PathValidated -and $ellPostState.Exists -and $ellPostState.IsRegularFile)
+        $existingComponentRetained = ($ellHashUnchanged -and $ellPresentAfterOperation)
 
-        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: modify did NOT report verified success (non-success)" `
-            -Passed $nonSuccess -Detail "reported_success=$reportedSuccess (exit=$opExit json_success=$opJsonSuccess) -- GREEN detect-and-fail after L.9" | Out-Null
+        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: modify returned exit 9, JSON success=false, error.code=artifact_missing" `
+            -Passed $operationContractSatisfied -Detail "contract=$operationContractSatisfied exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode" | Out-Null
 
         Record-Result -StepId "$($idBase)i" -Description "DESIRED-STATE: existing component retained (ELL hash unchanged, ELL present)" `
-            -Passed $existingComponentRetained -Detail "pre_ell=$preEllHash post_ell=$postEllHash unchanged=$ellHashUnchanged ell_present=$(Test-Path -Path $ellPath -PathType Leaf)" | Out-Null
+            -Passed $existingComponentRetained -Detail "pre_ell=$preEllHash post_ell=$postEllHash unchanged=$ellHashUnchanged ell_present=$ellPresentAfterOperation" | Out-Null
 
-        $desiredStatePassed = ($nonSuccess -and $existingComponentRetained)
+        $desiredStatePassed = ($operationContractSatisfied -and $existingComponentRetained)
         $invariantFailures = @()
-        if (-not $nonSuccess) { $invariantFailures += "false_verified_success(exit=$opExit,json_success=$opJsonSuccess)" }
+        if (-not $operationContractSatisfied) {
+            $invariantFailures += "operation_contract_not_satisfied(exit=$opExit,json_valid=$opJsonValid,json_exit=$opJsonExitCode,json_success=$opJsonSuccess,error_code=$opErrorCode; expected exit=9,json success=false,error.code=artifact_missing)"
+        }
         if (-not $existingComponentRetained) { $invariantFailures += "existing_component_not_retained(ell_hash_changed_or_absent)" }
-        Record-Result -StepId "$($idBase)j" -Description "DESIRED-STATE combined: non-success AND existing component retained (Fault A desired-state)" `
+        Record-Result -StepId "$($idBase)j" -Description "DESIRED-STATE combined: required modify failure contract AND existing component retained (Fault A desired-state)" `
             -Passed $desiredStatePassed -Detail "desired_passed=$desiredStatePassed invariant_failures=$($invariantFailures -join '; ') -- GREEN detect-and-fail after L.9" | Out-Null
 
         $evidence = @{
             CaseId                = $idBase
-            CaseTitle             = "Modify / read-only ELL (Fault A: stale-ELL modify; detect-and-fail; GREEN after L.9)"
+            CaseTitle             = "Modify / read-only ELL (Fault A: stale-ELL modify; detect-and-fail; historical/transient recorded run)"
             ItemIdentifier        = $Name
             ComponentType         = $Type
             ProgId                = $progId
@@ -3289,25 +4451,40 @@ function Run-L7-ModifyReadOnly {
     }
     finally {
         Write-Host "--- $idBase cleanup ---" -ForegroundColor Cyan
+        # Invoke-L7Sanitation captures and records the production snapshot before
+        # any attribute restore, sanitation delete, or artifact removal. Source
+        # fixture files are removed only after that snapshot has been captured.
+        if (-not $evidence -and $progId -gt 0) {
+            $evidence = New-L7EvidenceRecord -CaseId $idBase -CaseTitle "Modify / read-only ELL (Fault A: stale-ELL modify; detect-and-fail; historical/transient recorded run)" -Name $Name -Type $Type -ProgId $progId -Operation "modify" -ReadOnlyCapture $readOnlyCapture
+        }
+        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath -Evidence $evidence
         if ($insertSrcFile -and (Test-Path -Path $insertSrcFile -PathType Leaf)) { Remove-Item -Path $insertSrcFile -Force -ErrorAction SilentlyContinue }
         if ($modifySrcFile -and (Test-Path -Path $modifySrcFile -PathType Leaf)) { Remove-Item -Path $modifySrcFile -Force -ErrorAction SilentlyContinue }
-        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath
-        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and artifacts" `
-            -Passed ($cln.VerdictOk -and $cln.ReadOnlyRestored) -Detail $cln.Detail | Out-Null
         # TVS-L.7 hardening: remove this run's recovery marker ONLY after
         # verified sanitation (entry gone, both artifacts gone, read-only
         # restored). If sanitation did not verify, the marker is left in place
         # for the next run's Invoke-L7StaleMarkerRecovery to process.
-        $markerSanitized = ($cln.ExistsGone -and $cln.SanitizedEllGone -and $cln.SanitizedXmlGone -and $cln.ReadOnlyRestored)
+        $markerSanitized = $cln.PostSanitationHygieneOk
+        $markerRemovalOk = $true
+        $markerRemovalDetail = ""
         if ($markerPath -and $markerSanitized) {
-            Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemoval = Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemovalOk = $markerRemoval.Succeeded
+            $markerRemovalDetail = $markerRemoval.Detail
         }
+        $cleanupPassed = ($cln.PostSanitationHygieneOk -and ($markerRemovalOk -or -not $markerSanitized))
+        $cleanupDetail = $cln.Detail
+        if ($markerPath -and $markerSanitized -and -not $markerRemovalOk) { $cleanupDetail += " marker_cleanup=$markerRemovalDetail" }
+        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and artifacts" `
+            -Passed $cleanupPassed -Detail $cleanupDetail | Out-Null
         if ($evidence) {
-            $evidence.EllExistedBeforeSanitation    = $cln.EllExistedBeforeSanitation
-            $evidence.XmlExistedBeforeSanitation    = $cln.XmlExistedBeforeSanitation
-            $evidence.OrphanExistedBeforeSanitation = $cln.OrphanExistedBeforeSanitation
-            $evidence.ReadOnlyRestored              = $cln.ReadOnlyRestored
-            $evidence.CleanupVerdictOk              = $cln.VerdictOk
+            # The production-before-sanitation fields were populated inside
+            # Invoke-L7Sanitation before the first sanitation action. Only
+            # sanitation action and marker results are added here.
+            $evidence.RecoveryMarkerPath = $markerPath
+            $evidence.RecoveryMarkerSanitized = $markerSanitized
+            $evidence.RecoveryMarkerRemovalSucceeded = $markerRemovalOk
+            $evidence.RecoveryMarkerRemovalDetail = $markerRemovalDetail
             $script:L7Evidence.Add($evidence) | Out-Null
         }
     }
@@ -3361,6 +4538,11 @@ function Run-L7-UpsertExistingReadOnly {
 
         $ellPath = Join-Path $script:MyWorkBin "$prefix$progId.ell"
         $xmlPath = Join-Path $script:MyWorkBin "$prefix$progId.xml"
+        $initialEllState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $initialXmlState = Get-L7ArtifactState -Path $xmlPath -Type $Type -ProgId $progId -Extension 'xml'
+        if (-not $initialEllState.QuerySucceeded -or -not $initialEllState.PathValidated -or -not $initialXmlState.QuerySucceeded -or -not $initialXmlState.PathValidated) {
+            throw "L7 artifact paths failed exact-path validation: ell=$($initialEllState.Error) xml=$($initialXmlState.Error)"
+        }
         $script:L7TrackedItems.Add(@{ Name=$Name; Type=$Type; ProgId=$progId; EllPath=$ellPath; XmlPath=$xmlPath; ReadOnlySet=$false }) | Out-Null
 
         $preEllHash = Get-FileHashOrNull -Path $ellPath
@@ -3388,14 +4570,31 @@ function Run-L7-UpsertExistingReadOnly {
         # Upsert-existing with valid changed source.
         $cliUps = Invoke-Cli -Arguments @("--json","upsert",$cliType,$Name,$upsertSrcFile)
         $opExit = $cliUps.ExitCode
+        $opJsonValid = $false
         $opJsonSuccess = $null
+        $opJsonExitCode = $null
+        $opErrorCode = $null
         try {
             $jUps = $cliUps.Stdout | ConvertFrom-Json -ErrorAction Stop
-            $opJsonSuccess = [bool]$jUps.success
-        } catch { $opJsonSuccess = $null }
+            $successProperty = $jUps.PSObject.Properties['success']
+            $jsonExitProperty = $jUps.PSObject.Properties['exit_code']
+            $errorProperty = $jUps.PSObject.Properties['error']
+            if ($null -ne $successProperty -and $successProperty.Value -is [bool]) {
+                $opJsonSuccess = [bool]$successProperty.Value
+            }
+            if ($null -ne $jsonExitProperty -and ($jsonExitProperty.Value -is [int] -or $jsonExitProperty.Value -is [long])) {
+                $opJsonExitCode = [int]$jsonExitProperty.Value
+            }
+            if ($null -ne $errorProperty -and $null -ne $errorProperty.Value) {
+                $errorCodeProperty = $errorProperty.Value.PSObject.Properties['code']
+                if ($null -ne $errorCodeProperty) { $opErrorCode = [string]$errorCodeProperty.Value }
+            }
+            $opJsonValid = ($null -ne $successProperty -and $successProperty.Value -is [bool] -and
+                $null -ne $jsonExitProperty -and $null -ne $opJsonExitCode)
+        } catch { $opJsonValid = $false }
         $reportedSuccess = ($opExit -eq 0 -and $opJsonSuccess -eq $true)
         Record-Result -StepId "$($idBase)e" -Description "upsert-existing executed; captured exit/JSON success/stderr/stdout" `
-            -Passed $true -Detail "exit=$opExit json_success=$opJsonSuccess reported_success=$reportedSuccess stderr='$($cliUps.Stderr)' stdout='$($cliUps.Stdout)'" | Out-Null
+            -Passed $opJsonValid -Detail "exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode reported_success=$reportedSuccess stderr='$($cliUps.Stderr)' stdout='$($cliUps.Stdout)'" | Out-Null
 
         $postEllHash = Get-FileHashOrNull -Path $ellPath
         $postXmlHash = Get-FileHashOrNull -Path $xmlPath
@@ -3419,28 +4618,37 @@ function Run-L7-UpsertExistingReadOnly {
             -Passed $true -Detail "exit=$($cliGs.ExitCode) success=$gsSuccess src_len=$(if ($gsSrc) { $gsSrc.Length } else { 0 }) matches_new=$gsMatchesNew matches_old=$gsMatchesOld" | Out-Null
 
         # DESIRED-STATE ASSERTIONS (handoff Sec.6 case 2). Post-L.9 (L.9
-        # APPROVED): GREEN detect-and-fail -- production returns non-success
-        # and retains the existing component.
-        $nonSuccess = (-not $reportedSuccess)
+        # APPROVED): GREEN detect-and-fail -- production must return the
+        # specific persistence failure contract (exit 9 / success=false /
+        # artifact_missing), not merely any unrelated failure, and retain the
+        # existing component.
+        $operationContractSatisfied = ($opExit -eq 9 -and $opJsonValid -and
+            $opJsonExitCode -eq 9 -and $opJsonSuccess -eq $false -and
+            $opErrorCode -eq 'artifact_missing')
+        $nonSuccess = $operationContractSatisfied
         $ellHashUnchanged = ($preEllHash -ne $null -and $postEllHash -ne $null -and $preEllHash -eq $postEllHash)
-        $existingComponentRetained = ($ellHashUnchanged -and (Test-Path -Path $ellPath -PathType Leaf))
+        $ellPostState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $ellPresentAfterOperation = ($ellPostState.QuerySucceeded -and $ellPostState.PathValidated -and $ellPostState.Exists -and $ellPostState.IsRegularFile)
+        $existingComponentRetained = ($ellHashUnchanged -and $ellPresentAfterOperation)
 
-        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: upsert-existing did NOT report verified success (non-success)" `
-            -Passed $nonSuccess -Detail "reported_success=$reportedSuccess (exit=$opExit json_success=$opJsonSuccess) -- GREEN detect-and-fail after L.9" | Out-Null
+        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: upsert-existing returned exit 9, JSON success=false, error.code=artifact_missing" `
+            -Passed $operationContractSatisfied -Detail "contract=$operationContractSatisfied exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode" | Out-Null
 
         Record-Result -StepId "$($idBase)i" -Description "DESIRED-STATE: existing component retained (ELL hash unchanged, ELL present)" `
-            -Passed $existingComponentRetained -Detail "pre_ell=$preEllHash post_ell=$postEllHash unchanged=$ellHashUnchanged ell_present=$(Test-Path -Path $ellPath -PathType Leaf)" | Out-Null
+            -Passed $existingComponentRetained -Detail "pre_ell=$preEllHash post_ell=$postEllHash unchanged=$ellHashUnchanged ell_present=$ellPresentAfterOperation" | Out-Null
 
-        $desiredStatePassed = ($nonSuccess -and $existingComponentRetained)
+        $desiredStatePassed = ($operationContractSatisfied -and $existingComponentRetained)
         $invariantFailures = @()
-        if (-not $nonSuccess) { $invariantFailures += "false_verified_success(exit=$opExit,json_success=$opJsonSuccess)" }
+        if (-not $operationContractSatisfied) {
+            $invariantFailures += "operation_contract_not_satisfied(exit=$opExit,json_valid=$opJsonValid,json_exit=$opJsonExitCode,json_success=$opJsonSuccess,error_code=$opErrorCode; expected exit=9,json success=false,error.code=artifact_missing)"
+        }
         if (-not $existingComponentRetained) { $invariantFailures += "existing_component_not_retained(ell_hash_changed_or_absent)" }
-        Record-Result -StepId "$($idBase)j" -Description "DESIRED-STATE combined: non-success AND existing component retained (Fault A desired-state)" `
+        Record-Result -StepId "$($idBase)j" -Description "DESIRED-STATE combined: required upsert failure contract AND existing component retained (Fault A desired-state)" `
             -Passed $desiredStatePassed -Detail "desired_passed=$desiredStatePassed invariant_failures=$($invariantFailures -join '; ') -- GREEN detect-and-fail after L.9" | Out-Null
 
         $evidence = @{
             CaseId                = $idBase
-            CaseTitle             = "Upsert-existing / read-only ELL (Fault A variant; detect-and-fail; GREEN after L.9)"
+            CaseTitle             = "Upsert-existing / read-only ELL (Fault A variant; detect-and-fail; historical/transient recorded run)"
             ItemIdentifier        = $Name
             ComponentType         = $Type
             ProgId                = $progId
@@ -3471,23 +4679,38 @@ function Run-L7-UpsertExistingReadOnly {
     }
     finally {
         Write-Host "--- $idBase cleanup ---" -ForegroundColor Cyan
+        # Invoke-L7Sanitation captures and records the production snapshot before
+        # any attribute restore, sanitation delete, or artifact removal. Source
+        # fixture files are removed only after that snapshot has been captured.
+        if (-not $evidence -and $progId -gt 0) {
+            $evidence = New-L7EvidenceRecord -CaseId $idBase -CaseTitle "Upsert-existing / read-only ELL (Fault A variant; detect-and-fail; historical/transient recorded run)" -Name $Name -Type $Type -ProgId $progId -Operation "upsert" -ReadOnlyCapture $readOnlyCapture
+        }
+        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath -Evidence $evidence
         if ($insertSrcFile -and (Test-Path -Path $insertSrcFile -PathType Leaf)) { Remove-Item -Path $insertSrcFile -Force -ErrorAction SilentlyContinue }
         if ($upsertSrcFile -and (Test-Path -Path $upsertSrcFile -PathType Leaf)) { Remove-Item -Path $upsertSrcFile -Force -ErrorAction SilentlyContinue }
-        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath
-        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and artifacts" `
-            -Passed ($cln.VerdictOk -and $cln.ReadOnlyRestored) -Detail $cln.Detail | Out-Null
         # TVS-L.7 hardening: remove this run's recovery marker ONLY after
         # verified sanitation (see L7.1 finally for rationale).
-        $markerSanitized = ($cln.ExistsGone -and $cln.SanitizedEllGone -and $cln.SanitizedXmlGone -and $cln.ReadOnlyRestored)
+        $markerSanitized = $cln.PostSanitationHygieneOk
+        $markerRemovalOk = $true
+        $markerRemovalDetail = ""
         if ($markerPath -and $markerSanitized) {
-            Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemoval = Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemovalOk = $markerRemoval.Succeeded
+            $markerRemovalDetail = $markerRemoval.Detail
         }
+        $cleanupPassed = ($cln.PostSanitationHygieneOk -and ($markerRemovalOk -or -not $markerSanitized))
+        $cleanupDetail = $cln.Detail
+        if ($markerPath -and $markerSanitized -and -not $markerRemovalOk) { $cleanupDetail += " marker_cleanup=$markerRemovalDetail" }
+        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and artifacts" `
+            -Passed $cleanupPassed -Detail $cleanupDetail | Out-Null
         if ($evidence) {
-            $evidence.EllExistedBeforeSanitation    = $cln.EllExistedBeforeSanitation
-            $evidence.XmlExistedBeforeSanitation    = $cln.XmlExistedBeforeSanitation
-            $evidence.OrphanExistedBeforeSanitation = $cln.OrphanExistedBeforeSanitation
-            $evidence.ReadOnlyRestored              = $cln.ReadOnlyRestored
-            $evidence.CleanupVerdictOk              = $cln.VerdictOk
+            # Production-before-sanitation fields were populated by the helper
+            # before its first sanitation action; only marker results are added
+            # after sanitation here.
+            $evidence.RecoveryMarkerPath = $markerPath
+            $evidence.RecoveryMarkerSanitized = $markerSanitized
+            $evidence.RecoveryMarkerRemovalSucceeded = $markerRemovalOk
+            $evidence.RecoveryMarkerRemovalDetail = $markerRemovalDetail
             $script:L7Evidence.Add($evidence) | Out-Null
         }
     }
@@ -3547,6 +4770,11 @@ function Run-L7-DeleteReadOnly {
 
         $ellPath = Join-Path $script:MyWorkBin "$prefix$progId.ell"
         $xmlPath = Join-Path $script:MyWorkBin "$prefix$progId.xml"
+        $initialEllState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $initialXmlState = Get-L7ArtifactState -Path $xmlPath -Type $Type -ProgId $progId -Extension 'xml'
+        if (-not $initialEllState.QuerySucceeded -or -not $initialEllState.PathValidated -or -not $initialXmlState.QuerySucceeded -or -not $initialXmlState.PathValidated) {
+            throw "L7 artifact paths failed exact-path validation: ell=$($initialEllState.Error) xml=$($initialXmlState.Error)"
+        }
         $script:L7TrackedItems.Add(@{ Name=$Name; Type=$Type; ProgId=$progId; EllPath=$ellPath; XmlPath=$xmlPath; ReadOnlySet=$false }) | Out-Null
 
         $preEllHash = Get-FileHashOrNull -Path $ellPath
@@ -3574,11 +4802,40 @@ function Run-L7-DeleteReadOnly {
         # Delete through the production CLI.
         $cliDel = Invoke-Cli -Arguments @("--json","delete",$cliType,$Name)
         $opExit = $cliDel.ExitCode
+        $opJsonValid = $false
         $opJsonSuccess = $null
+        $opJsonExitCode = $null
+        $opErrorCode = $null
+        $opErrorMessage = ""
+        $opErrorDetails = ""
         try {
             $jDel = $cliDel.Stdout | ConvertFrom-Json -ErrorAction Stop
-            $opJsonSuccess = [bool]$jDel.success
-        } catch { $opJsonSuccess = $null }
+            $successProperty = $jDel.PSObject.Properties['success']
+            $jsonExitProperty = $jDel.PSObject.Properties['exit_code']
+            $errorProperty = $jDel.PSObject.Properties['error']
+            if ($null -ne $successProperty -and $successProperty.Value -is [bool]) {
+                $opJsonSuccess = [bool]$successProperty.Value
+            }
+            if ($null -ne $jsonExitProperty -and ($jsonExitProperty.Value -is [int] -or $jsonExitProperty.Value -is [long])) {
+                $opJsonExitCode = [int]$jsonExitProperty.Value
+            }
+            if ($null -ne $errorProperty -and $null -ne $errorProperty.Value) {
+                $errorCodeProperty = $errorProperty.Value.PSObject.Properties['code']
+                $errorMessageProperty = $errorProperty.Value.PSObject.Properties['message']
+                $errorDetailsProperty = $errorProperty.Value.PSObject.Properties['details']
+                if ($null -ne $errorCodeProperty) { $opErrorCode = [string]$errorCodeProperty.Value }
+                if ($null -ne $errorMessageProperty) { $opErrorMessage = [string]$errorMessageProperty.Value }
+                if ($null -ne $errorDetailsProperty) {
+                    if ($errorDetailsProperty.Value -is [string]) {
+                        $opErrorDetails = [string]$errorDetailsProperty.Value
+                    } else {
+                        $opErrorDetails = $errorDetailsProperty.Value | ConvertTo-Json -Compress
+                    }
+                }
+            }
+            $opJsonValid = ($null -ne $successProperty -and $successProperty.Value -is [bool] -and
+                $null -ne $jsonExitProperty -and $null -ne $opJsonExitCode)
+        } catch { $opJsonValid = $false }
         $reportedSuccess = ($opExit -eq 0 -and $opJsonSuccess -eq $true)
         # Capture the exact "failed to delete ... error=5" line from stderr.
         $deleteError5Line = ""
@@ -3586,58 +4843,86 @@ function Run-L7-DeleteReadOnly {
             $deleteError5Line = ($cliDel.Stderr -split "`n" | Where-Object { $_ -match 'error=5' } | Select-Object -First 1)
         }
         Record-Result -StepId "$($idBase)e" -Description "delete executed; captured exit/JSON success/stderr/stdout + error=5 line" `
-            -Passed $true -Detail "exit=$opExit json_success=$opJsonSuccess reported_success=$reportedSuccess stderr='$($cliDel.Stderr)' stdout='$($cliDel.Stdout)' error5_line='$deleteError5Line'" | Out-Null
+            -Passed $opJsonValid -Detail "exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode reported_success=$reportedSuccess stderr='$($cliDel.Stderr)' stdout='$($cliDel.Stdout)' error5_line='$deleteError5Line'" | Out-Null
 
         # Post-delete warehouse / XML / ELL presence (Fault B evidence).
-        $postExCli = Invoke-Cli -Arguments @("--json","exists",$cliType,$Name)
-        $warehouseEntryPresent = $false
-        if ($postExCli.ExitCode -eq 0) { $warehouseEntryPresent = Get-ExistsFromJson -Json $postExCli.Stdout }
-        $xmlPresentAfter = (Test-Path -Path $xmlPath -PathType Leaf)
-        $ellPresentAfter = (Test-Path -Path $ellPath -PathType Leaf)
+        $postWarehouseState = Get-L7ExistsState -Type $cliType -Name $Name
+        $warehouseEntryPresent = if ($postWarehouseState.QuerySucceeded) { $postWarehouseState.Exists } else { $null }
+        $postXmlState = Get-L7ArtifactState -Path $xmlPath -Type $Type -ProgId $progId -Extension 'xml'
+        $postEllState = Get-L7ArtifactState -Path $ellPath -Type $Type -ProgId $progId -Extension 'ell'
+        $xmlPresentAfter = if ($postXmlState.QuerySucceeded) { $postXmlState.Exists } else { $null }
+        $ellPresentAfter = if ($postEllState.QuerySucceeded) { $postEllState.Exists } else { $null }
         $postEllHash = Get-FileHashOrNull -Path $ellPath
         Record-Result -StepId "$($idBase)f" -Description "post-delete warehouse/XML/ELL presence + orphan ELL hash captured (Fault B evidence)" `
             -Passed $true -Detail "warehouse_present=$warehouseEntryPresent xml_present=$xmlPresentAfter ell_present=$ellPresentAfter orphan=$ellPresentAfter post_ell_hash=$postEllHash" | Out-Null
 
         # DESIRED-STATE ASSERTIONS (handoff Sec.6 case 3). Post-L.12 (L.12 GREEN):
-        # detect-and-report. The desired-state is NON-SUCCESS PLUS the residual
-        # artifact + Windows error being REPORTED (error=5 / path) -- NOT that
-        # the read-only ELL was physically removed. DeleteFileA cannot remove a
-        # +R file and L.12 deliberately does NOT invent attrib -R recovery, so
-        # the orphan ELL is EXPECTED to still be present at verdict time; the
-        # L7.4 sanitation in finally clears +R and deletes the orphan AFTER the
+        # detect-and-report. The production operation must return the specific
+        # delete failure contract (exit 6 / success=false /
+        # entry_op_failure), report the exact residual path + Windows error, and
+        # leave the expected pre-sanitation state. This is NOT that the
+        # read-only ELL was physically removed. DeleteFileA cannot remove a +R
+        # file and L.12 deliberately does NOT invent attrib -R recovery, so the
+        # orphan ELL is EXPECTED to still be present at verdict time; the L7.4
+        # sanitation in finally clears +R and deletes the orphan AFTER the
         # verdict is recorded. Full physical orphan removal is therefore NOT
         # the L.12 success criterion.
-        $nonSuccess = (-not $reportedSuccess)
+        $operationContractSatisfied = ($opExit -eq 6 -and $opJsonValid -and
+            $opJsonExitCode -eq 6 -and $opJsonSuccess -eq $false -and
+            $opErrorCode -eq 'entry_op_failure')
+        $nonSuccess = $operationContractSatisfied
         # residualReported: the L.12 detect-and-report signal. deleteEntry step
         # 5 emits "tsdev: WARNING -- failed to delete <path> (error=5)" to
         # stderr AND doDelete surfaces the residual path + Windows error in the
-        # JSON error.message (exit 6 / success=false). The error=5 line carries
-        # BOTH the residual path and the Windows error, so its presence is the
-        # single evidence that the residual was reported (not silently treated
-        # as success, as it was before L.12).
-        $residualReported = ($deleteError5Line -ne "")
+        # JSON error.message (exit 6 / success=false). Require the exact ELL
+        # path in both reports so an unrelated error=5 cannot satisfy the case.
+        $jsonResidualPathReported = ($opJsonValid -and $ellPath -and
+            (($opErrorMessage -and $opErrorMessage.Contains($ellPath)) -or
+             ($opErrorDetails -and $opErrorDetails.Contains($ellPath))))
+        $stderrResidualPathReported = ($deleteError5Line -ne "" -and $ellPath -and
+            $deleteError5Line -match 'error=5' -and $deleteError5Line.Contains($ellPath))
+        $residualReported = ($jsonResidualPathReported -and $stderrResidualPathReported)
         # The orphan ELL being present is EXPECTED post-L.12 (sanitation is in
-        # finally AFTER verdict). It is captured as evidence (L7.3f) but is NOT
-        # a desired-state pass/fail criterion -- asserting its absence would
-        # claim full physical orphan removal is L.12 success, which it is not.
+        # finally AFTER verdict). It is captured as evidence (L7.3f) and is
+        # required together with the absent warehouse/XML state below; asserting
+        # its absence would claim full physical orphan removal is L.12 success.
         $orphanExpectedPresent = $ellPresentAfter
+        $warehouseStateKnown = [bool]$postWarehouseState.QuerySucceeded
+        $xmlStateKnown = ($postXmlState.QuerySucceeded -and $postXmlState.PathValidated -and
+            (-not $postXmlState.Exists -or $postXmlState.IsRegularFile))
+        $ellStateKnown = ($postEllState.QuerySucceeded -and $postEllState.PathValidated -and
+            (-not $postEllState.Exists -or $postEllState.IsRegularFile))
+        $expectedPreSanitationState = ($warehouseStateKnown -and
+            (-not [bool]$postWarehouseState.Exists) -and $xmlStateKnown -and
+            (-not [bool]$postXmlState.Exists) -and $ellStateKnown -and
+            [bool]$postEllState.Exists -and [bool]$postEllState.IsRegularFile)
 
-        Record-Result -StepId "$($idBase)g" -Description "DESIRED-STATE: delete did NOT report success (non-success)" `
-            -Passed $nonSuccess -Detail "reported_success=$reportedSuccess (exit=$opExit json_success=$opJsonSuccess) -- GREEN detect-and-report after L.12" | Out-Null
+        Record-Result -StepId "$($idBase)g" -Description "DESIRED-STATE: delete returned exit 6, JSON success=false, error.code=entry_op_failure" `
+            -Passed $operationContractSatisfied -Detail "contract=$operationContractSatisfied exit=$opExit json_valid=$opJsonValid json_exit=$opJsonExitCode json_success=$opJsonSuccess error_code=$opErrorCode" | Out-Null
 
-        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: residual artifact + Windows error REPORTED (error=5 / path captured in stderr)" `
-            -Passed $residualReported -Detail "error5_line='$deleteError5Line' orphan_ell_present=$ellPresentAfter (expected present: sanitation is in finally AFTER verdict) -- GREEN detect-and-report after L.12" | Out-Null
+        Record-Result -StepId "$($idBase)h" -Description "DESIRED-STATE: residual artifact + Windows error REPORTED (error=5 / exact path captured in stderr and JSON error/details)" `
+            -Passed $residualReported -Detail "json_path_reported=$jsonResidualPathReported stderr_path_reported=$stderrResidualPathReported ell_path='$ellPath' error_message='$opErrorMessage' error_details='$opErrorDetails' error5_line='$deleteError5Line' orphan_ell_present=$ellPresentAfter (expected present: sanitation is in finally AFTER verdict) -- GREEN detect-and-report after L.12" | Out-Null
 
-        $desiredStatePassed = ($nonSuccess -and $residualReported)
+        Record-Result -StepId "$($idBase)h.state" -Description "DESIRED-STATE: pre-sanitation warehouse entry absent, XML absent, ELL orphan present" `
+            -Passed $expectedPreSanitationState -Detail "warehouse_query=$warehouseStateKnown warehouse_present=$warehouseEntryPresent xml_known=$xmlStateKnown xml_present=$xmlPresentAfter ell_known=$ellStateKnown ell_present=$ellPresentAfter -- production state before sanitation" | Out-Null
+
+        $desiredStatePassed = ($operationContractSatisfied -and $residualReported -and $expectedPreSanitationState)
         $invariantFailures = @()
-        if (-not $nonSuccess) { $invariantFailures += "false_success(exit=$opExit,json_success=$opJsonSuccess)" }
-        if (-not $residualReported) { $invariantFailures += "residual_not_reported(error5_line_empty=$($deleteError5Line -eq ''))" }
-        Record-Result -StepId "$($idBase)i" -Description "DESIRED-STATE combined: non-success AND residual/error reported (Fault B desired-state; detect-and-report, NOT physical orphan removal)" `
+        if (-not $operationContractSatisfied) {
+            $invariantFailures += "operation_contract_not_satisfied(exit=$opExit,json_valid=$opJsonValid,json_exit=$opJsonExitCode,json_success=$opJsonSuccess,error_code=$opErrorCode; expected exit=6,json success=false,error.code=entry_op_failure)"
+        }
+        if (-not $residualReported) {
+            $invariantFailures += "residual_not_reported(json_path=$jsonResidualPathReported,stderr_path=$stderrResidualPathReported,error5_line_empty=$($deleteError5Line -eq ''))"
+        }
+        if (-not $expectedPreSanitationState) {
+            $invariantFailures += "unexpected_or_unknown_pre_sanitation_state(warehouse_query=$warehouseStateKnown,warehouse_present=$warehouseEntryPresent,xml_known=$xmlStateKnown,xml_present=$xmlPresentAfter,ell_known=$ellStateKnown,ell_present=$ellPresentAfter; expected warehouse=false,xml=false,ell=true)"
+        }
+        Record-Result -StepId "$($idBase)i" -Description "DESIRED-STATE combined: required delete failure contract, exact residual/error report, and expected pre-sanitation state (Fault B desired-state; detect-and-report, NOT physical orphan removal)" `
             -Passed $desiredStatePassed -Detail "desired_passed=$desiredStatePassed invariant_failures=$($invariantFailures -join '; ') orphan_ell_present=$orphanExpectedPresent (expected: sanitation in finally AFTER verdict) -- GREEN detect-and-report after L.12" | Out-Null
 
         $evidence = @{
             CaseId                = $idBase
-            CaseTitle             = "Delete / read-only ELL (Fault B: orphan ELL false success; detect-and-report; GREEN after L.12)"
+            CaseTitle             = "Delete / read-only ELL (Fault B: orphan ELL false success; detect-and-report; historical/transient recorded run)"
             ItemIdentifier        = $Name
             ComponentType         = $Type
             ProgId                = $progId
@@ -3667,34 +4952,43 @@ function Run-L7-DeleteReadOnly {
     }
     finally {
         Write-Host "--- $idBase cleanup ---" -ForegroundColor Cyan
+        # Invoke-L7Sanitation captures and records the production snapshot before
+        # any attribute restore, sanitation delete, or artifact removal. Source
+        # fixture files are removed only after that snapshot has been captured.
+        if (-not $evidence -and $progId -gt 0) {
+            $evidence = New-L7EvidenceRecord -CaseId $idBase -CaseTitle "Delete / read-only ELL (Fault B: orphan ELL false success; detect-and-report; historical/transient recorded run)" -Name $Name -Type $Type -ProgId $progId -Operation "delete" -ReadOnlyCapture $readOnlyCapture
+        }
+        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath -Evidence $evidence
         if ($insertSrcFile -and (Test-Path -Path $insertSrcFile -PathType Leaf)) { Remove-Item -Path $insertSrcFile -Force -ErrorAction SilentlyContinue }
-        $cln = Invoke-L7Sanitation -Name $Name -Type $Type -ProgId $progId -EllPath $ellPath -XmlPath $xmlPath
         # L7.3.CLEANUP predicate (L.12 detect-and-report alignment): the
-        # pre-sanitation orphan ELL is EXPECTED to still be present at verdict
-        # time (DeleteFileA cannot remove a +R file; L.12 does NOT invent
-        # attrib -R recovery), so the shared Get-CleanupVerdict formula
-        # ($cln.VerdictOk, which requires pre-sanitation EllGone) does NOT
-        # apply here. Instead, CLEANUP passes when post-verdict hygiene
-        # succeeded: the read-only attribute was restored, the warehouse entry
-        # is gone, and the post-sanitation artifacts are gone (the orphan is
-        # removed by this finally, not by L.12 production code). This does NOT
-        # weaken L7.1/L7.2 cleanup (which still use $cln.VerdictOk) or any
-        # production code.
-        $l73CleanupPassed = ($cln.ReadOnlyRestored -and $cln.ExistsGone -and $cln.SanitizedEllGone -and $cln.SanitizedXmlGone)
-        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and post-sanitation artifacts; L7.3.g/h/i verdict (detect-and-report) was recorded BEFORE this sanitation -- the pre-sanitation orphan ELL is expected to still be present at verdict time (allowed under detect-and-report) and is removed here in finally, NOT by L.12" `
-            -Passed $l73CleanupPassed -Detail $cln.Detail | Out-Null
+        # production Fault B orphan is expected in the pre-sanitation snapshot
+        # and at the production verdict, so cleanup passes only on the separate
+        # post-sanitation hygiene state. The production desired-state result is
+        # recorded before this sanitation and is not rewritten by this cleanup.
+        $l73CleanupPassed = $cln.PostSanitationHygieneOk
         # TVS-L.7 hardening: remove this run's recovery marker ONLY after
         # verified sanitation (see L7.1 finally for rationale).
-        $markerSanitized = ($cln.ExistsGone -and $cln.SanitizedEllGone -and $cln.SanitizedXmlGone -and $cln.ReadOnlyRestored)
+        $markerSanitized = $cln.PostSanitationHygieneOk
+        $markerRemovalOk = $true
+        $markerRemovalDetail = ""
         if ($markerPath -and $markerSanitized) {
-            Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemoval = Remove-L7RecoveryMarker -MarkerPath $markerPath
+            $markerRemovalOk = $markerRemoval.Succeeded
+            $markerRemovalDetail = $markerRemoval.Detail
         }
+        if ($markerPath -and $markerSanitized -and -not $markerRemovalOk) { $l73CleanupPassed = $false }
+        $cleanupDetail = $cln.Detail
+        if ($markerPath -and $markerSanitized -and -not $markerRemovalOk) { $cleanupDetail += " marker_cleanup=$markerRemovalDetail" }
+        Record-Result -StepId "$($idBase).CLEANUP" -Description "$idBase cleanup restored read-only attribute, removed warehouse entry and post-sanitation artifacts; L7.3.g/h/i production verdict (detect-and-report) was recorded before sanitation and is not rewritten by hygiene cleanup" `
+            -Passed $l73CleanupPassed -Detail $cleanupDetail | Out-Null
         if ($evidence) {
-            $evidence.EllExistedBeforeSanitation    = $cln.EllExistedBeforeSanitation
-            $evidence.XmlExistedBeforeSanitation    = $cln.XmlExistedBeforeSanitation
-            $evidence.OrphanExistedBeforeSanitation = $cln.OrphanExistedBeforeSanitation
-            $evidence.ReadOnlyRestored              = $cln.ReadOnlyRestored
-            $evidence.CleanupVerdictOk              = $cln.VerdictOk
+            # Production-before-sanitation fields were populated by the helper
+            # before its first sanitation action; only marker results are added
+            # after sanitation here.
+            $evidence.RecoveryMarkerPath = $markerPath
+            $evidence.RecoveryMarkerSanitized = $markerSanitized
+            $evidence.RecoveryMarkerRemovalSucceeded = $markerRemovalOk
+            $evidence.RecoveryMarkerRemovalDetail = $markerRemovalDetail
             $script:L7Evidence.Add($evidence) | Out-Null
         }
     }
@@ -3714,41 +5008,177 @@ function Run-L7-DeleteReadOnly {
 function Invoke-L7FinalSanitation {
     $allClean = $true
     $details = @()
+    $records = @()
     foreach ($item in $script:L7TrackedItems) {
-        # 1. Clear read-only attribute if still set.
-        if ($item.EllPath -and (Test-Path -Path $item.EllPath -PathType Leaf)) {
-            $fi = Get-Item -Path $item.EllPath -ErrorAction SilentlyContinue
-            if ($fi -and $fi.IsReadOnly) {
-                Clear-ReadOnlyAttributeExact -Path $item.EllPath | Out-Null
-                $details += "cleared RO on $($item.EllPath)"
+        $itemProgId = [int]$item.ProgId
+        $record = @{
+            CaseId = "L7.4.$($item.Name)"
+            ItemIdentifier = $item.Name
+            ComponentType = $item.Type
+            ProgId = $itemProgId
+            PreSanitationSnapshotComplete = $false
+            PreSanitationWarehouseQuerySucceeded = $false
+            PreSanitationWarehouseEntryExists = $null
+            PreSanitationEllExists = $null
+            PreSanitationEllReadOnly = $null
+            PreSanitationEllHash = $null
+            PreSanitationEllHashCaptured = $false
+            PreSanitationXmlExists = $null
+            PreSanitationXmlReadOnly = $null
+            PreSanitationXmlHash = $null
+            PreSanitationXmlHashCaptured = $false
+            SanitationReadOnlyRestored = $false
+            SanitationWarehouseCleanupSucceeded = $false
+            SanitationArtifactRemovalAttempted = $false
+            SanitationArtifactEllGoneBeforeRemoval = $null
+            SanitationArtifactXmlGoneBeforeRemoval = $null
+            PostSanitationSnapshotComplete = $false
+            PostSanitationWarehouseQuerySucceeded = $false
+            PostSanitationWarehouseEntryExists = $null
+            PostSanitationEllExists = $null
+            PostSanitationEllReadOnly = $null
+            PostSanitationEllHash = $null
+            PostSanitationEllHashCaptured = $false
+            PostSanitationXmlExists = $null
+            PostSanitationXmlReadOnly = $null
+            PostSanitationXmlHash = $null
+            PostSanitationXmlHashCaptured = $false
+            PostSanitationHygienePassed = $false
+            Detail = ""
+        }
+
+        # This guarded snapshot is deliberately the first operation for the
+        # item. It must precede read-only restoration, the sanitation CLI delete,
+        # and exact artifact removal. An incomplete snapshot withholds all
+        # artifact mutation and is not treated as an absent/clean state.
+        try {
+            $preSnapshot = Get-L7SanitationSnapshot -Name $item.Name -Type $item.Type -ProgId $itemProgId -EllPath $item.EllPath -XmlPath $item.XmlPath
+        } catch {
+            $allClean = $false
+            $record.Detail = "pre-sanitation snapshot failed: $($_.Exception.Message)"
+            $details += "$($item.Name): $($record.Detail)"
+            $records += $record
+            continue
+        }
+        $record.PreSanitationSnapshotComplete = $preSnapshot.StateComplete
+        $record.PreSanitationWarehouseQuerySucceeded = $preSnapshot.WarehouseStateKnown
+        $record.PreSanitationWarehouseEntryExists = $preSnapshot.WarehouseEntryExists
+        $record.PreSanitationEllExists = $preSnapshot.EllExists
+        $record.PreSanitationEllReadOnly = $preSnapshot.EllReadOnly
+        $record.PreSanitationEllHash = $preSnapshot.EllHash
+        $record.PreSanitationXmlExists = $preSnapshot.XmlExists
+        $record.PreSanitationXmlReadOnly = $preSnapshot.XmlReadOnly
+        $record.PreSanitationXmlHash = $preSnapshot.XmlHash
+
+        $ellState = $preSnapshot.EllState
+        $xmlState = $preSnapshot.XmlState
+        $prePathsKnown = ($preSnapshot.EllStateKnown -and $preSnapshot.XmlStateKnown)
+        $itemClean = [bool]$preSnapshot.StateComplete
+        if (-not $preSnapshot.StateComplete) {
+            $details += "incomplete pre-sanitation snapshot for $($item.Name); mutation remains fail-closed"
+        }
+
+        # Sanitation action: clear read-only only after the production snapshot
+        # is complete and the exact ELL state is known. This preserves the
+        # recovery behavior without converting an unknown state into success.
+        $readOnlyRestored = $false
+        $roRestore = $null
+        if ($preSnapshot.StateComplete -and $preSnapshot.EllStateKnown) {
+            if (-not $ellState.Exists) {
+                $readOnlyRestored = $true
+            } elseif ($ellState.IsReadOnly) {
+                try {
+                    $roRestore = Clear-ReadOnlyAttributeExact -Path $item.EllPath
+                    $readOnlyRestored = ($roRestore.ExitCode -eq 0 -and $roRestore.IsReadOnlyAfter -eq $false)
+                } catch {
+                    $details += "read-only restoration failed for $($item.Name): $($_.Exception.Message)"
+                }
+            } else {
+                $readOnlyRestored = $true
             }
         }
-        # 2. Delete remaining warehouse entry by name (idempotent).
-        $cliDel = Invoke-Cli -Arguments @("--json","delete",$item.Type,$item.Name)
-        $cliEx = Invoke-Cli -Arguments @("--json","exists",$item.Type,$item.Name)
-        $stillExists = $false
-        if ($cliEx.ExitCode -eq 0) { $stillExists = Get-ExistsFromJson -Json $cliEx.Stdout }
-        # 3. Remove remaining artifacts.
-        $ellStill = $false; $xmlStill = $false
-        if ($item.EllPath -and (Test-Path -Path $item.EllPath -PathType Leaf)) {
-            Remove-Item -Path $item.EllPath -Force -ErrorAction SilentlyContinue
-            $ellStill = (Test-Path -Path $item.EllPath -PathType Leaf)
+        $record.SanitationReadOnlyRestored = $readOnlyRestored
+        if (-not $readOnlyRestored) {
+            $itemClean = $false
+            $details += "read-only state unverified for $($item.Name)"
         }
-        if ($item.XmlPath -and (Test-Path -Path $item.XmlPath -PathType Leaf)) {
-            Remove-Item -Path $item.XmlPath -Force -ErrorAction SilentlyContinue
-            $xmlStill = (Test-Path -Path $item.XmlPath -PathType Leaf)
+
+        # Sanitation action: warehouse cleanup follows the complete
+        # pre-sanitation snapshot and attribute action.
+        $warehouse = $null
+        try {
+            $warehouse = Invoke-L7WarehouseCleanup -Type $item.Type -Name $item.Name
+        } catch {
+            $warehouse = @{ CleanupSucceeded = $false; ExistsGone = $false; Detail = "warehouse cleanup exception=$($_.Exception.Message)"; DeleteAttempted = $false; DeleteExitCode = -1 }
+        }
+        $record.SanitationWarehouseCleanupSucceeded = [bool]$warehouse.CleanupSucceeded
+        $stillExists = -not [bool]$warehouse.ExistsGone
+        if (-not $warehouse.CleanupSucceeded) {
+            $itemClean = $false
+            $details += "warehouse cleanup unverified for $($item.Name): $($warehouse.Detail)"
+        }
+
+        # Separate sanitation-stage observation, after the warehouse action but
+        # before exact artifact removal. It is never a pre-sanitation value.
+        $artifactBeforeRemovalEllState = Get-L7ArtifactState -Path $item.EllPath -Type $item.Type -ProgId $itemProgId -Extension 'ell'
+        $artifactBeforeRemovalXmlState = Get-L7ArtifactState -Path $item.XmlPath -Type $item.Type -ProgId $itemProgId -Extension 'xml'
+        $artifactBeforeRemovalEllKnown = ($artifactBeforeRemovalEllState.QuerySucceeded -and $artifactBeforeRemovalEllState.PathValidated -and (-not $artifactBeforeRemovalEllState.Exists -or $artifactBeforeRemovalEllState.IsRegularFile))
+        $artifactBeforeRemovalXmlKnown = ($artifactBeforeRemovalXmlState.QuerySucceeded -and $artifactBeforeRemovalXmlState.PathValidated -and (-not $artifactBeforeRemovalXmlState.Exists -or $artifactBeforeRemovalXmlState.IsRegularFile))
+        $record.SanitationArtifactEllGoneBeforeRemoval = ($artifactBeforeRemovalEllKnown -and -not $artifactBeforeRemovalEllState.Exists)
+        $record.SanitationArtifactXmlGoneBeforeRemoval = ($artifactBeforeRemovalXmlKnown -and -not $artifactBeforeRemovalXmlState.Exists)
+
+        $ellStill = (-not $artifactBeforeRemovalEllKnown -or [bool]$artifactBeforeRemovalEllState.Exists)
+        $xmlStill = (-not $artifactBeforeRemovalXmlKnown -or [bool]$artifactBeforeRemovalXmlState.Exists)
+        $ellRemoval = $null
+        $xmlRemoval = $null
+        $artifactMutationAllowed = ($preSnapshot.StateComplete -and $warehouse.CleanupSucceeded -and $readOnlyRestored -and $prePathsKnown -and $artifactBeforeRemovalEllKnown -and $artifactBeforeRemovalXmlKnown)
+        if ($artifactMutationAllowed) {
+            $record.SanitationArtifactRemovalAttempted = $true
+            $ellRemoval = Remove-L7ExactFile -Path $item.EllPath -Type $item.Type -ProgId $itemProgId -Extension 'ell'
+            $xmlRemoval = Remove-L7ExactFile -Path $item.XmlPath -Type $item.Type -ProgId $itemProgId -Extension 'xml'
+            $ellStill = -not ($ellRemoval.Succeeded -and $ellRemoval.ExistsAfter -eq $false)
+            $xmlStill = -not ($xmlRemoval.Succeeded -and $xmlRemoval.ExistsAfter -eq $false)
+            if ($ellStill) { $details += "ELL cleanup unverified for $($item.Name): $($ellRemoval.Detail)" }
+            if ($xmlStill) { $details += "XML cleanup unverified for $($item.Name): $($xmlRemoval.Detail)" }
+        } else {
+            $details += "artifact cleanup withheld for $($item.Name) until complete warehouse/attribute/path state is verified"
         }
         if ($stillExists -or $ellStill -or $xmlStill) {
-            $allClean = $false
+            $itemClean = $false
             $details += "RESIDUAL $($item.Name): entry=$stillExists ell=$ellStill xml=$xmlStill"
         }
+
+        # Post-sanitation hygiene state is a separate guarded observation. It
+        # cannot rewrite the pre-sanitation snapshot or the action outcome.
+        try {
+            $postSnapshot = Get-L7SanitationSnapshot -Name $item.Name -Type $item.Type -ProgId $itemProgId -EllPath $item.EllPath -XmlPath $item.XmlPath
+            $record.PostSanitationSnapshotComplete = $postSnapshot.StateComplete
+            $record.PostSanitationWarehouseQuerySucceeded = $postSnapshot.WarehouseStateKnown
+            $record.PostSanitationWarehouseEntryExists = $postSnapshot.WarehouseEntryExists
+            $record.PostSanitationEllExists = $postSnapshot.EllExists
+            $record.PostSanitationEllReadOnly = $postSnapshot.EllReadOnly
+            $record.PostSanitationEllHash = $postSnapshot.EllHash
+            $record.PostSanitationEllHashCaptured = $postSnapshot.EllHashCaptured
+            $record.PostSanitationXmlExists = $postSnapshot.XmlExists
+            $record.PostSanitationXmlReadOnly = $postSnapshot.XmlReadOnly
+            $record.PostSanitationXmlHash = $postSnapshot.XmlHash
+            $record.PostSanitationXmlHashCaptured = $postSnapshot.XmlHashCaptured
+            $record.PostSanitationHygienePassed = ($postSnapshot.StateComplete -and $warehouse.CleanupSucceeded -and $readOnlyRestored -and -not $postSnapshot.WarehouseEntryExists -and -not $postSnapshot.EllExists -and -not $postSnapshot.XmlExists)
+        } catch {
+            $record.PostSanitationHygienePassed = $false
+            $details += "post-sanitation snapshot failed for $($item.Name): $($_.Exception.Message)"
+        }
+        if (-not $record.PostSanitationHygienePassed) { $itemClean = $false }
+        $record.Detail = "pre_complete=$($record.PreSanitationSnapshotComplete) pre_warehouse=$($record.PreSanitationWarehouseEntryExists) pre_ell=$($record.PreSanitationEllExists) pre_xml=$($record.PreSanitationXmlExists) ro_restored=$readOnlyRestored warehouse_cleanup=$($warehouse.CleanupSucceeded) artifact_removal_attempted=$($record.SanitationArtifactRemovalAttempted) post_warehouse=$($record.PostSanitationWarehouseEntryExists) post_ell=$($record.PostSanitationEllExists) post_xml=$($record.PostSanitationXmlExists) post_hygiene=$($record.PostSanitationHygienePassed)"
+        if (-not $itemClean) { $allClean = $false }
+        $records += $record
     }
-    return @{ AllClean = $allClean; Details = ($details -join '; ') }
+    return @{ AllClean = $allClean; Details = ($details -join '; '); Records = $records }
 }
 
 # ---------------------------------------------------------------------------
 # L7 OPT-IN EXECUTION (handoff Sec.6). Gated by -IncludeRedFaultInjection; the
-# registered always-green suite never sets this switch.
+# registered default regression suite never sets this switch.
 # ---------------------------------------------------------------------------
 if ($IncludeRedFaultInjection) {
     Write-Host ""
@@ -3766,13 +5196,14 @@ if ($IncludeRedFaultInjection) {
     # artifacts (never scans MyWork\Bin), verifies absence, and deletes each
     # marker only on success. Strict validation rejects any marker whose
     # name/type/ProgId/ELL/XML paths do not match the TS_AUTO_L7_* /
-    # elmodule_0_<ProgId>.ell/.xml / under-MyWork\Bin contracts.
+    # type-specific <prefix><ProgId>.ell/.xml / under-MyWork\Bin contracts.
     Write-Host "--- L7.0: stale recovery-marker sweep (prior crashed runs) ---" -ForegroundColor Cyan
     $staleRecovery = Invoke-L7StaleMarkerRecovery
     $staleRecovered = $staleRecovery.Recovered
     $staleSkipped = $staleRecovery.Skipped
+    $staleRecords = @($staleRecovery.Records)
     $staleOk = ($staleSkipped.Count -eq 0)
-    $staleDetail = "recovered=$($staleRecovered.Count) skipped=$($staleSkipped.Count)"
+    $staleDetail = "recovered=$($staleRecovered.Count) skipped=$($staleSkipped.Count) lifecycle_records=$($staleRecords.Count)"
     if ($staleRecovered.Count -gt 0) {
         $staleDetail += " | recovered: $($staleRecovered -join '; ')"
     }
@@ -3798,33 +5229,54 @@ if ($IncludeRedFaultInjection) {
         Write-Host ""
         Write-Host "--- L7.4: final sanitation confirmation ---" -ForegroundColor Cyan
         $finalSan = Invoke-L7FinalSanitation
-        Record-Result -StepId "L7.4" -Description "all L7 disposable items, attributes, and artifacts sanitized even when assertions fail" `
-            -Passed $finalSan.AllClean -Detail $finalSan.Details | Out-Null
+        $finalLifecycleRecords = @($finalSan.Records)
 
         # TVS-L.7 hardening: any markers left by cases whose per-case finally
         # could not verify sanitation are reported (NOT silently deleted) so
         # the next run's L7.0 sweep can attempt recovery again. This is a
         # visibility-only check; it does not delete markers itself.
         $leftoverMarkers = @()
-        if (Test-Path -Path $script:L7RecoveryDir -PathType Container) {
-            $leftoverMarkers = @(Get-ChildItem -Path $script:L7RecoveryDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+        $markerEnumerationOk = $true
+        $recoveryState = Get-L7PathState -Path $script:L7RecoveryDir
+        if (-not $recoveryState.QuerySucceeded) {
+            $markerEnumerationOk = $false
+            $markerEnumerationDetail = "recovery directory inspection failed: $($recoveryState.Error)"
+        } elseif ($recoveryState.Exists -and -not $recoveryState.IsDirectory) {
+            $markerEnumerationOk = $false
+            $markerEnumerationDetail = "recovery path is not a directory: $script:L7RecoveryDir"
+        } elseif ($recoveryState.Exists) {
+            try {
+                Test-L7EvidencePathHasReparsePoint -Path $script:L7RecoveryDir | Out-Null
+                $markerEntries = @(Get-ChildItem -Path $script:L7RecoveryDir -Filter '*.json' -File -ErrorAction Stop)
+                foreach ($markerEntry in $markerEntries) {
+                    $markerEntryState = Get-L7PathState -Path $markerEntry.FullName
+                    if (-not $markerEntryState.QuerySucceeded -or -not $markerEntryState.Exists -or -not $markerEntryState.IsRegularFile) {
+                        throw "marker inspection failed for '$($markerEntry.FullName)'"
+                    }
+                    $leftoverMarkers += $markerEntry.Name
+                }
+                $markerEnumerationDetail = "recovery marker enumeration verified"
+            } catch {
+                $markerEnumerationOk = $false
+                $markerEnumerationDetail = "recovery marker enumeration failed: $($_.Exception.Message)"
+            }
+        } else {
+            $markerEnumerationDetail = "recovery directory absent; no markers to enumerate"
         }
         if ($leftoverMarkers.Count -gt 0) {
             Write-Host "  NOTE: $($leftoverMarkers.Count) recovery marker(s) left for next-run sweep: $($leftoverMarkers -join ', ')" -ForegroundColor Yellow
         }
-
-        # Durable evidence write (handoff Sec.6 Evidence).
-        # WRITE-GUARD: $RedFaultInjectionDurablePath defaults to the gitignored
-        # tmp/ path; only -UpdateTrackedEvidence overrides it to the tracked
-        # docs/RE/ file. Routine runs do NOT touch the tracked evidence.
-        try {
-            Write-L7DurableEvidence -Path $RedFaultInjectionDurablePath -Evidence $script:L7Evidence
-            Record-Result -StepId "L7.EVIDENCE" -Description "durable RED evidence summary written" `
-                -Passed $true -Detail "path=$RedFaultInjectionDurablePath cases=$($script:L7Evidence.Count)" | Out-Null
-        } catch {
-            Record-Result -StepId "L7.EVIDENCE" -Description "durable RED evidence summary write FAILED" `
-                -Passed $false -Detail "path=$RedFaultInjectionDurablePath error=$($_.Exception.Message)" | Out-Null
+        if (-not $markerEnumerationOk) {
+            $finalSan.AllClean = $false
+            $finalSan.Details = ($finalSan.Details + "; " + $markerEnumerationDetail).Trim('; ')
         }
+        $finalSan.Details = ($finalSan.Details + "; lifecycle_records=$($finalLifecycleRecords.Count)").Trim('; ')
+        Record-Result -StepId "L7.4" -Description "all L7 disposable items, attributes, and artifacts sanitized even when assertions fail" `
+            -Passed $finalSan.AllClean -Detail $finalSan.Details | Out-Null
+
+        # The durable evidence write occurs after this sanitation finally
+        # block, below transient-directory cleanup. A caller-supplied tmp
+        # destination remains selected and is not removed as scratch data.
     }
 }
 
@@ -3833,8 +5285,62 @@ if ($IncludeRedFaultInjection) {
 # finally block intentionally leaves $tmpDir in place so the L4 / L5 / L7
 # sections can reuse it.
 # ---------------------------------------------------------------------------
-if (Test-Path -Path $tmpDir -PathType Container) {
+# An evidence destination is normally outside $tmpDir. If a caller explicitly
+# selected a path inside that scratch directory and it already exists, leave
+# the scratch directory intact so the no-overwrite rule is not bypassed by
+# deleting the destination before the exclusive evidence write.
+$preserveScratchForEvidence = $false
+if ($IncludeRedFaultInjection) {
+    try {
+        $tmpDirFull = [System.IO.Path]::GetFullPath($tmpDir).TrimEnd([char[]]@('\', '/'))
+        $tmpDirPrefix = $tmpDirFull + [System.IO.Path]::DirectorySeparatorChar
+        $evidenceInsideScratch = ($RedFaultInjectionDurablePath.StartsWith($tmpDirPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or [System.String]::Equals($RedFaultInjectionDurablePath, $tmpDirFull, [System.StringComparison]::OrdinalIgnoreCase))
+        if ($evidenceInsideScratch) {
+            $evidenceStateBeforeScratchCleanup = Get-L7PathState -Path $RedFaultInjectionDurablePath
+            $preserveScratchForEvidence = (-not $evidenceStateBeforeScratchCleanup.QuerySucceeded -or $evidenceStateBeforeScratchCleanup.Exists)
+            # Also preserve scratch when an existing path component is a file;
+            # otherwise recursive scratch cleanup could delete that component
+            # and turn an invalid destination into a different directory tree.
+            $parentToCheck = Split-Path -Parent $RedFaultInjectionDurablePath
+            while ($parentToCheck -and -not $preserveScratchForEvidence) {
+                $parentState = Get-L7PathState -Path $parentToCheck
+                if (-not $parentState.QuerySucceeded) {
+                    $preserveScratchForEvidence = $true
+                    break
+                }
+                if ($parentState.Exists) {
+                    if (-not $parentState.IsDirectory) { $preserveScratchForEvidence = $true }
+                    break
+                }
+                $nextParent = Split-Path -Parent $parentToCheck
+                if ([string]::Equals($nextParent, $parentToCheck, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+                $parentToCheck = $nextParent
+            }
+        }
+    } catch {
+        # An unsafe/unknown destination must not cause scratch cleanup to
+        # delete a path that the final fail-closed evidence write will inspect.
+        $preserveScratchForEvidence = $true
+    }
+}
+if ((Test-Path -Path $tmpDir -PathType Container) -and -not $preserveScratchForEvidence) {
     Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($IncludeRedFaultInjection) {
+    # WRITE-GUARD: the destination was selected and path-validated before any
+    # L7 work. Write only now, after transient scratch cleanup, so a caller-
+    # supplied tmp destination is not itself removed by that cleanup. The
+    # writer uses CreateNew for both tmp and explicitly authorized tracked paths
+    # and therefore fails closed if any destination already exists.
+    try {
+        Write-L7DurableEvidence -Path $RedFaultInjectionDurablePath -Evidence $script:L7Evidence -AllowTrackedPath:$UpdateTrackedEvidence
+        Record-Result -StepId "L7.EVIDENCE" -Description "durable RED evidence summary written" `
+            -Passed $true -Detail "path=$RedFaultInjectionDurablePath cases=$($script:L7Evidence.Count)" | Out-Null
+    } catch {
+        Record-Result -StepId "L7.EVIDENCE" -Description "durable RED evidence summary write FAILED" `
+            -Passed $false -Detail "path=$RedFaultInjectionDurablePath error=$($_.Exception.Message)" | Out-Null
+    }
 }
 
 # ===========================================================================

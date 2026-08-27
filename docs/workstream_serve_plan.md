@@ -1,24 +1,38 @@
 # Workstream K — `--serve` Mode (Elevated Named-Pipe Broker)
 
-**Status:** K.1–K.6b COMPLETE (Workstream K fully complete)
-**Goal:** Add a `--serve` mode to `tsdev_cli.exe` that starts elevated (one UAC
-prompt via the existing `requireAdministrator` manifest), creates a Windows
-named pipe, and services multiple commands in a loop. The Python wrapper
-connects to the pipe and sends framed JSON requests, receiving framed JSON
-responses. One UAC per session, no per-call prompts, native speed, no
-third-party dependency.
+**Status:** K.1–K.6b are recorded as implemented complete. The retained
+verification results below are historical/transient, not current
+production-acceptance evidence.
+**Original goal (historical planning snapshot):** Add a `--serve` mode to
+`tsdev_cli.exe` that starts an elevated broker through ordinary Windows UAC
+(`ShellExecuteExW` with `runas`; the CLI uses the existing
+`requireAdministrator` manifest), creates a Windows named pipe, and services
+multiple commands in a loop. The Python wrapper connects to the pipe and sends
+framed JSON requests, receiving framed JSON responses. One UAC per session, no
+per-call prompts, native speed, no third-party dependency.
+
+**Current operational contract (from the checked-in implementation):** The
+Python `TsDevClient` default is `use_serve=True`. In a non-elevated Python
+process, the broker is started lazily with `ShellExecuteExW`/`runas`; an already
+elevated process uses the direct `subprocess.run` path.
+A non-elevated operation using explicit `TsDevClient(use_serve=False)` raises
+`ElevationRequiredError` before `_run_cli()`/`_run_batch()` can launch a
+subprocess; it does not launch a child to provoke UAC. The broker remains
+available for subsequent pipe requests without another elevation request.
+Serve mode does not mutate global registry state and has no general
+TradeStation Desktop/TSDev.exe running-state prerequisite.
 
 **Implementation status:**
 - **K.1 (elevation guard):** COMPLETE — `isElevated()` helper, exit code 11, "not_elevated" error string, guard in main() before all subcommands including serve. Test: test_elevation_guard.cpp. Review APPROVED.
-- **K.2 (cliResultToJson):** COMPLETE — Extracted JSON serialization from emitOutput() into `cliResultToJson(const CliResult&)`. emitOutput() and emitBatchOutput() refactored to use it. Byte-identical output preserved. Test: test_json_serialize.cpp. Review APPROVED.
+- **K.2 (cliResultToJson):** COMPLETE — Extracted JSON serialization from emitOutput() into `cliResultToJson(const CliResult&)`. emitOutput() and emitBatchOutput() refactored to use it. Byte-identical output was recorded in the retained historical/transient verification, not as current acceptance evidence. Test: test_json_serialize.cpp. Review APPROVED.
 - **K.3 (serve dispatch):** COMPLETE — `ServeRequest` struct, `parseServeRequest()`, `dispatchServeRequest()`. Test: test_serve_dispatch.cpp. Review APPROVED.
 - **K.4 (named pipe server):** COMPLETE — Framing helpers, createServePipe, runServe, cmdServe, `serve` subcommand. Test: test_serve_framing.cpp. Review APPROVED.
-- **K.5 (Python serve-broker):** COMPLETE — _pipe.py, _ServeBroker, _detect_elevation(), use_serve=False, routing logic. 115 Python tests pass. Review APPROVED (after fixing 3 MAJOR findings: 64MB cap in recv_response, orphaned broker on start failure, reconnect process leak).
-- **K.6a (E2E integration): COMPLETE (2026-08-21)** — Full E2E with serve mode, backwards-compat verification, elevation guard E2E: all 7 phases passed; adversarial review APPROVED; committed as 027e7fe.
-- **K.6b (documentation + default flip): COMPLETE (2026-08-21)** — `use_serve` default flipped to `True`; `_ServeBroker.start()` FileNotFoundError guard added; serve-mode docs added to BUILD.md, E2E_TEST_SPEC.md (Part F), README.md; E2E 2/2 serve + 12/12 C++ regression passed; adversarial review APPROVED (17 INFO).
+- **K.5 (Python serve-broker):** COMPLETE — _pipe.py, _ServeBroker, _detect_elevation(), use_serve=False, routing logic. A retained historical/transient run recorded 115 Python tests passing; this is not current acceptance evidence. Review APPROVED (after fixing 3 MAJOR findings: 64MB cap in recv_response, orphaned broker on start failure, reconnect process leak).
+- **K.6a (E2E integration):** Recorded COMPLETE (2026-08-21) — The retained historical/transient record reports full E2E with serve mode, backwards-compat verification, and elevation guard E2E; all 7 phases passed. This is not current acceptance evidence. Adversarial review APPROVED; committed as 027e7fe.
+- **K.6b (documentation + default flip):** Recorded COMPLETE (2026-08-21) — `use_serve` default flipped to `True`; `_ServeBroker.start()` FileNotFoundError guard added; serve-mode docs added to BUILD.md, E2E_TEST_SPEC.md (Part F), README.md. The retained historical/transient record reports E2E 2/2 serve plus 12/12 C++ regression suites / 135 cases passed; these are not current acceptance evidence. Adversarial review APPROVED (17 INFO).
 
-**Crash handling (done alongside K.5, not in original plan):**
-A C++ VEH (Vectored Exception Handler) crash handler and Python `TsDevCrashError` exception were added to make serve mode safe. The VEH (`vehCrashHandler()` in anonymous namespace) catches access violations, stack overflows, and heap corruption, then calls `TerminateProcess(GetCurrentProcess(), code)` to prevent TSCrashReport.exe from spawning. This is critical for serve mode where the broker runs elevated and a non-elevated Python client cannot kill an elevated TSCrashReport.exe. The VEH is installed as the FIRST thing in main() via `AddVectoredExceptionHandler(1, ...)` + `SetErrorMode(SEM_NOGPFAULTERRORBOX)`. On the Python side, `TsDevCrashError` (subclass of `TsDevError` with `exit_code` attribute) is raised when crash NT status codes are detected. Tests: test_crash_handler.cpp (normal mode + --crash mode), test_crash_handler.ps1. Review APPROVED.
+**Crash handling (implemented alongside K.5, not in original plan):**
+A C++ VEH (Vectored Exception Handler) crash handler and Python `TsDevCrashError` exception were added to make serve mode safe. The VEH (`vehCrashHandler()` in anonymous namespace) catches access violations, stack overflows, and heap corruption, then calls `TerminateProcess(GetCurrentProcess(), code)` to prevent TSCrashReport.exe from spawning. This is critical for serve mode where the broker runs elevated and a non-elevated Python client cannot kill an elevated TSCrashReport.exe. The VEH is installed as the FIRST thing in main() via `AddVectoredExceptionHandler(1, ...)` + `SetErrorMode(SEM_NOGPFAULTERRORBOX)`. On the Python side, `TsDevCrashError` (subclass of `TsDevError` with `exit_code` attribute) is raised when crash NT status codes are detected. Tests: test_crash_handler.cpp (normal mode + --crash mode), test_crash_handler.ps1. The retained test and review records are historical/transient, not current acceptance evidence. Review APPROVED.
 
 **Supported component types in serve mode:**
 The serve dispatch (`parseServeRequest`) supports all 5 CLI component types: `strategy`, `indicator`, `function`, `tradingapp`, and `showme` (ShowMe was added via TVS-C.8, whType=1282).
@@ -30,53 +44,59 @@ just serve), since they all access the TSDev Library in
 
 ---
 
-## Architecture recap (from codebase exploration)
+## Architecture recap (historical planning snapshot; stable-name references)
 
-The CLI (`src/tsdev_cli.cpp`, 2115 lines at planning time; 2517 lines now) has 3 layers:
+This recap is retained from planning-time codebase exploration. Source line
+counts and line-number citations are intentionally omitted because they are
+not stable; the descriptions below use function and type names instead. This
+section is architectural provenance, not a current source line map.
 
 - **`do*` functions** (`doInsert`, `doModify`, `doDelete`, `doExists`,
   `doUpsert`, `doGetSource`): take a `TsDevLib&` + parsed args, return a
-  `CliResult`. Do NOT write to stdout. **This is the reuse seam.** (lines
-  317–1150)
+  `CliResult`. Do NOT write to stdout. **This is the reuse seam.**
 - **`cmd*` functions**: parse args, spawn a 64MB-stack worker thread,
   construct `TsDevLib`, call `do*`, emit output via `emitOutput()`. Write to
-  stdout. (lines 607–1230)
+  stdout.
 - **`run*` functions**: worker-thread entry points that construct/destruct
   `TsDevLib` on the 64MB-stack thread (thread-affine constraint: the hidden
-  EDIT control and the compiler both need the large stack). (lines 581–1175)
+  EDIT control and the compiler both need the large stack).
 
 Key existing pieces:
-- `CliResult` struct (line 201): `op`, `typeStr`, `name`, `success`,
-  `exitCode`, `progId`, `ellPath`, `existingProgId`, `compileErrors`,
-  `humanStdout`, `humanStderr`, `errorMessage`, `exists`, `storedName`,
-  `sourceText`.
-- `emitOutput()` (line 251): has a JSON branch that serializes `CliResult` →
+- `CliResult` struct: `op`, `typeStr`, `name`, `success`, `exitCode`, `progId`,
+  `ellPath`, `existingProgId`, `compileErrors`, `humanStdout`, `humanStderr`,
+  `errorMessage`, `exists`, `storedName`, `sourceText`.
+- `emitOutput()`: has a JSON branch that serializes `CliResult` →
   `nlohmann::ordered_json` → stdout. **This serialization logic should be
   extracted into a reusable helper** (`cliResultToJson()`).
-- `emitBatchOutput()` (line 1481): duplicates the per-result JSON
-  serialization (does NOT include `exists`/`stored_name`/`source` fields — a
-  pre-existing minor inconsistency to be aware of).
-- `runBatch` (line 1409): the existing precedent for a long-lived `TsDevLib`
-  (one thread, one lib, many ops). Constructs `TsDevLib` once, loops over
-  items calling `do*`, calls `closeWarehouse()` once at the end, then
-  destructs `TsDevLib`.
-- `#ifndef TSDEV_CLI_TEST` around `main()` (line 1740) so unit tests can
-  `#include` the `.cpp` and access anonymous-namespace internals.
-- `nlohmann/json.hpp` already included (line 67). Windows APIs available
-  transitively via `tsdev_lib.h` (line 19: `#include <windows.h>`).
-- CMakeLists.txt (line 249): `TSDEV_REQUIRE_ADMIN` option embeds
+- `emitBatchOutput()`: duplicates the per-result JSON serialization (does NOT
+  include `exists`/`stored_name`/`source` fields — a pre-existing minor
+  inconsistency to be aware of).
+- `runBatch`: the existing precedent for a long-lived `TsDevLib` (one thread,
+  one lib, many ops). It constructs `TsDevLib` once, loops over items calling
+  `do*`, calls `closeWarehouse()` once at the end, then destructs `TsDevLib`.
+- `#ifndef TSDEV_CLI_TEST` around `main()` lets unit tests include the `.cpp`
+  and access anonymous-namespace internals.
+- `nlohmann/json.hpp` is already included. Windows APIs are available
+  transitively via `tsdev_lib.h` (`#include <windows.h>`).
+- CMakeLists.txt's `TSDEV_REQUIRE_ADMIN` option embeds the
   `requireAdministrator` manifest in `tsdev_cli` and all TS-dependent test
-  executables (line 282).
+  executables.
 - Python wrapper (`src/tsdev_automation/client.py`): `TsDevClient` shells out
   via `subprocess.run(..., capture_output=True)` → `json.loads(stdout)`.
-  `_run_cli()` (line 366) and `_run_batch()` (line 393) are the two execution
-  paths. `TsDevResult.from_json()` (results.py line 63) parses the JSON.
+  `_run_cli()` and `_run_batch()` are the two execution paths;
+  `TsDevResult.from_json()` in `src/tsdev_automation/results.py` parses the JSON.
 - Python tests (`tests/test_tsdev_client.py`): unit tests mock
   `subprocess.run`; E2E tests marked `@pytest.mark.e2e` drive the real CLI.
 
 ---
 
-## 1. TVS breakdown
+## 1. TVS breakdown (historical planning snapshot)
+
+> The TVS goals, file lists, implementation details, and TDD approaches below
+> are retained as historical planning material. They describe the intended
+> slices and recorded completion history, not a current TODO list, current
+> verification result, or line-specific source citation. Current behavior is
+> defined by the checked-in implementation and the operational contract above.
 
 ### TVS-K.1 — Elevation guard for all subcommands — **COMPLETE**
 
@@ -109,7 +129,7 @@ subcommands (insert/modify/delete/exists/get-source/upsert/batch-*/serve).
   existing exit-code scheme (0–10), use **exit 11** for "not elevated".
   JSON form: `{"success":false,"exit_code":11,
   "error":{"code":"not_elevated","message":"..."}}`. Add `"not_elevated"` to
-  `errorCodeString()` (line 223) as `case 11`.
+  `errorCodeString()` as `case 11`.
 - The guard does NOT apply when `TSDEV_CLI_TEST` is defined (unit tests
   include the .cpp and define their own `main()`; the guard is inside
   `#ifndef TSDEV_CLI_TEST`).
@@ -139,9 +159,9 @@ subcommands (insert/modify/delete/exists/get-source/upsert/batch-*/serve).
 
 ### TVS-K.2 — Extract `cliResultToJson()` reusable serialization helper — **COMPLETE**
 
-**Goal:** Extract the JSON serialization branch of `emitOutput()` (lines
-264–297) into a standalone `ordered_json cliResultToJson(const CliResult& r)`
-function, and refactor `emitOutput()` and `emitBatchOutput()` to call it.
+**Goal:** Extract the JSON serialization branch of `emitOutput()` into a
+standalone `ordered_json cliResultToJson(const CliResult& r)` function, and
+refactor `emitOutput()` and `emitBatchOutput()` to call it.
 This eliminates the duplicated serialization logic and gives the serve layer
 a single function to serialize a `CliResult` to JSON for the wire.
 
@@ -154,7 +174,7 @@ a single function to serialize a `CliResult` to JSON for the wire.
 
 **Key implementation details:**
 - `cliResultToJson(const CliResult& r)` returns `ordered_json`. Contains
-  the EXACT logic currently in `emitOutput()` lines 264–297 (including the
+  the EXACT logic currently in the `emitOutput()` JSON branch (including the
   `exists`/`stored_name`/`source` op-specific fields).
 - `emitOutput()` JSON branch becomes: `ordered_json j = cliResultToJson(r);
   const std::string s = j.dump(); ...`.
@@ -164,15 +184,18 @@ a single function to serialize a `CliResult` to JSON for the wire.
   exists/get-source ops will include those fields too. Verify no existing
   test depends on the omission (batch subcommands are insert/modify/delete/
   upsert only, so `exists`/`get-source` never appear in batch output → safe).
-- Pure refactor: byte-identical JSON output for all existing paths.
+- Pure refactor: the retained historical/transient verification recorded
+  byte-identical JSON output for all existing paths; this is not current
+  acceptance evidence.
 
 **TDD approach:**
 - **Red:** `test_json_serialize.cpp` calls `cliResultToJson()` on a
   hand-built `CliResult` (success insert, compile-error, exists-found,
   get-source) and asserts the exact JSON key/value structure. Fails to
   compile (function doesn't exist).
-- **Green:** Extract the function, refactor callers. Test passes. Existing
-  `--json` output is byte-identical (verified by E2E).
+- **Green:** Extract the function, refactor callers. Test passes. The retained
+  historical/transient E2E record reported byte-identical `--json` output;
+  this is not current acceptance evidence.
 
 **Dependencies:** None (independent of K.1, but logically first since serve
 builds on it).
@@ -218,10 +241,11 @@ pipe I/O — fully unit-testable.
   get-source with `outputPath`: `doGetSource` writes to the file (the path
   is broker-side; the Python wrapper normally omits it and reads
   `sourceText` from the response).
-- **MVP scope:** single-item ops only (insert/modify/delete/exists/upsert/
-  get-source). Batch ops (`batch-insert`, etc.) are NOT served over the pipe
-  in the MVP — the Python wrapper sends N individual requests. Batch-over-
-  pipe is deferred (see §6).
+- **Original MVP scope (historical planning snapshot):** single-item ops only
+  (insert/modify/delete/exists/upsert/get-source). Batch ops were not given a
+  batch-array wire protocol; the Python wrapper now sends N individual
+  requests, as recorded in K.5, and a batch-over-pipe protocol remains
+  deferred (see §6).
 
 **TDD approach:**
 - **Red:** `test_serve_dispatch.cpp` calls `parseServeRequest()` with
@@ -258,20 +282,13 @@ the pipe is closed / `quit` op / process killed.
 
 **Key implementation details:**
 - **Pipe name:** `\\.\pipe\tsdev_cli_<PID>` where `<PID>` is the broker's
-  process ID (unique per broker instance, avoids collisions). The broker
-  prints the pipe name to stdout on startup so the Python wrapper can parse
-  it: `{"pipe":"\\\\.\\pipe\\tsdev_cli_12345"}` followed by newline. (The
-  Python wrapper launched the broker via `ShellExecute("runas")` and reads
-  the broker's stdout — but `ShellExecute` does NOT give a stdout pipe. See
-  §4 for the handshake: the wrapper probes `\\.\pipe\tsdev_cli_<PID>` using
-  the PID it captures from the launched process, OR the broker writes the
-  pipe name to a temp file whose path is passed as `--serve-pipe-file`.)
-  **Chosen approach:** `--serve-pipe-file <path>` — the broker writes the
-  full pipe name to that file once the pipe is created; the Python wrapper
-  polls that file. This is robust and avoids PID-guessing. The pipe name
-  still embeds the PID for uniqueness. The broker writes the full pipe name
-  AND its own PID to that file (format: first line = pipe name, second line
-  = PID as decimal string).
+  process ID (unique per broker instance, avoids collisions). The Python
+  `_ServeBroker.start()` implementation launches the broker with
+  `ShellExecuteExW`/`runas`; because that API does not provide a captured
+  stdout pipe, it passes `--serve-pipe-file <path>` and polls the handshake
+  file. The broker writes the full pipe name and its own PID to that file
+  after the pipe is created (first line = pipe name, second line = PID as a
+  decimal string).
 - **Security descriptor (SDDL):** `D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;`
   `OW)` + `S:(ML;;NW;;;ME)` — owner + admins + system full control, owner
   (the calling user) read/write, mandatory label Medium No-Write-Up. Built
@@ -334,11 +351,11 @@ the pipe is closed / `quit` op / process killed.
 
 ### TVS-K.5 — Python wrapper: serve-broker lifecycle + pipe client — **COMPLETE**
 
-**Goal:** Extend `TsDevClient` to detect elevation, auto-start the serve
-broker (via `ShellExecute("runas")`) when not elevated, connect to the named
-pipe, send/receive framed JSON, and route all operations through the broker.
-Fall back to direct `subprocess.run` when already elevated (zero overhead in
-the common elevated-session case).
+**Goal (historical planning snapshot):** Extend `TsDevClient` to detect
+elevation, auto-start the serve broker (via `ShellExecuteExW`/`runas`) when not
+elevated, connect to the named pipe, send/receive framed JSON, and route
+operations through the broker. Fall back to direct `subprocess.run` when
+already elevated (zero overhead in the common elevated-session case).
 
 **Files to change:**
 - `src/tsdev_automation/client.py` — add `_ServeBroker` class, elevation
@@ -352,16 +369,18 @@ the common elevated-session case).
 - `tests/test_serve_e2e.py` — new E2E test (marked `@pytest.mark.e2e`).
 
 **Key implementation details:**
-- **Elevation detection:** `ctypes.windll.advapi32.OpenProcessToken` +
-  `GetTokenInformation(TokenElevation)` — mirrors the C++ `isElevated()`.
-  Cached on the `TsDevClient` instance.
+- **Elevation detection:** module-level `_detect_elevation()` uses
+  `ctypes.windll.advapi32.OpenProcessToken` +
+  `GetTokenInformation(TokenElevation)` — mirroring the C++ `isElevated()`.
+  The result is cached on the `TsDevClient` instance.
 - **Broker start (`_ServeBroker`):**
-  1. Create a temp file path for the pipe-name handshake.
+  1. Create a temporary path for the pipe-name handshake.
   2. `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS` + `lpVerb="runas"` +
-     `lpFile=cli_path` + `lpParameters=f"--serve --serve-pipe-file {tmp}"`
-     + `nShow=SW_HIDE` → triggers ONE UAC prompt. `SHELLEXECUTEINFOW.hProcess`
-     is a real HANDLE usable with `WaitForSingleObject`/`TerminateProcess`.
-     If the user declines (hInstApp ≤ 32), raise `PermissionError("UAC declined")`.
+     `lpFile=cli_path` + `lpParameters=f"serve --serve-pipe-file {tmp}"`
+     + `nShow=SW_HIDE` requests ordinary Windows UAC consent. The returned
+     `SHELLEXECUTEINFOW.hProcess` is retained for
+     `WaitForSingleObject`/`TerminateProcess`. If the request fails or no
+     process handle is returned, raise `PermissionError`.
   3. Poll the temp file (up to ~30s) for the pipe name line. The broker
      writes the pipe-file atomically: writes to `<path>.tmp` then
      `MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`
@@ -377,9 +396,9 @@ the common elevated-session case).
   - `call(handle, obj)`: send + recv → `dict`.
 - **Routing in `TsDevClient`:**
   - `__init__`: detect elevation. If not elevated AND `use_serve=True`
-    (new opt-in flag, default `False` for backwards compat in this TVS;
-    flipped to `True` by default in K.6b after validation), start the
-    broker lazily on first operation.
+    (the current default), start the broker lazily on the first operation. If
+    `use_serve=False` in a non-elevated session, direct-mode execution is
+    rejected by `ElevationRequiredError` before subprocess launch.
   - `_single`/`exists`/`get_source`: if broker is active, build the request
     JSON `{"op":..., "type":..., "name":..., "source":...}` (source read
     client-side from the file/string), `broker.call()`, parse the response
@@ -408,7 +427,7 @@ the common elevated-session case).
 
 ---
 
-### TVS-K.6a — E2E integration + backwards-compat verification (no docs, no default flip) — **COMPLETE (2026-08-21)**
+### TVS-K.6a — E2E integration + backwards-compat verification (no docs, no default flip) — **RECORDED COMPLETE (2026-08-21; historical/transient verification)**
 
 **Goal:** End-to-end verification that the serve mode works with the real
 elevated broker and the real TSDev Library, AND that all existing
@@ -417,14 +436,17 @@ no `use_serve` default flip (that is K.6b, gated on K.6a passing).
 
 **Files to change:**
 - `tests/test_serve_e2e.py` — E2E test (real broker, real orlib20).
-- `tests/run_regression.ps1` — update test count (19 → 23 C++ test executables).
+- `tests/run_regression.ps1` — update the test inventory (the planning-time
+  count is omitted; the current runner inventory is documented in
+  `docs/BUILD.md`).
 
 **Key implementation details:**
 - E2E test: from a NON-elevated Python process, construct `TsDevClient(
   use_serve=True)`, perform insert → exists → get-source → modify → delete
   on a test strategy. Assert each result matches the direct-subprocess
-  results. Verify only ONE UAC prompt was triggered (the broker start).
-  Clean up the test entry.
+  results. Verify that broker startup requests one ordinary Windows UAC
+  consent and that subsequent pipe operations do not request additional
+  elevation. Clean up the test entry.
 - Backwards-compat: run the full existing E2E suite
   (`docs/E2E_TEST_SPEC.md`) WITHOUT `use_serve` (elevated session, direct
   `subprocess.run`). Assert byte-identical JSON output vs. the pre-serve
@@ -436,21 +458,22 @@ no `use_serve` default flip (that is K.6b, gated on K.6a passing).
 **TDD approach:**
 - **Red:** E2E test fails (serve mode not yet wired through Python
   end-to-end).
-- **Green:** Run E2E, fix any integration bugs. All existing E2E tests
-  still pass (backwards compat). `use_serve` default remains `False`.
+- **Green:** Run E2E, fix any integration bugs. Required outcome: all existing
+  E2E tests still pass (backwards compat). `use_serve` default remains
+  `False`; this is an expected outcome, not a current-run result.
 
 **Dependencies:** K.1–K.5 all complete.
 
 ---
 
-### TVS-K.6b — Documentation + `use_serve` default flip — **COMPLETE (2026-08-21)**
+### TVS-K.6b — Documentation + `use_serve` default flip — **RECORDED COMPLETE (2026-08-21; historical/transient verification)**
 
 **Completion summary:**
 - `use_serve` default flipped to `True` in `TsDevClient.__init__`.
 - Critical bug fixed: `_ServeBroker.start()` now validates the CLI path exists before `ShellExecuteExW` (raises `FileNotFoundError` instead of a Windows popup on a non-existent CLI path).
 - Serve-mode docs added to `docs/BUILD.md`, `docs/E2E_TEST_SPEC.md` (Part F), `README.md`.
 - `tests/test_serve_e2e.py` updated to use the default (no explicit `use_serve=True`).
-- E2E: 2/2 serve E2E passed (default-flip path), 12/12 C++ regression suites / 135 cases passed.
+- The retained historical/transient record reports E2E: 2/2 serve E2E passed (default-flip path), and 12/12 C++ regression suites / 135 cases passed. These results are not current acceptance evidence.
 - Adversarial review: APPROVED (17 INFO findings).
 
 **Goal:** Document the serve mode and flip the `use_serve` default to
@@ -472,8 +495,9 @@ end-to-end path.
 
 **TDD approach:**
 - **Red:** Docs absent; `use_serve` default still `False`.
-- **Green:** Docs written; default flipped; E2E from non-elevated session
-  passes with no explicit `use_serve=True`.
+- **Green:** Docs written; default flipped; required outcome is that E2E from
+  a non-elevated session passes with no explicit `use_serve=True`; this is an
+  expected outcome, not a current-run result.
 
 **Dependencies:** K.6a passing (E2E verified before flipping the default).
 
@@ -641,17 +665,19 @@ standard documented pattern for elevated-broker / non-elevated-client IPC.
 
 ---
 
-## 4. Python wrapper integration design
+## 4. Python wrapper integration design (current implementation contract)
 
 ### Elevation detection
-`TsDevClient._detect_elevation()` (cached):
+The module-level `_detect_elevation()` in
+`src/tsdev_automation/client.py` is called by `TsDevClient.__init__` and its
+result is cached on the instance:
 ```python
 import ctypes
 from ctypes import wintypes
 token = wintypes.HANDLE()
 ctypes.windll.advapi32.OpenProcessToken(
     ctypes.windll.kernel32.GetCurrentProcess(),
-    0x0020,  # TOKEN_QUERY
+    0x0008,  # TOKEN_QUERY
     ctypes.byref(token))
 elevated = wintypes.DWORD()
 ctypes.windll.advapi32.GetTokenInformation(
@@ -663,14 +689,14 @@ return bool(elevated.value)
 
 ### Broker start (ShellExecuteExW RunAs)
 `_ServeBroker.start()`:
-1. `tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pipe")` →
-   note the path, close it (the broker will create/overwrite it).
+1. Create a temporary handshake path with `tempfile.mkstemp`, close it, and
+   remove the placeholder so the broker can atomically publish the file.
 2. `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS` + `lpVerb="runas"` +
-   `lpFile=str(cli_path)` + `lpParameters=f"--serve --serve-pipe-file
-   {tmp_path}"` + `nShow=SW_HIDE` → triggers the UAC prompt.
-   `SHELLEXECUTEINFOW.hProcess` is a real HANDLE usable with
-   `WaitForSingleObject`/`TerminateProcess`. If the user declines
-   (hInstApp ≤ 32), raise `PermissionError("UAC declined")`.
+   `lpFile=str(cli_path)` + `lpParameters=f"serve --serve-pipe-file
+   {tmp_path}"` + `nShow=SW_HIDE` requests ordinary Windows UAC consent.
+   `SHELLEXECUTEINFOW.hProcess` is retained for
+   `WaitForSingleObject`/`TerminateProcess`. If the call fails or does not
+   return a process handle, raise `PermissionError`.
 3. Poll `tmp_path` (read, check non-empty) every 100ms up to 30s. Read the
    pipe name line. Delete the temp file. The broker writes the pipe-file
    atomically: writes to `<path>.tmp` then
@@ -727,11 +753,15 @@ The broker path is ONLY used when the Python session is NOT elevated AND
 |------------------|-------------|------|
 | Yes | True/False | `subprocess.run` (direct, no broker) |
 | No | True | Serve broker (one UAC, then pipe) |
-| No | False | `subprocess.run` (fails — each child triggers UAC or is blocked by manifest) |
+| No | False | `ElevationRequiredError` before `subprocess.run` (no direct child launch) |
 
 ---
 
 ## 5. Backwards compatibility verification
+
+The checks in this section are requirements and expected results for a future
+verification run. They do not claim that a current run passed; the retained
+K.6a results are historical/transient and are not current acceptance evidence.
 
 ### How to verify existing subcommands work identically
 1. **Unit tests:** all existing C++ unit tests (`tests/test_*.cpp`) must
@@ -800,11 +830,11 @@ The broker path is ONLY used when the Python session is NOT elevated AND
    `TerminateProcess` in `__del__` + the broker could also self-terminate
    on stdin EOF (but serve mode doesn't use stdin). Hardening: broker
    checks a "heartbeat" file timestamp and self-exits if stale (deferred).
-5. **UAC prompt UX** → `ShellExecute("runas")` shows a prompt that may
-   steal focus or confuse automated pipelines. Mitigation: this is
-   inherent to the one-UAC-per-session design and is the explicit goal.
-   Document it clearly. The prompt appears ONCE per `TsDevClient`
-   instance.
+5. **UAC prompt UX** → `ShellExecuteExW` with `runas` requests ordinary
+   Windows UAC consent and may steal focus or confuse automated pipelines.
+   Mitigation: this is inherent to the one-UAC-per-session design and is the
+   explicit goal. Document it clearly. The request occurs at broker startup,
+   not for each pipe operation.
 6. **Large source payloads** → EL source > 64MB would be rejected by the
    framing cap. Real EL source is never that large (KB range). Mitigation:
    64MB cap is generous; document the limit.
@@ -848,25 +878,29 @@ The broker path is ONLY used when the Python session is NOT elevated AND
   fragile (timing, permissions); the E2E test must validate it reliably.
 
 ### What should be deferred to a later workstream
-- **Batch ops over the pipe** (`batch-insert`, `batch-modify`, etc.): the
-  MVP routes only single-item ops through the broker. Batch ops from a
-  non-elevated session will need either (a) the broker to accept a batch
-  request (array of items) and loop internally, or (b) the Python wrapper
-  to send N individual requests. Option (b) works today but loses the
-  single-`TsDevLib`-init amortization of batch mode. Defer the batch-
-  over-pipe protocol to a follow-up workstream.
+- **Original MVP batch-over-pipe deferral (historical planning snapshot):**
+  The current Python wrapper implements non-elevated batch operations by
+  sending N individual requests through the long-lived broker, via
+  `_batch_serve`/`_batch_dir_serve` (recorded as implemented in K.5). A
+  batch-array wire protocol remains deferred; the old statement that batch
+  operations were not available through the broker is no longer current.
 - **Multi-client concurrency:** the MVP is single-client (one
   `ConnectNamedPipe` + loop). Supporting multiple simultaneous Python
   processes sharing one broker requires overlapped I/O + a thread pool
   (but all `do*` calls must serialize on the one `TsDevLib`-owning
   thread). Defer.
 - **Client PID/SID verification** (see §3 hardening table).
-- **Directory-batch ops over the pipe** (`batch-insert-dir`, etc.).
+- **Original directory-batch-over-pipe deferral (historical planning
+  snapshot):** The current wrapper implements `batch-*` directory operations
+  through `_batch_dir_serve`, which sends individual requests through the
+  long-lived broker (see K.5). A dedicated directory-batch wire protocol is
+  still deferred.
 - **Heartbeat / auto-shutdown** for zombie broker prevention.
 - **`TSDEV_REQUIRE_ADMIN=OFF` + serve** interaction: when the manifest is
-  OFF, `tsdev_cli --serve` launched non-elevated would fail the K.1 guard.
-  The Python wrapper's `ShellExecute("runas")` elevates it regardless of
-  the manifest. This works but is an edge case to document, not block on.
+  OFF, a directly launched non-elevated `tsdev_cli serve` would fail the K.1
+  guard. The Python wrapper's `ShellExecuteExW`/`runas` request still starts
+  the broker through ordinary Windows UAC consent. This works but is an edge
+  case to document, not block on.
 - **Concurrent broker instances:** two `TsDevClient` objects in the same
   process each start their own broker (pipe names embed PID, no collision).
   Both brokers access the same orlib20 — this is safe to the same extent

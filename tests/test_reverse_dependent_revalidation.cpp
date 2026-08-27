@@ -1,7 +1,10 @@
 // test_reverse_dependent_revalidation.cpp
 //
-// Workstream M slice M.4 — TDD RED integration test for the reverse-dependent
-// revalidation parity with TSDev.exe FUN_004D91E0.
+// Workstream M slice M.4 — integration test for reverse-dependent revalidation
+// parity with TSDev.exe FUN_004D91E0. The current production implementation
+// uses the linker-based path; CLI-created object code currently has version=0,
+// so the dependency cases remain blocked rather than constituting a green
+// acceptance result.
 //
 // CONFIRMED FACTS (Ghidra static analysis of TSDev.exe FUN_004D91E0; see
 // docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md):
@@ -12,11 +15,13 @@
 //   the just-verified module and recompiles+reverifies each one via a
 //   recursive FUN_004d91e0 call (which invokes _VerifyModule_New@20 /
 //   CompileText). Each reverse dependent is a FULL recompile, not a
-//   lightweight check. The implementation approach for the CLI is "Option
-//   B2": reverse-by-inverting-forward — for each candidate record of the
-//   relevant type, call GetDependencies / _GetStaticDependencyList@12; if
-//   the root ProgId is in the candidate's forward dep list, the candidate
-//   is a reverse dependent.
+//   lightweight check. The implemented CLI path is linker-based: for each
+//   candidate record from _LoadMasterRecsEX@16, call Ordinal_28 and the
+//   linker (ordinal 85), then scan the linked record's per-element dep-lists
+//   at element+0x7b for a matching root ProgId. GetDependencies/
+//   _GetStaticDependencyList@12 are not the production path; the M.4
+//   evidence note records the GetDependencies type-code mismatch and the
+//   linker-based correction.
 //
 //   R-M.4.2 — Contract-change detection (FUN_004d9040) is purely
 //   warehouse-record metadata: compares field offsets +0xd6, +0x15 (bits
@@ -36,10 +41,12 @@
 //   NOT flip root success.
 //
 //   R-M.4.5 — No single orlib20 export performs reverse-dependent
-//   revalidation. The traversal is composed from exported primitives
-//   (GetDependencies ord 487, _GetStaticDependencyList@12 ord 531,
-//   _DeleteDependencyList@4 ord 397, _GetMasterRecByType@16 ord 510,
-//   _LoadMasterRecsEX@16 ord 568, _VerifyModule_New@20 ord 700).
+//   revalidation. The implemented traversal is composed from the linker
+//   (ordinal 85), Ordinal_28 (partial-record setup), Ordinal_70 (linked-record
+//   release), _LoadMasterRecsEX@16 (candidate enumeration), and
+//   _VerifyModule_New@20 (dependent reverify). It parses the linked
+//   per-element dep-lists directly; the forward GetDependencies exports are
+//   not used by production.
 //
 //   Category gate (RE note §1.3, 0x004d92b2-0x004d92bd): reverse dependents
 //   are processed ONLY when the root verify succeeded AND the category is
@@ -47,35 +54,20 @@
 //   (2 Indicator, 3 ActivityBar, etc.) skip the traversal entirely.
 //
 // This test exercises the onReverseDependentRevalidationReady test hook
-// (populated via makeTsDevLibForTest) which the GREEN-phase verifyModule()
-// will invoke during the reverse-dependent traversal. The hook fires a
-// traversal-started sentinel once at traversal entry (dependent fields = 0,
+// (populated via makeTsDevLibForTest) which verifyModule() invokes during the
+// linker-based reverse-dependent traversal. The hook fires a traversal-started
+// sentinel once at traversal entry (dependent fields = 0,
 // revalidationTriggered = -1), then once per discovered reverse dependent.
 //
-// RED STATE: the current production code (src/tsdev_lib.cpp verifyModule())
-// does NOT perform any reverse-dependent traversal and does NOT invoke the
-// onReverseDependentRevalidationReady hook. The hook is copied from the
-// config in the private test ctor (test infrastructure only — no production
-// side effect), but it is never called. Therefore:
-//   - Cases 1, 2 (caller revalidation): the "traversal-started sentinel
-//     fired" assertion FAILS and the "dependent callback fired" assertion
-//     FAILS. This is the expected RED signal.
-//   - Case 3 (no-caller negative): the "traversal-started sentinel fired"
-//     assertion FAILS (no traversal exists). On GREEN this passes
-//     (traversal entered, zero dependents found). The RED failure here is
-//     meaningful: it proves no traversal code path exists at all.
-//   - Case 4 (category gate, modify an Indicator category 2): the negative
-//     assertion "sentinel did NOT fire" PASSES trivially on RED (no
-//     traversal exists). This case pins the category-gate contract for the
-//     GREEN phase (it must continue to pass: an Indicator modify must not
-//     trigger a traversal).
-//   - Case 5 (cycle safety): a live warehouse cycle is not feasible at the
-//     unit level without a synthetic A->B->A dependency. This case is
-//     documented as deferred to the regression at the lowest safe boundary
-//     per plan §M.4 TDD step 4, and instead asserts the hook signature
-//     carries a traversalDepth field (compile-time contract pin) so the
-//     visited-set / depth contract is locked in for the GREEN phase.
-//
+// CURRENT LIMITATION: CLI-created object code has version=0, so the linker
+// populators leave the element arrays empty and caller-dependent cases cannot
+// discover their dependencies. The dependency assertions are therefore a
+// documented blocked M.4 gate, not evidence that traversal is absent or that
+// the test is green. The category-gate assertion remains meaningful: an
+// Indicator (category 2) must not start the traversal. The cycle-safety case
+// remains a unit-level hook contract pin; a live warehouse cycle is deferred
+// to the lowest safe boundary described by plan §M.4 TDD step 4.
+
 // 5 test cases:
 //   1. Strategy caller of a Function — modify the Function, assert the
 //      traversal ran and the Strategy was revalidated.
@@ -93,9 +85,8 @@
 // REQUIRES TradeStation: this is an integration test that constructs a real
 // TsDevLib (loads orlib20.dll, applies patches, calls OrlibInit, creates the
 // hidden EDIT control) and inserts + verifies + deletes real warehouse
-// entries. Per the operational rule in docs/PM_WORKING_MEMORY.md, NO
-// TradeStation Desktop processes (TSDev.exe, TradeStation, ORPlat, etc.)
-// may be running when this test executes.
+// entries. This is a library-level test; Desktop/TSDev running state is not a
+// prerequisite because the test does not exercise the Desktop UI.
 //
 // Runs on a 64 MB-stack worker thread (EasyLanguage compiler needs far more
 // than the default 1 MB, and the hidden EDIT control is thread-affine so
@@ -229,7 +220,8 @@ std::string makeFunctionSource(const std::string& name) {
 // A Function whose body returns a value derived from a named function call.
 // Used to create a caller->callee dependency: the Strategy/Indicator source
 // references the Function by name, so the Function's ProgId appears in the
-// caller's forward dependency list (which the GREEN traversal inverts).
+// caller's linked per-element dependency list (which the linker-based
+// traversal scans).
 std::string makeFunctionSourceCalling(const std::string& name,
                                       const std::string& calleeName) {
     // The function body calls calleeName, establishing a forward dependency
@@ -241,10 +233,10 @@ std::string makeFunctionSourceCalling(const std::string& name,
 std::string makeStrategySourceCalling(const std::string& /*name*/,
                                       const std::string& calleeName) {
     // A Strategy that calls the named (no-input) Function in its order
-    // expression. This establishes a forward dependency from the Strategy to
-    // the Function, so the Function's ProgId is in the Strategy's forward
-    // dep list (which the GREEN traversal inverts to find the Strategy as a
-    // reverse dependent of the Function).
+    // expression. This establishes a compiled dependency from the Strategy to
+    // the Function, so the Function's ProgId is in the Strategy's linked
+    // per-element dep list (which the linker-based traversal scans to find the
+    // Strategy as a reverse dependent of the Function).
     return std::string("{ calls ") + calleeName + " }\r\n"
            "Value1 = " + calleeName + ";\r\n"
            "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -261,7 +253,7 @@ std::string makeIndicatorSourceCalling(const std::string& /*name*/,
 }
 
 // A modified Function source that changes the contract (signature) so the
-// GREEN contract-change comparison (FUN_004d9040 field offsets) detects a
+// M.4 contract-change comparison (FUN_004d9040 field offsets) detects a
 // change. We change the function body to return a different constant — this
 // alters the compiled contract metadata, which the warehouse record reflects.
 // (The exact field that flips is one of those documented in RE note §2; the
@@ -350,13 +342,14 @@ int insertAndVerify(TsDevLib& lib, ComponentType type,
 // Case 1: Strategy caller of a Function.
 //
 // Insert a Function (the callee). Insert a Strategy that calls the Function
-// (the caller — establishes a forward dep Strategy->Function). Modify the
-// Function's source (contract change) and re-verify the Function. Assert:
+// (the caller — establishes a compiled Strategy->Function dependency). Modify
+// the Function's source (contract change) and re-verify the Function. Assert:
 //   - the traversal-started sentinel fired (root = the Function),
 //   - at least one per-dependent event fired for the Strategy (the caller),
 //   - the Strategy's revalidation was triggered.
 //
-// RED: the sentinel never fires (no traversal exists) -> FAIL.
+// The dependency assertions are currently blocked when CLI-created object code
+// has version=0 and the linker leaves its element arrays empty.
 // ---------------------------------------------------------------------------
 int runStrategyCallerCase(TsDevLib& lib, int caseNum,
                           const std::string& funcName,
@@ -389,8 +382,8 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
 
     // --- 3. Modify the Function's source (contract change) and re-verify ---
     // The modify path: saveSource (replace source) + verifyModule (recompile).
-    // The GREEN traversal runs inside verifyModule AFTER the root verify
-    // succeeds, for category 4 (Function is in the 0/1/4 gate).
+    // The M.4 linker-based traversal runs inside verifyModule after the root
+    // verify succeeds, for category 4 (Function is in the 0/1/4 gate).
     std::printf("  [3] Modify Function source (contract change) + "
                 "re-verify (triggers reverse-dependent traversal)...\n");
     resetCapture();
@@ -411,7 +404,7 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
         std::printf("      modify verifyModule: no errors (root OK)\n");
     }
 
-    // --- 4. Assert the traversal-started sentinel fired (RED: FAILS) ---
+    // --- 4. Assert the traversal-started sentinel fired ---
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -442,7 +435,7 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
     }
 
     // --- 6. Assert at least one per-dependent event fired for the Strategy
-    //     (RED: FAILS — no traversal, no dependent events) ---
+    //     (blocked when CLI-created linker element arrays are empty) ---
     bool foundStratDep = false;
     for (const auto& ev : g_capture.dependentEvents) {
         if (ev.dependentProgId == stratProgId &&
@@ -460,7 +453,7 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
         CHECK(foundStratDep, buf);
     }
 
-    // --- 7. Assert the Strategy's revalidation was triggered (RED: FAILS) ---
+    // --- 7. Assert the Strategy's revalidation was triggered ---
     if (foundStratDep) {
         const DependentEvent* stratEv = nullptr;
         for (const auto& ev : g_capture.dependentEvents) {
@@ -494,7 +487,8 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
 // category 4 (in the 0/1/4 gate), so the traversal should run and find the
 // Indicator as a reverse dependent.
 //
-// RED: the sentinel never fires -> FAIL.
+// The dependency assertions are currently blocked when CLI-created object code
+// has version=0 and the linker leaves its element arrays empty.
 // ---------------------------------------------------------------------------
 int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
                             const std::string& funcName,
@@ -608,10 +602,10 @@ int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
 //     category 4 is in the gate), AND
 //   - ZERO per-dependent events fired (no reverse dependents exist).
 //
-// RED: the sentinel never fires (no traversal exists) -> the
-// "sentinel fired" assertion FAILS. This is meaningful: it proves no
-// traversal code path exists at all. On GREEN this passes (traversal
-// entered, zero dependents found).
+// With the current linker-based implementation, the sentinel is expected to
+// fire for this eligible root. A CLI-created object-code version of 0 can still
+// leave the candidate element arrays empty; that is the M.3b blocker, not
+// evidence that traversal is absent.
 // ---------------------------------------------------------------------------
 int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
                              const std::string& funcName) {
@@ -645,10 +639,9 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
         std::printf("      modify verifyModule: no errors (root OK)\n");
     }
 
-    // --- 3. Assert the traversal-started sentinel fired (RED: FAILS) ---
-    // This is the meaningful RED failure: no traversal code path exists, so
-    // the sentinel never fires. On GREEN this passes (traversal entered for
-    // category 4, zero dependents found).
+    // --- 3. Assert the traversal-started sentinel fired ---
+    // The eligible Function root enters the current linker-based traversal;
+    // an empty candidate element array is a separate M.3b data defect.
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -658,8 +651,8 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
     }
 
     // --- 4. Assert ZERO per-dependent events (no callers exist) ---
-    // On RED this passes trivially (no traversal -> no events). On GREEN it
-    // pins the contract: a leaf Function's traversal finds zero dependents.
+    // The current traversal should find zero dependents for this leaf Function;
+    // this assertion is independent of the CLI-created object-code blocker.
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -681,11 +674,8 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
 //   - the traversal-started sentinel did NOT fire (the category gate excludes
 //     category 2).
 //
-// RED: this PASSES trivially (no traversal exists at all, so the sentinel
-// never fires for any category). This case pins the category-gate contract
-// for the GREEN phase: when the traversal is implemented, an Indicator
-// modify must NOT trigger it (only categories 0/1/4 do). The case is
-// structured so it continues to pass on GREEN.
+// This case pins the current category-gate contract: an Indicator modify must
+// NOT trigger the reverse-dependent traversal (only categories 0/1/4 do).
 // ---------------------------------------------------------------------------
 int runCategoryGateCase(TsDevLib& lib, int caseNum,
                         const std::string& indName) {
@@ -723,10 +713,8 @@ int runCategoryGateCase(TsDevLib& lib, int caseNum,
     }
 
     // --- 3. Assert the traversal-started sentinel did NOT fire ---
-    // Category 2 (Indicator) is NOT in the 0/1/4 gate, so no traversal
-    // should be entered. On RED this passes trivially (no traversal exists).
-    // On GREEN it pins the gate: an Indicator modify must not trigger the
-    // reverse-dependent traversal.
+    // Category 2 (Indicator) is NOT in the 0/1/4 gate, so the current
+    // implementation must not enter the reverse-dependent traversal.
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -762,12 +750,12 @@ int runCategoryGateCase(TsDevLib& lib, int caseNum,
 //
 // This case instead asserts the visited-set / depth contract at the
 // compile-time level: the hook signature carries a `traversalDepth` field,
-// which the GREEN implementation will populate from the explicit visited-set
+// which the current implementation populates from the explicit visited-set
 // recursion. The test verifies the hook is wired with the correct arity
 // (9 integer args) by invoking it directly with a synthetic sentinel and a
 // synthetic per-dependent event, and asserting the capture records both.
-// This locks in the contract so the GREEN phase cannot silently drop the
-// depth field.
+// This locks in the contract so later changes cannot silently drop the depth
+// field.
 // ---------------------------------------------------------------------------
 int runCycleSafetyContractPinCase(TsDevLib& /*lib*/, int caseNum) {
     std::printf("\n=== Case %d: Cycle safety (unit-level contract pin) ===\n",
@@ -988,10 +976,10 @@ int main() {
                 "reverifies each one, matching TSDev.exe FUN_004D91E0.\n");
     std::printf("See docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md "
                 "(R-M.4.1 through R-M.4.5).\n");
-    std::printf("RED: no reverse-dependent traversal exists yet — positive "
-                "cases FAIL (sentinel never fires), negative cases pass "
-                "trivially.\n");
-    std::printf("Requires NO TradeStation Desktop processes running.\n");
+    std::printf("M.4 status: linker-based traversal is implemented; CLI-created "
+                "object-code version=0 currently blocks dependency discovery. "
+                "No green acceptance result is implied.\n");
+    std::printf("Desktop/TSDev running state is not a prerequisite for this library-level test.\n");
     std::printf("Cases: Strategy caller + Indicator caller + no-caller "
                 "negative + category-gate negative + cycle-safety contract "
                 "pin (5 cases total).\n");

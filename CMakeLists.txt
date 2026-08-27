@@ -95,15 +95,15 @@ target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
 target_link_libraries(tsdev_lib PRIVATE Ole32)
 
-# --- INSERT integration test (TDD red-green) --------------------------------
+# --- INSERT integration test (historical TDD red-green) --------------------------------
 add_executable(test_insert tests/test_insert.cpp)
 target_link_libraries(test_insert tsdev_lib)
 
-# --- DELETE integration test (TDD red-green) --------------------------------
+# --- DELETE integration test (historical TDD red-green) --------------------------------
 add_executable(test_delete tests/test_delete.cpp)
 target_link_libraries(test_delete tsdev_lib)
 
-# --- TradingApp DELETE integration test (TVS-C.5, TDD red-green) ------------
+# --- TradingApp DELETE integration test (TVS-C.5, historical TDD red-green) ------------
 # Validates the TradingApp delete operation end-to-end on a 64 MB-stack worker
 # thread (compiler + thread-affine hidden EDIT control require it).
 add_executable(test_delete_tradingapp tests/test_delete_tradingapp.cpp)
@@ -121,7 +121,7 @@ target_link_libraries(test_delete_diag tsdev_lib)
 add_executable(test_path_discovery tests/test_path_discovery.cpp)
 target_link_libraries(test_path_discovery tsdev_lib)
 
-# --- MODIFY integration test (TDD red-green) --------------------------------
+# --- MODIFY integration test (historical TDD red-green) --------------------------------
 add_executable(test_modify tests/test_modify.cpp)
 target_link_libraries(test_modify tsdev_lib)
 
@@ -138,7 +138,7 @@ target_link_libraries(test_modify tsdev_lib)
 add_executable(test_finalization_lifecycle tests/test_finalization_lifecycle.cpp)
 target_link_libraries(test_finalization_lifecycle tsdev_lib)
 
-# --- No hardcoded RVA constants test (AC1 TDD red-green) ---------------------
+# --- No hardcoded RVA constants test (AC1 historical TDD red-green) ---------------------
 # Verifies that tsdev_lib.cpp contains zero hardcoded RVA hex constants.
 # Compiles against the generated header signatures.gen.h: the forbidden set is
 # derived from it (JSON -> generated header -> test), per docs/archive/ARCHITECTURE_REDESIGN.md
@@ -162,19 +162,17 @@ target_link_libraries(test_tradingapp_type tsdev_lib)
 add_executable(test_showme_type tests/test_showme_type.cpp)
 target_link_libraries(test_showme_type tsdev_lib)
 
-# --- Elevation guard unit test (TVS-K.1, TDD RED) -----------------------------
+# --- Elevation guard unit test (TVS-K.1) -------------------------------------
 # Pure unit test for the isElevated() helper and the errorCodeString(11) entry
-# that the elevation guard in main() will rely on. isElevated() and
-# errorCodeString() live inside an anonymous namespace in src/tsdev_cli.cpp
-# (internal linkage), so the test #includes the .cpp directly (same TU) to
-# reach them. This pulls in tsdev_cli.cpp's main(); the test #defines
-# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
-# The test needs the third_party include dir (nlohmann/json) because the
-# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
-# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
-# access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
-# NOTE: isElevated() and case 11 in errorCodeString() do NOT exist yet — this
-# is the TDD RED step and will FAIL TO COMPILE until the Green step adds them.
+# used by the elevation guard in main(). isElevated() and errorCodeString()
+# live inside an anonymous namespace in src/tsdev_cli.cpp (internal linkage),
+# so the test #includes the .cpp directly (same TU) to reach them. This pulls
+# in tsdev_cli.cpp's main(); the test defines TSDEV_CLI_TEST to exclude it
+# (main() is wrapped in #ifndef TSDEV_CLI_TEST). The test needs the third_party
+# include dir (nlohmann/json) because the included tsdev_cli.cpp uses it, and
+# links tsdev_lib for the TsDevLib symbols referenced by the included CLI code.
+# It is a PURE UNIT TEST (no orlib20 access), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
 add_executable(test_elevation_guard tests/test_elevation_guard.cpp)
 target_include_directories(test_elevation_guard PRIVATE third_party)
 target_link_libraries(test_elevation_guard tsdev_lib)
@@ -264,14 +262,13 @@ add_executable(test_tsdev_com_init_seam
 target_include_directories(test_tsdev_com_init_seam PRIVATE src)
 target_link_libraries(test_tsdev_com_init_seam PRIVATE tsdev_lib Ole32)
 
-# --- Persistence-integrity validator unit test (TVS-L.9, TDD RED) -------------
+# --- Persistence-integrity validator unit test (TVS-L.9, GREEN) --------------
 # Pure unit test for the SHARED persistence-integrity validator that classifies
 # the cross-store (.ell vs .xml) consistency of a modify/upsert operation. The
-# validator is DECLARED in src/persistence_integrity.h but has NO implementation
-# yet (no src/persistence_integrity.cpp). This is the TDD RED step: the test
-# includes the header and calls tsdev::validatePersistenceIntegrity(), so the
-# test executable FAILS TO LINK (unresolved external) until a later (GREEN) TVS
-# provides the implementation.
+# validator is declared in src/persistence_integrity.h and implemented in
+# src/persistence_integrity.cpp. The test includes the header, calls
+# tsdev::validatePersistenceIntegrity(), and links the implementation through
+# tsdev_lib.
 #
 # The test does NOT load orlib20.dll, does NOT touch the TradeStation
 # installation, does NOT construct TsDevLib, and does NOT need a 64 MB stack.
@@ -283,10 +280,8 @@ target_link_libraries(test_tsdev_com_init_seam PRIVATE tsdev_lib Ole32)
 #                          GUID changed (Fault A from RE_L8_STALE_WRITE_FAULT_A).
 #   (c) NoOpAllowed      — source-equal proven first; unchanged ELL+XML hashes
 #                          accepted as a no-op, NOT a verified refresh.
-# bcrypt is linked for the test's own SHA-256 of fixture bytes (pre-op hashes);
-# tsdev_lib supplies the validatePersistenceIntegrity() definition (via
-# src/persistence_integrity.cpp compiled into the static library). Because
-# tsdev_lib is a static archive, the linker pulls in ONLY the
+# bcrypt is linked for the test's own SHA-256 of fixture bytes (pre-op hashes).
+# Because tsdev_lib is a static archive, the linker pulls in ONLY the
 # persistence_integrity.cpp object file (the only one defining a symbol the
 # test references) — tsdev_lib.cpp / com_apartment_guard.cpp are NOT pulled
 # in, so the test stays a pure unit test with no orlib20 / TsDevLib
@@ -298,7 +293,7 @@ add_executable(test_persistence_integrity tests/test_persistence_integrity.cpp)
 target_include_directories(test_persistence_integrity PRIVATE src)
 target_link_libraries(test_persistence_integrity PRIVATE bcrypt tsdev_lib)
 
-# --- Create-path cleanup ownership unit test (TVS-L.10, TDD RED->GREEN) -------
+# --- Create-path cleanup ownership unit test (TVS-L.10, GREEN) ---------------
 # Pure unit test for the SINGLE ownership decision that covers create-path
 # partial-entry cleanup after a successful createEntry for EVERY failure stage
 # (saveSource failure AND verifyModule early-return / SEH / OOM / compile
@@ -317,7 +312,7 @@ target_link_libraries(test_persistence_integrity PRIVATE bcrypt tsdev_lib)
 #       the !errors.empty() branch INSIDE verifyModule (written for the
 #       compile-error case, TD-001), not at the create-path level.
 #   The single owner implemented here is the fix: for progId > 0 it MUST
-#   require cleanup for all six stages; for progId <= 0 it MUST NOT (no
+#   require cleanup for every listed stage; for progId <= 0 it MUST NOT (no
 #   partial entry was created). The decision is a pure function of
 #   (progId, stage) with no orlib20 / warehouse / filesystem access, so this
 #   is a PURE UNIT TEST (no TSDev Library access). It is NOT in
@@ -355,72 +350,95 @@ target_link_libraries(test_create_path_cleanup PRIVATE tsdev_lib)
 #   access, so this is a PURE UNIT TEST (no TSDev Library access). It is NOT
 #   in TSDEV_ADMIN_TARGETS and runs under -NoTs.
 #
-# TDD: the RED step declared deleteDiskCleanupErrorFailsResult() in the header
-# with no .cpp, so the test executable FAILED TO LINK (unresolved external) —
-# that link failure was the RED signal. The GREEN step adds
-# src/delete_disk_cleanup.cpp to tsdev_lib (above), so the symbol now resolves
-# and the test links and runs; the assertions below pin the contract.
+# Historical TDD chronology: the RED step declared
+# deleteDiskCleanupErrorFailsResult() in the header with no .cpp, so the test
+# executable FAILED TO LINK (unresolved external) — that link failure was the
+# RED signal. The GREEN step adds src/delete_disk_cleanup.cpp to tsdev_lib
+# (above), so the symbol now resolves and the test links and runs; the
+# assertions below pin the contract.
 add_executable(test_delete_disk_cleanup tests/test_delete_disk_cleanup.cpp)
 target_include_directories(test_delete_disk_cleanup PRIVATE src)
 target_link_libraries(test_delete_disk_cleanup PRIVATE tsdev_lib)
 
-# --- JSON serialize unit test (TVS-K.2, TDD RED) ------------------------------
-# Pure unit test for the cliResultToJson() helper extracted from emitOutput()'s
-# JSON branch. cliResultToJson() will live inside an anonymous namespace in
-# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp directly
-# (same TU) to reach it. This pulls in tsdev_cli.cpp's main(); the test #defines
-# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# --- Warehouse-close status unit test ----------------------------------------
+# Pure unit test for the SEH-protected explicit close/flush call used by
+# TsDevLib::closeWarehouse(). The test injects a no-op and an SEH-raising
+# function through the internal test-only seam; it does not construct TsDevLib,
+# load orlib20.dll, or touch the TradeStation installation. It is not an
+# administrator/TS-dependent test and runs under -NoTs.
+add_executable(test_close_warehouse tests/test_close_warehouse.cpp)
+target_include_directories(test_close_warehouse PRIVATE src)
+target_link_libraries(test_close_warehouse PRIVATE tsdev_lib)
+
+# --- JSON serialize unit test (TVS-K.2, GREEN) -------------------------------
+# Pure unit test for the implemented cliResultToJson() helper extracted from
+# emitOutput()'s JSON branch. cliResultToJson() lives inside an anonymous
+# namespace in src/tsdev_cli.cpp (internal linkage), so the test #includes the
+# .cpp directly (same TU) to reach it. This pulls in tsdev_cli.cpp's main(); the
+# test #defines TSDEV_CLI_TEST to exclude it (main() is wrapped in
+# #ifndef TSDEV_CLI_TEST).
 # The test needs the third_party include dir (nlohmann/json) because the
 # included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
 # referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
 # access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
-# NOTE: cliResultToJson() does NOT exist yet — this is the TDD RED step and
-# will FAIL TO COMPILE until the Green step extracts it from emitOutput().
 add_executable(test_json_serialize tests/test_json_serialize.cpp)
 target_include_directories(test_json_serialize PRIVATE third_party)
 target_link_libraries(test_json_serialize tsdev_lib)
 add_dependencies(test_json_serialize siggen)
 
-# --- Serve request dispatch unit test (TVS-K.3, TDD RED) ----------------------
-# Pure unit test for parseServeRequest() — the JSON request -> ServeRequest
-# parser used by the serve/broker layer. parseServeRequest() and the
-# ServeRequest struct will live inside an anonymous namespace in
-# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp directly
-# (same TU) to reach it. This pulls in tsdev_cli.cpp's main(); the test #defines
-# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# --- Serve request dispatch unit test (TVS-K.3, GREEN) ------------------------
+# Pure unit test for the implemented parseServeRequest() helper — the JSON
+# request -> ServeRequest parser used by the serve/broker layer.
+# parseServeRequest() and the ServeRequest struct live inside an anonymous
+# namespace in src/tsdev_cli.cpp (internal linkage), so the test #includes the
+# .cpp directly (same TU) to reach them. This pulls in tsdev_cli.cpp's main();
+# the test #defines TSDEV_CLI_TEST to exclude it (main() is wrapped in
+# #ifndef TSDEV_CLI_TEST).
 # The test needs the third_party include dir (nlohmann/json) because the
 # included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
 # referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
 # access, no TsDevLib construction — parseServeRequest is pure logic), so it is
 # NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs. dispatchServeRequest() is
 # NOT unit-tested here (it needs a real TsDevLib; validated via K.5/K.6a E2E).
-# NOTE: parseServeRequest() and ServeRequest do NOT exist yet — this is the TDD
-# RED step and will FAIL TO COMPILE until the Green step adds them.
 add_executable(test_serve_dispatch tests/test_serve_dispatch.cpp)
 target_include_directories(test_serve_dispatch PRIVATE third_party)
 target_link_libraries(test_serve_dispatch tsdev_lib)
 add_dependencies(test_serve_dispatch siggen)
 
-# --- Serve framing helpers unit test (TVS-K.4, TDD RED) -----------------------
-# Pure unit test for writeFramed()/readFramed() — the length-prefixed framing
-# I/O helpers used by the serve/broker layer. writeFramed() and readFramed()
-# will live inside an anonymous namespace in src/tsdev_cli.cpp (internal
-# linkage), so the test #includes the .cpp directly (same TU) to reach them.
-# This pulls in tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to
-# exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST). The test needs the
-# third_party include dir (nlohmann/json) because the included tsdev_cli.cpp
-# uses it, and links tsdev_lib for the TsDevLib symbols referenced by the
-# included CLI code. It is a PURE UNIT TEST (no orlib20 access, no TsDevLib
-# construction — the framing helpers are pure Windows pipe I/O), so it is NOT
-# in TSDEV_ADMIN_TARGETS and runs under -NoTs. The framing helpers use Windows
+# --- Serve framing helpers unit test (TVS-K.4, GREEN) -------------------------
+# Pure unit test for the implemented writeFramed()/readFramed() length-prefixed
+# I/O helpers used by the serve/broker layer. The helpers live inside an
+# anonymous namespace in src/tsdev_cli.cpp (internal linkage), so the test
+# #includes the .cpp directly (same TU) to reach them. This pulls in
+# tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to exclude it
+# (main() is wrapped in #ifndef TSDEV_CLI_TEST). The test needs the third_party
+# include dir (nlohmann/json) because the included tsdev_cli.cpp uses it, and
+# links tsdev_lib for the TsDevLib symbols referenced by the included CLI code.
+# It is a PURE UNIT TEST (no orlib20 access, no TsDevLib construction — the
+# framing helpers are pure Windows pipe I/O), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs. The framing helpers use Windows
 # HANDLEs (from CreatePipe), not FILE* or std::istream. The full pipe server
 # (cmdServe/runServe) is validated via E2E in K.6a, NOT here.
-# NOTE: writeFramed() and readFramed() do NOT exist yet — this is the TDD RED
-# step and will FAIL TO COMPILE until the Green step adds them.
 add_executable(test_serve_framing tests/test_serve_framing.cpp)
 target_include_directories(test_serve_framing PRIVATE third_party)
 target_link_libraries(test_serve_framing tsdev_lib)
 add_dependencies(test_serve_framing siggen)
+
+# --- Pre-op hash classification unit test -------------------------------------
+# Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
+# Sha256FileStatus (Hashed/Absent/Error) classification. The helper lives inside
+# an anonymous namespace in src/tsdev_cli.cpp (internal linkage), so the test
+# #includes the .cpp directly (same TU) to reach it. This pulls in
+# tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to exclude it.
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access, no TsDevLib construction — sha256FileCli is pure Win32+bcrypt file
+# I/O), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_preop_hash_classification tests/test_preop_hash_classification.cpp)
+target_include_directories(test_preop_hash_classification PRIVATE third_party)
+target_link_libraries(test_preop_hash_classification tsdev_lib)
+add_dependencies(test_preop_hash_classification siggen)
 
 # --- TradingApp INSERT integration test (TVS-C.4) ----------------------------
 # End-to-end TDD test for the TradingApp INSERT flow: createEntry, saveSource,
@@ -437,31 +455,28 @@ target_link_libraries(test_insert_tradingapp tsdev_lib)
 add_executable(test_modify_tradingapp tests/test_modify_tradingapp.cpp)
 target_link_libraries(test_modify_tradingapp tsdev_lib)
 
-# --- EXISTS integration test (TVS-F.1, TDD red-green) ------------------------
-# Validates the library-level existence-query primitive (findExistPos) that the
-# future `exists` CLI subcommand will wrap. Inserts a probe strategy, queries
+# --- EXISTS integration test (TVS-F.1) ---------------------------------------
+# Validates the library-level existence-query primitive (findExistPos) used by
+# the implemented `exists` CLI subcommand. Inserts a probe strategy, queries
 # findExistPos for the existing name (expects ProgId > 0) and for a nonexistent
 # name (expects 0), then cleans up. Runs on a 64 MB-stack worker thread (same
 # pattern as test_insert).
 add_executable(test_exists tests/test_exists.cpp)
 target_link_libraries(test_exists tsdev_lib)
 
-# --- ENUMERATE integration test (TVS-F.5, TDD RED) ---------------------------
-# Validates the library-level case-insensitive existence-query primitive
-# (enumerateRecords) that the future `exists --case-insensitive` CLI subcommand
-# will wrap. Inserts a probe strategy, queries enumerateRecords with the name
-# in UPPERCASE (expects exists=true, verbatim stored name, ProgId > 0) and for
-# a nonexistent name (expects exists=false, empty stored name, ProgId == 0),
-# then cleans up. Runs on a 64 MB-stack worker thread (same pattern as
-# test_exists). NOTE: enumerateRecords and EnumerateResult do NOT exist yet in
-# tsdev_lib.h — this test is the TDD RED step (F5-S2) and will FAIL TO COMPILE
-# until F5-S4 implements them.
+# --- ENUMERATE integration test (TVS-F.5) ------------------------------------
+# Validates the implemented library-level case-insensitive existence-query
+# primitive (enumerateRecords) used by the `exists --case-insensitive` CLI
+# mode. Inserts a probe strategy, queries enumerateRecords with the name in
+# UPPERCASE (expects exists=true, verbatim stored name, ProgId > 0) and for a
+# nonexistent name (expects exists=false, empty stored name, ProgId == 0), then
+# cleans up. Runs on a 64 MB-stack worker thread (same pattern as test_exists).
 add_executable(test_enumerate tests/test_enumerate.cpp)
 target_link_libraries(test_enumerate tsdev_lib)
 
-# --- UPSERT integration test (TVS-F.3, TDD red-green) ------------------------
-# Validates the library-level primitives that the future `upsert` CLI subcommand
-# will compose (findExistPos + createEntry + saveSource + verifyModule +
+# --- UPSERT integration test (TVS-F.3) ---------------------------------------
+# Validates the library-level primitives composed by the implemented `upsert`
+# CLI subcommand (findExistPos + createEntry + saveSource + verifyModule +
 # modifyEntry + deleteEntry). Inserts a probe strategy, verifies the upsert
 # composition (insert then modify-in-place), asserts the KEY upsert invariant
 # (ProgId preserved after modify), then cleans up. Runs on a 64 MB-stack worker
@@ -469,10 +484,10 @@ target_link_libraries(test_enumerate tsdev_lib)
 add_executable(test_upsert tests/test_upsert.cpp)
 target_link_libraries(test_upsert tsdev_lib)
 
-# --- BATCH UPSERT integration test (TVS-I.1, TDD red-green) -------------------
-# Validates the library-level composition that the future `batch-upsert` CLI
-# subcommand will rely on: multiple upsert items on a SINGLE shared TsDevLib
-# instance, mixing insert-path and modify-path, with NO per-item
+# --- BATCH UPSERT integration test (TVS-I.1) ---------------------------------
+# Validates the library-level composition used by the implemented
+# `batch-upsert` CLI subcommand: multiple upsert items on a SINGLE shared
+# TsDevLib instance, mixing insert-path and modify-path, with NO per-item
 # closeWarehouse() (only one at the very end — the batch flushPerItem=false
 # "flush once" pattern). Asserts the KEY invariant: each item's ProgId is
 # preserved across the insert->modify transition. Runs on a 64 MB-stack
@@ -480,27 +495,25 @@ target_link_libraries(test_upsert tsdev_lib)
 add_executable(test_batch_upsert tests/test_batch_upsert.cpp)
 target_link_libraries(test_batch_upsert tsdev_lib)
 
-# --- DIRECTORY BATCH unit test (TVS-I.2, TDD RED) -----------------------------
-# Unit test for parseDirectory() — the directory-enumeration logic that the
-# future batch-<op>-dir CLI subcommands will rely on. parseDirectory() and
-# BatchItem live inside an anonymous namespace in src/tsdev_cli.cpp (internal
-# linkage), so the test #includes the .cpp directly (same TU) to reach them.
-# This pulls in tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to
-# exclude it (the implementer must wrap main() in #ifndef TSDEV_CLI_TEST).
-# The test needs the third_party include dir (nlohmann/json) because the
-# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
-# referenced by the included CLI code. NOTE: parseDirectory() does NOT exist
-# yet — this is the TDD RED step and will FAIL TO COMPILE until subtask 3
-# implements it (and adds the TSDEV_CLI_TEST guard around main()).
+# --- DIRECTORY BATCH unit test (TVS-I.2, GREEN) -------------------------------
+# Pure parser/filesystem unit test for the implemented parseDirectory() helper
+# used by the batch-<op>-dir CLI subcommands. parseDirectory() and BatchItem
+# live inside an anonymous namespace in src/tsdev_cli.cpp (internal linkage),
+# so the test #includes the .cpp directly (same TU) to reach them. This pulls
+# in tsdev_cli.cpp's main(); the test #defines TSDEV_CLI_TEST to exclude it
+# (main() is wrapped in #ifndef TSDEV_CLI_TEST). Although the included CLI
+# source references TsDevLib symbols, this test only calls parseDirectory(): it
+# does not construct TsDevLib or access orlib20 at runtime. It is therefore a
+# non-TS test and must not receive the administrator manifest.
 add_executable(test_directory_batch tests/test_directory_batch.cpp)
 target_include_directories(test_directory_batch PRIVATE third_party)
 target_link_libraries(test_directory_batch tsdev_lib)
 add_dependencies(test_directory_batch siggen)
 
-# --- GET-SOURCE integration test (TVS-F.4, TDD red-green) ---------------------
-# Validates the library-level source-retrieval primitive (getSource) that the
-# future `get-source` CLI subcommand will wrap. Inserts a probe strategy and a
-# probe function with KNOWN source text, calls getSource to retrieve the source
+# --- GET-SOURCE integration test (TVS-F.4) -----------------------------------
+# Validates the library-level source-retrieval primitive (getSource) used by the
+# implemented `get-source` CLI subcommand. Inserts a probe strategy and a probe
+# function with KNOWN source text, calls getSource to retrieve the source
 # (asserts key substrings present), tests getSource for a nonexistent name
 # (asserts empty string), then cleans up. Runs on a 64 MB-stack worker thread
 # (same pattern as test_exists / test_upsert).
@@ -516,8 +529,9 @@ add_executable(test_auto_cleanup tests/test_auto_cleanup.cpp)
 target_link_libraries(test_auto_cleanup tsdev_lib)
 
 # --- Workstream M slice M.1: CELCompiler field-layout parity integration test -
-# TDD RED->GREEN integration test for the CELCompiler allocation / setup /
-# destruction parity with TSDev.exe. Uses the onCompilerReady test hook
+# Historical TDD RED->GREEN transition test for the CELCompiler allocation /
+# setup / destruction parity with TSDev.exe. The M.1 implementation and test
+# are retained as current integration coverage. Uses the onCompilerReady test hook
 # (populated via makeTsDevLibForTest) to capture the live 0x58-byte CELCompiler
 # object state immediately before _VerifyModule_New and assert the TSDev-parity
 # field layout (+0x00, +0x04, +0x08, +0x0C, +0x10, +0x18, +0x28). Two cases:
@@ -525,8 +539,8 @@ target_link_libraries(test_auto_cleanup tsdev_lib)
 # that Strategy alone would miss). Inserts + verifies + deletes a disposable
 # item per case. REQUIRES TradeStation (constructs a real TsDevLib via the
 # test-only ctor with the real ComApi). Runs on a 64 MB-stack worker thread.
-# Per the operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation
-# Desktop processes may be running when this test executes.
+# Desktop/TSDev running state is not a prerequisite; this test exercises the
+# library-level path and does not use the Desktop UI.
 add_executable(test_compiler_layout tests/test_compiler_layout.cpp)
 target_include_directories(test_compiler_layout PRIVATE src)
 target_link_libraries(test_compiler_layout PRIVATE tsdev_lib Ole32)
@@ -544,101 +558,109 @@ target_link_libraries(test_compiler_layout PRIVATE tsdev_lib Ole32)
 # saves + verifies + round-trips + deletes a disposable item per case.
 # REQUIRES TradeStation (constructs a real TsDevLib via the test-only ctor
 # with the real ComApi). Runs on a 64 MB-stack worker thread. Per the
-# operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation Desktop
-# processes may be running when this test executes.
+# Desktop/TSDev running state is not a prerequisite; this test exercises the
+# library-level path and does not use the Desktop UI.
 add_executable(test_save_module tests/test_save_module.cpp)
 target_include_directories(test_save_module PRIVATE src)
 target_link_libraries(test_save_module PRIVATE tsdev_lib Ole32)
 
 # --- TVS-M slice M.3: 0x40A post-success notification parity integration test -
-# Asserts the 0x40A library-change notification (msg=0x40A, wParam=0,
-# lParam=(category<<16)|(ProgId&0xFFFF)) is sent after verify-success and
-# delete-success, and NOT sent after failed verify. Uses the onNotifyReady
+# Asserts the 0x40A library-change notification is sent after verify-success and
+# delete-success, and NOT sent after failed verify. The 0x40A message packing
+# formula (msg/wParam/lParam layout) is the SSOT in
+# docs/RE/RE_M3_0x40A_NOTIFICATION.md. Uses the onNotifyReady
 # test hook (populated via makeTsDevLibForTest) to capture the would-be
 # send arguments immediately before the 0x40A post (the same point at
-# which TSDev calls orlib20 Ordinal_57). See
+# which TSDev calls orlib20 Ordinal_57; ordinal details are the SSOT in
+# docs/SIGNATURE_CATALOG.md). See
 # docs/RE/RE_M3_0x40A_NOTIFICATION.md (R-M.3.1, R-M.3.2, R-M.3.3).
 # Six cases: 3 verify-success (Strat/Ind/Func) + failed-verify (negative)
 # + delete-success + batch-reuse (3 verify-success cycles on one TsDevLib).
 # REQUIRES TradeStation (constructs a real TsDevLib via the test-only ctor
 # with the real ComApi). Runs on a 64 MB-stack worker thread. Per the
-# operational rule in docs/PM_WORKING_MEMORY.md, NO TradeStation Desktop
-# processes may be running when this test executes.
-# RED state: no 0x40A send exists yet — positive cases FAIL (hook did not
-# fire), negative case passes trivially. GREEN phase will add the actual
-# 0x40A send (via orlib20 Ordinal_57) and the hook invocation to
-# verifyModule() (success path) and deleteEntry() (success path,
-# category != 4).
+# Desktop/TSDev running state is not a prerequisite; this test exercises the
+# library-level path and does not use the Desktop UI.
+# Historical RED state (pre-M.3): no 0x40A send existed and positive hook
+# cases failed while the negative case passed trivially. The current M.3
+# implementation sends via ordinal 57 and invokes the hook on verify-success
+# and delete-success (category != 4); the receiver-aware cases are retained
+# for regression coverage.
 add_executable(test_0x40a_notification tests/test_0x40a_notification.cpp)
 target_include_directories(test_0x40a_notification PRIVATE src)
 target_link_libraries(test_0x40a_notification PRIVATE tsdev_lib Ole32)
 
 # --- DIAGNOSTIC ONLY (M.4 enumeration speed) — NOT in regression suite ---
-# Standalone diagnostic that measures why enumerateReverseDependents() is too
-# slow. Constructs a real TsDevLib (test-only ctor) + a separate OrlibResolver
-# to time _LoadMasterRecsEX@16 / GetDependencies. Requires TradeStation. Run
-# manually; do NOT add to test_regression or run_regression.
+# Historical/rejected-path diagnostics below are not production M.4 logic. The
+# current reverse-dependent implementation uses the linker (ordinal 85) and
+# linked per-element dep-lists; GetDependencies/Option B2 probes are retained
+# only as provenance. Constructs a real TsDevLib (test-only ctor) + a separate
+# OrlibResolver to measure the historical _LoadMasterRecsEX@16 /
+# GetDependencies path. Requires TradeStation. Run manually; do NOT add to
+# test_regression or run_regression.
 add_executable(diag_m4_enum_speed tests/diag_m4_enum_speed.cpp)
 target_include_directories(diag_m4_enum_speed PRIVATE src)
 target_link_libraries(diag_m4_enum_speed PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- DIAGNOSTIC ONLY (M.4 reverse-dependent GetDependencies probe) — NOT in
-# regression suite. Standalone diagnostic that inserts a Function + a Strategy
-# that calls it, then probes GetDependencies on the Strategy with several
-# whType values (0, 0x200, 4) and elementIndex 0..3 to determine why
-# enumerateReverseDependents() finds zero reverse dependents. Requires
-# TradeStation. Run manually; do NOT add to test_regression or run_regression.
+# --- DIAGNOSTIC ONLY (M.4 historical GetDependencies probe) — NOT in
+# regression suite. Rejected-path diagnostic that inserts a Function + a
+# Strategy that calls it, then probes the forward-dependency export
+# GetDependencies with several whType values (0, 0x200, 4) and elementIndex
+# 0..3. Current reverse-dependent enumeration uses the linker (ordinal 85) and
+# linked per-element dep-lists; this probe is retained for historical evidence.
+# Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
 add_executable(diag_m4_deps tests/diag_m4_deps.cpp)
 target_include_directories(diag_m4_deps PRIVATE src)
 target_link_libraries(diag_m4_deps PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- DIAGNOSTIC ONLY (M.4 3-hypothesis GetDependencies probe) — NOT in
-# regression suite. Standalone diagnostic that tests three hypotheses for
-# why GetDependencies returns empty dep lists:
-#   (A) alternative API _GetStaticDependencyList@12 (ordinal 531)
-#   (B) parenthesized call to a Function WITH inputs (vs no-arg form)
-#   (C) dep list materialized lazily after warehouse reload (new TsDevLib)
-# Inserts a Function with a Numeric input + a Strategy that calls it with
-# parentheses, records ProgIds, probes GetDependencies and
-# _GetStaticDependencyList@12, then destroys + recreates TsDevLib to test
-# the reload hypothesis. Requires TradeStation. Run manually; do NOT add
-# to test_regression or run_regression.
+# --- DIAGNOSTIC ONLY (M.4 historical GetDependencies probes) — NOT in
+# regression suite. Rejected-path diagnostic that tests historical hypotheses
+# for the forward-dependency exports GetDependencies and
+# _GetStaticDependencyList@12: parenthesized calls, alternate APIs, and
+# warehouse reload. Current reverse-dependent enumeration uses the linker
+# (ordinal 85) and linked per-element dep-lists; this probe is retained for
+# historical evidence. Requires TradeStation. Run manually; do NOT add to
+# test_regression or run_regression.
 add_executable(diag_m4_deps2 tests/diag_m4_deps2.cpp)
 target_include_directories(diag_m4_deps2 PRIVATE src)
 target_link_libraries(diag_m4_deps2 PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- DIAGNOSTIC ONLY (M.4 raw master record structure probe) — NOT in
-# regression suite. Standalone diagnostic that dumps the raw 0x10A-byte
-# master record returned by _GetMasterRecByType@16 for a Strategy that
-# calls a Function, and checks the element-count / element-array-ptr /
-# dep-list fields to understand why GetDependencies returns empty dep
-# lists. Requires TradeStation. Run manually; do NOT add to test_regression
-# or run_regression.
+# --- DIAGNOSTIC ONLY (M.4 historical raw-record probe) — NOT in regression
+# suite. Rejected-path diagnostic that dumps the raw 0x10A-byte master-record
+# copy returned by _GetMasterRecByType@16 and records its element/dependency
+# fields alongside the current linker-based layout. The original probe was
+# intended to explain empty GetDependencies results; current evidence identifies
+# GetDependencies as a forward API and production reverse enumeration uses the
+# linker (ordinal 85) with linked per-element dep-lists. Requires TradeStation.
+# Run manually; do NOT add to test_regression or run_regression.
 add_executable(diag_m4_raw_rec tests/diag_m4_raw_rec.cpp)
 target_include_directories(diag_m4_raw_rec PRIVATE src)
 target_link_libraries(diag_m4_raw_rec PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- TVS-M.4: Ordinal_69 live-record diagnostic (manual, NOT in regression) -
-# Verifies the ABI of Ordinal_69 (orlib20 ord 69, RVA 0x1A3E00) and confirms
-# it returns a LIVE in-memory module record with populated element arrays
-# and dep lists — the data GetDependencies (ord 487) and
-# _GetMasterRecByType@16 (ord 568) fail to surface. Also probes Ordinal_70
-# (refcount-dec), Ordinal_28 (sibling), and GetDependencies (post-Ord69).
+# --- M.4 historical Ordinal_69 live-record diagnostic (manual, NOT in
+# regression) ---------------------------------------------------------------
+# Historical probe of Ordinal_69 (orlib20 ord 69, RVA 0x1A3E00) and its live
+# record/element arrays. It compares that data with the forward-dependency
+# GetDependencies export (ord 487) and the _GetMasterRecByType@16 copy (ord
+# 568). The current reverse-dependent implementation uses the linker (ordinal
+# 85) and linked per-element dep-lists, not this diagnostic path. Also probes
+# Ordinal_70, Ordinal_28, and GetDependencies for historical comparison.
 # Requires TradeStation. Run manually; do NOT add to test_regression or
 # run_regression.
 add_executable(diag_m4_ord69 tests/diag_m4_ord69.cpp)
 target_include_directories(diag_m4_ord69 PRIVATE src)
 target_link_libraries(diag_m4_ord69 PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- DIAGNOSTIC ONLY (M.4 forward-dependency probe) — NOT in regression suite.
-# Standalone diagnostic that tests whether GetDependencies (ord 487) and
-# _GetStaticDependencyList@12 (ord 531) return the Function's ProgId when
-# called on a Strategy that ACTUALLY CALLS the Function (i.e. a module with
-# real dependencies). Also dumps the 0x10A partial copy via Ordinal_28 for
-# both items, calls Ordinal_69 to read live record fields, and probes
-# GetDependencies with multiple calling conventions (__stdcall/__cdecl,
-# 3/4 args) to determine the actual ABI. Requires TradeStation. Run
-# manually; do NOT add to test_regression or run_regression.
+# --- DIAGNOSTIC ONLY (M.4 historical forward-dependency probe) — NOT in
+# regression suite. Rejected-path diagnostic that tests whether the forward
+# APIs GetDependencies (ord 487) and _GetStaticDependencyList@12 (ord 531)
+# return a Function's ProgId for a Strategy that calls it. It also dumps the
+# 0x10A partial copy via Ordinal_28, calls Ordinal_69 to read live fields, and
+# probes GetDependencies with multiple calling conventions. Current
+# reverse-dependent enumeration uses the linker (ordinal 85) and linked
+# per-element dep-lists; this probe is retained for historical ABI/evidence
+# comparison. Requires TradeStation. Run manually; do NOT add to
+# test_regression or run_regression.
 add_executable(diag_m4_fwd_deps tests/diag_m4_fwd_deps.cpp)
 target_include_directories(diag_m4_fwd_deps PRIVATE src)
 target_link_libraries(diag_m4_fwd_deps PRIVATE tsdev_lib orlib_resolver Ole32)
@@ -658,31 +680,29 @@ add_executable(diag_m4_subtype tests/diag_m4_subtype.cpp)
 target_include_directories(diag_m4_subtype PRIVATE src)
 target_link_libraries(diag_m4_subtype PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- DIAGNOSTIC ONLY (M.4 existing-item linker dep-list probe) — NOT in
+# --- DIAGNOSTIC ONLY (M.4 historical record-layout comparison) — NOT in
 # regression suite. Standalone READ-ONLY diagnostic that enumerates existing
 # Strategies/Functions/Indicators via _LoadMasterRecsEX@16, calls the linker
-# (ordinal 85) on each, and reads record+0x6f (dep-list ptr) and record+0x73
-# (dep-list size) directly from the linked record. Also reads the +0x79 gate
-# flag (bit 2) from the Ordinal_28 partial copy, and element+0x73/+0x7b from
-# the element array for comparison. Tests the Ghidra finding that the linker
-# writes the dep-list to rec+0x6f/+0x73 while GetDependencies reads from
-# element+0x7b. Does NOT insert/modify/delete any items. Requires TradeStation.
-# Run manually; do NOT add to test_regression or run_regression.
+# (ordinal 85) on each, and compares record+0x6f/+0x73 with the linked
+# per-element dep-list at element+0x7b/+0x73. The original interpretation that
+# GetDependencies read the linker-populated record+0x6f/+0x73 location was
+# superseded by M.4 evidence; production scans linked per-element lists.
+# Does NOT insert/modify/delete any items. Requires TradeStation. Run manually;
+# do NOT add to test_regression or run_regression.
 add_executable(diag_m4_existing_link tests/diag_m4_existing_link.cpp)
 target_include_directories(diag_m4_existing_link PRIVATE src)
 target_link_libraries(diag_m4_existing_link PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- TVS-M.4: full dep-list dump for existing items (manual, NOT in regression)
+# --- M.4 historical full dep-list dump (manual, NOT in regression) -----------
 # Dumps the FULL dep-list content (up to 4096 bytes per element) for existing
 # Strategies (first 10), Indicators (first 10), and Functions (first 5) by
 # calling the linker (ordinal 85) on each existing item, walking the element
 # array (elem size 0xb5), and reading element+0x73 (dep-list size) and
-# element+0x7b (dep-list ptr). Parses each dep-list entry
-# ({type dword, length byte, sourceLine int, sourceCol int, payload}) and
-# reports 0xfa4 (function dependency) entries with the function reference at
-# entry+0xd (expected to be a ProgId). READ-ONLY — does NOT
-# insert/modify/delete any items. Requires TradeStation. Run manually; do NOT
-# add to test_regression or run_regression.
+# element+0x7b (dep-list ptr). It retains the historical 0xfa4 function-ref
+# expectation for comparison; M.4 evidence identifies compiler-written
+# function references as 0xfa3. READ-ONLY — does NOT insert/modify/delete any
+# items. Requires TradeStation. Run manually; do NOT add to test_regression or
+# run_regression.
 add_executable(diag_m4_deplist_dump tests/diag_m4_deplist_dump.cpp)
 target_include_directories(diag_m4_deplist_dump PRIVATE src)
 target_link_libraries(diag_m4_deplist_dump PRIVATE tsdev_lib orlib_resolver Ole32)
@@ -717,10 +737,11 @@ target_link_libraries(diag_m4_ord71 PRIVATE tsdev_lib orlib_resolver Ole32)
 # Tests whether Ordinal_69 with param_3 != 0 (the short-circuit / linker
 # path) returns a record with populated element arrays, vs. param_3 == 0,
 # and whether calling the linker (ordinal 85, FUN_101a3340) directly
-# produces populated arrays. Also probes GetDependencies after the linker
-# path and the SafeArray at +0x26 right after verify (via Ordinal_28).
-# Requires TradeStation. Run manually; do NOT add to test_regression or
-# run_regression.
+# produces populated arrays. It also performs a historical GetDependencies
+# comparison after the linker path and inspects the SafeArray at +0x26 right
+# after verify (via Ordinal_28); GetDependencies is not used by production
+# reverse-dependent enumeration. Requires TradeStation. Run manually; do NOT
+# add to test_regression or run_regression.
 add_executable(diag_m4_linker tests/diag_m4_linker.cpp)
 target_include_directories(diag_m4_linker PRIVATE src)
 target_link_libraries(diag_m4_linker PRIVATE tsdev_lib orlib_resolver Ole32)
@@ -785,10 +806,11 @@ add_executable(diag_m4_whserver tests/diag_m4_whserver.cpp)
 target_include_directories(diag_m4_whserver PRIVATE src)
 target_link_libraries(diag_m4_whserver PRIVATE tsdev_lib orlib_resolver Ole32)
 
-# --- TVS-M.4: Reverse-dependent revalidation integration test ---
+# --- TVS-M.4: Reverse-dependent revalidation integration test (manual, blocked) ---
 # Validates reverse-dependent revalidation parity with TSDev.exe FUN_004D91E0.
-# Requires TradeStation (real orlib20.dll, real warehouse). NOT in the
-# regression suite (TS-required test, run manually).
+# Requires TradeStation (real orlib20.dll, real warehouse). M.4 remains blocked
+# by the CLI-created object-code defect; run this test manually only. Do NOT
+# add it to the test_regression or run_regression aggregates.
 add_executable(test_reverse_dependent_revalidation tests/test_reverse_dependent_revalidation.cpp)
 target_include_directories(test_reverse_dependent_revalidation PRIVATE src)
 target_link_libraries(test_reverse_dependent_revalidation PRIVATE tsdev_lib Ole32)
@@ -796,8 +818,10 @@ target_link_libraries(test_reverse_dependent_revalidation PRIVATE tsdev_lib Ole3
 # --- TVS-D.1: Batch feasibility stress test (opt-in, NOT in regression suite) -
 # Validates ONE TsDevLib instance can do N (default 600) sequential
 # insert+compile+verify ops then delete all N, leaving a clean warehouse, all
-# in ONE process on ONE 64 MB-stack worker thread. De-risks batch CLI (TVS-D.3).
-# Heavy/slow and hits the real warehouse — run manually, NOT via run_regression:
+# in ONE process on ONE 64 MB-stack worker thread. It exercises the shared
+# one-instance behavior used by the implemented batch CLI (TVS-D.3).
+# Heavy/slow and hits the real warehouse. Run manually, NOT via
+# run_regression:
 #   cmake --build build --config Release --target test_stress_batch
 #   $env:STRESS_BATCH_N=5;   .\build\Release\test_stress_batch.exe   # smoke
 #   $env:STRESS_BATCH_N=600; .\build\Release\test_stress_batch.exe   # full
@@ -825,12 +849,14 @@ target_link_libraries(tsdev_cli tsdev_lib)
 # an elevated (administrator) token. When the PARENT process is already elevated
 # (elevated Python wrapper / test runner / shell), child processes inherit that
 # token silently with NO per-run UAC prompt — one UAC prompt per session.
-# When OFF, manifests default to asInvoker (no elevation requirement).
+# When OFF, manifests default to asInvoker (no automatic UAC prompt), but the
+# direct tsdev_cli runtime elevation guard remains active and returns exit 11
+# when it executes non-elevated.
 #
 # CI builds with the default ON; this is safe because CI tests never invoke
 # tsdev_cli.exe or any TS-dependent test executable (the -NoTs suites use only
 # non-TS unit tests + sigtool; non-e2e Python tests mock subprocess.run).
-# Developers who need a non-elevated build pass -DTSDEV_REQUIRE_ADMIN=OFF.
+# Developers who need an asInvoker build variant pass -DTSDEV_REQUIRE_ADMIN=OFF.
 option(TSDEV_REQUIRE_ADMIN
     "Embed requireAdministrator execution level in TS-accessing executables" ON)
 
@@ -840,6 +866,9 @@ option(TSDEV_REQUIRE_ADMIN
 # / test_showme_type / test_orlib_resolver / test_elevation_guard
 # / test_crash_handler / test_json_serialize / test_serve_dispatch
 # / test_serve_framing / test_com_apartment_guard / test_tsdev_com_init_seam
+# / test_persistence_integrity / test_create_path_cleanup
+# / test_preop_hash_classification / test_delete_disk_cleanup
+# / test_close_warehouse / test_directory_batch
 # (pure unit tests, no TSDev Library access, run in CI under -NoTs from a
 # non-elevated runner).
 set(TSDEV_ADMIN_TARGETS
@@ -858,7 +887,6 @@ set(TSDEV_ADMIN_TARGETS
     test_enumerate
     test_upsert
     test_batch_upsert
-    test_directory_batch
     test_get_source
     test_auto_cleanup
     test_compiler_layout
@@ -866,6 +894,22 @@ set(TSDEV_ADMIN_TARGETS
     test_0x40a_notification
     test_reverse_dependent_revalidation
     test_stress_batch
+    diag_m4_enum_speed
+    diag_m4_deps
+    diag_m4_deps2
+    diag_m4_raw_rec
+    diag_m4_ord69
+    diag_m4_fwd_deps
+    diag_m4_subtype
+    diag_m4_existing_link
+    diag_m4_deplist_dump
+    diag_m4_reverse_enum
+    diag_m4_ord71
+    diag_m4_linker
+    diag_m4_frida_linker
+    diag_m4_linker_internals
+    diag_m4_objcode
+    diag_m4_whserver
 )
 
 if(TSDEV_REQUIRE_ADMIN)
@@ -938,18 +982,20 @@ add_dependencies(orlib_resolver siggen)
 target_link_libraries(orlib_resolver PUBLIC bcrypt)
 
 # --- OrlibResolver test executable (TVS-B.4) ---------------------------------
-# 184 assertions across 6 TDD cycles.
+# Historical/transient verification record (not current run evidence): 184 assertions across 6 TDD cycles.
 add_executable(test_orlib_resolver tests/test_orlib_resolver.cpp)
 target_link_libraries(test_orlib_resolver PRIVATE orlib_resolver)
 
 # --- Master regression build dependency target (TVS-B.6.3) -------------------
-# This is a build-only dependency target: it ensures ALL test executables,
-# the production CLI, and sigtool are built when invoked via:
+# This is a build-only dependency target: it ensures ALL regression test
+# executables, the production CLI, and sigtool are built when invoked via:
 #   cmake --build build --config Release --target test_regression
 # The actual regression test execution is performed by the PowerShell
 # orchestrator script tests/run_regression.ps1 (which runs sigtool verify,
-# all 27 C++ unit tests, and the 34 E2E CLI tests). This target adds NO
-# build commands of its own - it merely aggregates the dependencies.
+# the C++ unit tests, and the E2E CLI tests). The C++ unit test inventory
+# (list + count) is the SSOT in tests/run_unit_tests.ps1 ($TestDefinitions);
+# the E2E CLI case list is the SSOT in docs/E2E_TEST_SPEC.md. This target
+# adds NO build commands of its own - it merely aggregates the dependencies.
 add_custom_target(test_regression)
 add_dependencies(test_regression
     test_insert
@@ -969,9 +1015,12 @@ add_dependencies(test_regression
     test_serve_dispatch
     test_serve_framing
     test_com_apartment_guard
+    test_tsdev_com_init_seam
     test_persistence_integrity
     test_create_path_cleanup
+    test_preop_hash_classification
     test_delete_disk_cleanup
+    test_close_warehouse
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
@@ -984,7 +1033,6 @@ add_dependencies(test_regression
     test_compiler_layout
     test_save_module
     test_0x40a_notification
-    test_reverse_dependent_revalidation
     test_orlib_resolver
     tsdev_cli
     sigtool

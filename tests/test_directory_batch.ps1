@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    TVS-I.2: Directory batch mode test for tsdev_cli (TDD red).
+    TVS-I.2: Directory batch mode test for tsdev_cli.
 
 .DESCRIPTION
     Validates the four directory batch subcommands of tsdev_cli.exe:
@@ -54,11 +54,15 @@
     Prerequisites:
       - The project must be built: cmake --build build --config Release --target tsdev_cli
       - TradeStation 9.5 must be installed (or -TsPath provided)
-      - No TradeStation processes/services should be running
+      - The invoking PowerShell process must be an elevated administrator
+        process because this suite invokes tsdev_cli.exe directly. A
+        non-elevated direct CLI invocation returns exit code 11 (not_elevated).
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies; this suite does not use the Desktop UI
 
-    NOTE: This is a TDD red test. The batch-*-dir subcommands are NOT yet
-    implemented, so this test is EXPECTED to fail at this stage. That is
-    correct and intended.
+    NOTE: The batch-*-dir subcommands are implemented in tsdev_cli.cpp. This
+    suite is an integration/regression check for directory enumeration, batch
+    results, and exit-code handling.
 #>
 
 param(

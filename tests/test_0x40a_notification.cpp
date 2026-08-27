@@ -1,7 +1,9 @@
 // test_0x40a_notification.cpp
 //
-// Workstream M slice M.3 — TDD RED integration test for the 0x40A
-// post-success library-change notification parity with TSDev.exe.
+// Workstream M slice M.3 — integration test for the 0x40A post-success
+// library-change notification parity with TSDev.exe. The TDD RED→GREEN
+// transition is historical; the current implementation and receiver fixture
+// are retained for regression coverage.
 //
 // CONFIRMED FACTS (Ghidra static analysis of orlib20.dll FUN_101526f0
 // (Ordinal_57) + Frida trace; see
@@ -28,42 +30,23 @@
 //     receiver absence.
 //
 //   R-M.3.4 — Test receiver: register via
-//   _OrlibRegisterNotificationHandle@4 (ordinal 595). The GREEN phase will
-//   add a receiver-aware fixture; the RED test asserts only the hook
-//   capture (the would-be send arguments), which is sufficient to pin the
-//   packing and the operation set.
+//   _OrlibRegisterNotificationHandle@4 (ordinal 595). The receiver-aware
+//   fixture is implemented; the hook also captures the would-be send
+//   arguments to pin the packing and operation set.
 //
 // This test exercises the onNotifyReady test hook (populated via
-// makeTsDevLibForTest) which the GREEN-phase verifyModule() and
-// deleteEntry() will invoke immediately BEFORE the 0x40A notification is
-// sent (the same point at which TSDev calls orlib20 Ordinal_57). The
-// callback captures the (msg, wParam, lParam) tuple plus the affected
-// componentType and progId into thread_local globals, then the test
-// asserts:
-//   - capture.fired == true (positive cases) / false (negative case)
-//   - capture.msg == 0x040A
-//   - capture.wParam == 0
-//   - capture.lParam == (getCategory(type) << 16) | (progId & 0xFFFF)
-//   - capture.componentType == static_cast<int>(type)
-//   - capture.progId == progId
+// makeTsDevLibForTest) which the current verifyModule() and deleteEntry()
+// paths invoke immediately BEFORE the 0x40A notification is sent (the same
+// point at which TSDev calls orlib20 Ordinal_57). The callback captures the
+// (msg, wParam, lParam) tuple plus the affected componentType and progId into
+// thread_local globals, then the test asserts the packing and operation-set
+// behavior described above.
 //
-// RED STATE: the current production code (src/tsdev_lib.cpp verifyModule()
-// and deleteEntry()) does NOT send 0x40A and does NOT invoke the
-// onNotifyReady hook. The hook is copied from the config in the private
-// test ctor (test infrastructure only — no production side effect), but it
-// is never called. Therefore:
-//   - Cases 1, 2, 3 (verify-success): capture.fired == false → the
-//     "hook fired" assertion FAILS. This is the expected RED signal.
-//   - Case 4 (failed verify): capture.fired == false → the negative
-//     assertion PASSES trivially (correct behavior, no 0x40A on failure).
-//   - Case 5 (delete-success): capture.fired == false → the "hook fired"
-//     assertion FAILS. Expected RED signal.
-//   - Case 6 (batch reuse, 3 verify-success): each iteration's "hook
-//     fired" assertion FAILS. Expected RED signal.
-// This is the correct RED state. The GREEN phase will add the actual
-// 0x40A send (via orlib20 Ordinal_57) and the hook invocation to
-// verifyModule() (success path) and deleteEntry() (success path,
-// category != 4).
+// HISTORICAL RED STATE (pre-M.3): the production paths did not send 0x40A or
+// invoke the hook, so the positive hook assertions failed while the failed-
+// verify negative assertion passed trivially. The current M.3 implementation
+// sends through ordinal 57 and the receiver-aware cases exercise actual
+// delivery. The RED→GREEN transition is retained in the slice handoff.
 //
 // 16 test cases:
 //   1. Verify-success sends 0x40A (Strategy, category 0)
@@ -99,9 +82,8 @@
 // REQUIRES TradeStation: this is an integration test that constructs a real
 // TsDevLib (loads orlib20.dll, applies patches, calls OrlibInit, creates the
 // hidden EDIT control) and inserts + verifies + deletes real warehouse
-// entries. Per the operational rule in docs/PM_WORKING_MEMORY.md, NO
-// TradeStation Desktop processes (TSDev.exe, TradeStation, ORPlat, etc.)
-// may be running when this test executes.
+// entries. This is a library-level notification test; Desktop/TSDev running
+// state is not a prerequisite because it uses its own receiver fixture.
 //
 // Runs on a 64 MB-stack worker thread (EasyLanguage compiler needs far more
 // than the default 1 MB, and the hidden EDIT control is thread-affine so
@@ -351,7 +333,7 @@ int runVerifySuccessCase(TsDevLib& lib, int caseNum,
     // --- 5. Assert verifyModule succeeded (empty error string) ---
     // This guards the positive case: if verify unexpectedly failed, the
     // "hook did not fire" failure below would be misleading. We assert
-    // verify success first so the RED signal is unambiguous.
+    // verify success first so the notification assertion is meaningful.
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
@@ -361,7 +343,7 @@ int runVerifySuccessCase(TsDevLib& lib, int caseNum,
         CHECK(errors.empty(), buf);
     }
 
-    // --- 6. Assert the hook fired (RED: fails — no 0x40A send exists) ---
+    // --- 6. Assert the hook fired ---
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
@@ -370,8 +352,7 @@ int runVerifySuccessCase(TsDevLib& lib, int caseNum,
         CHECK(g_capture.fired, buf);
     }
 
-    // --- 7. Assert the captured packing (RED: skipped-via-false below,
-    //     but evaluated for diagnostics; on GREEN these pin the format) ---
+    // --- 7. Assert the captured packing ---
     LPARAM expLParam = expectedLParam(type, progId);
     {
         char buf[160];
@@ -431,8 +412,7 @@ int runVerifySuccessCase(TsDevLib& lib, int caseNum,
 // runFailedVerifyCase — negative case: create, save BROKEN source, verify,
 // assert the hook did NOT fire AND verifyModule actually failed. This is
 // the correct negative assertion (R-M.3.2: failed compile/verify does NOT
-// send 0x40A). On RED this passes trivially (no 0x40A send exists), but
-// it pins the contract for the GREEN phase.
+// send 0x40A). The current implementation must keep this negative contract.
 // ---------------------------------------------------------------------------
 int runFailedVerifyCase(TsDevLib& lib, int caseNum,
                         ComponentType type, const std::string& name) {
@@ -497,8 +477,7 @@ int runFailedVerifyCase(TsDevLib& lib, int caseNum,
     }
 
     // --- 6. Assert the hook did NOT fire (negative assertion) ---
-    // On RED this passes trivially (no 0x40A send exists). On GREEN it
-    // pins the contract: failed verify must NOT send 0x40A.
+    // This pins the current contract: failed verify must NOT send 0x40A.
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
@@ -596,7 +575,7 @@ int runDeleteSuccessCase(TsDevLib& lib, int caseNum,
         CHECK(deleted, buf);
     }
 
-    // --- 6. Assert the hook fired (RED: fails — no 0x40A send exists) ---
+    // --- 6. Assert the hook fired ---
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
@@ -1135,11 +1114,12 @@ struct ReceivedNotify {
 struct ReceiverState {
     HWND                       hwnd = nullptr;
     HANDLE                     readyEvent = nullptr;     // signaled when window is created
-    HANDLE                     doneEvent = nullptr;      // signaled by main when receiver may exit
+    HANDLE                     doneEvent = nullptr;      // signaled by wnd proc (target reached) or main (backstop) to wake the main thread's wait
     CRITICAL_SECTION           cs;
     std::vector<ReceivedNotify> messages;
     int                        targetCount = 1;          // how many 0x40A to capture before exiting
     bool                       timedOut = false;
+    bool                       mayExit = false;          // set by main thread AFTER unregisterFn, to tell the receiver it may destroy its window and exit
 };
 
 // The window proc — captures 0x40A into the shared state. All other
@@ -1158,8 +1138,10 @@ static LRESULT WINAPI ReceiverWndProc(HWND hwnd, UINT msg,
                     static_cast<unsigned long long>(wParam),
                     static_cast<unsigned long>(lParam), count);
         if (count >= rs->targetCount) {
-            // Wake up the main thread's wait and let the receiver loop
-            // fall through to its exit check.
+            // Wake up the main thread's wait so it can unregister the HWND
+            // and then set mayExit. The receiver loop does NOT break on
+            // this signal — it only breaks when mayExit is set, ensuring
+            // the window is not destroyed before unregisterFn runs.
             SetEvent(rs->doneEvent);
         }
         return 0;
@@ -1215,15 +1197,27 @@ static DWORD WINAPI ReceiverThreadProc(LPVOID param) {
     SetEvent(rs->readyEvent);
 
     // Message loop with a timeout. PeekMessage with PM_REMOVE is used so
-    // we can periodically check doneEvent and the elapsed time; a pure
+    // we can periodically check mayExit and the elapsed time; a pure
     // blocking GetMessage would not time out.
+    //
+    // LIFECYCLE RACE FIX: the loop breaks on mayExit (set by the main
+    // thread AFTER unregisterFn), NOT on doneEvent (self-signaled by the
+    // wnd proc when targetCount is reached). doneEvent only wakes the main
+    // thread so it can unregister the saved HWND before the receiver
+    // destroys its window. This guarantees unregisterFn(savedHwnd) always
+    // runs before DestroyWindow.
     const DWORD kLoopTickMs = 50;
     DWORD elapsed = 0;
-    const DWORD kTimeout = 5000;  // 5s, per the task spec
+    // ponytail: 120s backstop matches the CLI child-wait timeout in Cases 15/16.
+    // The in-process Cases 1-14 complete in < 5s, but CLI child-process cases
+    // need the receiver to pump for the full CLI startup + EL compile duration.
+    // The receiver exits early via mayExit (set by the main thread after
+    // unregisterFn), so the backstop is only reached on a hang.
+    const DWORD kTimeout = 120000;
     while (elapsed < kTimeout) {
-        // If the main thread has signaled completion (target captured or
-        // operation done), drain remaining messages then exit.
-        if (WaitForSingleObject(rs->doneEvent, 0) == WAIT_OBJECT_0) {
+        // If the main thread has set mayExit (after unregistering the
+        // HWND), drain remaining messages then exit.
+        if (rs->mayExit) {
             // Drain any straggler messages.
             MSG msg;
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -1250,9 +1244,21 @@ static DWORD WINAPI ReceiverThreadProc(LPVOID param) {
                      "  [receiver] TIMEOUT after %lu ms (captured %zu "
                      "0x40A messages)\n",
                      kTimeout, rs->messages.size());
+        // Wait for the main thread to unregister the saved HWND and set
+        // mayExit before destroying the window. Give a generous backstop
+        // (10s) so the main thread's doneEvent-timeout path has time to
+        // run unregisterFn and set mayExit.
+        DWORD waitElapsed = 0;
+        const DWORD kMayExitWaitMs = 10000;
+        while (!rs->mayExit && waitElapsed < kMayExitWaitMs) {
+            Sleep(kLoopTickMs);
+            waitElapsed += kLoopTickMs;
+        }
     }
 
-    // Destroy the window and unregister the class.
+    // Destroy the window and unregister the class. This only runs after
+    // mayExit is set (by the main thread, after unregisterFn), so the
+    // HWND is still valid when unregisterFn was called.
     DestroyWindow(rs->hwnd);
     rs->hwnd = nullptr;
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
@@ -1390,9 +1396,11 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
     if (WaitForSingleObject(rs.readyEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr, "  [receiver] readyEvent timed out\n");
     }
-    if (!rs.hwnd) {
+    HWND savedHwnd = rs.hwnd;
+    if (!savedHwnd) {
         std::fprintf(stderr,
                      "  [receiver] window not created; aborting case\n");
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -1402,12 +1410,12 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
         return fail("receiver-aware case: receiver window not created",
                     100 + caseNum * 10 + 4);
     }
-    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(rs.hwnd));
+    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(savedHwnd));
 
     // Register the receiver HWND with EventsViaHandles. The registration
     // call is thread-agnostic (it just adds the HWND to the set), so it
     // is safe to call from this worker thread.
-    int regResult = registerFn(rs.hwnd);
+    int regResult = registerFn(savedHwnd);
     std::printf("      _OrlibRegisterNotificationHandle@4 = %d\n",
                 regResult);
     {
@@ -1440,7 +1448,7 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
     }
 
     // --- 6. Wait for the receiver to capture the 0x40A (or timeout) ---
-    // The receiver signals doneEvent when targetCount messages arrive.
+    // The wnd proc signals doneEvent when targetCount messages arrive.
     // Give it a generous wait; the post happens during verifyModule above
     // so the message should already be queued.
     if (WaitForSingleObject(rs.doneEvent, 5000) != WAIT_OBJECT_0) {
@@ -1448,10 +1456,31 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
                      "  [receiver] doneEvent timed out — no 0x40A "
                      "captured\n");
     }
-    // Tell the receiver it can exit (in case it hasn't already).
-    SetEvent(rs.doneEvent);
 
-    // Snapshot the captured messages under the lock.
+    // --- 7. Unregister the saved HWND (local copy, not the shared
+    // rs.hwnd which the receiver may null during destruction) BEFORE
+    // setting mayExit and signaling the receiver thread to destroy its
+    // window. Then join the receiver thread. This ordering guarantees
+    // unregisterFn runs while the window is still alive. ---
+    {
+        DWORD rc = WaitForSingleObject(hRecv, 0);
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "receiver thread still alive at unregister time "
+                      "(unregister before window destroy) [case %d]",
+                      caseNum);
+        CHECK(rc == WAIT_TIMEOUT, buf);
+    }
+    if (unregisterFn) {
+        int unregResult = unregisterFn(savedHwnd);
+        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
+                    unregResult);
+    }
+    rs.mayExit = true;
+    SetEvent(rs.doneEvent);
+    WaitForSingleObject(hRecv, 5000);
+
+    // Snapshot the captured messages after the receiver has joined.
     std::vector<ReceivedNotify> captured;
     bool timedOut = false;
     {
@@ -1461,13 +1490,6 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
         LeaveCriticalSection(&rs.cs);
     }
 
-    // --- 7. Unregister the HWND, then join the receiver thread ---
-    if (unregisterFn) {
-        int unregResult = unregisterFn(rs.hwnd);
-        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
-                    unregResult);
-    }
-    WaitForSingleObject(hRecv, 5000);
     CloseHandle(hRecv);
     CloseHandle(rs.readyEvent);
     CloseHandle(rs.doneEvent);
@@ -1610,7 +1632,9 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
     if (WaitForSingleObject(rs.readyEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr, "  [receiver] readyEvent timed out\n");
     }
-    if (!rs.hwnd) {
+    HWND savedHwnd = rs.hwnd;
+    if (!savedHwnd) {
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -1621,9 +1645,9 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
                     "created",
                     100 + caseNum * 10 + 2);
     }
-    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(rs.hwnd));
+    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(savedHwnd));
 
-    int regResult = registerFn(rs.hwnd);
+    int regResult = registerFn(savedHwnd);
     std::printf("      _OrlibRegisterNotificationHandle@4 = %d\n",
                 regResult);
     {
@@ -1651,8 +1675,9 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
         std::printf("    createEntry = %d, errCode = 0x%X\n",
                     progId, errCode);
         if (progId <= 0) {
+            unregisterFn(savedHwnd);
+            rs.mayExit = true;
             SetEvent(rs.doneEvent);
-            unregisterFn(rs.hwnd);
             WaitForSingleObject(hRecv, INFINITE);
             CloseHandle(hRecv);
             CloseHandle(rs.readyEvent);
@@ -1729,11 +1754,29 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
                      "  [receiver] doneEvent timed out — expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
-    // Backstop: tell the receiver it can exit (in case targetCount was
-    // not reached).
-    SetEvent(rs.doneEvent);
 
-    // Snapshot the captured messages.
+    // Unregister the saved HWND (local copy) BEFORE setting mayExit and
+    // signaling the receiver thread to destroy its window. Then join.
+    {
+        DWORD rc = WaitForSingleObject(hRecv, 0);
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "rcv batch: receiver thread still alive at unregister "
+                      "time (unregister before window destroy) [case %d]",
+                      caseNum);
+        CHECK(rc == WAIT_TIMEOUT, buf);
+    }
+    if (unregisterFn) {
+        int unregResult = unregisterFn(savedHwnd);
+        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
+                    unregResult);
+    }
+    // Tell the receiver it may destroy its window and exit, then join.
+    rs.mayExit = true;
+    SetEvent(rs.doneEvent);
+    WaitForSingleObject(hRecv, 5000);
+
+    // Snapshot the captured messages after the receiver has joined.
     std::vector<ReceivedNotify> captured;
     bool timedOut = false;
     {
@@ -1743,13 +1786,6 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
         LeaveCriticalSection(&rs.cs);
     }
 
-    // Unregister and join.
-    if (unregisterFn) {
-        int unregResult = unregisterFn(rs.hwnd);
-        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
-                    unregResult);
-    }
-    WaitForSingleObject(hRecv, 5000);
     CloseHandle(hRecv);
     CloseHandle(rs.readyEvent);
     CloseHandle(rs.doneEvent);
@@ -1884,6 +1920,52 @@ std::string makeTempFilePath(const char* suffix) {
     return path;
 }
 
+// Extract ProgIds from CLI JSON output. The batch/serve JSON contains
+// "prog_id":NNNN per item. Returns all prog_id values found.
+// Used to filter captured 0x40A messages to only those from the CLI child's
+// operations, excluding notifications from concurrent orlib20 operations
+// (the SHARE_WO shared array delivers notifications from ALL processes).
+std::vector<DWORD> extractProgIdsFromJson(const std::string& json) {
+    std::vector<DWORD> progIds;
+    const std::string key = "\"prog_id\":";
+    size_t pos = 0;
+    while ((pos = json.find(key, pos)) != std::string::npos) {
+        pos += key.size();
+        // Skip optional space after colon.
+        while (pos < json.size() && json[pos] == ' ') ++pos;
+        DWORD val = 0;
+        bool gotDigit = false;
+        while (pos < json.size() && json[pos] >= '0' && json[pos] <= '9') {
+            val = val * 10 + static_cast<DWORD>(json[pos] - '0');
+            ++pos;
+            gotDigit = true;
+        }
+        if (gotDigit) progIds.push_back(val);
+    }
+    return progIds;
+}
+
+// Filter captured 0x40A messages to only those whose ProgId (low word of
+// lParam) matches one of the expected ProgIds. This isolates the CLI child's
+// notifications from concurrent orlib20 operations via the shared SHARE_WO
+// HWND array.
+std::vector<ReceivedNotify> filterByProgIds(
+    const std::vector<ReceivedNotify>& captured,
+    const std::vector<DWORD>& expectedProgIds) {
+    std::vector<ReceivedNotify> filtered;
+    for (const auto& msg : captured) {
+        WORD progIdLo = static_cast<WORD>(
+            static_cast<unsigned long>(msg.lParam) & 0xFFFF);
+        for (DWORD ep : expectedProgIds) {
+            if (static_cast<WORD>(ep) == progIdLo) {
+                filtered.push_back(msg);
+                break;
+            }
+        }
+    }
+    return filtered;
+}
+
 // ---------------------------------------------------------------------------
 // runCliBatchStdinCase — Case 15: spawn tsdev_cli.exe batch-insert
 // --batch-stdin as a child process, feed a 3-line manifest (3 Strategy
@@ -2016,7 +2098,9 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
     if (WaitForSingleObject(rs.readyEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr, "  [receiver] readyEvent timed out\n");
     }
-    if (!rs.hwnd) {
+    HWND savedHwnd = rs.hwnd;
+    if (!savedHwnd) {
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2026,9 +2110,9 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
         return fail("CLI batch case: receiver window not created",
                     100 + caseNum * 10 + 3);
     }
-    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(rs.hwnd));
+    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(savedHwnd));
 
-    int regResult = registerFn(rs.hwnd);
+    int regResult = registerFn(savedHwnd);
     std::printf("      _OrlibRegisterNotificationHandle@4 = %d\n",
                 regResult);
     {
@@ -2056,7 +2140,8 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
     if (!createPipe(hChildStdinRd, hChildStdinWr) ||
         !createPipe(hChildStdoutRd, hChildStdoutWr) ||
         !createPipe(hChildStderrRd, hChildStderrWr)) {
-        unregisterFn(rs.hwnd);
+        unregisterFn(savedHwnd);
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2106,7 +2191,8 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
         CloseHandle(hChildStdinRd); CloseHandle(hChildStdinWr);
         CloseHandle(hChildStdoutRd); CloseHandle(hChildStdoutWr);
         CloseHandle(hChildStderrRd); CloseHandle(hChildStderrWr);
-        unregisterFn(rs.hwnd);
+        unregisterFn(savedHwnd);
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2206,12 +2292,33 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
 
     // Wait for the receiver to capture all kIterations 0x40A posts (or
     // time out). The receiver signals doneEvent when targetCount is reached.
-    if (WaitForSingleObject(rs.doneEvent, 5000) != WAIT_OBJECT_0) {
+    // With the 120s receiver pump, doneEvent is typically already signaled
+    // before the child exits; 30s is a safety margin for late captures.
+    if (WaitForSingleObject(rs.doneEvent, 30000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
                      "  [receiver] doneEvent timed out — expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
+
+    // Unregister the saved HWND (local copy) BEFORE setting mayExit and
+    // signaling the receiver thread to destroy its window. Then join.
+    {
+        DWORD rc = WaitForSingleObject(hRecv, 0);
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "CLI batch: receiver thread still alive at unregister "
+                      "time (unregister before window destroy) [case %d]",
+                      caseNum);
+        CHECK(rc == WAIT_TIMEOUT, buf);
+    }
+    if (unregisterFn) {
+        int unregResult = unregisterFn(savedHwnd);
+        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
+                    unregResult);
+    }
+    rs.mayExit = true;
     SetEvent(rs.doneEvent);
+    WaitForSingleObject(hRecv, 5000);
 
     std::vector<ReceivedNotify> captured;
     bool timedOut = false;
@@ -2222,18 +2329,17 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
         LeaveCriticalSection(&rs.cs);
     }
 
-    if (unregisterFn) {
-        int unregResult = unregisterFn(rs.hwnd);
-        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
-                    unregResult);
-    }
-    WaitForSingleObject(hRecv, 5000);
     CloseHandle(hRecv);
     CloseHandle(rs.readyEvent);
     CloseHandle(rs.doneEvent);
     DeleteCriticalSection(&rs.cs);
 
     // --- Assertions ---
+    // The SHARE_WO shared HWND array delivers 0x40A notifications from ALL
+    // orlib20 operations in the session, not just the CLI child's. Filter
+    // captured messages to only those matching the CLI child's ProgIds.
+    std::vector<DWORD> expectedProgIds = extractProgIdsFromJson(childOut.stdoutStr);
+    std::vector<ReceivedNotify> matched = filterByProgIds(captured, expectedProgIds);
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -2245,27 +2351,28 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
         char buf[200];
         std::snprintf(buf, sizeof(buf),
                       "CLI batch: receiver captured exactly %d 0x40A "
-                      "messages (one per verify-success) [case %d, got %zu]",
-                      kIterations, caseNum, captured.size());
-        CHECK(captured.size() == static_cast<size_t>(kIterations), buf);
+                      "messages matching CLI ProgIds (one per verify-success) "
+                      "[case %d, got %zu (total captured %zu)]",
+                      kIterations, caseNum, matched.size(), captured.size());
+        CHECK(matched.size() == static_cast<size_t>(kIterations), buf);
     }
-    // Assert every captured message is a 0x40A with wParam==0.
-    for (size_t i = 0; i < captured.size(); ++i) {
+    // Assert every matched message is a 0x40A with wParam==0.
+    for (size_t i = 0; i < matched.size(); ++i) {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "CLI batch msg %zu: msg==0x40A && wParam==0 "
                       "[case %d]", i, caseNum);
-        CHECK(captured[i].msg == kNotifyMsg &&
-              captured[i].wParam == kNotifyWParam, buf);
+        CHECK(matched[i].msg == kNotifyMsg &&
+              matched[i].wParam == kNotifyWParam, buf);
     }
     // Assert the category packing (high word of lParam == category for
     // Strategy == 0). We do NOT assert the exact progId here because the
     // progId is assigned by the child's orlib20 instance and may differ
     // from what the test's TsDevLib would assign; the category (high word)
     // is deterministic for Strategy (category 0).
-    for (size_t i = 0; i < captured.size(); ++i) {
+    for (size_t i = 0; i < matched.size(); ++i) {
         WORD catHi = static_cast<WORD>(
-            (static_cast<unsigned long>(captured[i].lParam) >> 16) & 0xFFFF);
+            (static_cast<unsigned long>(matched[i].lParam) >> 16) & 0xFFFF);
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "CLI batch msg %zu: lParam high word == category "
@@ -2416,7 +2523,9 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     if (WaitForSingleObject(rs.readyEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr, "  [receiver] readyEvent timed out\n");
     }
-    if (!rs.hwnd) {
+    HWND savedHwnd = rs.hwnd;
+    if (!savedHwnd) {
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2426,9 +2535,9 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         return fail("CLI serve case: receiver window not created",
                     100 + caseNum * 10 + 3);
     }
-    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(rs.hwnd));
+    std::printf("      receiver HWND=0x%p\n", static_cast<void*>(savedHwnd));
 
-    int regResult = registerFn(rs.hwnd);
+    int regResult = registerFn(savedHwnd);
     std::printf("      _OrlibRegisterNotificationHandle@4 = %d\n",
                 regResult);
     {
@@ -2482,7 +2591,8 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
                      GetLastError());
         CloseHandle(hChildStdoutRd); CloseHandle(hChildStdoutWr);
         CloseHandle(hChildStderrRd); CloseHandle(hChildStderrWr);
-        unregisterFn(rs.hwnd);
+        unregisterFn(savedHwnd);
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2569,7 +2679,8 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         if (hDrainStdout) { WaitForSingleObject(hDrainStdout, 5000); CloseHandle(hDrainStdout); }
         if (hDrainStderr) { WaitForSingleObject(hDrainStderr, 5000); CloseHandle(hDrainStderr); }
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        unregisterFn(rs.hwnd);
+        unregisterFn(savedHwnd);
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2622,7 +2733,8 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         if (hDrainStdout) { WaitForSingleObject(hDrainStdout, 5000); CloseHandle(hDrainStdout); }
         if (hDrainStderr) { WaitForSingleObject(hDrainStderr, 5000); CloseHandle(hDrainStderr); }
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        unregisterFn(rs.hwnd);
+        unregisterFn(savedHwnd);
+        rs.mayExit = true;
         SetEvent(rs.doneEvent);
         WaitForSingleObject(hRecv, INFINITE);
         CloseHandle(hRecv);
@@ -2677,6 +2789,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     // createEntry + saveSource + verifyModule internally (doInsert with
     // flushPerItem=false); each verify-success posts 0x40A.
     bool allInsertsOk = true;
+    std::string allServeResponses;  // accumulated for ProgId extraction
     for (int i = 0; i < kIterations; ++i) {
         // Build the JSON request manually (avoid pulling in nlohmann here).
         // Schema: {"op":"insert","type":"strategy","name":"<N>","source":"<S>"}
@@ -2722,6 +2835,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         }
         std::printf("  [recv %d/%d] %zu bytes: %s\n",
                     i + 1, kIterations, resp.size(), resp.c_str());
+        allServeResponses += resp;
         // Check the response contains "success":true (simple substring
         // check — we do not parse the full JSON here to keep the test
         // dependency-free).
@@ -2786,12 +2900,33 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     }
 
     // Wait for the receiver to capture all kIterations 0x40A posts.
-    if (WaitForSingleObject(rs.doneEvent, 5000) != WAIT_OBJECT_0) {
+    // With the 120s receiver pump, doneEvent is typically already signaled
+    // before the broker exits; 30s is a safety margin for late captures.
+    if (WaitForSingleObject(rs.doneEvent, 30000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
                      "  [receiver] doneEvent timed out — expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
+
+    // Unregister the saved HWND (local copy) BEFORE setting mayExit and
+    // signaling the receiver thread to destroy its window. Then join.
+    {
+        DWORD rc = WaitForSingleObject(hRecv, 0);
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "CLI serve: receiver thread still alive at unregister "
+                      "time (unregister before window destroy) [case %d]",
+                      caseNum);
+        CHECK(rc == WAIT_TIMEOUT, buf);
+    }
+    if (unregisterFn) {
+        int unregResult = unregisterFn(savedHwnd);
+        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
+                    unregResult);
+    }
+    rs.mayExit = true;
     SetEvent(rs.doneEvent);
+    WaitForSingleObject(hRecv, 5000);
 
     std::vector<ReceivedNotify> captured;
     bool timedOut = false;
@@ -2802,12 +2937,6 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         LeaveCriticalSection(&rs.cs);
     }
 
-    if (unregisterFn) {
-        int unregResult = unregisterFn(rs.hwnd);
-        std::printf("      _OrlibUnregisterNotificationHandle@4 = %d\n",
-                    unregResult);
-    }
-    WaitForSingleObject(hRecv, 5000);
     CloseHandle(hRecv);
     CloseHandle(rs.readyEvent);
     CloseHandle(rs.doneEvent);
@@ -2817,6 +2946,11 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     DeleteFileA(pipeFilePath.c_str());
 
     // --- Assertions ---
+    // The SHARE_WO shared HWND array delivers 0x40A notifications from ALL
+    // orlib20 operations in the session, not just the CLI child's. Filter
+    // captured messages to only those matching the CLI child's ProgIds.
+    std::vector<DWORD> expectedProgIds = extractProgIdsFromJson(allServeResponses);
+    std::vector<ReceivedNotify> matched = filterByProgIds(captured, expectedProgIds);
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -2828,21 +2962,22 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
         char buf[200];
         std::snprintf(buf, sizeof(buf),
                       "CLI serve: receiver captured exactly %d 0x40A "
-                      "messages (one per verify-success) [case %d, got %zu]",
-                      kIterations, caseNum, captured.size());
-        CHECK(captured.size() == static_cast<size_t>(kIterations), buf);
+                      "messages matching CLI ProgIds (one per verify-success) "
+                      "[case %d, got %zu (total captured %zu)]",
+                      kIterations, caseNum, matched.size(), captured.size());
+        CHECK(matched.size() == static_cast<size_t>(kIterations), buf);
     }
-    for (size_t i = 0; i < captured.size(); ++i) {
+    for (size_t i = 0; i < matched.size(); ++i) {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "CLI serve msg %zu: msg==0x40A && wParam==0 "
                       "[case %d]", i, caseNum);
-        CHECK(captured[i].msg == kNotifyMsg &&
-              captured[i].wParam == kNotifyWParam, buf);
+        CHECK(matched[i].msg == kNotifyMsg &&
+              matched[i].wParam == kNotifyWParam, buf);
     }
-    for (size_t i = 0; i < captured.size(); ++i) {
+    for (size_t i = 0; i < matched.size(); ++i) {
         WORD catHi = static_cast<WORD>(
-            (static_cast<unsigned long>(captured[i].lParam) >> 16) & 0xFFFF);
+            (static_cast<unsigned long>(matched[i].lParam) >> 16) & 0xFFFF);
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "CLI serve msg %zu: lParam high word == category "
@@ -3156,9 +3291,9 @@ int main() {
                 "and delete-success, and NOT sent after failed verify.\n");
     std::printf("See docs/RE/RE_M3_0x40A_NOTIFICATION.md (R-M.3.1, R-M.3.2, "
                 "R-M.3.3).\n");
-    std::printf("RED: no 0x40A send exists yet — positive cases FAIL, "
-                "negative case passes trivially.\n");
-    std::printf("Requires NO TradeStation Desktop processes running.\n");
+    std::printf("M.3 status: 0x40A send and receiver fixture are implemented; "
+                "the historical RED baseline is retained in the handoff.\n");
+    std::printf("Desktop/TSDev running state is not a prerequisite; this test uses its own receiver fixture.\n");
     std::printf("Cases: 3 verify-success (Strat/Ind/Func) + failed-verify "
                 "(negative) + delete-success + batch-reuse (3 cycles) + "
                 "TradingApp + ShowMe + receiver-aware single + "

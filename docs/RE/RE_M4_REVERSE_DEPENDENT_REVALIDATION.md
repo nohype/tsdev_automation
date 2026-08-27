@@ -1,7 +1,7 @@
 # RE_M4 — Reverse-Dependent Revalidation (`FUN_004D91E0`)
 
 > **Status:** Research-only findings note for Workstream M, slice M.4.
-> **Date:** 2026-08-25
+> **Date:** 2026-08-26
 >
 > **CORRECTION NOTICE (2026-08-25, PM-applied):** The original note inverted the
 > contract-change gate logic in §1.6, §1.7, §2, §3.3, §3.4, and the R-M.4.2/R-M.4.3
@@ -20,12 +20,25 @@
 > test code was changed for this task.
 > **Method:** Ghidra static analysis of `TSDev.exe` and `orlib20.dll` in the
 > `TSDevAnalysis` project. PE export-table parsing via `pefile` (Python) to map
-> ordinal-only exports to RVAs. No dynamic trace was captured for this slice;
-> where static evidence is insufficient, the gap is recorded.
+> ordinal-only exports to RVAs. No TSDev reverse-traversal dynamic trace was
+> captured for the original slice; §8 adds runtime diagnostic evidence for the
+> linker/object-code behavior. Where static evidence is insufficient, the gap
+> is recorded.
 > **Binaries analyzed (read-only):**
 > `C:\Program Files (x86)\TradeStation 9.5\Program\TSDev.exe`,
 > `...\orlib20.dll` (baseline `9.50.01.3344`, SHA-256
 > `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18`).
+>
+> **CORRECTION NOTICE (2026-08-26):** The earlier pre-linker analysis in §§5.3–5.4
+> (including its Option B2 reverse-by-inverting-forward recommendation), §6, and
+> the R-M.4.5 answer is historical and superseded for production by the
+> linker-based approach in §8.7. The current implementation calls the linker
+> (ordinal 85), reads linked
+> per-element dep-lists, and does not use `GetDependencies` or
+> `_GetStaticDependencyList@12` for reverse-dependent enumeration. The §8
+> diagnostic figures are unverified historical/transient evidence, not M.4
+> acceptance evidence. CLI-created object code currently has version=0, which
+> leaves linker element arrays empty and blocks the M.4 dependency test.
 
 ---
 
@@ -76,12 +89,12 @@ ordinal 487, `_GetDynamicDependencyList@12` ordinal 489,
 The reverse-dependent set TSDev traverses is built in TSDev.exe from the
 warehouse master records, not from an orlib20 reverse-dependency export.
 
-**Recommendation (detailed in §7):** The CLI can replicate the traversal by
-composing existing orlib20 primitives (`GetWarehouse`/`Ordinal_10`, the
-master-record enumeration already used by `exists`, and `_VerifyModule_New@20`
-per dependent), plus a TSDev-equivalent contract-change comparison over
-warehouse record metadata. No coupling to `FUN_004D91E0` is required or
-permitted.
+**Historical recommendation (superseded by §8.7):** The original note proposed
+composing `GetWarehouse`/`Ordinal_10`, master-record enumeration, and
+`_VerifyModule_New@20` with a TSDev-equivalent metadata comparison. The current
+CLI implementation instead composes `_LoadMasterRecsEX@16`, Ordinal_28, the
+linker (ordinal 85), Ordinal_70, and `_VerifyModule_New@20`, scanning linked
+per-element dep-lists. It does not use `GetDependencies` for this path.
 
 ---
 
@@ -131,7 +144,7 @@ void __fastcall FUN_004d9480(undefined4 *param_1) {
 ```
 
 So `FUN_004D91E0(this=compiler, category, subtype, ProgId)`. The compiler
-object layout (confirmed by M.1, `docs/PM_WORKING_MEMORY.md` line 222, and
+object layout (confirmed by M.1, `docs/M1_HANDOFF.md` §R-M.1.2, and
 `FUN_00451800` at `0x00451800`): `+0x08`=category, `+0x0C`=subtype,
 `+0x10`=ProgId, `+0x18`=HWND (notification window). `+0x00` and `+0x04` are
 result accumulators zeroed before the call.
@@ -166,7 +179,8 @@ The primary-flag (`ECX`) is computed at `0x004d9278`–`0x004d928b`:
 So the primary-flag is 1 only when the current `(category, ProgId)` matches the
 compiler object's saved root `(+0x08, +0x10)`. This is the "+0x10 root
 bookkeeping/primary-flag selection" noted in prior RE
-(`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F.1).
+(`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F
+("Disproved or non-causal hypotheses")).
 
 Decompiled verify + result handling:
 
@@ -753,7 +767,7 @@ to have an enlarged stack for this path).
 - **Cycle safety**: not guaranteed by an explicit guard. The protection is
   implicit (verified flag + contract-change gate). Whether the warehouse
   prevents cycles in the reverse-dependent set is **not proven statically**
-  — see Gaps §8.
+  — see §7 ("Gaps / Open Questions").
 
 ---
 
@@ -989,15 +1003,15 @@ All ordinals 10, 28, 68, 69, 70, 71 are **ordinal-only `[NONAME]` exports**
 `GetProcAddress(hModule, MAKEINTRESOURCEA(ordinal))` — the same mechanism the
 CLI already uses for ordinals 66/67 (M.1).
 
-#### 5.3 What TSDev does that the CLI would need to replicate
+#### 5.3 Historical pre-linker implementation snapshot (superseded by §8.7)
 
 1. **Root verify**: `_VerifyModule_New@20` — the CLI already does this.
 2. **Reverse-dependent enumeration**: TSDev builds a `CELPrograms` BST from
    warehouse SafeArray data (command `0x0D` `ProgramById` via the worker
-   thread, or cached `InitGlobalLookup` BST). The CLI does not currently
-   enumerate reverse dependents. The existing `exists` enumeration
-   (`_LoadMasterRecsEX@16` / `_GetMasterRecsBuf@12`) enumerates **all** records
-   of a type, not the reverse-dependent subset.
+   thread, or cached `InitGlobalLookup` BST). In the historical pre-linker
+   snapshot, the CLI did not enumerate reverse dependents. Its existing
+   `exists` enumeration (`_LoadMasterRecsEX@16` / `_GetMasterRecsBuf@12`)
+   enumerated **all** records of a type, not the reverse-dependent subset.
 3. **Contract-change comparison**: `FUN_004d9040` compares two warehouse
    records' metadata fields. The CLI would need to read the old and new
    records (via `Ordinal_28`/`Ordinal_69` or `_GetMasterRecByType@16`) and
@@ -1008,7 +1022,7 @@ CLI already uses for ordinals 66/67 (M.1).
    visited-set. A CLI replication should use an explicit visited-set (safer
    than TSDev's implicit approach).
 
-#### 5.4 (a) Does a single exported reverse-dependent API exist?
+#### 5.4 (a) Historical export-availability snapshot (superseded as production guidance)
 
 **No.** orlib20.dll exports no "reverse-dependent revalidation" or
 "reverse-dependent enumeration" API. The closest exports
@@ -1016,7 +1030,7 @@ CLI already uses for ordinals 66/67 (M.1).
 `_GetStaticDependencyList@12`) are **forward** dependency APIs. The
 reverse-dependent traversal is TSDev.exe-private.
 
-#### 5.4 (b) Composable primitives
+#### 5.4 (b) Historical composable-primitives analysis (superseded by §8.7)
 
 A minimal behavioral replication of `FUN_004D91E0` using orlib20 primitives:
 
@@ -1044,10 +1058,10 @@ A minimal behavioral replication of `FUN_004D91E0` using orlib20 primitives:
    cycles — a **stricter** guard than TSDev's implicit one.
 5. Call `_VerifyModule_New@20` per dependent.
 
-#### 5.4 (c) Recommendation
+#### 5.4 (c) Historical recommendation (superseded by §8.7)
 
-**Recommend Option B2 (reverse-by-inverting-forward) using exported orlib20
-APIs**, because:
+**The original note recommended Option B2 (reverse-by-inverting-forward) using
+exported orlib20 APIs**, because:
 
 - It uses only **exported** orlib20 primitives (`GetDependencies` (ord 487),
   `_GetStaticDependencyList@12` (ord 531), `_GetMasterRecByType@16` (ord 510,
@@ -1076,28 +1090,29 @@ and "least complexity" principles.
 revalidation. The closest single export is `GetDependencies` (forward), which
 is a building block for Option B2, not a complete solution.
 
-### Answer (R-M.4.5)
+### Historical answer (R-M.4.5; superseded by the current linker/ordinal path)
 
-- **(a)** No. orlib20.dll does not export a reverse-dependent revalidation or
-  reverse-dependent enumeration API. The reverse-dependent traversal is
-  TSDev.exe-private (`FUN_004D91E0`). The dependency exports
+- **(a) Historical finding:** No. orlib20.dll does not export a reverse-dependent
+  revalidation or reverse-dependent enumeration API. The reverse-dependent
+  traversal is TSDev.exe-private (`FUN_004D91E0`). The dependency exports
   (`GetDependencies`, `_GetDynamicDependencyList@12`,
   `_GetStaticDependencyList@12`) are **forward** only.
-- **(b)** The traversal can be composed from exported orlib20 primitives:
-  `_VerifyModule_New@20` (verify), `GetDependencies`/`_GetStaticDependencyList@12`
-  (forward deps, to invert), `_GetMasterRecByType@16` (record reads),
-  `_DeleteDependencyList@4` (cleanup). The contract-change check is
-  replicable by comparing the documented metadata field offsets.
-- **(c)** Recommend **Option B2** (reverse-by-inverting-forward, using
-  exported APIs + explicit visited-set). It exactly matches TSDev's
-  observable behavior (recompile each reverse dependent) without coupling to
-  TSDev.exe or orlib20 internals, and is stricter on cycle safety.
+- **(b) Historical composition:** The original analysis composed the traversal
+  from exported orlib20 primitives: `_VerifyModule_New@20` (verify),
+  `GetDependencies`/`_GetStaticDependencyList@12` (forward deps, to invert),
+  `_GetMasterRecByType@16` (record reads), and `_DeleteDependencyList@4`
+  (cleanup). The contract-change check was replicated by comparing the
+  documented metadata field offsets.
+- **(c) Historical recommendation (superseded):** The original note recommended
+  **Option B2** (reverse-by-inverting-forward, using exported APIs + an explicit
+  visited-set). It was retained for its historical RE value, but is not the
+  current production path; see §8.7 for the linker (ordinal 85) approach.
 
 ---
 
-## 6. Synthesis & Implementation Recommendation
+## 6. Historical Synthesis & Implementation Recommendation (superseded by §8.7)
 
-### What the CLI should do to replicate `FUN_004D91E0`
+### What the original plan proposed for replicating `FUN_004D91E0`
 
 1. **Root verify**: continue using `_VerifyModule_New@20` (ordinal 700) —
    already implemented.
@@ -1142,8 +1157,9 @@ from exported primitives; there is no single orlib20 export that performs it.
 
 ### Key parity note
 
-The prior RE conclusion (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F.5) that
-"reverse-dependent revalidation is not required for root linkability" is
+The prior RE conclusion (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F
+("Disproved or non-causal hypotheses")) that "reverse-dependent revalidation
+is not required for root linkability" is
 **consistent** with these findings: `FUN_004D91E0`'s root verify
 (`_VerifyModule_New@20`) is the linkability-critical step; the
 reverse-dependent cascade is a propagation step for already-running
@@ -1181,8 +1197,9 @@ verify is linkable; reverse-dependent revalidation is a **parity** feature
    set (vs. the forward `GetDependencies` path) was not fully traced. The
    worker-thread command `0x0D` (`ProgramById`) is used by `FUN_004d75b0`,
    but how `ProgramById` returns a **set** of reverse dependents (rather than
-   a single record) is not fully resolved statically. This gap does not
-   block Option B2 (which uses forward-dep inversion), but is noted.
+   a single record) is not fully resolved statically. This gap did not block the
+   historical Option B2 analysis (which used forward-dep inversion); the current
+   production path is the linker-based approach in §8.7.
 
 4. **Contract-change field semantics.** The exact semantic meaning of each
    compared field in `FUN_004d9040` (e.g., what `+0x15` bit 2 represents) is
@@ -1192,12 +1209,15 @@ verify is linkable; reverse-dependent revalidation is a **parity** feature
    flips would label the fields. The CLI replication can compare the same
    offsets without knowing the semantic names.
 
-5. **No dynamic trace captured for M.4.** All findings are static. A Frida
-   trace of a UI Verify that triggers reverse-dependent revalidation (e.g.,
-   modifying a Function that a Strategy calls, then verifying the Function)
-   would confirm: (a) the recursion order, (b) the `+0x55` flag behavior,
-   (c) the `+0x18` overload, (d) the failure-reporting aggregate. This is a
-   recommendation, not a blocker for the static findings.
+5. **No TSDev UI reverse-traversal trace was captured for the original M.4
+   slice.** The §8 runtime diagnostic is not a TSDev UI trace; it records
+   linker/object-code behavior and does not establish a current acceptance
+   result. A Frida trace of a UI Verify that triggers reverse-dependent
+   revalidation (e.g., modifying a Function that a Strategy calls, then
+   verifying the Function) would confirm: (a) the recursion order, (b) the
+   `+0x55` flag behavior, (c) the `+0x18` overload, and (d) the
+   failure-reporting aggregate. This remains a recommendation, not a blocker
+   for the static findings.
 
 6. **`compiler+0x04` (dependent-failure aggregate) downstream consumption
    not exhaustively traced.** §4.3 confirms — by decompiling `FUN_00451800`
@@ -1278,9 +1298,9 @@ verify is linkable; reverse-dependent revalidation is a **parity** feature
 | `0x101A9060` | 489 | `_GetDynamicDependencyList@12` | **forward** dynamic dep list | §5.1 |
 | `0x101A8F70` | 531 | `_GetStaticDependencyList@12` | **forward** static dep list | §5.1 |
 | `0x101A9150` | 396/397 | `_DeleteChangedModulesList@4` / `_DeleteDependencyList@4` | free dep list | §5.1 |
-| `0x101A0460` | 510 | `_GetMasterRecByType@16` | master-record lookup by type (named export) — used by Option B2 / §6 step 3 | §5.4(c), §6 |
-| `0x101A5360` | 568 | `_LoadMasterRecsEX@16` | enumerate master records of a type (named export) — used by `exists` and Option B2 / §6 step 2 | §5.4(c), §6 |
-| `0x101A0C70` | 512 | `_GetMasterRecsBuf@12` | master-records buffer accessor (named export) — used by `exists` and Option B2 / §6 step 2 | §5.4(c), §6 |
+| `0x101A0460` | 510 | `_GetMasterRecByType@16` | master-record lookup by type (named export) — mentioned in the historical Option B2 / §6 analysis | §5.4(c), §6 |
+| `0x101A5360` | 568 | `_LoadMasterRecsEX@16` | enumerate master records of a type (named export) — used by `exists`; mentioned in the historical Option B2 / §6 analysis | §5.4(c), §6 |
+| `0x101A0C70` | 512 | `_GetMasterRecsBuf@12` | master-records buffer accessor (named export) — used by `exists`; mentioned in the historical Option B2 / §6 analysis | §5.4(c), §6 |
 | `0x101CFF60` | — | (internal) | `FUN_101cff60` — master-record lookup (used by Ordinal_28, _VerifyModule_New) | §1.4 |
 | `0x101D43A0` | — | (internal) | type→power-type expansion | §5.2 |
 
@@ -1301,22 +1321,22 @@ verify is linkable; reverse-dependent revalidation is a **parity** feature
   - ordinal **512** `_GetMasterRecsBuf@12`, RVA `0x1A0C70`
     (`0x101A0C70`)
   All three are **named exports** (verified via `pefile`: `e.name` is
-  non-`None` for each). The Option B2 recommendation (§5.4(c), §6) relies
-  only on these named exports plus `GetDependencies`/`_GetStaticDependencyList@12`
-  /`_DeleteDependencyList@4`/`_VerifyModule_New@20` — all named — so it
-  satisfies the AGENTS.md rule that the recommendation use only exported
-  orlib20 primitives.
+  non-`None` for each). The historical Option B2 recommendation (§5.4(c), §6)
+  relied on these named exports plus `GetDependencies`/
+  `_GetStaticDependencyList@12`/`_DeleteDependencyList@4`/
+  `_VerifyModule_New@20`; that recommendation is superseded by the
+  linker-based production path documented in §8.7.
 
 ### Prior RE cited
 
 - `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §6 (Verify chain static evidence)
-- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F.1 (+0x10 / outer recursive
-  wrapper), §F.5 (reverse-dependent revalidation not required for root
-  linkability)
+- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F ("Disproved or non-causal
+  hypotheses") — +0x10 / outer recursive wrapper and the finding that
+  reverse-dependent revalidation is not required for root linkability
 - `docs/RE/RE_M3_0x40A_NOTIFICATION.md` (format pattern + GetWarehouse RVA
   `0x1A9650` cross-reference)
-- `docs/PM_WORKING_MEMORY.md` line 222 (compiler field layout: +0x08
-  category, +0x0C subtype, +0x10 ProgId, +0x18 HWND)
+- `docs/M1_HANDOFF.md` §R-M.1.2 (compiler field layout: +0x08 category,
+  +0x0C subtype, +0x10 ProgId, +0x18 HWND)
 - `docs/SIGNATURE_CATALOG.md` §4.7 (GetWarehouse RVA `0x1A9650`), §5
   (ordinals 66/67 resolution mechanism)
 
@@ -1377,7 +1397,7 @@ Ghidra analysis of `MakeSymbol` (RVA 0x10021800) confirms that the value written
 Runtime diagnostic confirmed:
 - **Strategies (cat 0):** dep-lists exist (size=38 bytes, 2 entries per element). First 10 tested had only 0xBB8/0xBB9 entries (no function calls). Strategies that call Functions would have 0xFA3 entries.
 - **Indicators (cat 2):** dep-lists exist (size 35/38/80). 0xFA3 entries found in items that call Functions.
-- **Functions (cat 4):** dep-lists are empty (size=0, ptr=NULL for all elements). This is by design — Functions don't have "inputs" in the same way Indicators/Strategies do.
+- **Functions (cat 4):** dep-lists are empty (size=0, ptr=NULL for all elements), observed in the sampled existing Functions; design intent is unconfirmed.
 
 ### 8.7 M.4 implementation approach (linker-based, bypasses GetDependencies)
 
@@ -1393,5 +1413,5 @@ This bypasses the broken GetDependencies entirely. The linker call requires a pa
 
 ### 8.8 Known limitation
 
-This approach only works for items where the linker can populate element arrays (existing TSDev-created items). CLI-compiled items have empty element arrays due to the link defect (version=0, element count=0). This is the Workstream L root cause, not an M.4 issue.
+This approach only works for items where the linker can populate element arrays (existing TSDev-created items). CLI-compiled items have empty element arrays due to the separate CLI-created object-code defect (version=0, element count=0), which is tracked by M.3b. M.4 remains blocked until that defect is resolved; this is not an M.4 acceptance result.
 

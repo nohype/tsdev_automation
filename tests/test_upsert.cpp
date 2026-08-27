@@ -1,16 +1,14 @@
 // test_upsert.cpp
 //
-// Integration test (RED-GREEN) for the library-level primitives that the
-// `upsert` CLI subcommand will compose. Upsert = "insert or update": if the
-// item does not exist, insert it; if it does exist, modify it in place.
+// Library-level integration test for the primitives composed by the implemented
+// `upsert` CLI subcommand. Upsert = "insert or update": if the item does not
+// exist, insert it; if it does exist, modify it in place.
 //
-// TVS-F.3 subtask 1a (TDD scaffold): this test exercises the library-level
-// composition (findExistPos + createEntry + saveSource + verifyModule +
-// modifyEntry + deleteEntry) that the future `upsert` CLI subcommand will
-// wrap. All of these primitives are already implemented in tsdev_lib.cpp, so
-// the library-level assertions in this test PASS today. The test establishes
-// the test infrastructure for the upsert feature; the CLI-level E2E test is
-// a separate subtask.
+// Historical TDD transition note (TVS-F.3 subtask 1a): this test was introduced
+// as a RED-GREEN test of the library-level composition (findExistPos +
+// createEntry + saveSource + verifyModule + modifyEntry + deleteEntry). The
+// primitives are implemented in tsdev_lib.cpp. The CLI-level E2E test is a
+// separate subtask.
 //
 // The KEY upsert invariant verified here: after a modifyEntry, the ProgId
 // must NOT change (modification reuses the existing ProgId — no
@@ -32,7 +30,7 @@
 //   9. findExistPos(name, Strategy) — ASSERT returns the SAME ProgId
 //      (KEY upsert invariant: ProgId preserved after modify)
 //  10. deleteEntry(Strategy, name) — cleanup
-//  11. closeWarehouse() — best-effort flush
+//  11. closeWarehouse() — assert explicit flush status
 //  12. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -63,9 +61,9 @@ const char* kTestName = "zzz_test_upsert_probe";
 
 // Minimal valid EasyLanguage strategy source (initial). In EasyLanguage
 // `{ ... }` is a multi-line COMMENT block, so the actual code must be OUTSIDE
-// it. The leading comment names the strategy (TSDev convention); the body
-// issues a simple market buy order. This mirrors the proven source from
-// test_exists.cpp.
+// it. The brace text is arbitrary fixture source content only; it is not a
+// metadata convention or lookup mechanism. The name and ProgId come from
+// warehouse records/APIs. This mirrors the proven source from test_exists.cpp.
 const char* kSourceA =
     "{ zzz_test_upsert_probe }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -263,10 +261,14 @@ DWORD WINAPI runTest(LPVOID param) {
         st->exitCode = fail("cleanup deleteEntry failed", 90);
     }
 
-    // --- Step 11: closeWarehouse (best-effort flush) ---
+    // --- Step 11: closeWarehouse ---
     std::fprintf(stdout, "\n[11] closeWarehouse()...\n");
-    lib->closeWarehouse();
-    std::fprintf(stdout, "    closeWarehouse done\n");
+    bool closed = lib->closeWarehouse();
+    std::fprintf(stdout, "    closeWarehouse = %s\n",
+                 closed ? "true" : "false");
+    if (!closed) {
+        st->exitCode = fail("closeWarehouse returned false", 95);
+    }
 
     // --- Step 12: Result ---
     if (st->exitCode == 0) {

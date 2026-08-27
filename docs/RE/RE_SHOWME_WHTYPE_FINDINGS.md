@@ -204,12 +204,27 @@ Using subtype 3 would give expanded whType 770 (0x0302), which is NOT in the .el
 
 ---
 
-## 3. Question 2: CELCompiler +0x10 field (0xa02)
+## 3. Question 2: CELCompiler +0x10 field (historical `0xa02` finding; superseded)
 
-### Hypothesis
+> **CURRENT GUIDANCE — operation ProgId assignment:** The former guidance that
+> `CELCompiler +0x10 = 0xa02` is superseded. `TsDevLib::verifyModule`
+> writes the operation's `progId` to compiler-object `+0x10`: the TSDev-parity
+> field layout is documented at `src/tsdev_lib.cpp:1641-1646` and the live
+> assignments are at `src/tsdev_lib.cpp:1672-1679`. The same `progId` is passed
+> through `callVerify` to `_VerifyModule_New` (`src/tsdev_lib.cpp:173-183`,
+> call site `src/tsdev_lib.cpp:1711-1718`). For an insert, `TsDevLib::createEntry`
+> obtains that value from `CreateEntryEX` (`src/tsdev_lib.cpp:1356-1375`); for an
+> existing item, `TsDevLib::findExistPos` uses the value returned by
+> `FindExistPos` (`src/tsdev_lib.cpp:1346-1354`). For ShowMe, retain the
+> confirmed category 2, subtype 5, and expanded whType 1282 mapping above;
+> `0xa02` is not the current compiler-object `+0x10` assignment.
+
+### Historical RE finding (superseded for current CLI guidance)
+
+### Historical hypothesis
 The hardcoded `0xa02` value is the same for ShowMe as for the 4 current types.
 
-### Verdict: **LIKELY — 0xa02 is a type-independent constant**
+### Historical verdict: **LIKELY — 0xa02 was a type-independent constant** (superseded)
 
 ### Evidence
 
@@ -232,52 +247,84 @@ iVar7 = _VerifyModule_New_20(0, uVar3, uVar6, 0, iVar4);  // verify with +0x10=0
 
 The internal orlib20 verify wrapper leaves +0x10 at 0 and still works.
 
-#### 3c. Current CLI sets +0x10 to 0xa02 for ALL types
+#### 3c. Historical CLI state: +0x10 was set to 0xa02 (superseded)
 
-From `src/tsdev_lib.cpp:1135`:
+A prior CLI implementation contained:
 ```cpp
 *(reinterpret_cast<int*>(static_cast<char*>(compilerMem) + 0x10)) = 0xa02;
 ```
 
-This value was observed from Frida traces of TSDev.exe and is used for Strategy (cat 0), Indicator (cat 2), Function (cat 4), and TradingApp (cat 2, subtype 0x14). It is identical across all 4 types.
+This historical value was observed from Frida traces of TSDev.exe and was
+recorded as used for Strategy (cat 0), Indicator (cat 2), Function (cat 4),
+and TradingApp (cat 2, subtype 0x14). It was recorded as identical across all
+four types. The current tracked implementation instead assigns the operation
+`progId`; see the current guidance at the start of this section.
 
-#### 3d. 0xa02 is NOT a whType-specific value
+#### 3d. Historical interpretation: 0xa02 was NOT a whType-specific value
 
-0xa02 = (0x0a << 8) | 2 = VolatilityModel expanded whType. But it's used for ALL component types (Strategy, Indicator, Function, TradingApp), so it's NOT a type-dependent parameter. It appears to be a flags/mode constant that TSDev.exe sets on the CELCompiler object.
+Historically, `0xa02 = (0x0a << 8) | 2` was identified as the VolatilityModel
+expanded whType. The earlier finding recorded it as used for all component types
+(Strategy, Indicator, Function, TradingApp), so it was not treated as a
+type-dependent parameter; it was instead interpreted as a flags/mode constant
+that TSDev.exe set on the CELCompiler object. This interpretation is retained
+for historical context only and is superseded by the current ProgId assignment.
 
-#### 3e. VerifyModule_New does not read +0x10 in a type-dependent way
+#### 3e. Historical VerifyModule_New observation: +0x10 was not re-derived from whType
 
 In `_VerifyModule_New@20`, the CELCompiler object (param_5) is passed to `CELBasicCompiler::CompileText`. The expanded whType is computed separately via `FUN_101d4280(param_2, local_44 >> 8)` and passed as a separate argument to CompileText. The +0x10 field is not re-derived from the whType inside VerifyModule_New.
 
-### Conclusion
+### Historical conclusion (superseded)
 
-Since 0xa02 is:
-1. Identical for all 4 current types (including 2 different categories and 2 subtypes of category 2)
-2. Not set by orlib20's own internal verify wrapper (VerifyATechnique leaves it at 0)
-3. Not a whType-derived value (it's the same for Strategy cat=0 and Indicator cat=2)
+The historical evidence recorded that 0xa02 was:
+1. Identical for all 4 observed types (including 2 different categories and 2
+   subtypes of category 2)
+2. Not set by orlib20's own internal verify wrapper (VerifyATechnique leaves it
+   at 0)
+3. Not a whType-derived value (it was the same for Strategy cat=0 and Indicator
+   cat=2)
 
-It is **almost certainly a type-independent constant** that will be the same for ShowMe. The implementation should continue using 0xa02.
+The historical conclusion was that it was **almost certainly a type-independent
+constant** that would be the same for ShowMe, with a recommendation to continue
+using 0xa02. That recommendation is superseded. Current guidance is to assign
+the operation's `progId` to compiler `+0x10`, as documented at the start of this
+section and evidenced by `src/tsdev_lib.cpp:1641-1679`.
 
-**Confidence: LIKELY** (not CONFIRMED because TSDev.exe could not be opened in Ghidra to observe the actual value TSDev sets for ShowMe. A Frida trace of TSDev.exe creating a ShowMe would provide definitive confirmation.)
+**Historical confidence: LIKELY** (not CONFIRMED because TSDev.exe could not be
+opened in Ghidra to observe the actual value TSDev set for ShowMe).
 
 ---
 
-## 4. Question 3: enumerateRecords subtype filtering
+## 4. Question 3: enumerateRecords subtype filtering (historical finding; current source status)
 
-### Hypothesis
-ShowMe (subtype 0x04 in the hypothesis, actually 0x05) needs the same kind of subtype filtering as TradingApp in Phase 1, and possibly Phase 2.
+### Historical hypothesis
+ShowMe (subtype 0x04 in the hypothesis, actually 0x05) needs the same kind of subtype filtering as TradingApp in Phase 1, and possibly Phase 2. This is a historical hypothesis, not current implementation guidance.
 
-### Verdict: **CONFIRMED — Phase 1 needs subtype filtering; Phase 2 needs no change**
+### Historical verdict: **Phase 1 needed subtype filtering; Phase 2 needed no change** (superseded for current Phase 1 guidance)
+
+> **CURRENT GUIDANCE — category-2 filtering and Phase 2 buffer:** The historical
+> incomplete-filter and three-element-buffer statements below do not describe
+> the tracked source. `TsDevLib::enumerateRecords` is implemented at
+> `src/tsdev_lib.cpp:1495-1627`. Its Phase 1 `_LoadMasterRecsEX@16` loop is at
+> `src/tsdev_lib.cpp:1502-1563`; the current category-2 filter is the branch at
+> `src/tsdev_lib.cpp:1543-1549`. That branch fully filters the currently
+> supported category-2 queries: TradingApp keeps raw subtype `0x14`, Indicator
+> keeps raw subtypes `0x00`/`0x01`, and ShowMe keeps raw subtypes `0x03`/`0x05`.
+> The Phase 2 type-filter buffer is `int typeFilterBuf[16] = {};` at
+> `src/tsdev_lib.cpp:1589-1593`, and it is passed to the BST search at
+> `src/tsdev_lib.cpp:1601-1604`. There is no current `int typeFilterBuf[3]`
+> overflow or pending ShowMe-filter change in the tracked source.
 
 ### Evidence
 
-#### 4a. Phase 1: _LoadMasterRecsEX returns ALL category-2 subtypes
+#### 4a. Historical RE observation: _LoadMasterRecsEX returns ALL category-2 subtypes
 
-`_LoadMasterRecsEX@16` (0x101a5360) calls `FUN_101d43a0(category, typeArray)` to get ALL expanded whTypes for the category, then iterates each, loading records into a single buffer. For category 2, this returns records for ALL subtypes (Indicator, PaintBar, ShowMe, Expert, TradingApp, etc.) mixed together.
+`_LoadMasterRecsEX@16` (0x101a5360) calls `FUN_101d43a0(category, typeArray)` to get ALL expanded whTypes for the category, then iterates each, loading records into a single buffer. For category 2, this returns records for ALL subtypes (Indicator, PaintBar, ShowMe, Expert, TradingApp, etc.) mixed together before the caller applies its query-specific filter. This remains the reason the current Phase 1 branch is required.
 
 The subtype at record offset 0xE9 is the **raw subtype** (confirmed by FUN_10158fb0: `*(char*)(rec + 0xe9) = (char)param_2`).
 
-#### 4b. Current Phase 1 filter (tsdev_lib.cpp:1031-1036)
+#### 4b. Historical Phase 1 source snapshot (superseded)
+
+The following was the older Phase 1 implementation (the former `tsdev_lib.cpp:1031-1036` range); it is retained as historical evidence only:
 
 ```cpp
 if (category == 2) {
@@ -287,32 +334,31 @@ if (category == 2) {
 }
 ```
 
-This filter is **incomplete** — it only distinguishes TradingApp from Indicator. It does NOT exclude PaintBar, ShowMe, Expert, etc. from Indicator queries. This is a pre-existing issue.
+That historical filter was **incomplete** — it only distinguished TradingApp from Indicator and did not exclude PaintBar, ShowMe, Expert, etc. from Indicator queries. It is not a current-source claim; the current branch is identified in the current-guidance block above.
 
-#### 4c. ShowMe Phase 1 filter requirement
+#### 4c. Historical ShowMe Phase 1 filter recommendation (superseded; already implemented)
 
-For ShowMe (subType == 0x05), a filter must be added to keep only ShowMe records:
+The historical recommendation for ShowMe (`subType == 0x05`) was:
+
 ```cpp
 if (subType == 0x05 && recSubType != 0x05 && recSubType != 0x03) continue;
 ```
 
-This matches both raw subtypes 3 and 5 (both map to ShowMe per ConvertToPowerType and GetFileTypeName1).
+This matches both raw subtypes 3 and 5 (both map to ShowMe per ConvertToPowerType and GetFileTypeName1). The recommendation to add this condition is retained for provenance only; the condition is already present in the current `TsDevLib::enumerateRecords` category-2 branch at `src/tsdev_lib.cpp:1543-1549`. No additional ShowMe filtering change is pending.
 
-**Important:** Since we use subtype 5 for CreateEntryEX, newly created ShowMe records will have 0x05 at offset 0xE9. However, existing records created by TSDev.exe might use either 3 or 5. The filter should match both.
+**Historical note:** Since the implementation used subtype 5 for CreateEntryEX, newly created ShowMe records were expected to have 0x05 at offset 0xE9. Existing records created by TSDev.exe might use either 3 or 5, so the historical recommendation matched both.
 
-#### 4d. Phase 2: BST search — no subtype filtering needed
+#### 4d. Phase 2: BST search — no subtype narrowing is needed
 
-Phase 2 uses `FUN_101d43a0` (TypeConvert) to build a type filter array, then calls `FUN_101d05e0` (BST search wrapper) with this array. The BST search searches across ALL category-2 subtypes (the type filter includes all expanded whTypes for the category).
+Phase 2 uses `FUN_101d43a0` (TypeConvert) to build a type filter array, then calls `FUN_101d05e0` (BST search wrapper) with this array. The current implementation is the Phase 2 range at `src/tsdev_lib.cpp:1570-1624`; it builds the category-wide array at `src/tsdev_lib.cpp:1589-1593` and calls the BST wrapper at `src/tsdev_lib.cpp:1601-1604`. The BST search therefore searches across ALL category-2 subtypes (the type filter includes all expanded whTypes for the category), with no additional subtype narrowing in Phase 2.
 
-The BST search finds a node by name, and the verbatim name is read from it. The ProgId is obtained separately via `FindExistPos(searchName, type)` which uses `getCategory(type) = 2`.
+The BST search finds a node by name, and the verbatim name is read from it. The ProgId is obtained separately via `TsDevLib::findExistPos` / `FindExistPos` (`src/tsdev_lib.cpp:1346-1354`), which uses `getCategory(type) = 2` for ShowMe.
 
-This means Phase 2 does NOT filter by subtype — it could match any category-2 record with the same name. This is the **same pre-existing behavior for all category-2 types** (Indicator, TradingApp). ShowMe does not need any special Phase 2 handling beyond what already exists.
+This is the same behavior for all current category-2 types (Indicator, TradingApp, and ShowMe). ShowMe needs no special Phase 2 handling beyond the existing path. If a name collision exists (for example, an Indicator and a ShowMe with the same name), Phase 2 can match a category-2 record without subtype narrowing; this is a general category-2 behavior, not a ShowMe-specific pending fix.
 
-In practice, this is not a problem because component names are typically unique across all category-2 subtypes. If a name collision exists (e.g., an Indicator and a ShowMe with the same name), Phase 2 might return the wrong record, but this is a pre-existing issue not specific to ShowMe.
+#### 4e. Historical buffer-size note (superseded)
 
-#### 4e. Buffer size note (pre-existing issue)
-
-The Phase 2 code allocates `int typeFilterBuf[3]` but TypeConvert for category 2 writes 12 dwords. This is a pre-existing buffer overflow that happens to work because the overflowed data doesn't corrupt critical state. This is NOT specific to ShowMe and should be fixed separately.
+An earlier source snapshot allocated `int typeFilterBuf[3]` while TypeConvert for category 2 writes 12 dwords. That historical observation described a buffer overflow in the older implementation. It is not a current-source claim: the tracked Phase 2 code now allocates `int typeFilterBuf[16] = {};` at `src/tsdev_lib.cpp:1592` and passes that buffer through `callBuildTypeArray` at `src/tsdev_lib.cpp:1593`. No current three-element buffer overflow is supported by the repository.
 
 ---
 
@@ -368,8 +414,8 @@ The wide-char name function returns `L"Application"` for 0x1402 (TradingApp), wh
 | Question | Confidence | Explanation |
 |----------|-----------|-------------|
 | Q1: ShowMe whType | **CONFIRMED** | 4 independent Ghidra functions (GetFileTypeName1, FUN_101583c0, FUN_1019f510, ConvertToPowerType + FUN_101d4280) all agree: ShowMe = subtype 3/5, expanded 0x502 = 1282. The .ell filename set corroborates. The hypothesis (subtype 4, expanded 1026) is definitively PaintBar. |
-| Q2: CELCompiler +0x10 | **LIKELY** | 0xa02 is identical for all 4 current types (2 categories, 2 subtypes). orlib20's own VerifyATechnique leaves it at 0. It's not type-derived. However, TSDev.exe could not be opened to observe the actual value for ShowMe. A Frida trace would confirm definitively. |
-| Q3: enumerateRecords filtering | **CONFIRMED** (Phase 1), **CONFIRMED** (Phase 2 no change) | Phase 1 loads all category-2 subtypes; the 0xE9 field stores the raw subtype; filtering is needed. Phase 2 uses TypeConvert (all subtypes) and doesn't filter by subtype — same for all category-2 types. |
+| Q2: CELCompiler +0x10 | **HISTORICAL LIKELY; SUPERSEDED** | The historical finding recorded 0xa02 as identical for all 4 observed types (2 categories, 2 subtypes); orlib20's own VerifyATechnique leaves it at 0, and the value was not type-derived in that historical analysis. Current `TsDevLib::verifyModule` guidance instead assigns the operation's `progId` to `+0x10` (`src/tsdev_lib.cpp:1629-1679`), then passes it through `callVerify` (`src/tsdev_lib.cpp:173-183`, call site `:1711-1718`). |
+| Q3: enumerateRecords filtering | **HISTORICAL FINDING; CURRENT SOURCE CONFIRMED** | The historical Phase 1 snapshot was incomplete, but current `TsDevLib::enumerateRecords` applies the full supported category-2 filter in `src/tsdev_lib.cpp:1543-1549`. Phase 2 intentionally uses the category-wide TypeConvert array (`src/tsdev_lib.cpp:1589-1604`) and its current buffer is 16 ints, not 3 (`src/tsdev_lib.cpp:1592`). |
 
 ---
 
@@ -390,33 +436,45 @@ The existing `getCategory()` and `getSubType()` functions will correctly decompo
 
 Add "showme" to the type parsing function (alongside "indicator", "tradingapp", etc.).
 
-### 7c. CELCompiler +0x10 field
+### 7c. CELCompiler +0x10 field — current guidance
 
-**No change needed.** Continue using `0xa02` for all types including ShowMe. The existing `verifyModule()` code already uses `getCategory(type)` for the VerifyModule_New whType parameter, which correctly passes category=2 for ShowMe.
+Assign the operation's `progId` to compiler-object `+0x10`; do **not** use the
+historical `0xa02` assignment. The tracked current `TsDevLib::verifyModule`
+implementation writes
+`*(reinterpret_cast<int*>(base + 0x10)) = progId` in
+`src/tsdev_lib.cpp:1629-1679` (field layout at `:1641-1646`, assignment at
+`:1672-1679`) and passes the same `progId` through `callVerify`
+(`src/tsdev_lib.cpp:173-183`, call site `:1711-1718`) to
+`_VerifyModule_New`. For ShowMe, the operation still passes category 2 to the
+API while retaining expanded whType 1282 for the component mapping above.
 
-### 7d. enumerateRecords Phase 1 subtype filter
+### 7d. enumerateRecords Phase 1 subtype filtering — historical recommendation, already implemented
 
-Add ShowMe filtering in `src/tsdev_lib.cpp` around line 1031-1036. Replace:
+The earlier recommendation to add the ShowMe condition is retained in §4c as
+historical provenance only; it is not a current change request. The current
+`TsDevLib::enumerateRecords` implementation is at
+`src/tsdev_lib.cpp:1495-1627`, and its complete supported category-2 filter is
+already present at `src/tsdev_lib.cpp:1543-1549`:
+
 ```cpp
 if (category == 2) {
-    unsigned char recSubType = (unsigned char)rec[kSubTypeOffset];
+    unsigned char recSubType =
+        (unsigned char)rec[kSubTypeOffset];
     if (subType == 0x14 && recSubType != 0x14) continue;
-    if (subType == 0x00 && recSubType == 0x14) continue;
-}
-```
-With:
-```cpp
-if (category == 2) {
-    unsigned char recSubType = (unsigned char)rec[kSubTypeOffset];
-    if (subType == 0x14 && recSubType != 0x14) continue;
-    if (subType == 0x00 && recSubType == 0x14) continue;
+    if (subType == 0x00 && recSubType != 0x00 && recSubType != 0x01) continue;
     if (subType == 0x05 && recSubType != 0x05 && recSubType != 0x03) continue;
 }
 ```
 
+No additional Phase 1 or ShowMe filtering change is pending.
+
 ### 7e. enumerateRecords Phase 2
 
-**No change needed.** Phase 2 uses the same TypeConvert + BST search path for all category-2 types. ShowMe requires no special handling.
+**No change needed.** Phase 2 uses the same TypeConvert + BST search path for all
+current category-2 types. The current `int typeFilterBuf[16] = {};` allocation
+and `callBuildTypeArray` call are at `src/tsdev_lib.cpp:1589-1593`; the BST
+search call is at `src/tsdev_lib.cpp:1601-1604`. ShowMe requires no special
+handling, and the historical three-element-buffer overflow is superseded.
 
 ### 7f. .ell file path generation
 
@@ -438,7 +496,7 @@ if (category == 2) {
 2. Verify the entry appears in TSDev.exe's ShowMe list (not Indicator or PaintBar list).
 3. Test case-insensitive exists for ShowMe (both Phase 1 and Phase 2).
 4. Test delete and modify for ShowMe.
-5. If possible, Frida-trace TSDev.exe creating a ShowMe to confirm the CELCompiler +0x10 field value (would elevate Q2 from LIKELY to CONFIRMED).
+5. **Historical follow-up only (superseded):** Frida-tracing TSDev.exe creating a ShowMe was proposed to confirm the old CELCompiler `+0x10` assumption. The tracked current source now provides the operation `progId` assignment (`src/tsdev_lib.cpp:1641-1679`); no new live trace is implied.
 
 ### 7j. Minimal ShowMe EasyLanguage source
 

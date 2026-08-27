@@ -8,15 +8,16 @@
 // a raw HMODULE, or a byte signature. The resolver:
 //   (a) loads orlib20.dll and captures the base address,
 //   (b) detects the DLL version (3-tier method, TVS-B.2),
-//   (c) resolves every internal function by signature scan (catalog TVS-B.1)
-//       with a fallback to a known-versions manifest,
+//   (c) resolves every internal function by scanning the signature set
+//       selected for the detected version (catalog TVS-B.1),
 //   (d) validates patch sites (expected original bytes) before patches,
 //   (e) hands typed function pointers to the caller.
 //
-// This is a DESIGN ARTIFACT ONLY (header interface). No .cpp implementation
-// file is produced by TVS-B.3; implementation is TVS-B.4, TsDevLib integration
-// is TVS-B.5. Method bodies are declared-only (no inline definitions) — the
-// header compiles standalone; linking requires the future .cpp.
+// This header originated as the TVS-B.3 design interface. The implementation
+// is src/orlib_resolver.cpp (TVS-B.4), and TsDevLib uses it through the
+// resolver integration. Method bodies remain declared-only (no inline
+// definitions); the header compiles standalone and consumers link the
+// implementation library.
 //
 // Target: 32-bit x86 (Win32). orlib20.dll is a 32-bit PE. All function-pointer
 // typedefs use __stdcall for exported (_fn@N decorated) functions and match the
@@ -52,9 +53,10 @@
 //
 //   Trade-off: signature scanning is slower than RVA arithmetic (O(text_size *
 //   sig_len) per target) and depends on the signature remaining unique. Both
-//   are acceptable: the .text section is ~2 MB and there are 13 signatures,
-//   so the full scan completes in milliseconds at startup; uniqueness was
-//   verified (13/13 PASS, scan count = 1) for the tested build.
+//   are acceptable: the .text section is ~2 MB and there are signature
+//   definitions (tracked call targets and patch sites; see
+//   docs/SIGNATURE_CATALOG.md for the current counts), so the full scan
+//   completes in milliseconds at startup.
 //
 // 2. HOW THE VERSION MANIFEST WORKS
 //
@@ -76,28 +78,29 @@
 //   not match, the resolver throws. This separates "untested version"
 //   (warning) from "signatures don't match" (hard error).
 //
-// 3. RESOLUTION ORDER: SIGNATURE SCAN FIRST, MANIFEST FALLBACK
+// 3. MANIFEST ROLE IN SIGNATURE RESOLUTION
 //
-//   The resolver scans signatures FIRST and uses the manifest as a FALLBACK,
-//   not the other way around. Rationale:
-//     - Signatures are self-validating: a unique match proves the function is
-//       there, regardless of what the manifest claims. A manifest RVA is only
-//       a claim; it cannot prove the bytes are correct.
-//     - The manifest's primary value is version DETECTION (is this a known
-//       build?) and PATCH-SITE original-byte lookup (what bytes should be at
-//       this patch site for this version?), not function location. For
-//       patch-site validation, the manifest supplies the expected original
-//       bytes; the signature scan supplies the address.
-//     - If the version is unknown (not in the manifest), signatures may still
-//       match (a minor rebuild often preserves prologue patterns). Scanning
-//       first means an unknown version can still succeed, with only a
-//       warning. If we required a manifest hit first, unknown versions would
-//       be blocked even when the code is functionally identical.
-//     - The manifest CAN supply RVAs as a last-resort fallback for targets
-//       whose signatures fail to match (e.g., the function was rewritten but
-//       the version is known). In that case the manifest entry's recorded
-//       RVAs are used with a warning, accepting the risk that the RVA may be
-//       wrong. This fallback is opt-in and loudly warned.
+//   Runtime address resolution is signature-only. The resolver scans the
+//   selected .text signature set and requires exactly one match for each
+//   target; zero or multiple matches throw OrlibResolverError. Manifest data
+//   does not provide runtime RVA addresses or an alternative after a failed
+//   signature scan.
+//
+//   The manifest's runtime role is version DETECTION (is this a known build?)
+//   and SIGNATURE-SET SELECTION (which catalog applies to that version). For
+//   patch sites, the signature match supplies the containing-function address
+//   and patchOffset computes the patch address; the signature catalog supplies
+//   the expected original and replacement bytes used for validation/application.
+//
+//   If the version is unknown (not in the manifest), signature scanning still
+//   runs and may succeed when the code preserves the required patterns. A
+//   missing manifest entry therefore produces a version warning, not an RVA
+//   substitute or an automatic resolution failure; a zero- or multi-match
+//   scan remains a hard resolution error.
+//
+//   The expectedRva value retained in each signature definition is diagnostic
+//   metadata for the tested build only. It is not used to resolve a target at
+//   runtime.
 //
 // 4. ERROR-HANDLING STRATEGY
 //
@@ -171,16 +174,15 @@
 //   instance (or pointer) and queries it. No public method signature on
 //   TsDevLib changes.
 //
-// 7. DISCREPANCY NOTE: "8 exports" — RESOLVED (8th export added)
+// 7. HISTORICAL DISCREPANCY NOTE: "8 exports"
 //
 //   The TVS-B.3 handoff's adversarial-review line mentioned "8 exports". At
-//   the time, docs/SIGNATURE_CATALOG.md §5 (authoritative, confirmed via
-//   dumpbin /exports) listed exactly 7 export names used in production code:
-//     _OrlibInit@8, _OrlibExit@0, FindExistPos, _CreateEntryEX@24,
-//     _SaveModule_New@20, _VerifyModule_New@20,
-//     _CloseWarehouseForCurrentThreadAndPath@4.
-//   An 8th export has since been added to the signature set, resolving the
-//   discrepancy. This header now follows SIGNATURE_CATALOG.md (8 exports).
+//   that time, docs/SIGNATURE_CATALOG.md §5 listed 7 export names used in
+//   production code. F.4/F.5 later added 3 named exports, and M.1/M.3 added
+//   ordinal-only exports 66, 67, and 57. The current tracked export set
+//   (by-name + ordinal-only) is recorded in docs/SIGNATURE_CATALOG.md,
+//   separate from the total PE export count. This header follows the current
+//   catalog.
 //
 // =============================================================================
 
@@ -200,7 +202,8 @@ namespace tsdev {
 // ---------------------------------------------------------------------------
 // Forward reference to the TVS-B.1 signature definitions.
 // signatures/v9.50.01.3344.json (source of truth) is code-generated into
-// signatures.gen.h, which defines SignatureDef and kSignatures[] (13 entries).
+// signatures.gen.h, which defines SignatureDef and kSignatures[] (see
+// docs/SIGNATURE_CATALOG.md for the current signature-definition count).
 // The resolver consumes these at runtime. The struct is re-declared here
 // (as OrlibSignatureDef) so this header is self-contained and does not
 // hard-include a generated artifact; the implementation (TVS-B.4) bridges
@@ -221,7 +224,7 @@ struct OrlibSignatureDef {
     const uint8_t*     mask;                 ///< Per-byte mask: 0xFF = fixed (must match), 0x00 = wildcard (??, matches any).
     int                length;               ///< Number of bytes in `bytes` / `mask`.
     int                expectedMatchCount;   ///< Expected unique matches in .text (always 1).
-    bool               isPatchSite;          ///< True for the 5 patch-site targets (9-13).
+    bool               isPatchSite;          ///< True for current patch-site targets (count: see docs/SIGNATURE_CATALOG.md).
     const uint8_t*     originalBytes;        ///< Patch sites: original bytes at the patch site.
     int                originalBytesLen;     ///< Patch sites: length of `originalBytes`.
     const uint8_t*     originalBytesMask;    ///< Patch sites: per-byte mask for original bytes (0xFF=check, 0x00=wildcard).
@@ -378,7 +381,7 @@ private:
 // Internal functions: calling conventions per docs/SIGNATURE_CATALOG.md §3.
 // ===========================================================================
 
-// --- 7 exported functions (all __stdcall) ---
+// --- 7 core named exports (all __stdcall) ---
 typedef BOOL (__stdcall *OrlibInitFn)(const char* workDirPath, int contextId);
 typedef BOOL (__stdcall *OrlibExitFn)(void);
 typedef int  (__stdcall *FindExistPosFn)(const char* name, int warehouseType);
@@ -393,7 +396,7 @@ typedef int  (__stdcall *VerifyModule_NewFn)(HWND hwnd, int warehouseType,
                                              void* compilerObj);
 typedef void (__stdcall *CloseWarehouseFn)(int param);
 
-// --- 8 internal functions (CALL_TARGETs, resolved by signature scan) ---
+// --- Typed internal functions (CALL_TARGETs, resolved by signature scan) ---
 // Target 1: StartCompilingProcess — __cdecl, no args.
 typedef void (__cdecl *StartCompilingProcessFn)(void);
 // Target 2: EndCompilingProcess — __fastcall, 1 arg.
@@ -414,7 +417,9 @@ typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 // TSDev allocates+constructs the CELCompiler via orlib20 ordinal export 66
 // (FUN_10165f70 = operator_new(0x58) + ctor FUN_10165a00) and destructs+frees
 // via ordinal 67 (FUN_10165fd0 = dtor FUN_10165ac0 + operator delete(p,0x58)).
-// Calling conventions CONFIRMED by disassembly (see tmp/m1_ghidra_findings.md):
+// Calling conventions are documented in the historical M.1 handoff
+// (`docs/M1_HANDOFF.md` §R-M.1.1); the raw Ghidra note is transient and
+// unavailable in a fresh checkout:
 //   Ordinal 66: __cdecl, no args, returns void* (the constructed object, or
 //               NULL on alloc failure). Ends with plain RET (C3).
 //   Ordinal 67: __stdcall, one arg (void* p), returns void. Ends with
@@ -445,9 +450,9 @@ typedef void (__stdcall *NotifyLibChangedFn)(unsigned short category,
 
 /// \brief Encapsulates all version-specific knowledge of orlib20.dll.
 ///
-/// Loads the DLL, detects the version, resolves internal functions by
-/// signature scan (with manifest fallback), validates patch sites, and
-/// provides typed function pointers to the caller.
+/// Loads the DLL, uses manifest data for version detection and signature-set
+/// selection, resolves internal functions by signature scan, validates patch
+/// sites, and provides typed function pointers to the caller.
 ///
 /// \par Construction
 /// Two constructor overloads:
@@ -578,8 +583,9 @@ public:
 
     // --- Signature catalog access ------------------------------------------
 
-    /// Get the number of loaded signatures in the current signature set.
-    /// @return Number of signatures (e.g., 12 for the baseline version).
+    /// Get the number of loaded signature definitions in the current signature set.
+    /// @return Number of signatures (see docs/SIGNATURE_CATALOG.md for the
+    ///         current baseline-version count).
     size_t getSignatureCount() const;
 
     /// Get a signature definition by index (for enumeration/iteration).
@@ -588,12 +594,14 @@ public:
     /// @throws std::out_of_range if @p index >= getSignatureCount().
     const OrlibSignatureDef& getSignatureByIndex(size_t index) const;
 
-    // --- Specific internal-function resolvers (8 CALL_TARGETs) -------------
+    // --- Specific internal-function resolvers -------------------------------
     //
-    // Each method resolves its target by signature scan (via
-    // resolveBySignature) and returns a typed function pointer cast to the
-    // appropriate calling convention. The signature definitions come from
-    // docs/SIGNATURE_CATALOG.md §3 (targets 1-8) / signatures.gen.h.
+    // Each signature-resolved method resolves its target by signature scan
+    // (via resolveBySignature) and returns a typed function pointer cast to
+    // the appropriate calling convention. The current catalog has
+    // call-target signature definitions (count: see
+    // docs/SIGNATURE_CATALOG.md); ordinal-backed M.1/M.3 helpers are
+    // documented with their methods below.
     //
     // On signature no-match or multi-match, each throws OrlibResolverError.
     // ------------------------------------------------------------------------
@@ -625,8 +633,9 @@ public:
     /// caller must NOT separately malloc/memset the object — ordinal 66 does
     /// both internally.
     ///
-    /// Calling convention (CONFIRMED by disassembly, see
-    /// tmp/m1_ghidra_findings.md): __cdecl, no args, returns void*. Ends
+    /// Calling convention (historical M.1 handoff, see
+    /// `docs/M1_HANDOFF.md` §R-M.1.1; raw Ghidra note is transient/unavailable):
+    /// __cdecl, no args, returns void*. Ends
     /// with plain RET (C3).
     ///
     /// \return Typed function pointer (CELCompilerAllocFn).
@@ -645,9 +654,10 @@ public:
     /// pointer — ordinal 67 does both internally (calling std::free after
     /// would double-free).
     ///
-    /// Calling convention (CONFIRMED by disassembly, see
-    /// tmp/m1_ghidra_findings.md): __stdcall, one arg (void* p), returns
-    /// void. Ends with RET 4 (C2 04 00). Getting this wrong corrupts the
+    /// Calling convention (historical M.1 handoff, see
+    /// `docs/M1_HANDOFF.md` §R-M.1.1; raw Ghidra note is transient/unavailable):
+    /// __stdcall, one arg (void* p), returns void. Ends with RET 4 (C2 04 00).
+    /// Getting this wrong corrupts the
     /// stack.
     ///
     /// \return Typed function pointer (CELCompilerDestroyFn).
@@ -779,7 +789,8 @@ public:
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveVerbatimNameGetter();
 
-    // --- Export resolution (8 exports) -------------------------------------
+    // --- Export resolution (tracked exports plus ad-hoc diagnostic exports;
+    //     see docs/SIGNATURE_CATALOG.md for the current tracked-export count) ---
     //
     // Exports are resolved by GetProcAddress (production) or by parsing the
     // PE export table from the in-memory buffer (test). These are NOT
@@ -832,25 +843,27 @@ public:
 
     /// \brief Generic export resolution by ordinal number.
     ///
-    /// Workstream M slice M.1: orlib20 exports the CELCompiler alloc/destroy
-    /// wrappers as ordinal-only ([NONAME]) exports 66 and 67. These have NO
-    /// name in the export name table, so resolveExport(name) cannot find
-    /// them. This method resolves by ordinal directly:
+    /// Workstream M slices M.1/M.3 use ordinal-only ([NONAME]) exports for
+    /// the CELCompiler alloc/destroy wrappers (66/67) and the 0x40A sender
+    /// (57). These have NO name in the export name table, so resolveExport(name)
+    /// cannot find them. This method resolves by ordinal directly:
     ///   - Production mode: GetProcAddress(m_module, MAKEINTRESOURCEA(ordinal))
     ///     (the Windows loader accepts ordinal-by-MAKEINTRESOURCEA lookup).
     ///   - Test mode: index into the export directory's AddressOfFunctions
     ///     array by (ordinal - export->Base), skipping the name array loop.
     ///     Validates the ordinal is in range [Base, Base + NumberOfFunctions).
     ///
-    /// \param ordinal Export ordinal (e.g. 66, 67). Must be >= 1.
+    /// \param ordinal Export ordinal (e.g. 66, 67, 57). Must be >= 1.
     /// \return Raw FARPROC (caller casts to the appropriate typedef).
     /// \throws OrlibResolverError if the ordinal is out of range or the
     ///         export function RVA is 0 (empty / forwarder slot).
     FARPROC resolveExportByOrdinal(int ordinal);
 
-    // --- Patch-site resolution & validation (5 PATCH_SITEs) ----------------
+    // --- Patch-site resolution & validation (current PATCH_SITEs; count:
+    //     see docs/SIGNATURE_CATALOG.md) -------------------------------------
     //
-    // Targets 9-13 are patch sites. The signature matches the containing
+    // Each current patch-site entry is marked in the signature catalog. The
+    // signature matches the containing
     // function entry; the patch byte is at sigMatchRva + patchOffset.
     // The resolver validates that the bytes at the patch site match the
     // expected original bytes BEFORE allowing a patch to be applied.
@@ -1097,10 +1110,11 @@ private:
 
     // --- Signature catalog (loaded at construction) ---
     //
-    // The 13 signatures from signatures.gen.h, converted to OrlibSignatureDef
-    // form (byte arrays + masks). The implementation (TVS-B.4) populates
-    // this from kSignatures[] or from a per-version signature set selected
-    // by detectVersion().
+    // The signature definitions from signatures.gen.h, converted to
+    // OrlibSignatureDef form (byte arrays + masks); see
+    // docs/SIGNATURE_CATALOG.md for the current signature-definition count.
+    // The implementation (TVS-B.4) populates this from kSignatures[] or from
+    // a per-version signature set selected by detectVersion().
     std::vector<OrlibSignatureDef> m_signatures;
 
     /// \brief Look up a signature by target name.

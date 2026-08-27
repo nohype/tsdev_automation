@@ -52,14 +52,11 @@
 //   - saveSource returned true
 //   - getSource round-trip contains the original source text
 //
-// RED STATE: the current production code (src/tsdev_lib.cpp saveSource())
-// passes NULL for both arg3 (flags) and arg5 (password). The hook is
-// invoked with these current (NULL) values, so:
-//   - Assertion "capture.flags is non-NULL" FAILS (hook received NULL)
-//   - Assertion "capture.passwordBuf is non-NULL" FAILS (hook received NULL)
-// This is the expected RED state. The GREEN phase will change the actual
-// m_pSaveModuleNew call arguments to pass a non-NULL flags word and a
-// 64-byte password buffer matching the TSDev values above.
+// HISTORICAL RED STATE (pre-M.2): the production code then passed NULL for
+// both arg3 (flags) and arg5 (password). The hook received those NULL values,
+// so the two non-NULL assertions failed. The current M.2 implementation passes
+// the non-NULL flags word and 64-byte password buffer matching the TSDev values
+// above. The historical RED→GREEN transition is retained in the slice handoff.
 //
 // Six insert/modify test cases + one batch-reuse case (adversarial review
 // findings #1, #2, #4):
@@ -82,9 +79,8 @@
 // REQUIRES TradeStation: this is an integration test that constructs a real
 // TsDevLib (loads orlib20.dll, applies patches, calls OrlibInit, creates the
 // hidden EDIT control) and inserts + verifies + deletes real warehouse
-// entries. Per the operational rule in docs/PM_WORKING_MEMORY.md, NO
-// TradeStation Desktop processes (TSDev.exe, TradeStation, ORPlat, etc.)
-// may be running when this test executes.
+// entries. This is a library-level test; Desktop/TSDev running state is not a
+// prerequisite because the test does not exercise the Desktop UI.
 //
 // Runs on a 64 MB-stack worker thread (EasyLanguage compiler needs far more
 // than the default 1 MB, and the hidden EDIT control is thread-affine so
@@ -157,9 +153,10 @@ void onSaveModuleNewReadyHook(const unsigned int* flags,
     g_capture.progId          = progId;
     g_capture.fired           = true;
     // Copy up to 64 bytes of the password buffer so the test can inspect it
-    // after saveSource returns. If passwordBuf is NULL (the current RED
-    // state), the buffer stays zeroed (matching the capture struct's
-    // default initialization).
+    // after saveSource returns. If passwordBuf is NULL (the historical pre-M.2
+    // RED state), the buffer stays zeroed (matching the capture struct's
+    // default initialization). Current production passes a non-NULL
+    // initialized/populated buffer, as documented elsewhere.
     if (passwordBuf != nullptr && passwordBufSize > 0) {
         int n = (passwordBufSize < 64) ? passwordBufSize : 64;
         std::memcpy(g_capture.passwordBuf, passwordBuf, n);
@@ -199,9 +196,11 @@ struct TestCase {
 // Minimal valid EasyLanguage source for each component type, mirroring the
 // proven patterns from test_compiler_layout.cpp (Strategy, Indicator) and
 // test_get_source.cpp (Function). In EasyLanguage `{ ... }` is a multi-line
-// COMMENT block; the actual code must be OUTSIDE it. The leading comment
-// names the item (TSDev convention). For Function, the function name in the
-// source body MUST match the item name.
+// COMMENT block; the actual code must be OUTSIDE it. The brace text is
+// arbitrary fixture source content only, not a metadata convention or lookup
+// mechanism. Stored names, types, and ProgIds come from warehouse records/APIs.
+// For Function, the function name in the source body MUST match the item name
+// for EasyLanguage compiler syntax, independently of stored metadata.
 std::string makeStrategySource(const std::string& name) {
     return std::string("{ ") + name + " }\r\n"
            "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -1035,7 +1034,7 @@ int main() {
     std::printf("(FUN_00452290; see docs/RE/RE_M2_SAVEMODULE_NEW.md).\n");
     std::printf("Expected: flags=(category&0x7)|0x60 (insert) | 0x70 (modify, bit 4 set),\n");
     std::printf("          password=\"!p$Kn@aSus\" (internal default).\n");
-    std::printf("Requires NO TradeStation Desktop processes running.\n");
+    std::printf("Desktop/TSDev running state is not a prerequisite for this library-level test.\n");
     std::printf("Cases: 3 insert (Strat/Ind/Func) + modify + ShowMe + TradingApp + batch-reuse.\n");
 
     // Run the entire test on a worker thread with a 64 MB stack. The

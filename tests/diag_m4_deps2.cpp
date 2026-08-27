@@ -2,7 +2,9 @@
 //
 // DIAGNOSTIC ONLY (not part of the regression suite). Read-only with respect
 // to production code: this file does NOT modify any src/ file. It writes a
-// standalone diagnostic program that investigates THREE hypotheses for why
+// historical diagnostic for the rejected GetDependencies/Option B2 path;
+// current production M.4 uses the linker and linked per-element dep-lists.
+// It investigates THREE historical hypotheses for why
 // GetDependencies (orlib20 ordinal 487) returns an empty dep list for a
 // Strategy that calls a no-arg Function via `Value1 = FUNC_NAME;`:
 //
@@ -14,8 +16,9 @@
 //       dependency map that may be populated independently of the
 //       `record->elements[i] + 0x7b` list that GetDependencies reads.
 //
-//   (B) No-arg function refs not encoded as 0xFA4 — a bare Function name
-//       without parentheses may be encoded differently. Tested here by
+//   (B) Historical hypothesis: no-arg function refs were not encoded as 0xFA4
+//       — a bare Function name without parentheses may be encoded differently.
+//       Tested here by
 //       inserting a Function WITH a numeric input and a Strategy that calls
 //       it WITH parentheses: `Value1 = FUNC2(Close);`. If GetDependencies
 //       returns the Function's ProgId in this case but not in the no-arg
@@ -28,10 +31,10 @@
 //       OrlibInit and re-loads the warehouse master records), then calling
 //       GetDependencies on the Strategy.
 //
-// TradeStation Desktop is open. The user authorized running tests with it
-// open. If the diagnostic crashes, TSCrashReport.exe is killed and the
-// crash is reported. The diagnostic completes in under 60 seconds or is
-// killed.
+// This diagnostic requires TradeStation Desktop to be open. If a crash report
+// is detected, it is reported without terminating any process. Its 60-second
+// limit is an operational timeout, not a measured completion time or M.4
+// acceptance evidence.
 //
 // RE ABI references:
 //   docs/RE/RE_M4_GETDEPENDENCIES_ABI.md  (GetDependencies, ordinal 487)
@@ -41,6 +44,7 @@
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <memory>
@@ -49,8 +53,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // -------------------------------------------------------------------------
 // SEH-protected call wrappers (POD-only so __try/__except is legal under
@@ -98,8 +122,8 @@ ComApi realComApi() {
 // -------------------------------------------------------------------------
 // EasyLanguage source builders.
 //
-// Hypothesis B requires a Function WITH a numeric input and a Strategy that
-// calls it WITH parentheses. The standard EasyLanguage syntax for a function
+// Historical hypothesis B requires a Function WITH a numeric input and a
+// Strategy that calls it WITH parentheses. The standard EasyLanguage syntax for a function
 // input declaration is `input: Price(Numeric);` (singular `input:` keyword,
 // type-name `Numeric`). The function body assigns to the function name.
 // The Strategy calls it as `Value1 = FUNC_NAME(Close);` (parenthesized call
@@ -113,10 +137,11 @@ std::string makeFunctionSourceWithInput(const std::string& name) {
            + name + " = Price * 2;\r\n";
 }
 
-// Strategy that calls the named Function WITH parentheses (hypothesis B
-// caller). Establishes a forward dep Strategy -> Function via a
-// parenthesized call site, which is the form that should emit a 0xFA4
-// function-ref opcode if hypothesis B is correct.
+// Strategy that calls the named Function WITH parentheses (historical
+// hypothesis B caller). Establishes a forward dep Strategy -> Function via a
+// parenthesized call site, which was expected by that old probe to emit a 0xFA4
+// function-ref opcode. Current M.4 evidence identifies compiler-written
+// function references as 0xFA3 and production uses the linker path.
 std::string makeStrategySourceCallingWithParens(
         const std::string& /*name*/, const std::string& calleeName) {
     return std::string("{ calls ") + calleeName + " }\r\n"
@@ -722,10 +747,13 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // Pre-check: is TSCrashReport.exe already running?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [PRE] TSCrashReport.exe IS "
-           "running || echo [PRE] TSCrashReport.exe NOT running");
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
 
     // Run on a 64 MB-stack worker thread (EasyLanguage compiler / hidden
     // EDIT control need this, and TsDevLib is thread-affine).
@@ -737,14 +765,21 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — kill the thread if it hangs.
+    // 60-second hard timeout — report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 60s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        // Best-effort cleanup of any TSCrashReport spawned by a crash.
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 60s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
@@ -753,10 +788,12 @@ int main() {
     CloseHandle(hThread);
 
     // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [POST] TSCrashReport.exe IS "
-           "running (crash occurred) || echo [POST] TSCrashReport.exe NOT "
-           "running (no crash)");
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
 
     return st.exitCode;
 }

@@ -3,7 +3,12 @@
 **Status:** Durable RE note (read-only Ghidra static analysis).
 **Source binary:** `orlib20.dll` (Ghidra project `TSDevAnalysis`, image base `0x10000000`).
 **Method:** Ghidra MCP decompilation + disassembly of the two export RVAs and their callees.
-**Date:** 2026-09-26
+**Date:** 2026-08-26
+
+> **Use note:** These are forward-dependency-list ABI records. They are retained
+> for diagnostics/reference; the current M.4 reverse-dependent implementation
+> uses the linker (ordinal 85) and linked per-element dep-lists instead. See
+> `RE_M4_REVERSE_DEPENDENT_REVALIDATION.md` §8.7.
 
 ---
 

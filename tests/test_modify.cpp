@@ -1,9 +1,8 @@
 // test_modify.cpp
 //
-// Integration test (RED-GREEN TDD) for the MODIFY flow through the tsdev_lib
-// wrapper. This is the RED test: it references `modifyEntry`, which does NOT
-// exist yet on TsDevLib, so it is expected to FAIL TO COMPILE until
-// modifyEntry is implemented (the "green" step).
+// Integration test for the implemented MODIFY flow through the tsdev_lib
+// wrapper. `modifyEntry` is declared by TsDevLib and implemented in
+// src/tsdev_lib.cpp; this test exercises that existing library operation.
 //
 // MODIFY requirements verified by this test:
 //   1. Find the existing component by name+type (FindExistPos).
@@ -109,20 +108,6 @@ int scanProcesses(const char* when, const char* const* names, int nameCount,
         std::fprintf(stderr, "  (none of the target processes found)\n");
     }
     return found;
-}
-
-void preRunProcessCheck() {
-    const char* names[] = {
-        "TSDev.exe",
-        "WHServer.exe",
-        "test_modify.exe"
-    };
-    int found = scanProcesses("pre-run", names, 3, true);
-    if (found > 0) {
-        std::fprintf(stderr,
-                     "  WARNING: Stale/conflicting processes found. "
-                     "Not killing them.\n");
-    }
 }
 
 bool postRunCrashCheck() {
@@ -480,11 +465,8 @@ DWORD WINAPI threadProc(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::fprintf(stdout,
-                 "=== test_modify: MODIFY flow end-to-end (RED test) ===\n");
+                 "=== test_modify: MODIFY flow end-to-end ===\n");
     std::fprintf(stdout, "Strategy name: %s\n", kTestName);
-
-    // --- Pre-run: check for stale/conflicting processes (report only) ---
-    preRunProcessCheck();
 
     // --- Run the test on a 64 MB-stack worker thread ---
     TestState st;

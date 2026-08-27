@@ -1,10 +1,10 @@
 // test_serve_framing.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-K.4: named pipe framing helpers.
+// Unit test for TVS-K.4: named pipe framing helpers.
 //
 // This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
-// only exercises the new framing I/O helpers in src/tsdev_cli.cpp:
+// exercises the implemented framing I/O helpers in src/tsdev_cli.cpp:
 //   - bool writeFramed(HANDLE pipe, const std::string& payload)
 //   - bool readFramed(HANDLE pipe, std::string& out)
 //
@@ -28,18 +28,16 @@
 // stack size is harmless for a unit test.
 //
 // Linkage mechanism:
-//   writeFramed() and readFramed() will live inside an anonymous namespace in
+//   writeFramed() and readFramed() live inside an anonymous namespace in
 //   src/tsdev_cli.cpp (internal linkage), so they are NOT accessible from a
 //   separate translation unit. The only way to reach them is to #include the
 //   .cpp directly so the test is part of the SAME translation unit. This
 //   pulls in tsdev_cli.cpp's int main(); the test #defines TSDEV_CLI_TEST
-//   before the include so main() is excluded (main() is wrapped in
-//   #ifndef TSDEV_CLI_TEST at line 1947 of tsdev_cli.cpp).
+//   before the include so main() is excluded by the TSDEV_CLI_TEST guard in
+//   src/tsdev_cli.cpp.
 //
-// TDD RED step:
-//   - writeFramed() and readFramed() do NOT exist yet in tsdev_cli.cpp.
-//   This test is the RED step — it is expected to FAIL TO COMPILE until the
-//   implementer (Green step) adds the framing helpers.
+// The checks below exercise the implemented framing helpers for normal,
+// boundary, and broken-pipe cases.
 //
 // Checks:
 //   1. Round-trip: writeFramed(write, "Hello World") then
@@ -58,11 +56,14 @@
 //   6. Broken pipe handling: close the write end of a pipe, then call
 //      readFramed on the read end and assert it returns false (graceful
 //      failure, not crash).
+//   7. ConnectNamedPipe classification: a successful call and
+//      ERROR_PIPE_CONNECTED remain normal, while an unexpected failure maps
+//      to a nonzero infrastructure status.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
-// (main() is wrapped in #ifndef TSDEV_CLI_TEST at line 1947 of tsdev_cli.cpp.)
+// (main() is wrapped in the #ifndef TSDEV_CLI_TEST guard in tsdev_cli.cpp.)
 #define TSDEV_CLI_TEST
 
 // Include the CLI source directly so anonymous-namespace internals
@@ -381,6 +382,30 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout,
                      "    PASS: broken pipe handled gracefully (no crash)\n");
     }
+
+    // ------------------------------------------------------------------
+    // Check 7: ConnectNamedPipe failure classification.
+    //   A successful connect and the documented ERROR_PIPE_CONNECTED race
+    //   are normal; an unexpected failed connect must produce a nonzero
+    //   infrastructure status. The serve worker uses this same helper before
+    //   it leaves its outer loop.
+    // ------------------------------------------------------------------
+    if (serveConnectExitCode(TRUE, ERROR_ACCESS_DENIED) != 0) {
+        ec = fail("check7: successful ConnectNamedPipe must remain normal", 70);
+        return 0;
+    }
+    if (serveConnectExitCode(FALSE, ERROR_PIPE_CONNECTED) != 0) {
+        ec = fail("check7: ERROR_PIPE_CONNECTED must remain normal", 71);
+        return 0;
+    }
+    if (serveConnectExitCode(FALSE, ERROR_ACCESS_DENIED) == 0) {
+        ec = fail("check7: unexpected ConnectNamedPipe failure must be nonzero", 72);
+        return 0;
+    }
+    std::fprintf(stdout,
+                 "  [7] ConnectNamedPipe failure classification: unexpected failure is nonzero\n");
+    std::fprintf(stdout,
+                 "    PASS: normal connect/disconnect semantics preserved and unexpected failure fails closed\n");
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;

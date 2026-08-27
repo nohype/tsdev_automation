@@ -9,18 +9,23 @@
 > `MAKEINTRESOURCEA(57)` (production path) or PE export-table indexing
 > (test-mode path), and `verifyModule()` (success path) plus `deleteEntry()`
 > (success path, gated `category != 4`) call it to post the 0x40A
-> notification, matching TSDev's Frida-confirmed ordering. See new §5
-> entry "Ordinal 57".
+> notification, matching TSDev's historical Frida-confirmed ordering. See new §5
+> entry "Ordinal 57". The cited raw trace under `tmp/` is gitignored,
+> transient, and unavailable as tracked current-run evidence.
 >
-> **Catalog totals change as a result:**
+> **Current totals (canonical — authoritative):** Signature definitions:
+> **22** (ordinal 57 is an export, not a code-section signature). Tracked
+> exports: **13** (10 by-name plus ordinal-only 66, 67, and 57; this is the
+> resolver's tracked-export count, not the total PE export count — the
+> baseline PE export table has 699 total entries). Data globals: **3**. Patch
+> sites: **11**. Generated header constants: `kSignatureCount=22`,
+> `kExportCount=13`. `tools/sigcodegen.py` constants:
+> `EXPECTED_SIGNATURE_COUNT=22`, `EXPECTED_DATA_GLOBAL_COUNT=3`,
+> `EXPECTED_EXPORT_COUNT=13`. All other internal mentions of these counts in
+> this file refer back to this statement.
 >
-> - Signature count: **22 → 22** (unchanged — ordinal 57 is an export, not
->   a code-section signature).
-> - Export count: **12 → 13** (added ordinal 57). All prior "12 exports"
->   references in this document are superseded to **13 exports**.
-> - Generated header constants: `kSignatureCount=22`, `kExportCount=13`
->   (was 22 / 12).
-> - `tools/sigcodegen.py` `EXPECTED_EXPORT_COUNT` is now 13 (was 12).
+> The M.3 transition was **12 → 13 tracked exports** (ordinal 57 added); prior
+> unqualified current-looking "12 exports" references are superseded.
 >
 > Per the project's documentation rules, historical banners and sections
 > below are **not silently rewritten**; dated corrections are prepended
@@ -31,16 +36,29 @@
 > results) for the 22 retained signatures remain authoritative and
 > unchanged.
 >
+> **Historical snapshots (consolidated):** Each prior count phase is recorded
+> once here with its provenance; other internal mentions of historical counts
+> reference this subsection. Counts are given as **signatures / tracked
+> exports / data globals / patch sites**.
+>
+> | Phase | Sigs | Exports | Globals | Patches | Provenance |
+> |---|---:|---:|---:|---:|---|
+> | Pre-L.3 | 25 | 10 | 3 | 12 | Before TVS-L.3 retired target #9 (`FUN_10011230_persistence_patch`). See the L.3 records below and `docs/workstream_unknown_link_fix_plan.md`. |
+> | Post-L.3, pre-M.1 (F.4/F.5 snapshot) | 24 | 10 | 3 | 11 | After TVS-L.3 removed target #9; F.4/F.5 added 13 signatures and 3 exports. See the F.4/F.5 snapshot below. |
+> | Post-M.1, pre-M.3 | 22 | 12 | 3 | 11 | M.1 retired `CELCompiler_ctor`/`CELCompiler_dtor` signatures (§4.3, §4.4) and added ordinal-only exports 66/67. See the M.1 notice below and `docs/M1_HANDOFF.md`. |
+> | **Current (post-M.3)** | **22** | **13** | **3** | **11** | M.3 added ordinal-only export 57. See Current totals above. |
+>
 > **Evidence:** `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1) —
 > Ghidra export-table annotation `/* 0x1526f0  57   */` confirming
 > ordinal 57 = `FUN_101526f0` (`MOVZX ECX,word[EBP+8]` category,
 > `MOVZX EAX,word[EBP+0xC]` ProgId, `SHL ECX,0x10`, `OR ECX,EAX`,
 > `PUSH ECX` lParam, `PUSH 0` wParam, `PUSH 0x40A` msg,
-> `CALL [tslib!PosMessageToClients]`, `MOV EAX,1`, `RET 8`); Frida trace
-> `tmp/frida_trace_verify.log` confirming 57 `PostMessageW(0x40A)` sends
-> to 19 registered HWNDs after verify success.
+> `CALL [tslib!PosMessageToClients]`, `MOV EAX,1`, `RET 8`); historical/transient
+> Frida trace `tmp/frida_trace_verify.log` (unavailable as tracked current-run
+> evidence) recorded 57 `PostMessageW(0x40A)` sends to 19 registered HWNDs
+> after verify success.
 
-> **CORRECTION NOTICE — 2026-08-24 (Workstream M, slice M.1).**
+> **HISTORICAL CORRECTION NOTICE — 2026-08-24 (Workstream M, slice M.1).**
 >
 > Workstream M slice M.1 (TSDev parity — compiler-object lifecycle) has
 > **retired** the `CELCompiler_ctor` (§4.3) and `CELCompiler_dtor` (§4.4)
@@ -51,72 +69,64 @@
 > PE export-table indexing (test-mode path). See new §5 entries "Ordinal 66"
 > and "Ordinal 67" and the RETIRED notes prepended to §4.3 and §4.4.
 >
-> **Catalog totals change as a result:**
->
-> - Signature count: **24 → 22** (removed `CELCompiler_ctor`,
->   `CELCompiler_dtor`). All prior "24 signatures" references in this
->   document are superseded to **22 signatures**.
-> - Export count: **10 → 12** (added ordinal 66, ordinal 67). All prior
->   "10 exports" references are superseded to **12 exports**.
-> - Generated header constants: `kSignatureCount=22`, `kExportCount=12`
->   (was 24 / 10).
-> - `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 22 and
->   `EXPECTED_EXPORT_COUNT` is now 12.
+> **Catalog totals change as a result:** M.1 transitioned the catalog from
+> the post-L.3/pre-M.1 phase (24/10/3/11) to the post-M.1/pre-M.3 phase
+> (22/12/3/11) — see the Historical snapshots subsection above for the full
+> count lineage and provenance. The current post-M.3 totals (22/13/3/11) are
+> in the Current totals statement above. Generated header constants and
+> `tools/sigcodegen.py` `EXPECTED_*` constants track the current phase.
 >
 > Per the project's documentation rules, historical banners and sections
 > below are **not silently rewritten**; dated corrections are prepended
 > instead. The historical TVS-L.3 cleanup note and 2026-08-23 supersession
-> banner (which describe the earlier 25 → 24 / 12 → 11 patch-site transition)
-> are retained as historical context and are **superseded by this notice**
-> with respect to signature/export counts only. Signature *facts* (RVAs,
-> original/replacement bytes, scan results) for the 22 retained signatures
-> remain authoritative and unchanged.
+> banner are retained as historical context and are **superseded by this
+> notice** with respect to signature/export counts only. Signature *facts*
+> (RVAs, original/replacement bytes, scan results) for the 22 retained
+> signatures remain authoritative and unchanged.
 >
-> **Evidence:** `tmp/m1_ghidra_findings.md` §1 (R-M.1.1) — Ghidra export
+> **Historical/transient evidence (unavailable in the tracked checkout):** `tmp/m1_ghidra_findings.md` §1 (R-M.1.1) — Ghidra export
 > table annotations + xrefs confirming ordinal 66 = FUN_10165f70
 > (`operator_new(0x58)` + ctor FUN_10165a00, cdecl, no args, returns
 > `void*`) and ordinal 67 = FUN_10165fd0 (dtor FUN_10165ac0 + `operator
 > delete(p, 0x58)`, stdcall, one arg `void* p`, returns void). Full M.1
 > findings/handoff: `docs/M1_HANDOFF.md`.
 >
-> **Verification status (post-M.1):** 22/22 signatures PASS;
+> **Historical verification status (post-M.1, pre-M.3; unverified historical/transient; not current acceptance evidence):** 22/22 signatures PASS;
 > `test_orlib_resolver` 251/251 × 3 cycles, 0 failures; `test_sigtool`
 > 12/12 passed; `test_compiler_layout` 18/18 assertions, 0 failures;
 > `test_no_hardcoded_rvas` 25 forbidden entries, 0 violations; full
 > regression 12/12 suites PASS. See `docs/M1_HANDOFF.md` for the complete
 > test and E2E results.
 
-> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+> **Historical status note (pre-closure):** Earlier Workstream L status text was
+> superseded by the current closure status and is retained only for provenance;
+> it is not current workstream guidance.
+>
+> **CURRENT-STATUS BANNER — Workstream L.** The current Workstream L/M status
+> (closure of L, M.1/M.2/M.3 approved historical, M.3b planned, M.4
+> manual/blocked, M.5 pending) is maintained in
+> `AGENTS.md §"Current state and TODO"`; that file is the SSOT for
+> workstream-status sentences and should be consulted instead of the
+> verbatim status text previously carried here.
+>
+> The historical L.1–L.17 claims, results, and fault records below are retained
+> for provenance. Signature facts (counts, RVAs,
+> original/replacement bytes, scan results) below are separate from those
+> workstream-status records.
+>
+> **HISTORICAL STATUS RECORD — Workstream L (pre-closure):** At the time of
+> this record, TVS-L.1–L.3 were recorded as complete, while the L.4/L.5
+> completion claim had been falsified by persistence and deletion fault
+> injection and was recorded as superseded by the L.6–L.15 recovery. The
+> historical fault details, branch references, and L.17 gate caveats are
+> retained in the dated L records; none is current guidance after the closure
+> decision above.
 
-> **CURRENT-STATUS BANNER — Workstream L.** Workstream L is **NOT YET
-> CLOSED**. TVS-L.1–L.3 are **COMPLETE** (RED harness, STA COM lifecycle
-> guard, and removal of the `FUN_10011230` persistence bypass — the catalog
-> total change to 24 signatures / 11 patch sites described in the TVS-L.3
-> cleanup note below has shipped; the `FUN_10011230` persistence bypass is
-> removed). The TVS-L.4 (persistence validation + cleanup/rollback hardening)
-> and TVS-L.5 (full verification matrix + Desktop runtime gate) completion
-> claim was **FALSIFIED by independent persistence and deletion fault
-> injection** (Fault A: stale-ELL modify; Fault B: orphan-ELL delete; both
-> returned `exit 0` / `success=true`) and is **superseded by the L.6–L.15
-> recovery**, which is **implemented on branch `workstream-L-recovery`**
-> (L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
-> modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks
-> are necessary but not sufficient) (see `docs/PM_WORKING_MEMORY.md`). **No
-> new Desktop runtime re-gate is claimed without an L.17 result.** Workstream
-> M remains BLOCKED until L.17 independent final verification. The earlier
-> "Workstream L is PLANNED but NOT implemented" statement in the supersession
-> banner below predates L.1–L.3 and is retained as historical context; it is
-> reconciled here: L.3 **shipped** (target #9 retired, 24/11 counts), and
-> L.4/L.5 are **falsified/superseded by L.6–L.15**, not complete. Signature
-> facts (counts, RVAs, original/replacement bytes, scan results) below are
-> unchanged and remain authoritative.
-
-> **TVS-L.3 CLEANUP NOTE (post-L.3 shipment).** The
+> **HISTORICAL TVS-L.3 CLEANUP NOTE (post-L.3, pre-M.1).** The
 > `FUN_10011230_persistence_patch` entry (former target #9, §3 row 9, §4.9)
 > has been **removed** from this catalog as part of TVS-L.3
-> (`docs/workstream_unknown_link_fix_plan.md`). Catalog totals are now
-> **24 signatures / 11 patch sites** (3 data globals, 10 exports unchanged);
-> `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 24. Target #9 is
+> (`docs/workstream_unknown_link_fix_plan.md`). Catalog totals after L.3 were
+> 24/10/3/11 (see the Historical snapshots subsection above). Target #9 is
 > **retired as a stable-ID gap** — targets 1–8 and 10–25 retain their original
 > IDs; generated array indices must not be inferred from IDs. The 2026-08-23
 > supersession banner below is **retained as historical context**; it
@@ -125,14 +135,14 @@
 > ABI hazard) that motivated the removal. The durable evidence remains in
 > `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`.
 
-> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
+> **HISTORICAL SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
 >
 > Confirmed Unknown-link findings have invalidated the **calling-convention
 > narrative** for the `FUN_10011230_persistence_patch` entry (target #9,
 > §3 row 9, §4.9). The signature/patch *facts* below (counts, RVAs, original
 > bytes, replacement bytes, scan results) are **retained as-is** because the
-> production code still carries the patch until TVS-L.3 removes it; the
-> catalog must not prematurely drop counts or entries. The following
+> pre-L.3 production code still carried the patch until TVS-L.3 removed it;
+> the catalog must not prematurely drop counts or entries. The following
 > narrative claims are **stale/superseded**:
 >
 > - The `__fastcall` (ECX=arg1, EDX=arg2) "with 12 bytes stack args
@@ -157,28 +167,28 @@
 >   STA COM** for the MSXML wrapper used by `SymWriter::Save` (not "partially
 >   initialized CLR").
 >
-> **Patch slated for removal:** The `FUN_10011230_persistence_patch` entry
+> **HISTORICAL PATCH-REMOVAL PLAN:** The `FUN_10011230_persistence_patch` entry
 > (target #9) is slated for **complete removal** in TVS-L.3
 > (`docs/workstream_unknown_link_fix_plan.md`), after TVS-L.2 establishes the
 > STA COM prerequisite that makes the unpatched path safe to run. When L.3
-> ships, the catalog totals change from **25 signatures / 12 patch sites** to
-> **24 signatures / 11 patch sites** (3 data globals, 10 exports unchanged),
-> and `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` drops from 25 to 24.
-> **Until L.3 ships, the current 25/12 counts and the target #9 entry must
-> remain in this catalog and in `signatures/v9.50.01.3344.json`** — the
-> production code still applies this patch.
+> shipped, the catalog totals transitioned from the pre-L.3 phase (25/10/3/12)
+> to the post-L.3 phase (24/10/3/11) — see the Historical snapshots subsection
+> above. **Before L.3 shipped, the then-current pre-L.3 counts and target #9
+> entry were required to remain in this catalog and in the pre-L.3 signature
+> JSON snapshot** — the pre-L.3 production code still applied this patch.
 >
-> **[L.3 UPDATE — shipped:** TVS-L.3 has now shipped. The removal described
-> above is **complete**: the target #9 entry, §4.9, and all 25/12 count
-> references have been removed/updated to 24/11 throughout this catalog and
-> in `signatures/v9.50.01.3344.json`. The preceding paragraphs are retained
+> **HISTORICAL L.3 UPDATE — shipped:** TVS-L.3 had shipped at the time of this record. The removal described
+> above is **complete**: the target #9 entry and §4.9 have been removed, and
+> count references throughout this catalog and in
+> `signatures/v9.50.01.3344.json` were updated to the post-L.3 phase (see the
+> Historical snapshots subsection above). The preceding paragraphs are retained
 > as the historical 2026-08-23 record of the root-cause finding. See the
-> TVS-L.3 cleanup note at the very top of this file.**]**
+> TVS-L.3 cleanup note at the very top of this file.
 >
-> **Production runtime acceptance is currently BROKEN.** CLI-produced
-> strategies fail in TradeStation Desktop with "Unknown link error occurred"
-> despite TSDev reporting them VERIFIED. Workstream L is **PLANNED but NOT
-> implemented**. Durable evidence: `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`;
+> **HISTORICAL PRE-L.3 STATUS (retained):** Production runtime acceptance was
+> recorded as **BROKEN**: CLI-produced strategies failed in TradeStation
+> Desktop with "Unknown link error occurred" despite TSDev reporting them
+> VERIFIED. Workstream L was then recorded as **PLANNED but NOT implemented**. Durable evidence: `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`;
 > approved plan: `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`; L plan:
 > `docs/workstream_unknown_link_fix_plan.md`; dynamic A/B proof:
 > `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
@@ -189,36 +199,33 @@
 > note at the top of this file and `docs/workstream_unknown_link_fix_plan.md`
 > for the current Workstream L status.**]**
 >
-> **[RECONCILIATION — current Workstream L status:** The "Workstream L is
-> PLANNED but NOT implemented" statement above predates L.1–L.3 and is
-> retained as historical context. Current status: TVS-L.1–L.3 **COMPLETE**
-> (L.3 shipped — target #9 retired, 24 signatures / 11 patch sites; the
-> `FUN_10011230` persistence bypass is removed); TVS-L.4 and TVS-L.5
-> **FALSIFIED** — their completion claim was falsified by persistence and
-> deletion fault injection and is **superseded by the L.6–L.15 recovery**,
-> which is **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED,
-> L.9 detect-and-fail stale-ELL modify/upsert, L.12 detect-and-report
-> orphan-ELL delete; existence checks are necessary but not sufficient) (see
-> `docs/PM_WORKING_MEMORY.md`). Workstream L is **NOT YET CLOSED**; no new
-> Desktop runtime re-gate is claimed without an L.17 result. Workstream M
-> remains BLOCKED until L.17 independent final verification. The
-> current-status banner at the top of this file is the authoritative
-> current-status statement; signature facts below are unchanged.**]**
+> **[RECONCILIATION — current status, 2026-08-26:** The current Workstream L/M
+> status is maintained in `AGENTS.md §"Current state and TODO"` (the SSOT for
+> workstream-status sentences); the verbatim L/M status text previously
+> carried here has been removed in favor of that reference. The earlier L
+> status text is retained as historical context. Signature facts below are
+> separate from these workstream-status records.**]**
 
 | Field | Value |
 |---|---|
 | **TVS Identifier** | TVS-B.1 + Workstreams F.4, F.5 |
 | **Date** | 2026-08-17 (B.1); 2026-08-19/26 (F.4, F.5 additions) |
 | **Status** | APPROVED |
-| **Purpose** | Catalogs the 22 code-section RVA targets in `orlib20.dll` (11 from TVS-B.1 + 13 from Workstreams F.4 and F.5; target #9 retired in TVS-L.3; targets #3 `CELCompiler_ctor` and #4 `CELCompiler_dtor` retired in Workstream M.1 — see the 2026-08-24 correction notice at the top of this file), providing for each: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. Also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 12 export entries (10 by-name exports plus 2 ordinal-only `[NONAME]` exports 66/67 added in M.1), 3 data-section RVA targets, 11 patch sites, and structural constants. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`. |
+| **Purpose** | Catalogs the 22 active code-section RVA targets in `orlib20.dll`. The current provenance is `(12 original TVS-B.1 definitions − 1 L.3-retired persistence target − 2 M.1-retired compiler-object targets) + 13 F.4/F.5 definitions = 22`; the retired targets remain only as explicitly labeled historical rows. It provides for each active target: a candidate byte signature (hex with `??` wildcard notation), signature length, uniqueness-verification result (scan count = 1 within `.text`), expected original bytes at the patch site (for patches), calling convention, and structural assumptions. It also documents the DLL baseline metadata (version, PE timestamp, SHA-256), the 13 tracked export entries (10 by-name exports plus 3 ordinal-only `[NONAME]` exports 66, 67, and 57), 3 data-section RVA targets, 11 patch sites, and structural constants. The 13 tracked exports are not the total PE export count. This catalog is the human-readable reference for signature-based RVA resolution and version detection. The authoritative machine-readable source of truth is `signatures/v9.50.01.3344.json`; `tools/sigcodegen.py` enforces 22 definitions, 3 data globals, and 13 tracked exports. |
 
 > **WORKSTREAM E NOTICE (2026-08-17):** The signature data source of truth has been migrated from `tmp/re_artifacts/b1_signatures.h` (gitignored, not regenerable) to version-controlled `signatures/v9.50.01.3344.json` with build-time C++ code generation. See `docs/archive/ARCHITECTURE_REDESIGN.md` for the complete design and TVS-E.1 through TVS-E.7 migration plan. The signature patterns and metadata in this document remain valid; only the storage format and build integration changed. This migration is **IMPLEMENTED (Workstream E complete)**.
 
-> **WORKSTREAM F.4/F.5 NOTICE (2026-08-19/26):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The catalog below has been updated to reflect all 24 signatures, 10 exports, 3 data globals, and 11 patch sites (post-TVS-L.3; was 25/12 before target #9 retirement). The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py` (EXPECTED_SIGNATURE_COUNT=24, EXPECTED_DATA_GLOBAL_COUNT=3, EXPECTED_EXPORT_COUNT=10).
+> **HISTORICAL WORKSTREAM F.4/F.5 SNAPSHOT (2026-08-19/26, pre-M.1):** 13 new signatures and 3 new exports were added to `signatures/v9.50.01.3344.json` during Workstreams F.4 (get-source) and F.5 (case-insensitive exists). The post-F.4/F.5 phase counts were 24/10/3/11 (see the Historical snapshots subsection above). The JSON file (`signatures/v9.50.01.3344.json`) is the **authoritative source of truth**; this catalog is the human-readable reference. All counts are validated at build time by `tools/sigcodegen.py`.
 >
-> **[M.1 UPDATE — 2026-08-24:** The counts in this notice are superseded by Workstream M.1. M.1 retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures (§4.3, §4.4) and added ordinal-only exports 66 and 67 (see §5). Current counts: **22 signatures, 12 exports, 3 data globals, 11 patch sites**. `tools/sigcodegen.py` `EXPECTED_SIGNATURE_COUNT` is now 22 and `EXPECTED_EXPORT_COUNT` is now 12. The F.4/F.5 narrative above is retained as the historical record of the F.4/F.5 additions; only the totals are superseded. See the 2026-08-24 correction notice at the top of this file and `docs/M1_HANDOFF.md`.**]
+> **[HISTORICAL M.1 SNAPSHOT — 2026-08-24 (pre-M.3):** The counts in this notice are superseded by Workstream M.1. M.1 retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures (§4.3, §4.4) and added ordinal-only exports 66 and 67 (see §5). Post-M.1 phase counts were 22/12/3/11 (see the Historical snapshots subsection above). The F.4/F.5 narrative above is retained as the historical record of the F.4/F.5 additions; only the totals are superseded. See the 2026-08-24 correction notice at the top of this file and `docs/M1_HANDOFF.md`.**]
 
-**Source artifacts (all in `tmp/re_artifacts/`):**
+> **Transient evidence note:** The `tmp/re_artifacts/` paths listed below are
+> gitignored historical artifacts, not tracked repository evidence. Missing
+> entries are unavailable in the current checkout; no replacement scan,
+> inventory, or review result is implied. Current catalog facts come from the
+> tracked JSON, `tools/sigcodegen.py`, and current source.
+
+**Source artifacts (historical/transient; not checked in):**
 
 | Artifact | Content |
 |---|---|
@@ -228,13 +235,13 @@
 | `b1_signatures.h` | The original 12 finalized signatures (hex patterns with `??` wildcards, patch metadata) — **superseded by `signatures/v9.50.01.3344.json` (Workstream E); kept as historical reference** |
 | `b1_export_confirmation.md` | Export table confirmation for the original 7 export names |
 | `b1_sig_scan_run.md` | Uniqueness scan results (12/12 PASS, exit 0) for the original 12 signatures |
-| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 22 signatures, 3 data globals, 12 exports (all versions; post-M.1 — was 24/10 before M.1 retired `CELCompiler_ctor`/`CELCompiler_dtor` and added ordinal 66/67) |
+| `signatures/v9.50.01.3344.json` | **Authoritative source of truth** — 22 signature definitions, 3 data globals, 13 tracked exports (all versions; post-M.3; tracked exports are not the total PE export count) |
 
 ---
 
 ## 1. DLL Baseline
 
-*Source: `tmp/re_artifacts/b1_dll_baseline.md`*
+*Historical source (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_dll_baseline.md`; current tracked baseline reference: §1 and `tests/fixtures/orlib20_baseline.dll`.*
 
 All measurements taken from the copied baseline DLL, not the read-only install original.
 
@@ -248,7 +255,7 @@ All measurements taken from the copied baseline DLL, not the read-only install o
 | **CompanyName** | TradeStation Technologies, Inc. |
 | **File size** | 4,924,400 bytes |
 | **SHA-256** | `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18` |
-| **PE timestamp (TimeDateStamp)** | `0x5C01735E` = Fri Nov 30 18:29:02 2018 UTC |
+| **PE timestamp (TimeDateStamp)** | `0x5C01735E` = Fri Nov 30 17:29:02 2018 UTC |
 | **Machine** | 0x014C (x86) |
 | **Characteristics** | 0x2102 (Executable, 32-bit word machine, DLL) |
 | **Magic** | 0x010B (PE32) |
@@ -260,13 +267,13 @@ All measurements taken from the copied baseline DLL, not the read-only install o
 | **.text raw size (size of raw data)** | `0x001F7400` (2,061,312 bytes) |
 | **.text file pointer to raw data** | `0x00000400` |
 
-**Summary:** Version 9.50.01.3344 (Omega EasyLanguage, TradeStation Technologies, Inc.), 4,924,400 bytes, SHA-256 `318DB24A...`, PE timestamp `0x5C01735E` (Fri Nov 30 18:29:02 2018 UTC), image base `0x10000000`, .text RVA `0x00001000`, virtual size `0x001F72FC`, raw size `0x001F7400`.
+**Summary:** Version 9.50.01.3344 (Omega EasyLanguage, TradeStation Technologies, Inc.), 4,924,400 bytes, SHA-256 `318DB24A...`, PE timestamp `0x5C01735E` (Fri Nov 30 17:29:02 2018 UTC), image base `0x10000000`, .text RVA `0x00001000`, virtual size `0x001F72FC`, raw size `0x001F7400`.
 
 ---
 
 ## 2. Wildcard Notation Convention
 
-*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (§Wildcard Notation Convention), `signatures/v9.50.01.3344.json` (header comment)*
+*Current source: `signatures/v9.50.01.3344.json` (header comment); historical Ghidra source (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_ghidra_evidence.md` (§Wildcard Notation Convention).*
 
 In all signatures in this catalog, `??` represents a **wildcard byte** (matches any single byte at that position). All other bytes are **fixed** and must match exactly.
 
@@ -294,9 +301,9 @@ In all signatures in this catalog, `??` represents a **wildcard byte** (matches 
 
 ## 3. Signature Catalog Table
 
-*Source: `signatures/v9.50.01.3344.json` (exact hex patterns), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
+*Current source: `signatures/v9.50.01.3344.json` (exact hex patterns); historical scan source (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_sig_scan_run.md`.*
 
-One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets #3 `CELCompiler_ctor` / #4 `CELCompiler_dtor` retired in Workstream M.1 — stable-ID gaps, not renumbered). The two M.1-retired rows are retained below marked **RETIRED 2026-08-24 (M.1)** for historical traceability; they are no longer part of the active 22-signature set and are not generated into `signatures/v9.50.01.3344.json`. For patch sites (targets 10–12, 13–21, 25), additional patch metadata columns are populated.
+One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets #3 `CELCompiler_ctor` / #4 `CELCompiler_dtor` retired in Workstream M.1 — stable-ID gaps, not renumbered). The two M.1-retired rows are retained below marked **RETIRED 2026-08-24 (M.1)** for historical traceability; they are no longer part of the active 22-signature set and are not generated into `signatures/v9.50.01.3344.json`. For the 11 patch-site rows (targets 10–16, 19–21, and 25), additional patch metadata columns are populated.
 
 > **Note on patch-site targets:** The signature matches the **containing function** entry point (or a mid-function anchor for some F.5 signatures), not the patch byte itself. The "RVA" column shows the **patch-site RVA** (the production target). The "Sig Match RVA" column shows where the signature actually matches (the containing function entry or anchor). The patch byte is at `Sig Match RVA + Patch Offset`.
 
@@ -347,9 +354,9 @@ One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets
 
 ## 4. Per-Target Detail Sections
 
-*Source: `tmp/re_artifacts/b1_ghidra_evidence.md` (disassembly, raw bytes, calling conventions), `signatures/v9.50.01.3344.json` (exact signatures), `tmp/re_artifacts/b1_sig_scan_run.md` (scan results)*
+*Current source: `signatures/v9.50.01.3344.json` (exact signatures); historical Ghidra and scan sources (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_ghidra_evidence.md` and `tmp/re_artifacts/b1_sig_scan_run.md`.*
 
-**Export status note (applies to all 22 active targets):** None of the 22 active RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 12 exported entries used in production code (10 by-name exports plus 2 ordinal-only `[NONAME]` exports 66/67 added in M.1) are documented separately in §5. The two M.1-retired targets (#3 `CELCompiler_ctor`, #4 `CELCompiler_dtor`) were previously resolved by RVA signature; M.1 replaced them with ordinal 66/67 export resolution (see §5 and the RETIRED notes on §4.3/§4.4).
+**Export status note (applies to all 22 active targets):** None of the 22 active RVA targets are exported functions. They are **internal functions** resolved by RVA (`m_orlibBase + RVA`), not by `GetProcAddress`. The 13 tracked exported entries used in production code (10 by-name exports plus 3 ordinal-only `[NONAME]` exports 66, 67, and 57) are documented separately in §5. The 13 tracked exports are not the total PE export count. The two M.1-retired targets (#3 `CELCompiler_ctor`, #4 `CELCompiler_dtor`) were previously resolved by RVA signature; M.1 replaced them with ordinal 66/67 export resolution (see §5 and the RETIRED notes on §4.3/§4.4).
 
 ---
 
@@ -423,9 +430,11 @@ One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets
 > RVA 0x165A00). The historical signature/scan/structural-assumption
 > content below is **retained as the historical record** of the pre-M.1
 > RVA-resolution approach; it is **superseded** for production purposes by
-> the ordinal 66 entry in §5. See `docs/M1_HANDOFF.md` (R-M.1.1) and
-> `tmp/m1_ghidra_findings.md` §1 for the Ghidra export-table evidence.
-> Catalog totals are now **22 signatures / 12 exports** (was 24 / 10).
+> the ordinal 66 entry in §5. See `docs/M1_HANDOFF.md` (R-M.1.1); the
+> `tmp/m1_ghidra_findings.md` §1 Ghidra export-table evidence is
+> historical/transient and unavailable in the tracked checkout. For the
+> post-M.1/pre-M.3 and current count phases, see the Historical snapshots
+> subsection and Current totals statement above.
 
 | Field | Value |
 |---|---|
@@ -470,9 +479,10 @@ One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets
 > signature/scan/structural-assumption content below is **retained as the
 > historical record** of the pre-M.1 RVA-resolution approach; it is
 > **superseded** for production purposes by the ordinal 67 entry in §5.
-> See `docs/M1_HANDOFF.md` (R-M.1.1) and `tmp/m1_ghidra_findings.md` §1
-> for the Ghidra export-table evidence. Catalog totals are now
-> **22 signatures / 12 exports** (was 24 / 10).
+> See `docs/M1_HANDOFF.md` (R-M.1.1); the `tmp/m1_ghidra_findings.md` §1
+> Ghidra export-table evidence is historical/transient and unavailable in the
+> tracked checkout. For the post-M.1/pre-M.3 and current count phases, see
+> the Historical snapshots subsection and Current totals statement above.
 
 | Field | Value |
 |---|---|
@@ -1236,23 +1246,24 @@ One row per RVA target (22 active rows; target #9 retired in TVS-L.3 and targets
 
 ## 5. Export Name Confirmation
 
-*Source: `tmp/re_artifacts/b1_export_confirmation.md` (original 7), `signatures/v9.50.01.3344.json` (all 10 by-name exports), `tmp/m1_ghidra_findings.md` §1 (R-M.1.1 — ordinal 66/67, added in M.1)*
+*Current source: `signatures/v9.50.01.3344.json` (10 by-name exports), `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (ordinal 57), and current source resolver names. Historical export evidence (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_export_confirmation.md` and `tmp/m1_ghidra_findings.md` §1 (ordinals 66/67).*
 
-> **[M.1 UPDATE — 2026-08-24:** Workstream M.1 added two **ordinal-only
+> **[HISTORICAL M.1 SNAPSHOT — 2026-08-24 (pre-M.3):** Workstream M.1 added two **ordinal-only
 > `[NONAME]` exports** (66 and 67) to the production resolution set,
 > replacing the retired `CELCompiler_ctor` / `CELCompiler_dtor` RVA
-> signatures (§4.3, §4.4). The export count is now **12** (10 by-name +
-> 2 ordinal-only). The two new entries are resolved by ordinal via
+> signatures (§4.3, §4.4). The post-M.1 phase had 12 tracked exports
+> (10 by-name + 2 ordinal-only) — see the Historical snapshots subsection
+> above. The two new entries are resolved by ordinal via
 > `GetProcAddress(m_orlibModule, MAKEINTRESOURCEA(ordinal))` in
 > production and by PE export-table indexing in test mode (see
 > `src/orlib_resolver.cpp` `resolveExportByOrdinal()`). They are
 > `[NONAME]` exports — they have **no export name string** and cannot be
 > resolved by `GetProcAddress(name)`. See the new rows 11–12 in the table
-> below and the §5.1 / §5.2 detail subsections. Evidence:
-> `tmp/m1_ghidra_findings.md` §1 (R-M.1.1); full handoff:
+> below and the §5.1 / §5.2 detail subsections. Evidence (historical/transient raw note unavailable in the tracked checkout):
+> `tmp/m1_ghidra_findings.md` §1 (R-M.1.1); current handoff:
 > `docs/M1_HANDOFF.md`.**]
 
-The 12 export entries used in production code, confirmed present in `orlib20_baseline.dll`'s export table via `dumpbin /exports` (by-name entries) and Ghidra export-table annotations + xrefs (ordinal-only entries). Export table: 699 functions total, 636 named, 63 ordinal-only (`[NONAME]`). Ordinal base = 10. The original 7 by-name exports (TVS-B.1) are used in `src/tsdev_lib.cpp`. The 3 by-name exports added in F.4/F.5 are used in the `get-source` and `exists --case-insensitive` code paths. The 2 ordinal-only exports added in M.1 are used in the CELCompiler object-lifecycle path (alloc+ctor / dtor+free), replacing the retired §4.3/§4.4 RVA signatures.
+The 13 tracked export entries used in production code are confirmed present in the tracked baseline fixture `tests/fixtures/orlib20_baseline.dll`'s export table via the historical `dumpbin /exports` record (by-name entries) and historical Ghidra export-table annotations + xrefs (ordinal-only entries). The PE export table has 699 functions total, 636 named, and 63 ordinal-only (`[NONAME]`); that total is distinct from the 13 tracked entries. Ordinal base = 10. The original 7 by-name exports (TVS-B.1) are used in `src/tsdev_lib.cpp`. The 3 by-name exports added in F.4/F.5 are used in the `get-source` and `exists --case-insensitive` code paths. The 3 ordinal-only exports added in M.1/M.3 are used in the CELCompiler object-lifecycle and 0x40A notification paths, replacing the retired §4.3/§4.4 RVA signatures where applicable.
 
 | # | Export name (as used in code) | Decorated? | Ordinal | Hint | Export RVA | Found in export table? | Added in |
 |---|---|---|---|---|---|---|---|
@@ -1268,12 +1279,18 @@ The 12 export entries used in production code, confirmed present in `orlib20_bas
 | 10 | `_GetMasterRecByType@16` | Yes (stdcall-decorated) | — | — | 0x001A0460 | Yes | F.5 |
 | 11 | ordinal 66 (`[NONAME]`) | **N/A — ordinal-only, no name** | 66 | — | 0x00165F70 | Yes (ordinal-only `[NONAME]`) | M.1 |
 | 12 | ordinal 67 (`[NONAME]`) | **N/A — ordinal-only, no name** | 67 | — | 0x00165FD0 | Yes (ordinal-only `[NONAME]`) | M.1 |
+| 13 | ordinal 57 (`[NONAME]`) | **N/A — ordinal-only, no name** | 57 | — | 0x001526F0 | Yes (ordinal-only `[NONAME]`) | M.3 |
 
-**All 12 export entries are present in the export table.** Exports 1–10 are exported by name (none of those 10 are ordinal-only). Exports 11–12 are **ordinal-only `[NONAME]`** — they have no export name string and are resolved by ordinal via `GetProcAddress` with `MAKEINTRESOURCEA(ordinal)` (production) or PE export-table indexing (test mode). Ordinal/hint values for by-name exports 8–10 are not documented in `b1_export_confirmation.md` (which predates F.4/F.5); the RVAs are from `signatures/v9.50.01.3344.json`. The RVAs and ordinals for entries 11–12 are from `tmp/m1_ghidra_findings.md` §1 (R-M.1.1).
+**All 13 tracked export entries are present in the export table.** Exports 1–10 are exported by name (none of those 10 are ordinal-only). Exports 11–13 are **ordinal-only `[NONAME]`** — they have no export name string and are resolved by ordinal via `GetProcAddress` with `MAKEINTRESOURCEA(ordinal)` (production) or PE export-table indexing (test mode). Ordinal/hint values for by-name exports 8–10 are not documented in the
+historical `b1_export_confirmation.md` (which predates F.4/F.5); the RVAs are
+from `signatures/v9.50.01.3344.json`. The RVAs and ordinals for entries 11–12
+were established by the historical/transient `tmp/m1_ghidra_findings.md` §1
+(unavailable in the tracked checkout); ordinal 57 is from the tracked
+`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1). The 13 tracked entries are not the total PE export count.
 
 ### 5.1 Ordinal 66 — CELCompiler alloc+ctor (`[NONAME]` export, added in M.1)
 
-*Source: `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
+*Historical/transient source (unavailable in the tracked checkout): `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
 
 | Field | Value |
 |---|---|
@@ -1290,7 +1307,7 @@ The 12 export entries used in production code, confirmed present in `orlib20_bas
 
 ### 5.2 Ordinal 67 — CELCompiler dtor+free (`[NONAME]` export, added in M.1)
 
-*Source: `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
+*Historical/transient source (unavailable in the tracked checkout): `tmp/m1_ghidra_findings.md` §1 (R-M.1.1)*
 
 | Field | Value |
 |---|---|
@@ -1336,7 +1353,7 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 
 ### Calling conventions for the 13 exports
 
-*Source: `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary, original 7), `signatures/v9.50.01.3344.json` (all 10 by-name exports), `tmp/m1_ghidra_findings.md` §1 (R-M.1.1 — ordinal 66/67, added in M.1), `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (R-M.3.1 — ordinal 57, added in M.3)*
+*Current source: `signatures/v9.50.01.3344.json` (10 by-name exports) and the current resolver declarations/definitions; `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §1.2 (ordinal 57). Historical export evidence (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_rva_inventory.md` (§Calling-convention summary) and `tmp/m1_ghidra_findings.md` §1 (ordinals 66/67).*
 
 | Export | Convention | Signature |
 |---|---|---|
@@ -1358,7 +1375,7 @@ Note: a *different* function `_FindExistPosSubType@12` exists (ordinal 454, RVA 
 
 ## 6. Data-Section RVA Targets
 
-*Source: `tmp/re_artifacts/b1_rva_inventory.md` (entries 13–15), `tmp/re_artifacts/b1_ghidra_evidence.md` (§3 Data-Section RVA Targets)*
+*Current source: `signatures/v9.50.01.3344.json` (`dataGlobals`); historical inventory/Ghidra sources (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_rva_inventory.md` (entries 13–15) and `tmp/re_artifacts/b1_ghidra_evidence.md` (§3 Data-Section RVA Targets).*
 
 These 3 data-section RVAs are **NOT code signatures** — they are data globals read directly by the production code. They are documented here for completeness but are NOT part of the 22 code-section signature targets.
 
@@ -1382,7 +1399,7 @@ This approach ties data-offset resolution to code-signature resolution, making b
 
 ## 7. Structural Constants
 
-*Source: `tmp/re_artifacts/b1_rva_inventory.md` (entries 16–29)*
+*Historical source (transient/unavailable in the tracked checkout): `tmp/re_artifacts/b1_rva_inventory.md` (entries 16–29). Current values are represented by the tracked JSON and the production source.*
 
 These constants are used by the production code and/or embedded in signatures. They are documented here as part of the RE baseline.
 
@@ -1417,32 +1434,37 @@ These constants are used by the production code and/or embedded in signatures. T
 
 | Constant | Value | Name | Source |
 |---|---|---|---|
-| CELCompiler object size | 0x58 (88) | kCELCompilerSize | `src/tsdev_lib.cpp:48` — malloc'd + zeroed before ctor |
-| Error record stride | 0x129 (297) | kErrRecordStride | `src/tsdev_lib.cpp:141` — bytes per error record in global array |
-| Error text offset | 0x29 | kErrTextOffset | `src/tsdev_lib.cpp:142` — offset of null-terminated error text within record |
-| Error resource ID offset | 0x12 | kErrResIdOffset | `src/tsdev_lib.cpp:143` — offset of `short` string-table resource ID |
-| Error char offset | 0x0A | kErrCharOffset | `src/tsdev_lib.cpp:144` — offset of `int` character offset for line/col computation |
-| CELCompiler +0x10 field offset | 0x10 | — | `src/tsdev_lib.cpp:474` — set to 0xA02 after construction |
-| CELCompiler +0x18 field offset | 0x18 | — | `src/tsdev_lib.cpp:475` — set to m_editorHwnd |
-| CELCompiler +0x28 field offset | 0x28 | — | `src/tsdev_lib.cpp:477` — set to 6 after construction |
-| CELCompiler +0x10 field value | 0xA02 | — | `src/tsdev_lib.cpp:474` |
-| CELCompiler +0x28 field value | 6 | — | `src/tsdev_lib.cpp:477` |
-| Warehouse type: Strategy | 0 | — | `src/tsdev_lib.h:26-28` |
-| Warehouse type: Indicator | 2 | — | `src/tsdev_lib.h:26-28` |
-| Warehouse type: Function | 4 | — | `src/tsdev_lib.h:26-28` |
-| Error count sanity bound | 1000 | — | `src/tsdev_lib.cpp:153` — guards against corrupt count |
-| LoadStringA buffer size | 1024 | — | `src/tsdev_lib.cpp:187` — `char buf[1024]` |
-| Error level (error) | 0x7775 | — | Referenced in docs/AGENTS only; NOT present as a literal in production source. Error-record level field at +0x00 (0x7775 = error). Recorded for completeness. |
+| CELCompiler object size | 0x58 (88) | kCELCompilerSize | `src/tsdev_lib.cpp:61-66` — documented size; ordinal 66 performs the allocation |
+| Error record stride | 0x129 (297) | kErrRecordStride | `src/tsdev_lib.cpp:165` — bytes per error record in global array |
+| Error text offset | 0x29 | kErrTextOffset | `src/tsdev_lib.cpp:166` — offset of null-terminated error text within record |
+| Error resource ID offset | 0x12 | kErrResIdOffset | `src/tsdev_lib.cpp:167` — offset of `short` string-table resource ID |
+| Error char offset | 0x0A | kErrCharOffset | `src/tsdev_lib.cpp:168` — `int` character offset of error start in source |
+| CELCompiler +0x10 field offset | 0x10 | — | `src/tsdev_lib.cpp:1667-1674` — set to the current operation's ProgId |
+| CELCompiler +0x18 field offset | 0x18 | — | `src/tsdev_lib.cpp:1667-1674` — set to `m_editorHwnd` |
+| CELCompiler +0x28 field offset | 0x28 | — | `src/tsdev_lib.cpp:1667-1674` — not written by TSDev or the CLI; ctor does not zero it |
+| CELCompiler +0x10 field value | per-operation ProgId | — | `src/tsdev_lib.cpp:1673` |
+| CELCompiler +0x28 field value | indeterminate (not written) | — | `src/tsdev_lib.cpp:1669` |
+| Warehouse type: Strategy | 0 | — | `src/tsdev_lib.h:50-55` |
+| Warehouse type: Indicator | 2 | — | `src/tsdev_lib.h:50-55` |
+| Warehouse type: Function | 4 | — | `src/tsdev_lib.h:50-55` |
+| Error count sanity bound | 1000 | — | `src/tsdev_lib.cpp:2630-2631` — guards against corrupt count |
+| LoadStringA buffer size | 1024 | — | `src/tsdev_lib.cpp:2665-2666` — `char buf[1024]` |
+| Error level (error) | 0x7775 | — | Referenced in `AGENTS.md` only; NOT present as a literal in production source. Error-record level field at +0x00 (0x7775 = error). Recorded for completeness. |
 
 ---
 
 ## 8. Uniqueness Verification Methodology
 
-*Source: `tmp/re_artifacts/b1_sig_scan_run.md`, `src/sig_scan.cpp`*
+*Current implementation: `src/sigtool.cpp`, invoked by `tests/run_regression.ps1`; historical standalone probe and scan record (transient/unavailable in the tracked checkout): `archive/sig_scan.cpp` and `tmp/re_artifacts/b1_sig_scan_run.md`.*
 
 ### Probe description
 
-The standalone probe `src/sig_scan.cpp` verifies that each of the 22 candidate signatures matches exactly once within the `.text` section of `orlib20_baseline.dll`. (Was 24 prior to Workstream M.1, which retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures — see the 2026-08-24 correction notice at the top of this file and the RETIRED notes on §4.3/§4.4.)
+The current `sigtool verify` path verifies each of the 22 candidate signatures
+against the `.text` section of `tests/fixtures/orlib20_baseline.dll`. The
+archived `archive/sig_scan.cpp` probe and its scan record are historical (the
+active CMake target is `sigtool`). The active set was 24 before Workstream M.1,
+which retired the `CELCompiler_ctor` and `CELCompiler_dtor` signatures — see the
+2026-08-24 correction notice and the RETIRED notes on §4.3/§4.4.
 
 **How it works:**
 
@@ -1460,26 +1482,25 @@ The standalone probe `src/sig_scan.cpp` verifies that each of the 22 candidate s
 
 ```
 cmake -S . -B build -A Win32
-cmake --build build --config Release --target sig_scan
-build\Release\sig_scan.exe [path_to_orlib20.dll]
+cmake --build build --config Release --target sigtool
+build\Release\sigtool.exe verify --dll tests\fixtures\orlib20_baseline.dll --signatures signatures\v9.50.01.3344.json
+build\Release\sigtool.exe verify-patch --dll tests\fixtures\orlib20_baseline.dll --signatures signatures\v9.50.01.3344.json
 ```
-
-Defaults to `tests/fixtures/orlib20_baseline.dll` if no argument is given.
 
 ### Result
 
 > **[M.1 UPDATE — 2026-08-24:** The active signature count is now **22**.
 > Targets #3 `CELCompiler_ctor` and #4 `CELCompiler_dtor` were retired by
-> Workstream M.1 and are no longer scanned by `sig_scan` or generated into
+> Workstream M.1 and are no longer part of the active `sigtool` scan or generated into
 > `signatures/v9.50.01.3344.json`. Their historical scan rows are retained
 > below marked **RETIRED 2026-08-24 (M.1)** for traceability; they are
 > excluded from the active 22/22 PASS count. The constructor/destructor
 > are now reached via ordinal 66/67 export resolution (see §5.1/§5.2 and
 > `docs/M1_HANDOFF.md`).**]
 
-**22 / 22 signatures PASS. Exit code 0.** (Pre-M.1: 24 / 24 signatures PASS — the two retired rows below were part of that historical 24/24 result.)
+**Historical scan record (unverified current run; not current acceptance evidence): 22 / 22 signatures PASS. Exit code 0.** (Pre-M.1: 24 / 24 signatures PASS — the two retired rows below were part of that historical 24/24 result.)
 
-All 22 active signatures matched exactly once at their expected RVAs within the `.text` section. All 11 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). The original TVS-B.1 signatures (targets 1–8, 10–12; 11 remaining after TVS-L.3 retired target 9; 9 remaining after M.1 retired targets 3 and 4) were verified by `b1_sig_scan_run.md` (which originally verified 12; target 9 was removed in TVS-L.3; targets 3 and 4 were removed in M.1). The 13 new signatures (targets 13–25) were verified by the sigtool regression suite (`tests/run_regression.ps1`), which runs `sig_scan` against `signatures/v9.50.01.3344.json` with all 22 active signatures (post-M.1).
+The historical scan record reports all 22 active signatures matched exactly once at their expected RVAs within the `.text` section and all 11 patch-site byte checks passed (the byte at each patch offset matches the expected original byte). This is not a current acceptance result. The original TVS-B.1 signatures (targets 1–8, 10–12; 11 remaining after TVS-L.3 retired target 9; 9 remaining after M.1 retired targets 3 and 4) were covered by the unavailable historical `b1_sig_scan_run.md` record (which originally verified 12; target 9 was removed in TVS-L.3; targets 3 and 4 were removed in M.1). The 13 new signatures (targets 13–25) were covered by the historical sigtool regression record (`tests/run_regression.ps1`); the current implementation is `src/sigtool.cpp` using `signatures/v9.50.01.3344.json` with the 22 active signatures.
 
 | # | Name | Expected RVA | Match Count | Matched RVA | Result |
 |---|---|---|---|---|---|
@@ -1512,7 +1533,7 @@ All 22 active signatures matched exactly once at their expected RVAs within the 
 
 **Note on signature #12 evolution:** During the first scan run, signature #12 (FUN_101d1fa0) was 41 bytes and matched twice (a spurious match at RVA 0x001CFCE0 in addition to the expected 0x001D1FA0). The signature was extended to 57 bytes by appending the post-INT3 context bytes (`FF 76 6E C7 46 04 17 00 00 00 FF 15 ?? ?? ?? ??`), which disambiguated the duplicate. The re-run confirmed uniqueness (count = 1, exit 0). The 57-byte version is the finalized signature in `signatures/v9.50.01.3344.json`.
 
-**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The sig_scan tool and sigtool regression suite verify uniqueness (match count = 1) for all 22 active signatures.
+**Note on mid-function anchor signatures (targets 21, 25):** These signatures match at a mid-function anchor point rather than the function entry. The `expectedRva` in the JSON for these entries is the containing function entry, but the actual pattern match occurs at a later offset within the function. The current `sigtool` path verifies uniqueness (match count = 1) for all 22 active signatures; the archived `sig_scan` probe is historical.
 
 ---
 
@@ -1526,15 +1547,15 @@ The following items were **out of scope for TVS-B.1** and have since been comple
 | Signature-based RVA resolution integration | DONE (TVS-B.4/B.5) | The 22 signatures in this catalog are now integrated into the production code. Hardcoded RVAs have been replaced with signature-scanned RVAs at runtime via `OrlibResolver`. (Was 24 prior to M.1, which retired the `CELCompiler_ctor`/`CELCompiler_dtor` signatures in favor of ordinal 66/67 export resolution.) |
 | Version detection logic | DONE (TVS-B.2/B.4) | The DLL baseline metadata (FileVersion, SHA-256, PE timestamp) documented in §1 is now used by the 3-tier version detection logic implemented in `OrlibResolver::detectVersion()`. |
 | SEH protection on data-array reads | DONE (TVS-B.5, partial) | `readErrorsFromArray` now has SEH protection around the array pointer dereference and record iteration. |
-| Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7) and ShowMe (TVS-C.8); 3 types remain unconfirmed | Strategy=0, Indicator=2, Function=4, TradingApp (0x1402), and ShowMe (0x0502) are confirmed. ActivityBar, PaintBar, ProbabilityMap warehouse types remain unconfirmed. |
+| Warehouse type resolution | DONE for TradingApp (TVS-C.1–C.7) and ShowMe (TVS-C.8); 3 types remain unconfirmed | The authoritative warehouse-type→`whType` mapping (5 confirmed, 3 unconfirmed) lives in `docs/TS_COMPONENT_TYPES.md` (that category's SSOT; code SSOT: `src/tsdev_lib.h` enum). |
 
 ---
 
 ## Appendix A: Acceptance Criteria Traceability
 
-| Criterion (HANDOFF_B §4) | Where satisfied |
+| Criterion (`docs/archive/HANDOFF_B_ROBUSTNESS.md` §4) | Where satisfied |
 |---|---|
 | 1. Document lists, for each of 22 RVA targets: RVA, function/patch name, candidate signature (hex with wildcard), signature length, uniqueness-verification result (count = 1 in .text), expected original bytes at patch site (for patches), calling convention, structural assumptions | §3 (catalog table + patch metadata table), §4 (per-target detail sections with all fields). (Was 24; targets #3/#4 retired in M.1 — see 2026-08-24 correction notice and RETIRED notes on §4.3/§4.4.) |
-| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + results: 22/22 PASS, exit 0, using `src/sig_scan.cpp` standalone probe and sigtool regression suite) |
-| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (12 export entries: 10 by-name exports with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND; 2 ordinal-only `[NONAME]` exports 66/67 added in M.1 with Ghidra-confirmed RVAs) |
+| 2. Each signature verified unique by scanning actual orlib20.dll .text section | §8 (methodology + historical 22/22 PASS record; current implementation is `src/sigtool.cpp` and the `archive/sig_scan.cpp` probe is historical) |
+| 3. For exported functions (§2.4), catalog notes decorated/undecorated name and confirms it appears in export table | §5 (13 tracked export entries: 10 by-name exports with decorated/undecorated status, ordinals, RVAs, all confirmed FOUND; 3 ordinal-only `[NONAME]` exports 66, 67, and 57 added in M.1/M.3 with Ghidra-confirmed RVAs; total PE exports are separate) |
 | 4. Catalog notes orlib20.dll file version, PE timestamp, file size, SHA-256 hash | §1 (DLL Baseline: FileVersion 9.50.01.3344, PE timestamp 0x5C01735E, file size 4,924,400 bytes, SHA-256 318DB24A...) |

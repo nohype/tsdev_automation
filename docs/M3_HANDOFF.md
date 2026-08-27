@@ -1,6 +1,6 @@
 # M.3 Handoff — Workstream M, Slice M.3 (TSDev Parity: Post-Success `0x40A` Library-Change Notification)
 
-> **Status:** Implemented and verified (TDD red→green; full regression PASS).
+> **Status:** APPROVED historical slice (TDD red→green implementation record). Dated test/E2E results below are unverified historical/transient and not current acceptance evidence.
 > **Date:** 2026-08-25
 > **Workstream:** M (TSDev parity) — slice M.3
 > **Plan reference:** `docs/workstream_tsdev_parity_plan.md`
@@ -51,7 +51,7 @@ Ordinal_57 unconditionally returns 1. No receiver = silent no-op. Invalid HWND =
 
 ### R-M.3.4 — Test receiver mechanism
 
-Test receiver via `_OrlibRegisterNotificationHandle@4` (ordinal 595, Ghidra-confirmed at `0x1011c130`). The hook-based test (`onNotifyReady`) captures the would-be send arguments (msg/wParam/lParam/category/progId). A full receiver-window fixture is a residual limitation (see §6).
+Test receiver via `_OrlibRegisterNotificationHandle@4` (ordinal 595, Ghidra-confirmed at `0x1011c130`). The hook-based test (`onNotifyReady`) captures the would-be send arguments (msg/wParam/lParam/category/progId). The current receiver-window fixture is implemented (see §6); the original handoff limitation is historical.
 
 **Evidence:** `docs/RE/RE_M3_0x40A_NOTIFICATION.md` (R-M.3.4).
 
@@ -103,8 +103,8 @@ The hook is **test-only** (`nullptr` in production), allowing unit tests to insp
 - 1 receiver-aware batch (3 verify-success cycles on the same shared TsDevLib with the same registered receiver window — proves exactly one `0x40A` per operation, no missed/duplicated messages across batch reuse at the receiver level),
 - 3 delete-success 0x40A packing cases for the remaining non-Function component types (Indicator/TradingApp/ShowMe — closes the comparative-review finding that only Strategy delete had a 0x40A assertion; plan L207 "correct packing for all five component types, for each operation in the confirmed set"),
 - 1 Function delete negative case (Function category = 4; asserts 0x40A is NOT sent on Function delete — closes the comparative-review finding that the Function-delete negative path was untested; plan L210 "not sent for operations outside that set"),
-- 1 CLI stdin batch 0x40A assertion (asserts 0x40A delivery via a cross-process receiver fixture during CLI stdin batch mode — closes the comparative-review finding that batch 0x40A was deferred against the plan's "do not defer" clause; plan L219a),
-- 1 serve mode 0x40A assertion (asserts 0x40A delivery via a cross-process receiver fixture during a reused serve session — closes the comparative-review finding that serve 0x40A was deferred against the plan's "do not defer" clause; plan L219b).
+- 1 CLI stdin batch 0x40A assertion (asserts 0x40A delivery via a receiver-window fixture running on a separate thread in the test process during CLI stdin batch mode — closes the comparative-review finding that batch 0x40A was deferred against the plan's "do not defer" clause; plan L219a),
+- 1 serve mode 0x40A assertion (asserts 0x40A delivery via a receiver-window fixture running on a separate thread in the test process during a reused serve session — closes the comparative-review finding that serve 0x40A was deferred against the plan's "do not defer" clause; plan L219b).
 
 The tests assert:
 - the exact **msg/wParam/lParam packing** per operation,
@@ -116,7 +116,7 @@ The tests assert:
 - **actual `PostMessageW` delivery** to a real registered receiver window (Case 9 — single verify; Case 10 — 3 verify + 3 delete = 6 posts captured across batch reuse, no missed/duplicated),
 - **delete 0x40A packing for all non-Function types** (Cases 11-13 — Indicator/TradingApp/ShowMe delete-success),
 - **Function delete does NOT send 0x40A** (Case 14 — negative case for the category=4 gate),
-- **CLI stdin batch and serve mode both deliver 0x40A** via a cross-process receiver fixture (Cases 15-16 — closes the L219a/L219b deferral findings).
+- **CLI stdin batch and serve mode both deliver 0x40A** via a receiver-window fixture running on a separate thread in the test process (Cases 15-16 — closes the L219a/L219b deferral findings).
 
 ### Files changed
 
@@ -127,13 +127,13 @@ The tests assert:
 - `src/tsdev_lib.cpp` (ordinal 57 resolution in `initAfterCom`; `0x40A` send+hook in `verifyModule` success path; `0x40A` send+hook in `deleteEntry` success path; hook copy in private test ctor)
 - `src/orlib_resolver.h` (`NotifyLibChangedFn` typedef + `resolveNotifyLibChanged` declaration)
 - `src/orlib_resolver.cpp` (`resolveNotifyLibChanged` implementation)
-- `tests/test_0x40a_notification.cpp` (new — 175 assertions, 16 cases; Cases 7–10 added by the adversarial-review fix pass: TradingApp/ShowMe packing, receiver-aware single + batch; Cases 11–16 added by the comparative-review fix pass: delete coverage for Indicator/TradingApp/ShowMe, Function delete negative, CLI stdin batch + serve mode cross-process receiver assertions)
+- `tests/test_0x40a_notification.cpp` (new — 175 assertions, 16 cases; Cases 7–10 added by the adversarial-review fix pass: TradingApp/ShowMe packing, receiver-aware single + batch; Cases 11–16 added by the comparative-review fix pass: delete coverage for Indicator/TradingApp/ShowMe, Function delete negative, CLI stdin batch + serve mode receiver-window delivery assertions)
 - `CMakeLists.txt` (`test_0x40a_notification` target + test list)
 - `tests/run_unit_tests.ps1` (`test_0x40a_notification` registration)
 - `signatures/v9.50.01.3344.json` (ordinal-57 export entry)
 - `tools/sigcodegen.py` (`EXPECTED_EXPORT_COUNT` 12→13)
 - `docs/SIGNATURE_CATALOG.md` (M.3 correction notice + §5.3 Ordinal 57 entry)
-- `docs/PM_WORKING_MEMORY.md` (M.3 completion entry)
+- `docs/workstream_tsdev_parity_plan.md` (M.3 status entry)
 
 ---
 
@@ -141,7 +141,7 @@ The tests assert:
 
 | Suite | Result |
 |---|---|
-| `test_0x40a_notification` | All assertions PASS — 175/175 across 16 cases (3 verify-success types + 1 failed-verify negative + 1 delete-success + 1 batch-reuse (3 iterations) + TradingApp + ShowMe + receiver-aware single verify + receiver-aware batch (3 verify + 3 delete = 6 receiver-captured posts) + Indicator/TradingApp/ShowMe delete-success 0x40A packing + Function delete negative (0x40A NOT sent) + CLI stdin batch 0x40A via cross-process receiver fixture + serve mode 0x40A via cross-process receiver fixture) |
+| `test_0x40a_notification` | All assertions PASS — 175/175 across 16 cases (3 verify-success types + 1 failed-verify negative + 1 delete-success + 1 batch-reuse (3 iterations) + TradingApp + ShowMe + receiver-aware single verify + receiver-aware batch (3 verify + 3 delete = 6 receiver-captured posts) + Indicator/TradingApp/ShowMe delete-success 0x40A packing + Function delete negative (0x40A NOT sent) + CLI stdin batch 0x40A via receiver-window fixture running on a separate thread in the test process + serve mode 0x40A via receiver-window fixture running on a separate thread in the test process) |
 | Full regression | 13/13 suites PASS |
 
 Full regression coverage:
@@ -158,7 +158,7 @@ The `test_0x40a_notification` RED→GREEN transition is the key TDD evidence:
 - **RED:** 18/63 pass — positive cases fail because the `onNotifyReady` hook is never called (no `0x40A` send wired up).
 - **GREEN:** 63/63 pass — after the M.3 production change (ordinal 57 resolution + send in `verifyModule`/`deleteEntry` success paths).
 - **Adversarial-review fix pass:** 63→112 assertions (Cases 7–10 added: TradingApp/ShowMe packing coverage, receiver-aware single + batch delivery via `_OrlibRegisterNotificationHandle@4` ordinal 595). All 112/112 pass; production code unchanged.
-- **Comparative-review fix pass:** 112→175 assertions (Cases 11–16 added: Indicator/TradingApp/ShowMe delete-success 0x40A packing, Function delete negative, CLI stdin batch 0x40A via cross-process receiver fixture, serve mode 0x40A via cross-process receiver fixture). All 175/175 pass; closes the 5 pre-completion comparative-review findings.
+- **Comparative-review fix pass:** 112→175 assertions (Cases 11–16 added: Indicator/TradingApp/ShowMe delete-success 0x40A packing, Function delete negative, CLI stdin batch 0x40A via receiver-window fixture running on a separate thread in the test process, serve mode 0x40A via receiver-window fixture running on a separate thread in the test process). All 175/175 pass; closes the 5 pre-completion comparative-review findings.
 
 No regressions introduced.
 
@@ -176,10 +176,10 @@ No regressions introduced.
 
 ## 6. Residual limitations
 
-1. **Receiver-window fixture IMPLEMENTED (no longer a limitation).** Cases 9 and 10 now register a real message-only window via `_OrlibRegisterNotificationHandle@4` (orlib20 ordinal 595, resolved by `GetModuleHandleW("orlib20.dll")` + `GetProcAddress` with `MAKEINTRESOURCEA(595)`), run a `GetMessage`/`DispatchMessage` loop on a separate receiver thread, and capture the actual `PostMessageW(0x40A)` delivery. Case 9 proves a single verify-success delivers exactly one correctly-packed `0x40A` to the registered HWND. Case 10 proves 3 verify-success cycles on the same shared TsDevLib with the same registered receiver window deliver exactly 6 `0x40A` posts (3 verify + 3 delete, Strategy category 0) with no missed/duplicated messages. The `onNotifyReady` hook remains as the library-level capture; the receiver window proves the orlib20 `PostMessageW` delivery path end-to-end. The unregister is via ordinal 596. (This item was a residual limitation in the original M.3 handoff; the adversarial-review fix pass closed it.)
+1. **Receiver-window fixture IMPLEMENTED (no longer a limitation).** Cases 9 and 10 now register a real message-only window via `_OrlibRegisterNotificationHandle@4` (orlib20 ordinal 595, resolved by `GetModuleHandleW("orlib20.dll")` + `GetProcAddress` with `MAKEINTRESOURCEA(595)`), run a `GetMessage`/`DispatchMessage` loop on a separate thread in the test process, and capture the actual `PostMessageW(0x40A)` delivery. Case 9 proves a single verify-success delivers exactly one correctly-packed `0x40A` to the registered HWND. Case 10 proves 3 verify-success cycles on the same shared TsDevLib with the same registered receiver window deliver exactly 6 `0x40A` posts (3 verify + 3 delete, Strategy category 0) with no missed/duplicated messages. The `onNotifyReady` hook remains as the library-level capture; the receiver window proves the orlib20 `PostMessageW` delivery path end-to-end. The unregister is via ordinal 596. (This item was a residual limitation in the original M.3 handoff; the adversarial-review fix pass closed it.)
 2. **Identical-source no-op modify UNRESOLVED.** Whether TSDev sends `0x40A` for a modify with byte-identical source is unconfirmed (no Frida capture). The CLI's modify always re-verifies, so `0x40A` would be sent on verify success. This is a parity gap that may need a dedicated Frida capture.
-3. **Desktop runtime observation PERFORMED 2026-08-25, user-supervised.** The M.3 plan (L218) asked for a controlled human observation that an already-applied study refreshes without restart after a CLI operation. This was performed 2026-08-25 under the explicit M.3 Desktop-observation exception to the general "do NOT run `tsdev_cli` insert/modify/delete while TradeStation Desktop is open" rule (see `docs/PM_WORKING_MEMORY.md`, "DURABLE CONCURRENCY CAVEAT — 2026-08-24", operational rule amended 2026-08-25). Indicator `TS_AUTO_M3_DESK_IND_20260825` (ProgId 2757) was inserted via CLI while Desktop was closed; the user then opened Desktop and applied the indicator to a chart (v1 plotted Close, v2 plotted High, v3 plotted constant 100.00). Two CLI modifies were then run while Desktop was open with the indicator applied: Modify 1 (Close → High) refreshed the chart automatically with no restart; Modify 2 (High → 100.00 constant) refreshed the chart automatically to a flat line at 100.00 with no restart (user confirmed "it worked. perfect."). A CLI delete was then run while Desktop was open with the indicator applied: the indicator disappeared from the chart with a warning "the indicator has been deleted", matching TSDev's own delete-from-library UI behavior (user confirmed "100% correct and the same behavior as if the indicator had been removed via the TSDev UI"). No crashes occurred during any of the three CLI operations. The cross-process delivery mechanism is established by `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md` (EventsViaHandles HWND set lives in the `SHARE_WO` PE shared memory section, `IMAGE_SCN_MEM_SHARED`; orlib20 has no ASLR so the shared section maps at the same VA in every process; registration uses `LOCK CMPXCHG`; `PostMessageW` delivers to any HWND system-wide). Full observation record: `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §6a.
-4. **CLI batch/serve notification assertions IMPLEMENTED (Cases 15-16).** CLI stdin batch mode and serve mode both assert `0x40A` delivery via a cross-process receiver fixture (a window registered via `_OrlibRegisterNotificationHandle@4` ordinal 595 in a separate receiver process). Case 15 asserts `0x40A` delivery during CLI stdin batch mode; Case 16 asserts `0x40A` delivery during a reused serve session. Both close the comparative-review findings that batch/serve `0x40A` assertions had been deferred to M.5 against the plan's explicit "do not defer" clause (plan L219a/L219b). No longer a residual limitation for M.5.
+3. **Desktop runtime observation PERFORMED 2026-08-25.** The M.3 plan (L218) asked for a controlled human observation that an already-applied study refreshes without restart after a CLI operation. This was performed 2026-08-25. Indicator `TS_AUTO_M3_DESK_IND_20260825` (ProgId 2757) was inserted via CLI while Desktop was closed; the user then opened Desktop and applied the indicator to a chart (v1 plotted Close, v2 plotted High, v3 plotted constant 100.00). Two CLI modifies were then run while Desktop was open with the indicator applied: Modify 1 (Close → High) refreshed the chart automatically with no restart; Modify 2 (High → 100.00 constant) refreshed the chart automatically to a flat line at 100.00 with no restart (user confirmed "it worked. perfect."). A CLI delete was then run while Desktop was open with the indicator applied: the indicator disappeared from the chart with a warning "the indicator has been deleted", matching TSDev's own delete-from-library UI behavior (user confirmed "100% correct and the same behavior as if the indicator had been removed via the TSDev UI"). No crashes occurred during any of the three CLI operations. The cross-process delivery mechanism is established by `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md` (EventsViaHandles HWND set lives in the `SHARE_WO` PE shared memory section, `IMAGE_SCN_MEM_SHARED`; orlib20 has no ASLR so the shared section maps at the same VA in every process; registration uses `LOCK CMPXCHG`; `PostMessageW` delivers to any HWND system-wide). Full observation record: `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §6a.
+4. **CLI batch/serve notification assertions IMPLEMENTED (Cases 15-16).** CLI stdin batch mode and serve mode both assert `0x40A` delivery via a receiver-window fixture: its window/message loop runs on a separate thread in the test process, while CLI/broker execution runs in child processes. The window is registered via `_OrlibRegisterNotificationHandle@4` ordinal 595. Case 15 asserts `0x40A` delivery during CLI stdin batch mode; Case 16 asserts `0x40A` delivery during a reused serve session. Both close the comparative-review findings that batch/serve `0x40A` assertions had been deferred to M.5 against the plan's explicit "do not defer" clause (plan L219a/L219b). No longer a residual limitation for M.5.
 5. **Bit 3 (`has_expiry`) always 0** — inherited from M.2, not an M.3 concern.
 6. **Delete gating nuance (known parity nuance, code left as-is).** In `deleteEntry()`, the `0x40A` send is placed AFTER the disk-cleanup check (`cleanupFailed`). If disk cleanup fails (e.g. `ERROR_ACCESS_DENIED` on the `.xml` or `.ell` file), the operation returns `false` AND `0x40A` is NOT sent, even though the warehouse delete succeeded. TSDev's `FUN_10159ae0` sends `0x40A` after the warehouse delete (gated only on `category != 4`), NOT gated on disk cleanup. The CLI's behavior is defensible: the operation is reported as failed to the user, so not notifying receivers is consistent with "the operation did not fully succeed." It does, however, differ from TSdev, which notifies regardless of disk cleanup. If strict TSDev parity is needed, the `0x40A` send could be moved to immediately after the warehouse orchestrator succeeds (before the disk-cleanup check). The code is left as-is (the current placement is defensible); this nuance is documented for M.4/M.5 awareness.
 
@@ -188,7 +188,7 @@ No regressions introduced.
 ## 7. Follow-up work for M.4 / M.5
 
 - **M.4:** Reverse-dependent revalidation (`FUN_004D91E0` traversal). Should also revisit the delete gating nuance (§6 item 6) if strict TSDev parity is required.
-- **M.5:** Consolidated verification and documentation closure. The Desktop observation (§6 item 3) and CLI batch/serve notification assertions (§6 item 4) are now CLOSED — they are no longer on M.5's list. The receiver-window fixture (§6 item 1), the TradingApp/ShowMe packing coverage, the delete-coverage cases (Cases 11-14), and the CLI batch/serve cross-process receiver fixture (Cases 15-16) are all CLOSED. M.5's closure gate should address the remaining residual limitation — identical-source no-op modify (§6 item 2) — if a dedicated Frida capture is warranted, and revisit the delete gating nuance (§6 item 6) if strict TSDev parity is required.
+- **M.5:** Consolidated verification and documentation closure. The Desktop observation (§6 item 3) and CLI batch/serve notification assertions (§6 item 4) are now CLOSED — they are no longer on M.5's list. The receiver-window fixture (§6 item 1), the TradingApp/ShowMe packing coverage, the delete-coverage cases (Cases 11-14), and the CLI batch/serve receiver-window fixture running on a separate thread in the test process (Cases 15-16) are all CLOSED. M.5's closure gate should address the remaining residual limitation — identical-source no-op modify (§6 item 2) — if a dedicated Frida capture is warranted, and revisit the delete gating nuance (§6 item 6) if strict TSDev parity is required.
 
 M.3 established the post-success `0x40A` notification parity foundation (R-M.3.1 through R-M.3.4) that M.4–M.5 build on. The residual limitations in §6 should be revisited as appropriate in those slices.
 

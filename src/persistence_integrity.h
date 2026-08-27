@@ -1,6 +1,6 @@
 // persistence_integrity.h
 //
-// Shared persistence-integrity validator API (TVS-L.9, TDD RED).
+// Shared persistence-integrity validator API (TVS-L.9, GREEN).
 //
 // This header DECLARES the validator used to classify the cross-store
 // consistency of a TradeStation EasyLibrary item's two persistence artifacts
@@ -10,12 +10,10 @@
 // runtime-linkable refresh" means, instead of each caller re-implementing the
 // ELL/XML hash + GUID-occurrence check inline.
 //
-// STATUS: DECLARATION ONLY. There is NO implementation (.cpp) yet. This is the
-// TDD RED step for TVS-L.9: the test in tests/test_persistence_integrity.cpp
-// includes this header and calls validatePersistenceIntegrity(), so the test
-// executable FAILS TO LINK until a later (GREEN) TVS provides the implementation
-// in src/persistence_integrity.cpp. No production code may rely on this symbol
-// until the GREEN step ships it.
+// STATUS: IMPLEMENTED. src/persistence_integrity.cpp defines the validator used
+// by the production CLI and by tests/test_persistence_integrity.cpp. The test
+// links the implementation through tsdev_lib; the verdict behavior is described
+// by the matrix below.
 //
 // Why a shared validator is needed (the defect this targets):
 //   Fault A (post-compile stale-write false success, see
@@ -39,7 +37,7 @@
 //        Only when this is true may an unchanged `.ell` hash be accepted as a
 //        no-op rather than rejected as a stale write.
 //
-// Verdict matrix (what the GREEN implementation must produce):
+// Verdict matrix (implemented behavior):
 //
 //   ellChanged | xmlChanged | guidInEll | sourceEqualProven | Verdict
 //   -----------+------------+-----------+-------------------+----------------------
@@ -114,11 +112,9 @@ struct IntegrityInput {
 
 // Evaluate the persistence integrity of a single modify/upsert operation.
 //
-// DECLARATION ONLY — no implementation exists yet (TVS-L.9 RED). Linking a
-// caller against this header without a future src/persistence_integrity.cpp
-// produces an unresolved external (RED). The GREEN step must implement this
-// according to the verdict matrix above and the fixture-driven expectations
-// encoded in tests/test_persistence_integrity.cpp.
+// Implemented in src/persistence_integrity.cpp according to the verdict matrix
+// above and the fixture-driven expectations encoded in
+// tests/test_persistence_integrity.cpp.
 IntegrityVerdict validatePersistenceIntegrity(const IntegrityInput& in);
 
 } // namespace tsdev

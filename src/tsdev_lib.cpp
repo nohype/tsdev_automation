@@ -1,11 +1,13 @@
 // tsdev_lib.cpp
 //
 // Implementation of the shared orlib20 wrapper. See tsdev_lib.h for the API
-// contract and tmp/re_artifacts/orlib_param_orders.md for the confirmed
-// reverse-engineering findings this is built on.
+// contract and docs/FEASIBILITY.md §5.1 for the tracked summary of the
+// historical reverse-engineering findings this is built on; the original raw
+// record under tmp/ is gitignored and unavailable in a fresh checkout.
 //
-// The reference probe (archive/elevated_test20.cpp) demonstrates the full flow
-// end-to-end; this module encapsulates the same logic in a reusable API.
+// The historical reference probe (archive/elevated_test20.cpp) records the
+// pre-L.3 flow; its patch-based persistence result is not current acceptance
+// evidence. This module contains the current reusable API implementation.
 
 #include "tsdev_lib.h"
 #include "orlib_resolver.h"
@@ -62,7 +64,8 @@ const wchar_t* kSupportDlls[] = {
 // analysis of the ordinal-66 alloc wrapper (FUN_10165f70 calls
 // operator_new(0x58)). Workstream M slice M.1: no longer used for allocation
 // (ordinal 66 allocates internally), retained as a documented constant for
-// the confirmed object size. See tmp/m1_ghidra_findings.md §1.
+// the confirmed object size. See docs/M1_HANDOFF.md §R-M.1.1; the underlying
+// raw Ghidra note is historical/transient and unavailable in a fresh checkout.
 const size_t kCELCompilerSize = 0x58; // 88 bytes
 
 // Thread-check bypass patches: NOP the INT3 (0xCC → 0x90) in eleven
@@ -283,12 +286,15 @@ bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
 #pragma warning(pop)
 
 // SEH-protected call to _CloseWarehouseForCurrentThreadAndPath@4.
-// __stdcall, 1 arg (wide string pointer cast to int). POD-only.
-void callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
+// __stdcall, 1 int arg (the production call passes 0). POD-only.
+// The boolean reports only whether the underlying call completed without an
+// SEH exception; the close export has no native return status.
+bool callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
     __try {
         fn(param);
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Best-effort close; ignore SEH.
+        return false;
     }
 }
 
@@ -490,6 +496,29 @@ bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
     return true;
 }
 
+// SEH-protected call to NotifyLibChanged (orlib20 ordinal 57, __stdcall,
+// 2 args: unsigned short category, unsigned short progId, returns void).
+// Workstream M slice M.3: the 0x40A library-change notification sender.
+// Fire-and-forget semantics — the caller preserves current behavior by
+// ignoring the return value (a notification SEH exception must NOT crash
+// the caller or fail the insert/modify/delete operation). POD-only (no C++
+// objects with destructors) so __try/__except is legal under MSVC (no
+// C2712). NotifyLibChangedFn comes from orlib_resolver.h (namespace tsdev)
+// and is structurally identical to the TsDevLib member typedef
+// NotifyLibChanged_t. The orlib20 boundary requires every orlib20 call to
+// be SEH-protected; the previous raw m_pNotifyLibChanged(...) calls at the
+// M.3 insert/modify (verifyModule success) and delete (deleteEntry success)
+// paths were not wrapped.
+bool callNotifyLibChanged(NotifyLibChangedFn fn,
+                          unsigned short category, unsigned short progId) {
+    __try {
+        fn(category, progId);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 // SEH-protected contract-change comparison (M.4).
 // Replicates TSDev.exe FUN_004d9040: compares two warehouse master records
 // field-by-field. Returns 1 = no change, 0 = changed.
@@ -554,7 +583,8 @@ int compareMasterRecsContractSeh(const char* oldRec, const char* newRec) {
     return result;
 }
 
-// SEH-protected call to GetDependencies (M.4). POD-only.
+// Historical diagnostic helper for GetDependencies (M.4); the production
+// reverse-dependent path uses the linker below. POD-only.
 // File-scope typedef matching the TsDevLib private member typedef
 // (structurally identical: HGLOBAL (__stdcall*)(int, int, int, int*)),
 // so this free helper can take a typed function pointer without accessing
@@ -1087,8 +1117,8 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
         }
     }
 
-    // 8. Resolve 7 exported functions via resolver (replaces the old
-    //    GetProcAddress-based template helper).
+    // 8. Resolve the 7 core named exports via resolver (the additional
+    //    tracked/ad-hoc exports are resolved below as needed).
     m_pOrlibInit      = m_resolver->resolveOrlibInit();
     m_pOrlibExit      = m_resolver->resolveOrlibExit();
     m_pFindExistPos   = m_resolver->resolveFindExistPos();
@@ -1100,8 +1130,9 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     m_loadMasterRecsEx = (LoadMasterRecsExFn)m_resolver->resolveExport("_LoadMasterRecsEX@16");
     m_getMasterRecByType = (GetMasterRecByTypeFn)m_resolver->resolveExport("_GetMasterRecByType@16");
 
-    // M.4: GetDependencies (ordinal 487) and _DeleteDependencyList@4 (ordinal 397).
-    // These are named exports, resolved by name.
+    // Historical M.4 diagnostics only: these forward-dependency exports are
+    // retained in the resolver surface but are not used by the production
+    // reverse-dependent traversal (the M.4 path uses the linker below).
     m_getDependencies = (GetDependenciesFn)m_resolver->resolveExport("GetDependencies");
     m_deleteDependencyList = (DeleteDependencyListFn)m_resolver->resolveExport("_DeleteDependencyList@4");
 
@@ -1113,11 +1144,12 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     m_ord70 = reinterpret_cast<Ordinal70Fn>(m_resolver->resolveExportByOrdinal(70));
     m_linkerRaw = (void*)m_resolver->resolveExportByOrdinal(85);
 
-    // 9. Resolve 8 internal functions via resolver (signature scan,
-    //    replaces old base-address + RVA arithmetic).
+    // 9. Resolve the signature-based internal functions via resolver
+    //    (replaces old base-address + RVA arithmetic).
     //    Workstream M slice M.1: CELCompiler alloc/destroy are now resolved
     //    by orlib20 ORDINAL (66/67), not by signature scan of the raw
-    //    ctor/dtor. See tmp/m1_ghidra_findings.md §1 (R-M.1.1).
+    //    ctor/dtor. See docs/M1_HANDOFF.md §R-M.1.1; the underlying raw Ghidra
+    //    note is historical/transient and unavailable in a fresh checkout.
     m_pStartCompiling     = m_resolver->resolveStartCompilingProcess();
     m_pEndCompiling       = m_resolver->resolveEndCompilingProcess();
     m_pCELCompilerAlloc   = m_resolver->resolveCELCompilerAlloc();
@@ -1256,12 +1288,20 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
     // from the config BEFORE initAfterCom() so it is in place by the time
     // any verifyModule() or deleteEntry() call runs. The public ctor leaves
     // m_onNotifyReady as nullptr (its default), so production code is
-    // unaffected. No invocation of this hook is added anywhere in this RED
-    // phase — the GREEN phase will add the actual 0x40A send (and the hook
-    // call) to verifyModule() and deleteEntry().
+    // unaffected. The current M.3 implementation invokes this hook at the
+    // would-be 0x40A send point on the configured post-success paths.
     m_onNotifyReady = config.onNotifyReady;
     m_onReverseDependentRevalidationReady = config.onReverseDependentRevalidationReady;
     initAfterCom(tsPathOverride);
+}
+
+// Test-only wrapper for the SEH-protected close call. It is declared only in
+// src/tsdev_lib_test_hooks.h and delegates to the exact helper used by the
+// production TsDevLib::closeWarehouse() implementation. No TsDevLib instance
+// or orlib20 state is needed, so the seam remains a pure unit-test boundary.
+bool invokeCloseWarehouseForTest(CloseWarehouseTestFn fn) {
+    return callCloseWarehouseHelper(
+        reinterpret_cast<CloseWarehouseFn>(fn), 0);
 }
 
 // ============================================================================
@@ -1305,14 +1345,15 @@ TsDevLib::~TsDevLib() {
     if (m_orlibInitialized && m_pOrlibExit) {
         callOrlibExit(m_pOrlibExit);
     }
-    // Restore all 11 patch sites to their original bytes AFTER OrlibExit but
+    // Restore all patch sites to their original bytes AFTER OrlibExit but
     // BEFORE m_resolver (unique_ptr) is destroyed — the resolver still owns
     // the loaded orlib20.dll and its base address, so baseAddress() is valid
     // here. This returns the in-memory DLL to its original state so that a
     // subsequent TsDevLib instance in the same process can re-scan the
     // original-byte signatures (the thread-check signatures scan for 0xCC).
     // Without this restoration the second instance's scan finds the patched
-    // bytes (0x90) and throws OrlibResolverError.
+    // bytes (0x90) and throws OrlibResolverError. The patch-site count is
+    // authoritative in docs/SIGNATURE_CATALOG.md.
     if (m_patchesApplied) {
         uintptr_t base = m_resolver->baseAddress();
         // Thread-check patches: restore 1 original byte (0xCC) each. Only
@@ -1390,7 +1431,9 @@ bool TsDevLib::saveSource(ComponentType type, int progId,
         saveFlags |= 0x10;  // bit 4 = is_verified (FUN_0044f720 returns 1 for re-saves)
     }
     char savePasswordBuf[64] = {};
-    memcpy(savePasswordBuf, kInternalDefaultPassword, sizeof(kInternalDefaultPassword) - 1);  // 10 bytes, rest already zeroed
+    // Zero the full buffer first; copy the 10-byte default into its leading
+    // bytes, so only the unused tail remains zero at the call.
+    memcpy(savePasswordBuf, kInternalDefaultPassword, sizeof(kInternalDefaultPassword) - 1);
     if (m_onSaveModuleNewReady) {
         m_onSaveModuleNewReady(&saveFlags, savePasswordBuf, 64,
                                static_cast<int>(type), progId);
@@ -1416,8 +1459,10 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
     //     0x7B indicates "internally encrypted on disk" (this is NOT a
     //     password-protection feature). When this bit is set, _LoadTextFileEX
     //     requires a non-NULL password buffer to trigger the internal
-    //     decryption path (Branch C in FUN_101a0f90). TSDev passes a zeroed
-    //     64-byte buffer (FUN_10108630), and any non-NULL pointer works.
+    //     decryption path (Branch C in FUN_101a0f90). The get-side buffer is
+    //     a separate 64-byte buffer that is zero-initialized before the call;
+    //     the loader then populates it from the embedded password. Any
+    //     non-NULL pointer works for this decryption path.
     //     If _GetMasterRecByType fails (SEH exception or returns 0), we
     //     gracefully fall back to _LoadTextFileEX with NULL (the plain-text
     //     path) as before.
@@ -1432,9 +1477,10 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
                 // Source is internally encrypted on disk. Passing a non-NULL
                 // password buffer triggers Branch C in FUN_101a0f90, which
                 // extracts the embedded password from the data header and
-                // decrypts the source body. TSDev does the same (FUN_10108630
-                // uses a zeroed 64-byte buffer). The buffer content doesn't
-                // matter — any non-NULL pointer triggers the decrypt path.
+                // decrypts the source body. This separate get-side buffer is
+                // zero-initialized before the call and then populated by the
+                // loader; its prior contents do not matter — any non-NULL
+                // pointer triggers the decrypt path.
                 char decryptBuffer[64] = {};
                 LoadTextFileExSehResult decryptSeh;
                 if (!callLoadTextFileEx(m_loadTextFileEx, nullptr,
@@ -1529,7 +1575,9 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
                             // subtypes (PaintBar, ShowMe, Expert, etc.) by
                             // accepting only raw subtypes 0x00 and 0x01.
                             // ShowMe records use raw subtype 0x03 or 0x05 (both
-                            // map to power type 5 / expanded whType 0x0502).
+                            // map to the ShowMe power type / expanded whType;
+                            // authoritative mapping in
+                            // docs/TS_COMPONENT_TYPES.md).
                             if (category == 2) {
                                 unsigned char recSubType =
                                     (unsigned char)rec[kSubTypeOffset];
@@ -1637,7 +1685,8 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
     //   +0x28 = NOT WRITTEN by TSDev (left as uninitialized heap; ctor does NOT zero it).
     // After StartCompilingProcess, before _VerifyModule_New, FUN_004D9480
     // zeroes +0x00 and +0x04 (the result fields). See
-    // tmp/m1_ghidra_findings.md §2-3 (R-M.1.2 / R-M.1.3 / R-M.1.4 / R-M.1.5).
+    // docs/M1_HANDOFF.md §R-M.1.2–§R-M.1.5; the underlying raw Ghidra note is
+    // historical/transient and unavailable in a fresh checkout.
 
     // --- 1. Allocate + construct via ordinal 66 (no malloc, no memset) ---
     void* compilerMem = nullptr;
@@ -1737,7 +1786,9 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         int rootCategory = getCategory(type);
         if (rootCategory == 0 || rootCategory == 1 || rootCategory == 4) {
             // Contract-change check: compare old vs new master record.
-            // The old record was captured before saveSource() (if applicable).
+            // Intended old-record capture before saveSource() is currently
+            // missing and is an escalated M.4 blocker. Until it is populated,
+            // m_hasOldMasterRec remains false and this defaults to changed.
             bool contractChanged = true;  // default: assume changed
             if (m_hasOldMasterRec) {
                 // Read the new master record.
@@ -1753,7 +1804,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
                 m_hasOldMasterRec = false;  // reset for next operation
             }
 
-            // Traverse reverse dependents with explicit visited-set.
+            // Traverse reverse dependents with an explicit visited-set; cycle termination is not established when contractChanged=true (M.4 blocker).
             std::set<int> visited;
             visited.insert(progId);  // root is already visited
             traverseReverseDependents(type, progId, compilerMem,
@@ -1787,7 +1838,12 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
             m_onNotifyReady(0x40A, 0, lParam, static_cast<int>(type), progId);
         }
         if (m_pNotifyLibChanged) {
-            m_pNotifyLibChanged(category, progIdWord);
+            // SEH-protected (orlib20 boundary). Fire-and-forget: a
+            // notification exception is ignored and must not fail the
+            // insert/modify operation (R-M.3.3 error semantics).
+            callNotifyLibChanged(
+                reinterpret_cast<NotifyLibChangedFn>(m_pNotifyLibChanged),
+                category, progIdWord);
         }
     }
 
@@ -2053,7 +2109,7 @@ void TsDevLib::traverseReverseDependents(
     char* compilerBase = static_cast<char*>(compilerMem);
 
     for (const auto& dep : dependents) {
-        // Cycle safety: check visited-set.
+        // Check visited-set; cycle safety is not established when contractChanged=true (M.4 blocker).
         if (visited.count(dep.progId)) {
             if (!contractChanged) {
                 // Already visited AND contract did NOT change -> skip.
@@ -2070,10 +2126,10 @@ void TsDevLib::traverseReverseDependents(
             // Contract changed -> reverify even if visited.
         }
 
-        // Mark as visited BEFORE reverifying (prevents infinite recursion).
+        // Mark as visited BEFORE reverifying; this does not establish cycle termination when contractChanged=true (M.4 blocker).
         visited.insert(dep.progId);
 
-        // Reverify via _VerifyModule_New@20 with flag=0 (non-primary).
+        // Intended contract: reverify via _VerifyModule_New@20 with flag=0 (non-primary); callVerify() currently hardcodes flag=1, an escalated M.4 blocker.
         // The compiler object's +0x08/+0x0C/+0x10 stay as the root's values.
         // The dependent's (category, progId) are passed as args.
         VerifySehResult vSeh;
@@ -2092,7 +2148,7 @@ void TsDevLib::traverseReverseDependents(
         }
 
         // AND the dependent result into compiler+0x04 (aggregate).
-        // compiler+0x00 (root result) is NOT touched (flag=0, not primary).
+        // Intended contract: compiler+0x00 (root result) is not touched by flag=0; callVerify() currently passes flag=1, an escalated M.4 blocker.
         int currentAggregate = *(reinterpret_cast<int*>(compilerBase + 0x04));
         *(reinterpret_cast<int*>(compilerBase + 0x04)) =
             currentAggregate & revalidationResult;
@@ -2121,14 +2177,13 @@ void TsDevLib::traverseReverseDependents(
     }
 }
 
-void TsDevLib::closeWarehouse() {
-    __try {
-        m_pCloseWarehouse(0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // Best-effort flush; log SEH but do not propagate (destructor path).
+bool TsDevLib::closeWarehouse() {
+    if (!callCloseWarehouseHelper(m_pCloseWarehouse, 0)) {
         std::fprintf(stderr,
             "tsdev: WARNING — closeWarehouse raised SEH exception\n");
+        return false;
     }
+    return true;
 }
 
 bool TsDevLib::ellFileExists(ComponentType type, int progId) {
@@ -2273,7 +2328,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
         }
     }
 
-    // 4. CloseWarehouse (best-effort flush).
+    // 4. CloseWarehouse (explicit flush).
     //    Skipped when flush=false (serve/batch mode) because closing the
     //    warehouse frees the IWHouse interface ([warehouse+0x5E]), which
     //    causes subsequent enumerateRecords/refreshCache calls to crash with
@@ -2282,7 +2337,10 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     //    once at the end by runServe/runBatch.
     if (flush) {
         TSDEV_DBG("tsdev: deleteEntry — calling closeWarehouse()\n");
-        closeWarehouse();
+        if (!closeWarehouse()) {
+            TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() failed\n");
+            return false;
+        }
         TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() done\n");
     } else {
         TSDEV_DBG("tsdev: deleteEntry — skipping closeWarehouse (flush=false)\n");
@@ -2382,7 +2440,12 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
             m_onNotifyReady(0x40A, 0, lParam, static_cast<int>(type), progId);
         }
         if (m_pNotifyLibChanged) {
-            m_pNotifyLibChanged(categoryWord, progIdWord);
+            // SEH-protected (orlib20 boundary). Fire-and-forget: a
+            // notification exception is ignored and must not fail the
+            // delete operation (R-M.3.3 error semantics).
+            callNotifyLibChanged(
+                reinterpret_cast<NotifyLibChangedFn>(m_pNotifyLibChanged),
+                categoryWord, progIdWord);
         }
     }
 
@@ -2402,16 +2465,19 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     // createEntry), so it must never trigger create-path cleanup. It calls
     // verifyModule with outStage=nullptr, so no stage is recorded and the
     // create-path cleanup owner (doInsert) is never involved.
-    // Structural guarantee (Ghidra-verified, see
-    // docs/RE/RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md):
-    // On ANY modify failure (compile or post-compile finalization),
-    // the .ell file is NEVER truncated or replaced. This is because
-    // MDVault::SaveModule (which writes .ell) is only called when
-    // FUN_10011230 returns success. On failure, only SymWriter::Save
-    // (which writes .xml debugger data) may run unconditionally.
-    // The .xml inconsistency is a debugger/source-map issue, not a
-    // runtime linkability risk. This matches TSDev's behavior (no
-    // rollback for .xml). No backup/restore is needed.
+    // Failure persistence is stage-dependent (Ghidra evidence in
+    // docs/RE/RE_VERIFYMODULE_FINALIZATION_TRUNCATION.md and
+    // docs/RE/RE_L8_STALE_WRITE_FAULT_A.md), not a universal ELL guarantee:
+    // compile failure before finalization/write, and finalization failure when
+    // FUN_10011230 returns false, can leave a pre-existing .ell unchanged
+    // because MDVault::SaveModule is skipped. SymWriter::Save may still rewrite
+    // .xml on the latter path.
+    // Fault A is different: post-compile code generation/finalization succeeds,
+    // MDVault::SaveModule attempts the .ell write, the OS write fails, and
+    // ELMDCore suppresses that failure. XML and warehouse source may change
+    // while the stale .ell remains. The current post-verify persistence-
+    // integrity validator in tsdev_cli detects and reports that condition.
+    // It is detect-and-fail only; no rollback, retry, or restore is attempted.
     // 1. Look up the existing component by name + type.
     int progId = findExistPos(name, type);
     TSDEV_DBG("tsdev: modifyEntry — findExistPos(\"%s\", %d) = %d\n",

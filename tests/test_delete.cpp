@@ -1,6 +1,6 @@
 // test_delete.cpp
 //
-// Integration test (RED-GREEN) for the DELETE flow through the tsdev_lib
+// Integration test for the implemented DELETE flow through the tsdev_lib
 // wrapper. This validates the delete operation end-to-end:
 //   1. Create a test entry (INSERT flow: createEntry + saveSource + verify)
 //   2. Verify it exists (findExistPos > 0)
@@ -29,8 +29,9 @@ namespace {
 // Test fixture constants.
 const char* kTestName = "zzz_cli_delete_test";
 
-// Minimal valid EasyLanguage strategy source. The leading comment names the
-// strategy (TSDev convention); the body issues a simple market buy order.
+// Minimal valid EasyLanguage strategy source. Any leading `{ name }` comment
+// is arbitrary fixture content; stored metadata comes from warehouse
+// records/APIs. The body issues a simple market buy order.
 const char* kTestSource =
     "{ zzz_cli_delete_test }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";

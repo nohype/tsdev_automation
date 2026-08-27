@@ -1,33 +1,26 @@
 // test_json_serialize.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-K.2: extract cliResultToJson() reusable
-// serialization helper from emitOutput().
+// Unit test for TVS-K.2: the reusable cliResultToJson() serialization helper
+// extracted from emitOutput().
 //
 // This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
-// only exercises the new cliResultToJson() helper in src/tsdev_cli.cpp:
+// exercises the implemented cliResultToJson() helper in src/tsdev_cli.cpp:
 //   - cliResultToJson(const CliResult& r) : returns ordered_json matching the
 //                                            EXACT structure emitOutput()'s
-//                                            JSON branch currently produces
-//                                            (does NOT exist yet — TDD RED).
+//                                            JSON branch currently produces.
 //
 // It runs on a worker thread with a 64 MB stack only to match the project's
 // test harness convention (all tests run on a large-stack worker thread); the
 // stack size is harmless for a unit test.
 //
 // Linkage mechanism:
-//   cliResultToJson() will live inside an anonymous namespace in
-//   src/tsdev_cli.cpp (internal linkage), so it is NOT accessible from a
-//   separate translation unit. The only way to reach it is to #include the
-//   .cpp directly so the test is part of the SAME translation unit. This pulls
-//   in tsdev_cli.cpp's int main(); the test #defines TSDEV_CLI_TEST before the
-//   include so main() is excluded (main() is wrapped in #ifndef TSDEV_CLI_TEST
-//   at line 1741 of tsdev_cli.cpp).
-//
-// TDD RED step:
-//   - cliResultToJson() does NOT exist yet in tsdev_cli.cpp.
-//   This test is the RED step — it is expected to FAIL TO COMPILE until the
-//   implementer (Green step) extracts cliResultToJson() from emitOutput().
+//   cliResultToJson() lives inside an anonymous namespace in src/tsdev_cli.cpp
+//   (internal linkage), so it is NOT accessible from a separate translation
+//   unit. The only way to reach it is to #include the .cpp directly so the test
+//   is part of the SAME translation unit. This pulls in tsdev_cli.cpp's int
+//   main(); the test #defines TSDEV_CLI_TEST before the include so main() is
+//   excluded by the TSDEV_CLI_TEST guard in src/tsdev_cli.cpp.
 //
 // Checks:
 //   1. Success insert: CliResult with op="insert", typeStr="strategy",
@@ -50,7 +43,7 @@
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
-// (main() is wrapped in #ifndef TSDEV_CLI_TEST at line 1741 of tsdev_cli.cpp.)
+// (main() is wrapped in the #ifndef TSDEV_CLI_TEST guard in tsdev_cli.cpp.)
 #define TSDEV_CLI_TEST
 
 // Include the CLI source directly so anonymous-namespace internals
@@ -99,7 +92,6 @@ DWORD WINAPI runTest(LPVOID param) {
         r.progId    = 42;
         r.ellPath   = "C:\\path\\file.ell";
 
-        // cliResultToJson() does not exist yet (TDD RED: compile failure).
         ordered_json j = cliResultToJson(r);
         std::fprintf(stdout, "  [1] success insert: %s\n",
                      j.dump().c_str());

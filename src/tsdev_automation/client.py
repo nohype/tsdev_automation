@@ -220,6 +220,17 @@ _shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_SHELLEXECUTEINFOW)]
 _shell32.ShellExecuteExW.restype = wintypes.BOOL
 
 
+def _build_serve_parameters(ts_path: str | None, handshake_path: str) -> str:
+    """Build the broker command line using Windows-compatible argv quoting."""
+    args: list[str] = []
+    if ts_path:
+        args.extend(("--ts-path", ts_path))
+    args.extend(("serve", "--serve-pipe-file", handshake_path))
+    # ShellExecuteExW receives a command-line string, not an argv list.
+    # list2cmdline uses the quoting rules expected by the Windows C runtime.
+    return subprocess.list2cmdline(args)
+
+
 class _ServeBroker:
     """Manages the elevated ``tsdev_cli serve`` broker process.
 
@@ -258,6 +269,11 @@ class _ServeBroker:
         """
         if self._started:
             return
+        # A failed start may leave a live process handle when Windows refuses
+        # TerminateProcess or the post-termination wait is inconclusive.  Do
+        # not replace that handle with a new broker; clean it up first.
+        if self._process_handle is not None or self._pipe_handle is not None:
+            self._reset_pipe()
         # Validate the CLI path before invoking ShellExecuteExW.  Without this
         # check, a missing CLI binary would surface as a Windows "cannot find
         # file" dialog rather than a clean Python FileNotFoundError — the same
@@ -268,79 +284,100 @@ class _ServeBroker:
         #    so the path is valid on disk, then close it; the broker will
         #    overwrite it atomically (write to <path>.tmp then MoveFileExW).
         fd, tmp_path = tempfile.mkstemp(suffix=".pipe", prefix="tsdev_serve_")
-        os.close(fd)
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-        # 2. ShellExecuteExW with runas.
-        params = f"serve --serve-pipe-file {tmp_path}"
-        if self._ts_path:
-            params = f"--ts-path {self._ts_path} " + params
-        sei = _SHELLEXECUTEINFOW()
-        sei.cbSize = ctypes.sizeof(sei)
-        sei.fMask = _SEE_MASK_NOCLOSEPROCESS
-        sei.hwnd = None
-        sei.lpVerb = "runas"
-        sei.lpFile = str(self._cli_path)
-        sei.lpParameters = params
-        sei.lpDirectory = None
-        sei.nShow = _SW_HIDE
-        ok = _shell32.ShellExecuteExW(ctypes.byref(sei))
-        if not ok:
-            err = ctypes.windll.kernel32.GetLastError()
-            raise PermissionError(f"UAC declined or ShellExecuteExW failed (err={err})")
-        if sei.hProcess is None or int(sei.hProcess) == 0 or int(sei.hProcess) == _INVALID_HANDLE_VALUE:
-            raise PermissionError("UAC declined: no process handle returned")
-        self._process_handle = int(sei.hProcess)
-
-        # 3. Poll the temp file (up to 30 s) for the pipe name, then connect.
-        #    If anything below fails, terminate the orphaned broker process
-        #    before re-raising so we don't leak an elevated child.
-        try:
-            pipe_name: str | None = None
-            deadline = time.monotonic() + 30.0
-            while time.monotonic() < deadline:
-                if self._process_exited():
-                    raise TsDevError(message="serve broker exited before writing the pipe file")
-                if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
-                    try:
-                        with open(tmp_path, "r", encoding="utf-8") as f:
-                            pipe_name = f.readline().strip()
-                    except OSError:
-                        pipe_name = None
-                    if pipe_name:
-                        break
-                time.sleep(0.1)
-            # Best-effort cleanup of the handshake file.
+            os.close(fd)
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            if not pipe_name:
-                raise TimeoutError("serve broker did not write the pipe file within 30s")
 
-            # 4. Connect to the pipe (retry for ~5 s — broker may not have called
-            #    ConnectNamedPipe yet).
-            self._pipe_handle = _pipe.connect(pipe_name, timeout_ms=5000)
-        except Exception:
-            # Terminate the orphaned broker process before re-raising.
-            if self._process_handle:
-                try:
-                    _wait_for_exit(self._process_handle, 5000)
-                except Exception:
-                    pass
-                try:
-                    _kernel32.CloseHandle(self._process_handle)
-                except Exception:
-                    pass
-                self._process_handle = None
-            raise
-        self._started = True
-        # Safety net: ensure the broker is killed if the Python process exits
-        # without an explicit shutdown().
-        atexit.register(self.shutdown)
+            # 2. ShellExecuteExW with runas.  lpParameters is one command-line
+            #    string, so quote path arguments using the Windows C-runtime
+            #    rules rather than interpolating them into the string.
+            params = _build_serve_parameters(self._ts_path, tmp_path)
+            sei = _SHELLEXECUTEINFOW()
+            sei.cbSize = ctypes.sizeof(sei)
+            sei.fMask = _SEE_MASK_NOCLOSEPROCESS
+            sei.hwnd = None
+            sei.lpVerb = "runas"
+            sei.lpFile = str(self._cli_path)
+            sei.lpParameters = params
+            sei.lpDirectory = None
+            sei.nShow = _SW_HIDE
+
+            try:
+                ok = _shell32.ShellExecuteExW(ctypes.byref(sei))
+                if not ok:
+                    err = ctypes.windll.kernel32.GetLastError()
+                    raise PermissionError(f"UAC declined or ShellExecuteExW failed (err={err})")
+                if (
+                    sei.hProcess is None
+                    or int(sei.hProcess) == 0
+                    or int(sei.hProcess) == _INVALID_HANDLE_VALUE
+                ):
+                    raise PermissionError("UAC declined: no process handle returned")
+                self._process_handle = int(sei.hProcess)
+
+                # 3. Poll the temp file (up to 30 s) for the pipe name, then
+                #    connect.  The handshake file is removed by the outer
+                #    finally block on every success and failure path.
+                pipe_name: str | None = None
+                deadline = time.monotonic() + 30.0
+                while time.monotonic() < deadline:
+                    if self._process_exited():
+                        raise TsDevError(message="serve broker exited before writing the pipe file")
+                    if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
+                        try:
+                            with open(tmp_path, "r", encoding="utf-8") as f:
+                                pipe_name = f.readline().strip()
+                        except OSError:
+                            pipe_name = None
+                        if pipe_name:
+                            break
+                    time.sleep(0.1)
+                if not pipe_name:
+                    raise TimeoutError("serve broker did not write the pipe file within 30s")
+
+                # 4. Connect to the pipe (retry for ~5 s — broker may not have
+                #    called ConnectNamedPipe yet).
+                self._pipe_handle = _pipe.connect(pipe_name, timeout_ms=5000)
+                self._started = True
+                # Safety net: ensure the broker is killed if the Python process
+                # exits without an explicit shutdown().
+                atexit.register(self.shutdown)
+            except Exception:
+                # Close any connected pipe before cleaning up the process.
+                if self._pipe_handle is not None:
+                    pipe_handle = self._pipe_handle
+                    self._pipe_handle = None
+                    try:
+                        _pipe.close(pipe_handle)
+                    except Exception:
+                        pass
+                self._started = False
+                # Terminate the orphaned broker before re-raising.  If this
+                # cannot be confirmed, retain the process handle so a later
+                # explicit shutdown can retry; never claim it was terminated.
+                if self._process_handle is not None:
+                    process_handle = self._process_handle
+                    try:
+                        exited = _wait_for_exit(process_handle, 5000)
+                    except Exception:
+                        exited = False
+                    if exited:
+                        try:
+                            _kernel32.CloseHandle(wintypes.HANDLE(process_handle))
+                        except Exception:
+                            pass
+                        self._process_handle = None
+                raise
+        finally:
+            # This is deliberately scoped to the exact path returned by
+            # mkstemp; cleanup must not touch any unrelated path.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def call(self, request: dict) -> dict:
         """Send a request and receive the response.
@@ -391,11 +428,10 @@ class _ServeBroker:
         if self._pipe_handle is not None:
             _pipe.close(self._pipe_handle)
             self._pipe_handle = None
-        # Wait for the process to exit, then terminate if needed.
-        if self._process_handle is not None:
-            _wait_for_exit(self._process_handle, timeout_ms=5000)
-            _kernel32.CloseHandle(wintypes.HANDLE(self._process_handle))
-            self._process_handle = None
+        # Wait for the process to exit, then terminate if still alive.  A
+        # failed termination or an inconclusive wait is an error, and the
+        # process handle is retained for a later retry.
+        self._wait_and_close_process()
         self._started = False
 
     def __del__(self) -> None:
@@ -407,30 +443,36 @@ class _ServeBroker:
     # --- internals ---------------------------------------------------------
 
     def _reset_pipe(self) -> None:
+        """Close the broken pipe and confirmedly terminate its broker."""
+        self._started = False
         # Close pipe handle.
         if self._pipe_handle is not None:
-            _pipe.close(self._pipe_handle)
+            pipe_handle = self._pipe_handle
             self._pipe_handle = None
+            _pipe.close(pipe_handle)
         # Terminate and close old broker process so start() doesn't leak it.
-        if self._process_handle is not None:
-            try:
-                _wait_for_exit(self._process_handle, 5000)
-            except Exception:
-                pass
-            try:
-                _kernel32.CloseHandle(self._process_handle)
-            except Exception:
-                pass
-            self._process_handle = None
-        self._started = False
+        # _wait_and_close_process raises if termination cannot be confirmed;
+        # in that case the live process handle remains available for retry.
+        self._wait_and_close_process()
 
     def _close_handles(self) -> None:
         if self._pipe_handle is not None:
-            _pipe.close(self._pipe_handle)
+            pipe_handle = self._pipe_handle
             self._pipe_handle = None
-        if self._process_handle is not None:
-            _kernel32.CloseHandle(wintypes.HANDLE(self._process_handle))
-            self._process_handle = None
+            _pipe.close(pipe_handle)
+        # Even an unsuccessful start can leave a process handle.  Do not
+        # discard it without first confirming that the process is terminal.
+        self._wait_and_close_process()
+
+    def _wait_and_close_process(self, timeout_ms: int = 5000) -> None:
+        """Wait for and close the broker handle, or raise without closing it."""
+        if self._process_handle is None:
+            return
+        process_handle = self._process_handle
+        if not _wait_for_exit(process_handle, timeout_ms):
+            raise TimeoutError("serve broker process did not terminate")
+        _kernel32.CloseHandle(wintypes.HANDLE(process_handle))
+        self._process_handle = None
 
     def _process_exited(self) -> bool:
         if self._process_handle is None:
@@ -456,21 +498,25 @@ class _ServeBroker:
 
 
 def _wait_for_exit(process_handle: int, timeout_ms: int) -> bool:
-    """Wait for a process handle to exit.
+    """Wait for a process handle to exit, terminating it after a timeout.
 
-    Returns ``True`` if the process exited within ``timeout_ms`` (or was
-    already dead), ``False`` on timeout.  If the wait times out and
-    ``timeout_ms > 0``, the process is terminated via ``TerminateProcess``.
+    Returns ``True`` only when a terminal process state is confirmed by
+    ``WaitForSingleObject``.  If the initial wait times out and
+    ``timeout_ms > 0``, ``TerminateProcess`` is attempted and a second wait
+    confirms whether termination completed.  A failed termination call or a
+    second wait timeout is reported as ``False``.
     """
     WAIT_TIMEOUT = 0x00000102
     WAIT_OBJECT_0 = 0x00000000
-    result = _kernel32.WaitForSingleObject(wintypes.HANDLE(process_handle), wintypes.DWORD(timeout_ms))
+    handle = wintypes.HANDLE(process_handle)
+    result = _kernel32.WaitForSingleObject(handle, wintypes.DWORD(timeout_ms))
     if result == WAIT_OBJECT_0:
         return True
     if result == WAIT_TIMEOUT and timeout_ms > 0:
-        _kernel32.TerminateProcess(wintypes.HANDLE(process_handle), wintypes.UINT(1))
-        _kernel32.WaitForSingleObject(wintypes.HANDLE(process_handle), wintypes.DWORD(1000))
-        return True
+        if not _kernel32.TerminateProcess(handle, wintypes.UINT(1)):
+            return False
+        result = _kernel32.WaitForSingleObject(handle, wintypes.DWORD(1000))
+        return result == WAIT_OBJECT_0
     return False
 
 
@@ -496,9 +542,16 @@ class TsDevClient:
         serve`` broker (started once via a single UAC prompt) instead of
         spawning a fresh elevated child per op — so a non-elevated session
         pays one UAC prompt for the whole process lifetime rather than one
-        per operation.  When already elevated, or when ``use_serve=False``
-        is passed explicitly, the existing ``subprocess.run`` path is used
-        directly (zero overhead, no broker, no extra UAC).  Batch ops are
+        per operation.  When already elevated, or when ``use_serve=False`` is
+        passed explicitly from an already elevated process, the existing
+        ``subprocess.run`` path is used directly (zero overhead, no broker, no
+        extra UAC).  Direct ``tsdev_cli`` subprocess mode requires an elevated
+        administrator process.  A non-elevated Python caller with
+        ``use_serve=False`` raises
+        :class:`~tsdev_automation.exceptions.ElevationRequiredError` before
+        launch; a non-elevated direct ``tsdev_cli`` invocation returns a
+        not-elevated error (see AGENTS.md and docs/BUILD.md for the
+        authoritative elevation contract, including the exit code).  Batch ops are
         routed through the broker by looping over individual
         items — the broker's long-lived TsDevLib (flushPerItem=false) makes
         this as efficient as the C++ batch path (no per-op process spawn, no
@@ -528,8 +581,11 @@ class TsDevClient:
         # Serve-broker integration (TVS-K.5).  When ``use_serve`` is True and
         # the Python session is NOT elevated, single-item ops are routed
         # through an elevated serve broker (one UAC prompt) instead of
-        # spawning a fresh elevated child per op.  When already elevated (or
-        # ``use_serve`` is False) the existing ``subprocess.run`` path is used.
+        # spawning a fresh elevated child per op.  When already elevated, the
+        # existing ``subprocess.run`` path is used directly.  Direct mode is
+        # valid only for an elevated administrator process; with
+        # ``use_serve=False`` and a non-elevated session, _run_cli/_run_batch
+        # raise ElevationRequiredError before launching the CLI.
         self._use_serve = use_serve
         self._is_elevated = _detect_elevation()
         self._broker: _ServeBroker | None = None  # lazy-init on first op
@@ -684,9 +740,11 @@ class TsDevClient:
         """Return ``True`` when single-item ops should route through the broker.
 
         The broker path is used ONLY when the Python session is NOT elevated
-        AND ``use_serve`` is True.  When already elevated (the common
-        elevated-session case) the existing ``subprocess.run`` path is used
-        directly (zero overhead, no extra UAC).
+        AND ``use_serve`` is True.  When already elevated, the existing
+        ``subprocess.run`` path is used directly (zero overhead, no extra UAC).
+        Direct subprocess mode is valid only when the Python process is
+        elevated; with ``use_serve=False`` in a non-elevated session,
+        _run_cli/_run_batch raise ElevationRequiredError before launch.
         """
         return self._use_serve and not self._is_elevated
 
@@ -771,7 +829,8 @@ class TsDevClient:
         t = _validate_type(type_)
         # Serve-broker routing: when not elevated and use_serve is active,
         # route single-item ops through the elevated broker instead of
-        # spawning a fresh child per op.
+        # spawning a fresh child per op.  Otherwise _run_cli requires an
+        # elevated process for direct subprocess mode.
         if self._serve_active():
             return self._call_broker_single(op, t, name, source)
         sub = _SINGLE_SUBCMD[op]
@@ -1001,13 +1060,16 @@ class TsDevClient:
         return text
 
     def _run_cli(self, cmd: list[str]) -> TsDevResult:
-        # Elevation guard: when use_serve=False and the Python session is NOT
-        # elevated, the CLI (which has a requireAdministrator manifest) cannot
-        # be launched via subprocess.run — it fails with
-        # ERROR_ELEVATION_REQUIRED (Windows error 740).  Raise a clear,
-        # actionable error BEFORE attempting the subprocess call.  When the
-        # session IS elevated this guard is a no-op (direct subprocess calls
-        # work fine).  When use_serve=True and not elevated, this method is
+        # Direct tsdev_cli subprocess mode requires an elevated administrator
+        # process.  When use_serve=False and the Python session is NOT
+        # elevated, raise ElevationRequiredError BEFORE attempting the
+        # subprocess call.  A direct tsdev_cli invocation in that state
+        # returns a not-elevated error; the Python guard provides the
+        # client-side exception instead.  The authoritative elevation
+        # contract (direct-CLI / serve broker / use_serve / exit code) lives
+        # in AGENTS.md and docs/BUILD.md; see those instead of restating the
+        # exit-code detail here.  When the session IS elevated this guard is
+        # a no-op.  When use_serve=True and not elevated, this method is
         # never reached (the serve-broker path is taken instead).
         if not self._use_serve and not self._is_elevated:
             raise ElevationRequiredError()
@@ -1047,13 +1109,16 @@ class TsDevClient:
         return TsDevResult.from_json(obj, stdout=stdout, stderr=stderr)
 
     def _run_batch(self, cmd: list[str], input: str) -> list[TsDevResult]:
-        # Elevation guard: same rationale as _run_cli — when use_serve=False
-        # and the session is not elevated, the batch CLI (requireAdministrator
-        # manifest) cannot be launched via subprocess.run.  Raise a clear,
-        # actionable error BEFORE attempting the subprocess call.  When
-        # use_serve=True and not elevated, batch ops are routed
-        # through the broker in _batch_serve/_batch_dir_serve before
-        # reaching here.
+        # Elevation guard: direct tsdev_cli subprocess mode requires an
+        # elevated administrator process.  When use_serve=False and the
+        # session is not elevated, raise ElevationRequiredError BEFORE
+        # attempting the subprocess call; a direct CLI invocation in that
+        # state returns a not-elevated error.  The authoritative elevation
+        # contract (direct-CLI / serve broker / use_serve / exit code) lives
+        # in AGENTS.md and docs/BUILD.md; see those instead of restating the
+        # exit-code detail here.  When use_serve=True and not elevated, batch
+        # ops are routed through the broker in _batch_serve/_batch_dir_serve
+        # before reaching here.
         if not self._use_serve and not self._is_elevated:
             raise ElevationRequiredError()
         if not self.cli_path.is_file():

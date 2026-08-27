@@ -1,4 +1,4 @@
-// test_path_discovery.cpp — TVS-B.7 TDD test for TS install path discovery
+// test_path_discovery.cpp — TVS-B.7 test for TS install path discovery
 //
 // Verifies:
 //   1. Auto-discovery (registry or conventional default) returns a valid path
@@ -15,9 +15,9 @@
 // The test does NOT hardcode "TradeStation 9.5" — it validates the discovered
 // path by checking that <root>\Program\orlib20.dll exists.
 //
-// This is the RED step: the test references TsDevLib(const wchar_t*) and
-// getMyWorkBinPath()/getWrkPath(), which do NOT exist yet. The build is
-// expected to FAIL until the GREEN step implements them.
+// TsDevLib(const wchar_t*) and getMyWorkBinPath()/getWrkPath() are implemented
+// in src/tsdev_lib.cpp. This test exercises those current APIs and their path
+// discovery, override, normalization, and invalid-path behavior.
 //
 // Runs on a 64 MB-stack worker thread (the EasyLanguage compiler and the
 // thread-affine hidden EDIT control require it), matching test_insert.cpp,
@@ -372,8 +372,7 @@ DWORD WINAPI threadProc(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::fprintf(stdout,
-                 "=== test_path_discovery: TS install path discovery "
-                 "(RED test) ===\n");
+                 "=== test_path_discovery: TS install path discovery ===\n");
 
     // --- Run the test on a 64 MB-stack worker thread ---
     TestState st;

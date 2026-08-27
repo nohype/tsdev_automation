@@ -7,23 +7,18 @@
 // stem as the item name, and (for insert/modify/upsert) reads the file content
 // as the EL source. For delete (needsSource=false) the source is left empty.
 //
-// TVS-I.2 TDD RED step: parseDirectory() does NOT exist yet in tsdev_cli.cpp.
-// This test is the RED step — it is expected to FAIL TO COMPILE until the
-// implementer (subtask 3) adds parseDirectory() to src/tsdev_cli.cpp.
+// TVS-I.2 unit test for the implemented parseDirectory() helper in
+// src/tsdev_cli.cpp. The test exercises the production directory-enumeration
+// logic directly in the same translation unit.
 //
 // Linkage mechanism:
 //   parseDirectory() and BatchItem live inside an anonymous namespace in
 //   src/tsdev_cli.cpp (internal linkage), so they are NOT accessible from a
-//   separate translation unit. The only way to reach them is to #include the
-//   .cpp directly so the test is part of the SAME translation unit. This pulls
-//   in tsdev_cli.cpp's int main() (line 1568), which would conflict with this
-//   test's own main(). The implementer MUST wrap tsdev_cli.cpp's main() in:
-//       #ifndef TSDEV_CLI_TEST
-//       int main(int argc, char** argv) { ... }
-//       #endif
-//   This test #defines TSDEV_CLI_TEST before the include so main() is excluded.
-//   Until that guard is added, this test FAILS TO COMPILE (duplicate main()
-//   definition) — the expected RED state.
+//   separate translation unit. The test therefore #includes the .cpp directly
+//   so it is part of the SAME translation unit. This pulls in tsdev_cli.cpp's
+//   main(), which would conflict with this test's own main(); the test
+//   #defines TSDEV_CLI_TEST before the include and the production source wraps
+//   its main() in #ifndef TSDEV_CLI_TEST / #endif so the CLI main is excluded.
 //
 // The test is a pure unit test of parseDirectory()'s filesystem logic: it does
 // NOT construct TsDevLib, does NOT touch orlib20, and does NOT need a 64 MB
@@ -34,7 +29,7 @@
 // Exit code: 0 on success, nonzero on failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
-// (Implementer must add the corresponding #ifndef TSDEV_CLI_TEST guard.)
+// tsdev_cli.cpp provides the corresponding #ifndef TSDEV_CLI_TEST guard.
 #define TSDEV_CLI_TEST
 
 // Include the CLI source directly so anonymous-namespace internals

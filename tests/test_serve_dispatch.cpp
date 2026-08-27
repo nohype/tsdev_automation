@@ -1,10 +1,10 @@
 // test_serve_dispatch.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-K.3: serve request dispatch layer.
+// Unit test for TVS-K.3: serve request dispatch layer.
 //
 // This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
-// only exercises the new parseServeRequest() helper in src/tsdev_cli.cpp:
+// exercises the implemented parseServeRequest() helper in src/tsdev_cli.cpp:
 //   - parseServeRequest(const ordered_json& req, ServeRequest& out)
 //       -> CliResult (usage-error CliResult on malformed request).
 //
@@ -19,19 +19,13 @@
 // stack size is harmless for a unit test.
 //
 // Linkage mechanism:
-//   parseServeRequest() and the ServeRequest struct will live inside an
-//   anonymous namespace in src/tsdev_cli.cpp (internal linkage), so they are
-//   NOT accessible from a separate translation unit. The only way to reach
-//   them is to #include the .cpp directly so the test is part of the SAME
-//   translation unit. This pulls in tsdev_cli.cpp's int main(); the test
-//   #defines TSDEV_CLI_TEST before the include so main() is excluded (main()
-//   is wrapped in #ifndef TSDEV_CLI_TEST at line 1741 of tsdev_cli.cpp).
-//
-// TDD RED step:
-//   - parseServeRequest() and ServeRequest do NOT exist yet in tsdev_cli.cpp.
-//   This test is the RED step — it is expected to FAIL TO COMPILE until the
-//   implementer (Green step) adds the ServeRequest struct and
-//   parseServeRequest() function.
+//   parseServeRequest() and the ServeRequest struct live inside an anonymous
+//   namespace in src/tsdev_cli.cpp (internal linkage), so they are NOT
+//   accessible from a separate translation unit. The only way to reach them is
+//   to #include the .cpp directly so the test is part of the SAME translation
+//   unit. This pulls in tsdev_cli.cpp's int main(); the test #defines
+//   TSDEV_CLI_TEST before the include so main() is excluded by the
+//   TSDEV_CLI_TEST guard in src/tsdev_cli.cpp.
 //
 // Checks (valid parsing):
 //   1. Valid insert: {"op":"insert","type":"strategy","name":"Test",
@@ -63,7 +57,7 @@
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
-// (main() is wrapped in #ifndef TSDEV_CLI_TEST at line 1741 of tsdev_cli.cpp.)
+// (main() is wrapped in the #ifndef TSDEV_CLI_TEST guard in tsdev_cli.cpp.)
 #define TSDEV_CLI_TEST
 
 // Include the CLI source directly so anonymous-namespace internals

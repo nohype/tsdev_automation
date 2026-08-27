@@ -2,51 +2,39 @@
 
 Automated management of the TradeStation Development Environment (TSDev) Library without using the TSDev UI (TSDev.exe). Insert, delete, modify, query, and retrieve EasyLanguage strategies, indicators, functions, and trading apps via a standalone CLI and a Python wrapper.
 
-## Known Critical Issue — Current Status
+## Known Critical Issue — Historical Workstream L record
 
-> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15.**
+> **Current status:** Workstream L is closed; current Workstream M status
+> (approved slices, blocked/pending items) is tracked authoritatively in
+> [`AGENTS.md`](AGENTS.md) §"Current state and TODO".
+>
+> The L.1–L.17 claims, results, and fault records below are retained for provenance.
 
-**Strategies inserted/modified/upserted by the production `tsdev_cli` /
-`TsDevClient` may appear VERIFIED in TSDev but fail at runtime in TradeStation
-Desktop with "Unknown link error occurred."** A full Desktop restart does not
-repair a broken CLI Strategy. Other supported component types use the common
-compile/finalization path and are included in Workstream L validation, but an
-equivalent runtime failure has not been claimed without type-specific evidence.
+**Historical L evidence records that strategies inserted/modified/upserted by
+`tsdev_cli` / `TsDevClient` could appear VERIFIED in TSDev but fail at runtime
+in TradeStation Desktop with "Unknown link error occurred."** A full Desktop
+restart did not repair a broken CLI Strategy in that historical observation.
+Other supported component types used the common compile/finalization path and
+were included in the historical Workstream L validation, but an equivalent
+runtime failure was not claimed without type-specific evidence.
 
-The only known workaround is to open the item in TSDev, make a harmless edit,
-and re-Verify — this re-runs the original finalization path. **This is a
-workaround only and is not an acceptable fix for an automated tool.**
+The historical workaround was to open the item in TSDev, make a harmless edit,
+and re-Verify — this re-ran the original finalization path. **This was a
+workaround only and was not an acceptable fix for an automated tool.**
 
-This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
-It is not a general breakage of the other operations
-(insert/modify/delete/exists/get-source/upsert/batch), which remain functional
-at the CLI/library level. **Workstream L** is the workstream addressing the
-root cause and the Desktop runtime-execution regression gate. Current status:
-L.1–L.3 remain COMPLETE; the L.4/L.5 completion claim was FALSIFIED by
-persistence and deletion fault injection and is superseded by the L.6–L.15
-recovery, which is implemented on branch `workstream-L-recovery` (L.8 BLOCKED
-— no invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert;
-L.12 detect-and-report orphan-ELL delete; existence checks are necessary but
-not sufficient; the `FUN_10011230` persistence bypass is removed). Workstream
-L is not yet CLOSED. No new Desktop runtime re-gate is claimed without an
-L.17 result. Workstream M remains BLOCKED until L.17 independent final
-verification.
+The retained L record describes a confirmed root-cause defect in the CLI's
+orlib20 finalization path and the historical L remediation/verification work.
+It does not change the current status above or imply that its historical test
+counts are current acceptance evidence. For current Workstream M status
+(approved slices, blocked/pending items), see
+[`AGENTS.md`](AGENTS.md) §"Current state and TODO".
 
 - Workstream L plan: [`docs/workstream_unknown_link_fix_plan.md`](docs/workstream_unknown_link_fix_plan.md)
 - Durable root-cause record: [`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
 
 ## Supported component types
 
-| Type | WHType | Status |
-|------|--------|--------|
-| Strategy | 0 | Supported |
-| Indicator | 2 | Supported |
-| Function | 4 | Supported |
-| TradingApp | 5122 (0x1402) | Supported |
-| ActivityBar | — | Unconfirmed |
-| PaintBar | — | Unconfirmed |
-| ProbabilityMap | — | Unconfirmed |
-| ShowMe | 1282 (0x0502) | Supported |
+The CLI supports five confirmed EasyLanguage types (Strategy, Indicator, Function, TradingApp, ShowMe); three remain unconfirmed (ActivityBar, PaintBar, ProbabilityMap). See [`docs/TS_COMPONENT_TYPES.md`](docs/TS_COMPONENT_TYPES.md) for the authoritative type-mapping table and per-type status.
 
 ## CLI usage
 
@@ -92,29 +80,43 @@ See [docs/BUILD.md](docs/BUILD.md) for build prerequisites, CMake commands, and 
 
 ## Admin privileges
 
-The CLI and TS-dependent test executables require administrator privileges —
-TradeStation's TSDev Library (`orlib20.dll`) is only accessible to elevated
-processes. Run your terminal or Python session as Administrator; you get **one
-UAC prompt per session**, and all CLI invocations thereafter are silent
-(subprocesses inherit the elevated token). To build a non-elevated development
-variant:
+Direct `tsdev_cli` subcommands, including `serve`, require an elevated
+administrator process. The default CLI build uses a `requireAdministrator`
+manifest, so a non-elevated direct launch follows normal Windows UAC/manifest
+handling and may fail at process creation before the CLI runs; an `asInvoker`
+development/testing variant reaches the CLI's runtime elevation guard instead.
+The separate `sigtool` file-analysis CLI does not access the live TSDev Library
+and does not have this requirement. TS-dependent test executables have their own
+administrator prerequisite.
+
+Run your terminal as Administrator for direct CLI commands; direct CLI
+invocations thereafter are silent (subprocesses inherit the elevated token).
+Python users using the default `TsDevClient(use_serve=True)` do not need to run
+their Python process as Administrator — it starts the separate elevated serve
+broker through a single normal Windows UAC consent prompt. The
+`TsDevClient(use_serve=False)` path requires an already-elevated Python process
+and raises `ElevationRequiredError` before launch otherwise. To build an
+`asInvoker` development/testing variant (the direct CLI runtime guard still
+requires elevation):
 
 ```cmd
 cmake -S . -B build -A Win32 -DTSDEV_REQUIRE_ADMIN=OFF
 ```
 
-See [docs/BUILD.md](docs/BUILD.md#admin-privileges-tsdev_require_admin) for
-full details on the `TSDEV_REQUIRE_ADMIN` CMake option.
+For the full elevation contract — including the exact CLI exit code, the
+`use_serve` flag mechanics, and the serve-broker internals — see
+[docs/BUILD.md](docs/BUILD.md#admin-privileges-tsdev_require_admin)
+(operational) and [AGENTS.md](AGENTS.md) (rule).
 
 ### Serve mode (one-UAC UX from a non-elevated Python session)
 
-When using the Python wrapper from a **non-elevated** session, `TsDevClient`
-(the default `use_serve=True`) auto-starts an elevated broker process via a
-single `ShellExecuteExW` `"runas"` call (**one UAC prompt**) and routes all
-single-item ops (`insert`/`modify`/`delete`/`exists`/`get_source`/`upsert`)
-through a Windows named pipe to that broker — no per-call prompts. When the
-Python session is **already elevated**, the direct `subprocess.run` path is
-used with zero overhead (no broker is started). See
+When using the Python wrapper from a **non-elevated** session, the default
+`TsDevClient(use_serve=True)` auto-starts an elevated broker process through a
+single UAC consent prompt and routes all single-item ops
+(`insert`/`modify`/`delete`/`exists`/`get_source`/`upsert`) through a Windows
+named pipe to that broker — no per-call prompts. When the Python session is
+**already elevated**, the direct `subprocess.run` path is used with zero
+overhead (no broker is started). See
 [docs/BUILD.md](docs/BUILD.md#serve-mode---serve--use_serve) for the full
 serve-mode documentation (broker protocol, `use_serve` flag, E2E test).
 
@@ -253,7 +255,8 @@ TsDevError                      # base
 ├── EntryOpError                # exit 6  — createEntry/deleteEntry failure
 ├── SaveSourceError             # exit 7  — saveSource failure
 ├── CompileError                # exit 8  — EasyLanguage compile failure
-├── EllMissingError             # exit 9  — .ell not produced after compile
+├── ArtifactMissingError        # exit 9  — missing/inconsistent persistence artifact (.ell/.xml), including Fault A
+├── EllMissingError             # exit 9  — historical legacy .ell-not-produced payload
 ├── ThreadFailure               # exit 10 — worker-thread creation failure
 ├── ElevationRequiredError      # client exit 12 — use_serve=False without elevation
 └── TsDevCrashError             # crash  — CLI process crash (exit code = NT status)
@@ -322,4 +325,12 @@ Run `tsdev-automation --help` for full usage.
 powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
 ```
 
-Runs 14 registered sub-suites (13 default; Suite 14 stress opt-in via `-ExtendedStress`) — 142 test cases, 253 assertions, 600 opt-in stress cycles, 33 C++ unit test executables.
+Runs the registered regression sub-suites (a default set plus an opt-in stress
+suite via `-ExtendedStress`); see
+[`tests/run_regression.ps1`](tests/run_regression.ps1) for the authoritative
+sub-suite list. The C++ unit-test runner defines the executable inventory and
+its `-NoTs` path selects the non-TS executables, while the separate sigtool
+suite also runs without live TradeStation; see
+[`tests/run_unit_tests.ps1`](tests/run_unit_tests.ps1) for the current
+inventory. Historical aggregate result counts are not current acceptance
+evidence.

@@ -4,12 +4,19 @@
 > **Scope:** Reverse-engineering of the `0x40A` notification emitted after successful
 > TradeStation library mutations. No production or test code was changed for this task.
 > **Method:** Ghidra static analysis of `TSDev.exe`, `orlib20.dll`, `tslib.dll` (import
-> tables), and `orchart.exe`; plus an existing Frida trace at
+> tables), and `orchart.exe`; plus a historical Frida trace referenced at
 > `D:\tsdev_automation\tmp\frida_trace_verify.log` (captured 2026-08-22, hooks on
 > `SendMessageW`/`PostMessageW`/`SendMessageA`/`PostMessageA`).
 > **Binaries analyzed (read-only; copies only where required):**
 > `C:\Program Files (x86)\TradeStation 9.5\Program\TSDev.exe`,
 > `...\orlib20.dll`, `...\tslib.dll`, `...\orchart.exe`.
+>
+> **EVIDENCE STATUS — HISTORICAL / TRANSIENT / UNVERIFIED:** The Frida
+> trace and the Desktop observation described in this note are **not present in the
+> tracked checkout**. Their exact figures, ProgIds, and HWNDs are historical/transient
+> observations, **not current acceptance evidence**. Ghidra/static findings are distinct
+> from the unavailable transient dynamic evidence; this note makes no current dynamic
+> or Desktop-runtime claim.
 
 ---
 
@@ -19,7 +26,9 @@
 TradeStation consumers that a library module changed. It is **not** a durable queue and
 **not** the unknown-link repair (that is Workstream L).
 
-Key conclusions, all confirmed by both static and dynamic evidence:
+Key conclusions below are grounded in Ghidra/static analysis; where noted, the historical
+Frida trace provided transient corroboration, but that dynamic artifact is unavailable in
+this tracked checkout and is not current acceptance evidence:
 
 1. **Sender = `orlib20.dll`** (the library layer), **not** `TSDev.exe`. `TSDev.exe`
    contains **no** `PUSH 0x40A` instruction; it is a *receiver* of `0x40A`.
@@ -28,16 +37,17 @@ Key conclusions, all confirmed by both static and dynamic evidence:
    to a single hard-coded HWND.
 3. **Payload:** `msg = 0x40A`, `wParam = 0`, `lParam = (category << 16) | (ProgId & 0xFFFF)`.
    The **low word of `lParam` IS the ProgId** (a.k.a. warehouse record index — the two are
-   the same identifier in the orlib20 warehouse). The Frida trace confirms `wParam=0` and a
-   packed `lParam` whose low word equals the affected module's ProgId: `0x1a1e`=6686,
-   `0x1a1f`=6687, `0x1a20`=6688 (cross-referenced with `docs/PM_WORKING_MEMORY.md` line 217,
-   "TS_AUTO_CLI_LINK_REPRO_01 ProgId 6687"). The same value `0x1a1e` is the record-index
-   argument to `InitGlobalLookup` and the return value of `_CreateEntryEX@24` in the trace
-   (line 783), proving the low word is the record index = ProgId, not the subtype.
-4. **Verify-success emits `0x40A`** — confirmed by Frida: immediately after
-   `_VerifyModule_New@20` returns success, `EndCompilingProcess` and
-   `ShowRecalculationWarning` run, then a burst of `PostMessageW(0x40A)` is sent to every
-   registered client HWND.
+   the same identifier in the orlib20 warehouse). The historical Frida trace records
+   `wParam=0` and a packed `lParam` whose low word equals the affected module's ProgId:
+   `0x1a1e`=6686,
+   `0x1a1f`=6687, `0x1a20`=6688. The same value `0x1a1e` is the record-index
+   argument to `InitGlobalLookup` and the return value of `_CreateEntryEX@24` in the historical trace
+   (line 783), historically corroborating that the low word is the record index = ProgId,
+   not the subtype.
+4. **Verify-success emits `0x40A`** — the static success path reaches the sender;
+   the historical Frida trace recorded that immediately after `_VerifyModule_New@20`
+   returned success, `EndCompilingProcess` and `ShowRecalculationWarning` ran, then a
+   burst of `PostMessageW(0x40A)` was sent to every registered client HWND.
 5. **Delete emits `0x40A`** after successful deletion (gated on category).
 6. The M.3 plan wording "category/ProgId" is **correct**: the payload packs category (high
    word) and ProgId (low word). The earlier draft of this note incorrectly labeled the low
@@ -48,27 +58,28 @@ Key conclusions, all confirmed by both static and dynamic evidence:
 
 ## 1. R-M.3.1 — Message Format and Target Mechanism
 
-### 1.1 Message ID and payload (CONFIRMED)
+### 1.1 Message ID and payload (STATICALLY CONFIRMED; HISTORICAL DYNAMIC CORROBORATION UNAVAILABLE)
 
 | Field    | Value                                  | Evidence |
 |----------|----------------------------------------|----------|
-| `msg`    | `0x040A` (1034)                        | `PUSH 0x40A` at 4 sites in `orlib20.dll`; Frida `msg_id=0x40a` |
-| `wParam` | `0`                                    | `PUSH 0` before `PUSH 0x40A`; Frida `wParam=0x0` |
-| `lParam` | `(category << 16) \| (ProgId & 0xFFFF)` | `MOVZX ECX,word[EBP+8]; MOVZX EAX,word[EBP+0xC]; SHL ECX,0x10; OR ECX,EAX; PUSH ECX`; Frida `lParam=0x1a1e/0x1a1f/0x1a20` |
+| `msg`    | `0x040A` (1034)                        | Static: `PUSH 0x40A` at 4 sites in `orlib20.dll`; historical Frida trace recorded `msg_id=0x40a` |
+| `wParam` | `0`                                    | Static: `PUSH 0` before `PUSH 0x40A`; historical Frida trace recorded `wParam=0x0` |
+| `lParam` | `(category << 16) \| (ProgId & 0xFFFF)` | Static: `MOVZX ECX,word[EBP+8]; MOVZX EAX,word[EBP+0xC]; SHL ECX,0x10; OR ECX,EAX; historical Frida trace recorded `lParam=0x1a1e/0x1a1f/0x1a20` |
 
 **The low word of `lParam` IS the ProgId** (a.k.a. warehouse record index — "record index"
 and "ProgId" refer to the same warehouse identifier; `_CreateEntryEX@24` returns it and
 `InitGlobalLookup` accepts it as its record-index argument). The payload packs two 16-bit
-fields: **category** (high word) and **ProgId** (low word). This is confirmed by three
-converging evidence lines:
+fields: **category** (high word) and **ProgId** (low word). Static Ghidra analysis establishes
+this field layout; the historical Frida material provided transient corroboration but is
+unavailable in the tracked checkout:
 
-1. **Frida trace** (`tmp/frida_trace_verify.log`): the `0x40A` posts carry
-   `lParam=0x1a1e/0x1a1f/0x1a20`. Decimal: 6686/6687/6688. `docs/PM_WORKING_MEMORY.md`
-   line 217 records "TS_AUTO_CLI_LINK_REPRO_01 ProgId 6687" (= `0x1a1f`), and line 243
-   lists the retained test ProgIds 6686/6687/6688/6689. Strategy subtype is 0 (per
-   `docs/TS_COMPONENT_TYPES.md`: Strategy = category 0, subtype 0), so if the low word
-   were subtype it would be 0, not 6687. The low word is therefore the ProgId.
-2. **Frida trace identity**: the same value `0x1a1e` is (a) the return value of
+1. **Historical Frida trace** (`tmp/frida_trace_verify.log`, not present in the tracked
+   checkout): the `0x40A` posts carried
+   `lParam=0x1a1e/0x1a1f/0x1a20`. Decimal: 6686/6687/6688. Strategy subtype is 0
+   (per `docs/TS_COMPONENT_TYPES.md`: Strategy = category 0, subtype 0), so if the
+   low word were subtype it would be 0, not these record-index values. The low word
+   is therefore the ProgId.
+2. **Historical Frida trace identity**: the same value `0x1a1e` is (a) the return value of
    `_CreateEntryEX@24` (trace line 783, `retval=0x1a1e` — the record index assigned by
    CreateEntry), (b) the record-index argument to `InitGlobalLookup` (trace lines 751,
    753, 767, 769, …), and (c) the `lParam` low word of the `0x40A` posts. The record
@@ -79,10 +90,10 @@ converging evidence lines:
    object (`Ordinal_66()`) is configured as `piVar10[2]=*(ushort*)(param_1+0x1e8)`
    (category), `piVar10[3]=*(ushort*)(param_1+0x1ea)` (analysis subtype),
    `piVar10[4]=*(ushort*)(param_1+0x1ec)` (ProgId). This matches the CELCompiler field
-   layout recorded in `docs/PM_WORKING_MEMORY.md` line 222 ("+0x08=category, +0x0C=subtype,
-   +0x10=current ProgId"). Therefore `param_1+0x1ec` is the **ProgId** field, and it is
-   the value passed as the second (low-word) argument to `Ordinal_57`. The earlier draft's
-   "subtype" label for `+0x1ec` is retracted.
+   layout recorded in `docs/M1_HANDOFF.md` §R-M.1.2 ("+0x08=category,
+   +0x0C=subtype, +0x10=ProgId"). Therefore `param_1+0x1ec` is the **ProgId** field,
+   and it is the value passed as the second (low-word) argument to `Ordinal_57`. The
+   earlier draft's "subtype" label for `+0x1ec` is retracted.
 
 ### 1.2 Canonical sender — `FUN_101526f0` (asynchronous, the one TSDev uses)
 
@@ -130,7 +141,7 @@ export-address table slot at `0x1021d094` (DATA xref) points to `0x101526c0`).
 **TSDev.exe does not import ordinal 65**, so TSDev never uses the synchronous sender.
 The synchronous variant exists for other orlib20 consumers.
 
-### 1.4 Delivery target — registered HWND set (CONFIRMED)
+### 1.4 Delivery target — registered HWND set (STATICALLY CONFIRMED; HISTORICAL DYNAMIC CORROBORATION UNAVAILABLE)
 
 Delivery is to the **registered client HWND set** maintained by
 `tslib::EventsViaHandles`, **not** a broadcast and **not** a single fixed HWND.
@@ -154,25 +165,27 @@ The `EventsViaHandles` singleton pointer is stored at `orlib20!0x10231050`
 (`PTR_DAT_10231050`) and is loaded into `ECX` as the `this` pointer for every
 `PosMessageToClients` / `SendMessageToClients` call.
 
-### 1.5 Frida confirmation of the delivery model
+### 1.5 Historical Frida delivery observation (not currently verifiable)
 
-From `tmp/frida_trace_verify.log`, filtering `msg_id=0x40a`:
+The unavailable historical trace referenced at `tmp/frida_trace_verify.log`, filtered for
+`msg_id=0x40a`, recorded:
 
-- **57 total `0x40A` sends**, **all via `PostMessageW`** (asynchronous), **0 via
-  `SendMessageW`**.
-- **19 distinct receiver HWNDs** per operation:
+- The historical trace recorded **57 total `0x40A` sends**, **all via `PostMessageW`**
+  (asynchronous), **0 via `SendMessageW`**.
+- It recorded **19 distinct receiver HWNDs** per operation:
   `0x100d4e, 0x150a8e, 0x180a9c, 0x234f2, 0x23550, 0x235b8, 0x2360c, 0x23660,
   0x50e96, 0x50eb8, 0x50f6a, 0x61376, 0x61400, 0x63190, 0x70a40, 0x710a8, 0x81280,
   0xc09c6, 0xe11be`.
-- **3 distinct `lParam` values**: `0x1a1e, 0x1a1f, 0x1a20` (one per verify operation,
-  marker generations 2/3/4). These are the affected modules' **ProgIds** (warehouse record
-  indices): 6686/6687/6688 (cross-referenced with `docs/PM_WORKING_MEMORY.md` lines 217,
-  243). Each operation posts the same `(msg,wParam,lParam)` to all
-  19 HWNDs (57 = 3 × 19).
-- Every `PostMessageW` returned `retval=0x1` (TRUE).
+- It recorded **3 distinct `lParam` values**: `0x1a1e, 0x1a1f, 0x1a20` (one per verify
+  operation, marker generations 2/3/4). These are the affected modules' **ProgIds**
+  (warehouse record indices): 6686/6687/6688 (see the historical trace values described
+  in §1.5). Each operation posted the same `(msg,wParam,lParam)` to all 19 HWNDs
+  (57 = 3 × 19).
+- Every recorded `PostMessageW` returned `retval=0x1` (TRUE).
 
-This is exactly the behavior of `PosMessageToClients` iterating the registered HWND set
-and calling `PostMessageW` once per registered handle.
+The static `PosMessageToClients` call structure matches iteration of the registered HWND
+set and one `PostMessageW` call per registered handle; the unavailable historical trace
+recorded the corresponding posts.
 
 ### 1.6 `0x40A` is not a registered (string-named) message
 
@@ -210,9 +223,9 @@ that thunk — i.e. the only places TSDev posts `0x40A`:
    }
    ```
    The `+0x1ec` field is the ProgId, confirmed by `FUN_00451800` which loads it into
-   CELCompiler `+0x10` (the "current ProgId" field; see `docs/PM_WORKING_MEMORY.md`
-   line 222) and passes it as the ProgId argument to `Ordinal_17`, `FUN_004d7a30`-related
-   calls, etc. Referenced from **18 DATA locations** (`0x56374c`…`0x56d800`) — MFC
+   CELCompiler `+0x10` (the "current ProgId" field; see `docs/M1_HANDOFF.md`
+   §R-M.1.2) and passes it as the ProgId argument to `Ordinal_17`, `FUN_004d7a30`-
+   related calls, etc. Referenced from **18 DATA locations** (`0x56374c`…`0x56d800`) — MFC
    command-handler / vtable dispatch entries. This is the post-verify-success notification
    path.
 
@@ -232,14 +245,14 @@ ORLIB20 import list (ordinals 10,13,15,17,18,20,24,25,28,30,37,38,39,56,57,66,67
 
 | Operation | Sends `0x40A`? | Sender / path | Evidence |
 |-----------|----------------|---------------|----------|
-| **Verify (successful)** | **YES (CONFIRMED)** (async Post) | `FUN_00453f70` → Ordinal_57 → `PosMessageToClients` | Frida: `_VerifyModule_New@20` retval=1 → `EndCompilingProcess` → `ShowRecalculationWarning` → `PostMessageW(0x40A)` burst to 19 HWNDs (`tmp/frida_trace_verify.log` lines ~105941+, marker_generation 2) |
-| **Insert** | **YES (CONFIRMED)** (async Post) | Same verify-success path; insert compiles+verifies then notifies | Evidence chain: (a) TSDev UI workflow "File > New > Strategy > name > OK > source > Build > Verify (F3)" (`docs/PM_WORKING_MEMORY.md` line 213) — INSERT goes through Build > Verify; (b) Build > Verify is WM_COMMAND 0x296A → `FUN_0047b0e0` → `FUN_00451800` → `FUN_004d9480` → `FUN_004d91e0` → `_VerifyModule_New@20` (`docs/PM_WORKING_MEMORY.md` line 215) — the **same** command handler fires for new and existing items; (c) on verify success the dispatch reaches `FUN_00453f70` (the 0x40A sender), referenced from 18 MFC command-handler/vtable DATA locations; (d) Frida confirms 0x40A is sent after verify success (retval=1). New item → Build > Verify → verify success → `FUN_00453f70` → 0x40A. |
-| **Modify** | **YES (CONFIRMED)** (async Post) | Same verify-success path | Same evidence chain as Insert: an existing item is edited then Build > Verify (same WM_COMMAND 0x296A handler `FUN_00451800`) → verify success → `FUN_00453f70` → 0x40A. The command handler is identical for new and existing items; only the verify-success branch sends 0x40A. `docs/PM_WORKING_MEMORY.md` line 217 confirms a CLI-inserted item was "harmlessly edited, and successfully re-verified" through this path. |
-| **Upsert** | **YES (by composition)** (async Post) | Resolves to insert or modify, both CONFIRMED | Upsert is a CLI composition concept (insert-or-modify), NOT a TSDev UI operation — TSDev has no "upsert" command. It resolves to insert (CONFIRMED above) when the item is absent, or modify (CONFIRMED above) when present. Both branches verify-on-success and emit 0x40A via `FUN_00453f70`. |
-| **Delete** | **YES (CONFIRMED)** (async Post) | `FUN_10159ae0` (delete) → `PosMessageToClients(0x40A,0, cat<<16\|ProgId)` | Static: post-delete send gated on `category != 4` (decompilation `FUN_10159ae0`; export wrapper `FUN_10159dd0`). |
-| **Failed compile / verify** | **NO (CONFIRMED)** | — | `_VerifyModule_New@20` returns failure; `FUN_00453f70` is only reached on the success branch (Frida shows the burst only after `retval=1`). No `0x40A` send on failure paths. (No dedicated failed-compile Frida capture; see §5 item 4 — static evidence is conclusive but a confirming capture remains open.) |
-| **Identical-source no-op modify** | **UNRESOLVED** (gap recorded) | — | Not captured in the available Frida trace; no evidence either way. Static analysis: the verify-success path is gated on verify success, not on source-difference detection; a no-op modify that still compiles+verifies successfully would still reach `FUN_00453f70`. Whether orlib20 short-circuits identical-source recompiles is NOT confirmed. Per R-M.3.2 (no-guessing rule, `docs/workstream_tsdev_parity_plan.md` M.3 section): this operation does NOT get a confirmed 0x40A answer and the gap is recorded here. **Needs a dedicated Frida capture.** |
-| **Import/Export batch** | **YES (CONFIRMED)** (async Post, per module) | `EndImportExport` → `FUN_1016bc20` → `FUN_101743b0` (tree walk) → `FUN_1016b2f0` per node | One `0x40A` per affected module; gated `category != 1 && category != 4`. |
+| **Verify (successful)** | **YES (async Post; statically supported; historical dynamic support unavailable)** | `FUN_00453f70` → Ordinal_57 → `PosMessageToClients` | Historical Frida trace (not present in the tracked checkout) recorded `_VerifyModule_New@20` retval=1 → `EndCompilingProcess` → `ShowRecalculationWarning` → `PostMessageW(0x40A)` burst to 19 HWNDs (`tmp/frida_trace_verify.log` lines ~105941+, marker_generation 2) |
+| **Insert** | **YES (async Post; statically supported; historical dynamic support unavailable)** | Same verify-success path; insert compiles+verifies then notifies | Evidence chain: (a) TSDev UI workflow "File > New > Strategy > name > OK > source > Build > Verify (F3)" (`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.2) — INSERT goes through Build > Verify; (b) Build > Verify is WM_COMMAND 0x296A → `FUN_0047b0e0` → `FUN_00451800` → `FUN_004d9480` → `FUN_004d91e0` → `_VerifyModule_New@20` (`docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.2) — the **same** command handler fires for new and existing items; (c) on verify success the dispatch reaches `FUN_00453f70` (the 0x40A sender), referenced from 18 MFC command-handler/vtable DATA locations; (d) the historical Frida trace recorded 0x40A after verify success (retval=1); it is not current acceptance evidence. New item → Build > Verify → verify success → `FUN_00453f70` → 0x40A. |
+| **Modify** | **YES (async Post; statically supported; historical dynamic support unavailable)** | Same verify-success path | Same evidence chain as Insert: an existing item is edited then Build > Verify (same WM_COMMAND 0x296A handler `FUN_00451800`) → verify success → `FUN_00453f70` → 0x40A. The command handler is identical for new and existing items; only the verify-success branch sends 0x40A. The historical UI workflow and verify-success evidence are recorded in §2.2 and the unavailable historical Frida trace. |
+| **Upsert** | **YES (static composition; async Post)** | Resolves to insert or modify; historical dynamic support unavailable | Upsert is a CLI composition concept (insert-or-modify), NOT a TSDev UI operation — TSDev has no "upsert" command. It resolves to insert (static path above) when the item is absent, or modify (static path above) when present. Both branches verify-on-success and emit 0x40A via `FUN_00453f70`; the historical verify trace is unavailable in the tracked checkout. |
+| **Delete** | **YES (async Post; statically supported; historical dynamic support unavailable)** | `FUN_10159ae0` (delete) → `PosMessageToClients(0x40A,0, cat<<16\|ProgId)` | Static: post-delete send gated on `category != 4` (decompilation `FUN_10159ae0`; export wrapper `FUN_10159dd0`). |
+| **Failed compile / verify** | **NO (statically supported; historical failure trace unavailable)** | — | `_VerifyModule_New@20` returns failure; `FUN_00453f70` is only reached on the success branch (the historical Frida trace recorded the burst only after `retval=1`). No `0x40A` send on failure paths. (No dedicated failed-compile Frida capture; see §5 item 4 — static evidence is conclusive but a confirming capture remains open.) |
+| **Identical-source no-op modify** | **UNRESOLVED** (gap recorded) | — | Not captured in the historical Frida trace referenced here (not present in the tracked checkout); no evidence either way. Static analysis: the verify-success path is gated on verify success, not on source-difference detection; a no-op modify that still compiles+verifies successfully would still reach `FUN_00453f70`. Whether orlib20 short-circuits identical-source recompiles is NOT confirmed. Per R-M.3.2 (no-guessing rule, `docs/workstream_tsdev_parity_plan.md` M.3 section): this operation does NOT get a confirmed 0x40A answer and the gap is recorded here. **Needs a dedicated Frida capture.** |
+| **Import/Export batch** | **YES (async Post, per module; statically supported; historical dynamic support unavailable)** | `EndImportExport` → `FUN_1016bc20` → `FUN_101743b0` (tree walk) → `FUN_1016b2f0` per node | One `0x40A` per affected module; gated `category != 1 && category != 4`. |
 
 ### 2.4 Category gating
 
@@ -252,10 +265,10 @@ ORLIB20 import list (ordinals 10,13,15,17,18,20,24,25,28,30,37,38,39,56,57,66,67
   itself; the gate is simply "verify succeeded". (The category and ProgId are still packed
   into `lParam`.)
 
-### 2.5 Frida verify-success sequence (verbatim ordering)
+### 2.5 Historical Frida verify-success sequence (verbatim ordering; not currently verifiable)
 
-From `tmp/frida_trace_verify.log` (marker_generation 2; the `0x40A` posts begin at trace
-line 105941):
+The unavailable historical trace referenced at `tmp/frida_trace_verify.log`
+(marker_generation 2; the `0x40A` posts begin at trace line 105941) recorded:
 
 ```
 EXIT  _VerifyModule_New@20            retval=0x1            ; verify SUCCESS
@@ -273,10 +286,11 @@ The `lParam` low word (`0x1a1e`) is the same identifier used in the immediately 
 record index). It is packed into the low 16 bits with `category = 0` (high 16 bits) for
 the captured Strategy verifies (Strategy category = 0 per
 `docs/TS_COMPONENT_TYPES.md`). The same value `0x1a1e` is the return value of
-`_CreateEntryEX@24` earlier in the trace (line 783, `retval=0x1a1e`), confirming it is the
-record index assigned by CreateEntry = the ProgId. Successive verifies produced `0x1a1f`
-(=6687) then `0x1a20` (=6688), consistent with incrementing ProgIds (cross-referenced with
-`docs/PM_WORKING_MEMORY.md` lines 217 and 243: ProgIds 6686/6687/6688).
+`_CreateEntryEX@24` earlier in the historical trace (line 783, `retval=0x1a1e`),
+historically corroborating that it is the record index assigned by CreateEntry = the ProgId.
+Successive verifies produced `0x1a1f`
+(=6687) then `0x1a20` (=6688), consistent with incrementing ProgIds (the three trace
+values are also summarized in §1.5).
 
 ### 2.6 `orlib20` save/verify internals do NOT themselves send `0x40A`
 
@@ -303,9 +317,10 @@ regardless of how many HWNDs received the message or whether any `PostMessageW`
 succeeded. The wrapper is effectively `void`-semantics from the caller's perspective:
 **TSDev cannot detect a delivery failure from the return value.**
 
-### 3.2 Per-HWND Win32 result (Frida-observed)
+### 3.2 Per-HWND Win32 result (historical Frida observation; not currently verifiable)
 
-Every `PostMessageW(0x40A)` in the trace returned `retval=0x1` (TRUE). `PostMessageW`
+Every `PostMessageW(0x40A)` in the unavailable historical trace returned `retval=0x1`
+(TRUE). `PostMessageW`
 returns BOOL (success of posting, not of processing), so `0x1` means the message was
 accepted into the target's queue — it does **not** mean the receiver processed it.
 
@@ -398,7 +413,7 @@ use:
 | `msg` | window proc `uMsg` | `0x040A` |
 | `wParam` | window proc `wParam` | `0` |
 | `lParam` | window proc `lParam` | `(category<<16)\|(ProgId&0xFFFF)`; high word = category, low word = **ProgId** (warehouse record index) |
-| ProgId | `LOWORD(lParam)` | equals the operated module's ProgId directly (no separate warehouse lookup needed for the ProgId field); Frida confirms `0x1a1e/0x1a1f/0x1a20` = ProgIds 6686/6687/6688 |
+| ProgId | `LOWORD(lParam)` | equals the operated module's ProgId directly (no separate warehouse lookup needed for the ProgId field); the historical Frida trace recorded `0x1a1e/0x1a1f/0x1a20` = ProgIds 6686/6687/6688 |
 | Sender | inferred from which process posted | orlib20 in the TSDev (or CLI) process |
 | Delivery | one post per registered HWND | receiver gets exactly one per mutation |
 | Timing | async (posted) | arrives after the verify-success sequence completes |
@@ -419,9 +434,10 @@ TSDev's own `0x40A` handling is a static dispatch-table entry, not a window-proc
 - Table base `0x005d372c`, written by a static initializer at `0x00440565`.
 - The `0x40A` entry (`0x005d3778`) maps to handler `FUN_004430a0`.
 - `FUN_004430a0` refreshes string resources / CEL program state (receive-side refresh),
-  confirming TSDev treats `0x40A` as "library changed → refresh in-memory state".
+  showing that TSDev treats `0x40A` as "library changed → refresh in-memory state".
 
-This confirms the architectural intent: `0x40A` is the live-consumer refresh signal.
+This static receiver-side finding supports the architectural intent: `0x40A` is the
+live-consumer refresh signal.
 
 ---
 
@@ -429,26 +445,28 @@ This confirms the architectural intent: `0x40A` is the live-consumer refresh sig
 
 1. **`tslib.dll` internals not statically confirmed.** The exact Win32 primitive inside
    `EventsViaHandles::PosMessageToClients` / `SendMessageToClients` was inferred
-   (Frida observes `PostMessageW` at the Win32 boundary, so `PosMessageToClients` calls
-   `PostMessageW`; `SendMessageToClients` presumably calls `SendMessageW`). Stale-HWND
-   removal and iteration order inside `tslib.dll` were not disassembled in this task.
-2. **Identical-source no-op modify.** Not captured in the available Frida trace. Needs a
-   dedicated trace: modify an item with byte-identical source and observe whether the
-   verify-success path (and thus `0x40A`) still fires. Static evidence suggests it would
-   (the gate is verify-success, not source-diff), but this is unconfirmed.
-3. **Pure-insert Frida capture.** The available trace captured verify-success
-   (marker_generations 2/3/4). A pure insert (new ProgId) capture would directly confirm
-   the insert path emits `0x40A` with the same packing. (Insert is already upgraded to
-   CONFIRMED in §2.3 via the TSDev UI workflow + shared command-handler + verify-success
-   evidence chain; a pure-insert trace would be additional direct confirmation.)
-4. **Failed-compile Frida capture.** Not in the trace; static evidence says no `0x40A`
-   on failure, but a capture with a deliberately broken source would confirm zero
-   `0x40A` sends.
+   (the unavailable historical Frida trace recorded `PostMessageW` at the Win32 boundary,
+   so `PosMessageToClients` calls `PostMessageW`; `SendMessageToClients` presumably calls
+   `SendMessageW`). Stale-HWND removal and iteration order inside `tslib.dll` were not
+   disassembled in this task.
+2. **Identical-source no-op modify.** Not captured in the historical Frida trace, which
+   is not present in the tracked checkout. Needs a dedicated trace: modify an item with
+   byte-identical source and observe whether the verify-success path (and thus `0x40A`)
+   still fires. Static evidence suggests it would (the gate is verify-success, not
+   source-diff), but this is unconfirmed.
+3. **Pure-insert Frida capture.** The historical trace recorded verify-success
+   (marker_generations 2/3/4), but is not present in the tracked checkout. A pure insert
+   (new ProgId) capture would directly confirm the insert path emits `0x40A` with the
+   same packing. (Insert follows the static path in §2.3; a pure-insert trace would be
+   additional dynamic corroboration.)
+4. **Failed-compile Frida capture.** Not in the historical trace; static evidence says no
+   `0x40A` on failure, but a capture with a deliberately broken source would provide
+   dynamic corroboration of zero `0x40A` sends.
 5. **Complete receiver inventory.** Only `orchart.exe` was confirmed to import
    `_OrlibRegisterNotificationHandle@4` (ordinal 595). Other potential receivers
    (`tselc.dll`, `ELIS.exe`, `ORPlat.exe`, `ORDllHst.exe`) were not exhaustively
-   checked. The 19 HWNDs observed in Frida belong to whatever TradeStation processes
-   were running at capture time.
+   checked. The 19 HWNDs recorded in the historical Frida trace belong to whatever
+   TradeStation processes were running at capture time.
 6. **`_OrlibRegisterNotificationHandle@4` ordinal — RESOLVED.** Ghidra-confirmed: export
    at `0x1011c130`, **ordinal 595** (decompilation annotation
    `/* 0x11c130  595  _OrlibRegisterNotificationHandle@4 */`; calls
@@ -468,10 +486,11 @@ To emulate TSDev behavior for automated library management:
 1. **After a successful verify (insert/modify/upsert), post `0x40A`** via orlib20
    Ordinal_57 (`FUN_101526f0`), packing `lParam = (category<<16)|(ProgId&0xFFFF)`,
    `wParam = 0`. This matches TSDev's `FUN_00453f70` path. Insert and modify are
-   CONFIRMED (§2.3): both go through the same Build > Verify command handler
+   statically supported (§2.3): both go through the same Build > Verify command handler
    (`FUN_00451800`, WM_COMMAND 0x296A) and emit `0x40A` on verify success via
-   `FUN_00453f70`; Frida confirms the verify-success → 0x40A burst. Upsert is CONFIRMED
-   by composition (it resolves to insert or modify, both confirmed).
+   `FUN_00453f70`; the unavailable historical Frida trace recorded the verify-success →
+   `0x40A` burst. Upsert is statically supported by composition (it resolves to insert or
+   modify); no current dynamic confirmation is asserted.
 2. **After a successful delete, post `0x40A`** via the same export, respecting the
    `category != 4` gate (or use the orlib20 delete export `FUN_10159dd0` which already
    contains the gated send).
@@ -479,31 +498,29 @@ To emulate TSDev behavior for automated library management:
 4. **Do not treat the return value as a delivery guarantee** — Ordinal_57 always returns
    1. Delivery to live consumers is best-effort, fire-and-forget, exactly as in TSDev.
 5. **Pack the ProgId into the low word of `lParam`.** The low word IS the ProgId
-   (warehouse record index), confirmed by Frida (`0x1a1e/0x1a1f/0x1a20` = ProgIds
-   6686/6687/6688) and by Ghidra (`FUN_00453f70` passes `+0x1ec` = the ProgId field per
-   `FUN_00451800`'s CELCompiler `+0x10` assignment). Do NOT pack the subtype; the subtype
+   (warehouse record index): the historical Frida trace recorded `0x1a1e/0x1a1f/0x1a20`
+   = ProgIds 6686/6687/6688, while Ghidra (`FUN_00453f70` passes `+0x1ec` = the ProgId
+   field per `FUN_00451800`'s CELCompiler `+0x10` assignment) provides the static finding.
+   Do NOT pack the subtype; the subtype
    is not carried in the `0x40A` payload.
 6. **`0x40A` is live-only and has no durable queue.** It cannot repair the unknown-link
    defect (Workstream L). Restarting Desktop does not replay it.
 
 ---
 
-## 6a. Desktop Runtime Observation (2026-08-25, user-supervised)
+## 6a. Historical Desktop Runtime Observation (2026-08-25; not currently verifiable)
 
-This section records the user-supervised Desktop runtime observation required by plan L218
+This section records the historical Desktop runtime observation associated with plan L218
 (`docs/workstream_tsdev_parity_plan.md`, M.3 Desktop observation requirement). The
-observation verifies that an already-applied study in a running TradeStation Desktop
-refreshes without restart after a CLI operation that the CLI confirms sends `0x40A`.
+observation is not present in the tracked checkout and is not current acceptance evidence.
+It recorded that an already-applied study in a running TradeStation Desktop refreshed
+without restart after a CLI operation that historically sent `0x40A`.
 
-The observation was performed under the explicit M.3 Desktop-observation exception to the
-general "do NOT run `tsdev_cli` insert/modify/delete while TradeStation Desktop is open"
-rule (see `docs/PM_WORKING_MEMORY.md`, "DURABLE CONCURRENCY CAVEAT — 2026-08-24",
-operational rule amended 2026-08-25). The 2026-08-24 concurrency caveat's original claim
-that the affected items were applied to charts was corrected on 2026-08-25: they were
-NOT applied. The M.3 observation is an explicit, user-authorized exception to the general
-rule.
+The observation was performed on 2026-08-25. The 2026-08-24 concurrency caveat's
+original claim that the affected items were applied to charts was corrected on 2026-08-25:
+they were NOT applied.
 
-### 6a.1 EventsViaHandles locality — CROSS-PROCESS (CONFIRMED)
+### 6a.1 EventsViaHandles locality — CROSS-PROCESS (STATICALLY CONFIRMED; HISTORICAL DYNAMIC CORROBORATION UNAVAILABLE)
 
 The `EventsViaHandles` notification HWND set is **cross-process**, stored in a PE shared
 memory section (`SHARE_WO`, marked `IMAGE_SCN_MEM_SHARED`). The CLI's `0x40A` posts
@@ -523,12 +540,13 @@ TradeStation Desktop / `ORPlat.exe`), because:
    session/desktop).
 
 Full PE section analysis, registration/send-path decompilation, and the cross-process
-data-flow walkthrough are in `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md`. This finding
-establishes that the Desktop observation is a valid verification target: the CLI's
+data-flow walkthrough are in `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md`. This static
+finding establishes that the historical Desktop observation was a valid verification
+target: the CLI's
 `0x40A` is not process-local and is not silently dropped simply because the sender is a
 different process from the receiver.
 
-### 6a.2 Modify observation (two CLI modifies, both refreshed automatically)
+### 6a.2 Historical modify observation (two CLI modifies, both reportedly refreshed automatically)
 
 Indicator `TS_AUTO_M3_DESK_IND_20260825` (ProgId 2757) was inserted via CLI while
 TradeStation Desktop was closed. The user then opened Desktop and applied the indicator
@@ -539,46 +557,49 @@ Two CLI `modify` operations were then run while Desktop was open with the indica
 applied to a chart:
 
 - **Modify 1 (Close → High):** the chart refreshed automatically; no Desktop restart was
-  needed. The user initially misread the change direction but subsequently confirmed the
-  modify worked correctly.
+  needed. The historical report initially misread the change direction but subsequently
+  recorded that the modify worked correctly.
 - **Modify 2 (High → 100.00 constant):** the chart refreshed automatically to a flat
-  line at `100.00`; no Desktop restart was needed. The user confirmed: "it worked.
-  perfect."
+  line at `100.00`; no Desktop restart was needed. The historical report recorded that it
+  worked correctly.
 
-Both modifies produced an automatic chart refresh, consistent with the CLI's `0x40A`
-post reaching Desktop's registered receiver windows via the cross-process
+The historical observation recorded an automatic chart refresh for both modifies,
+consistent with the CLI's `0x40A` post reaching Desktop's registered receiver windows via
 `EventsViaHandles` shared array (§6a.1) and Desktop's `0x40A` handler refreshing
 in-memory library/runtime state (§4.5).
 
-### 6a.3 Delete observation (indicator disappeared with warning, matching TSDev UI)
+### 6a.3 Historical delete observation (indicator disappeared with warning, matching TSDev UI)
 
-A CLI `delete` was run while Desktop was open with the indicator applied to a chart.
-The indicator disappeared from the chart, accompanied by a warning message: "the
-indicator has been deleted." The user confirmed: "this is 100% correct and the same
-behavior as if the indicator had been removed via the TSDev UI."
+The historical record states that a CLI `delete` was run while Desktop was open with the
+indicator applied to a chart. The indicator disappeared from the chart, accompanied by a
+warning message: "the indicator has been deleted." The historical report recorded that
+this matched the behavior of removing the indicator via the TSDev UI.
 
-This matches the expected `0x40A`-driven refresh behavior: the delete-success
-`0x40A` post (gated `category != 4`; Indicator category = 2, so the gate passes) reaches
-Desktop, which removes the now-deleted indicator from the live chart and surfaces a
-warning consistent with TSDev's own delete-from-library UI flow.
+The historical report matched the expected `0x40A`-driven refresh behavior: the
+historical delete-success `0x40A` post (gated `category != 4`; Indicator category = 2, so
+the gate passes) reached Desktop, which removed the now-deleted indicator from the live
+chart and surfaced a warning consistent with TSDev's own delete-from-library UI flow.
 
-### 6a.4 No crashes
+### 6a.4 Historical no-crash observation
 
-No crashes occurred during any of the three CLI operations (two modifies + one delete)
-while TradeStation Desktop was open with the affected indicator applied to a chart. This
-contrasts with the 2026-08-24 concurrent-write incident (see `docs/PM_WORKING_MEMORY.md`,
-"DURABLE CONCURRENCY CAVEAT — 2026-08-24"), which involved a concurrent warehouse write
-while Desktop was open but did NOT involve items applied to charts. The M.3 observation
-operations were performed under the user-authorized M.3 Desktop-observation exception
-and did not reproduce the earlier crash.
+The historical observation recorded no crashes during any of the three CLI operations
+(two modifies + one delete) while TradeStation Desktop was open with the affected
+indicator applied to a chart. This contrasts with the 2026-08-24 concurrent-write incident
+recorded in
+`docs/PROJECT_HISTORY.md` under the dated concurrent-write entry, which involved a
+concurrent warehouse write while Desktop was open but did NOT involve items applied to
+charts. The M.3 observation
+operations did not reproduce the earlier crash.
 
-### 6a.5 Plan L218 satisfaction
+### 6a.5 Historical plan L218 observation record
 
-This observation satisfies plan L218's Desktop observation requirement for M.3: a CLI
-operation was run while Desktop was open with an affected study applied to a chart, and
+The historical record here corresponds to plan L218's Desktop observation requirement for
+M.3: a CLI operation was run while Desktop was open with an affected study applied to a
+chart, and
 the study refreshed without restart. Both the modify path (verify-success → `0x40A` →
 refresh) and the delete path (delete-success → `0x40A` gated `category != 4` → refresh
-+ warning) were observed end-to-end in the live Desktop runtime. The cross-process
++ warning) were historically observed end-to-end in the live Desktop runtime. The
+cross-process
 delivery mechanism is established by `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md`.
 
 ---
@@ -588,9 +609,9 @@ delivery mechanism is established by `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md
 | Claim | Source |
 |-------|--------|
 | `PUSH 0x40A` sites in orlib20 | Ghidra byte search `68 0A 04 00 00` → `0x101526d3, 0x10152703, 0x10159d76, 0x1016b33e` |
-| Packing `(cat<<16)\|ProgId` (low word = ProgId, NOT subtype) | Disasm at `0x101526f0` (`MOVZX/SHL/OR/PUSH`); Ghidra decompile `FUN_101526f0` → `CONCAT22(param_1,param_2)`; Frida `lParam=0x1a1e/0x1a1f/0x1a20` = ProgIds 6686/6687/6688 |
-| Low word = ProgId (record index), confirmed three ways | (1) Frida: `_CreateEntryEX@24` retval=`0x1a1e` (trace line 783) = same value used by `InitGlobalLookup` (lines 751+) = `lParam` low word (lines 105941+); (2) `docs/PM_WORKING_MEMORY.md` line 217 "ProgId 6687" = `0x1a1f`; (3) Ghidra: `FUN_00453f70` passes `+0x1ec` to Ordinal_57, and `FUN_00451800` loads `+0x1ec` into CELCompiler `+0x10` = "current ProgId" (`docs/PM_WORKING_MEMORY.md` line 222) |
-| `+0x1ec` is the ProgId field (not subtype) | Ghidra decompile `FUN_00451800`: `piVar10[4]=*(ushort*)(param_1+0x1ec)` (CELCompiler +0x10 = ProgId); `piVar10[2]=+0x1e8` (category), `piVar10[3]=+0x1ea` (subtype); matches `docs/PM_WORKING_MEMORY.md` line 222 |
+| Packing `(cat<<16)\|ProgId` (low word = ProgId, NOT subtype) | Static disassembly at `0x101526f0` (`MOVZX/SHL/OR/PUSH`); Ghidra decompile `FUN_101526f0` → `CONCAT22(param_1,param_2)`; historical Frida trace recorded `lParam=0x1a1e/0x1a1f/0x1a20` = ProgIds 6686/6687/6688 (trace not present in tracked checkout) |
+| Low word = ProgId (record index), static finding with historical corroboration | (1) Historical Frida trace (not present in tracked checkout): `_CreateEntryEX@24` retval=`0x1a1e` (trace line 783) = same value used by `InitGlobalLookup` (lines 751+) = `lParam` low word (lines 105941+); (2) the historical trace recorded successive values `0x1a1f` and `0x1a20` for successive verifies (§1.5); (3) Ghidra: `FUN_00453f70` passes `+0x1ec` to Ordinal_57, and `FUN_00451800` loads `+0x1ec` into CELCompiler `+0x10` = "current ProgId" (`docs/M1_HANDOFF.md` §R-M.1.2) |
+| `+0x1ec` is the ProgId field (not subtype) | Ghidra decompile `FUN_00451800`: `piVar10[4]=*(ushort*)(param_1+0x1ec)` (CELCompiler +0x10 = ProgId); `piVar10[2]=+0x1e8` (category), `piVar10[3]=+0x1ea` (subtype); matches `docs/M1_HANDOFF.md` §R-M.1.2 |
 | `wParam=0` | `PUSH 0x0` at `0x10152701` |
 | EventsViaHandles singleton | `MOV ECX, 0x10231050` at `0x10152708` |
 | `PosMessageToClients` import | `[0x101fa054]` → `?PosMessageToClients@EventsViaHandles@tslib@@QAEXIIJ@Z` |
@@ -607,17 +628,17 @@ delivery mechanism is established by `docs/RE/RE_M3_EVENTSVIAHANDLES_LOCALITY.md
 | TSDev receiver table | `0x005d372c` (init `0x00440565`); `0x40A` entry `0x005d3778` → `FUN_004430a0` |
 | `FUN_00453f70` posts `0x40A` after ShowRecalculationWarning | Decompilation `0x00453f70` (`Ordinal_57(*(ushort*)(param_1+0x1e8), *(ushort*)(param_1+0x1ec))`); 18 vtable DATA xrefs |
 | `FUN_0044cab0` posts `0x40A` after rename | Decompilation `0x0044cab0` (`Ordinal_57((short)param_1[0x7a], (short)param_1[0x7b])`); caller `FUN_0044c950` |
-| Build > Verify command handler = `FUN_00451800` (WM_COMMAND 0x296A) | `docs/PM_WORKING_MEMORY.md` line 215; Ghidra decompile `FUN_00451800` configures CELCompiler (+0x08 cat, +0x0C subtype, +0x10 ProgId from `+0x1e8/+0x1ea/+0x1ec`) and dispatches to `FUN_004d9480` → `_VerifyModule_New@20`; same handler for new and existing items |
-| Insert CONFIRMED via Build > Verify | `docs/PM_WORKING_MEMORY.md` line 213 (UI workflow "File > New > Strategy > … > Build > Verify (F3)"); line 215 (command chain); `FUN_00453f70` is verify-success 0x40A sender (18 DATA xrefs); Frida verify-success → 0x40A |
-| Modify CONFIRMED via Build > Verify | Same command handler `FUN_00451800` (WM_COMMAND 0x296A) for existing items; `docs/PM_WORKING_MEMORY.md` line 217 (CLI item "harmlessly edited, and successfully re-verified"); verify success → `FUN_00453f70` → 0x40A |
-| Upsert = composition of insert/modify (both CONFIRMED) | TSDev has no "upsert" UI command; CLI upsert resolves to insert (CONFIRMED) or modify (CONFIRMED) |
-| Identical-source no-op modify = UNRESOLVED (gap recorded) | No Frida capture; no static evidence either way; R-M.3.2 no-guessing rule (`docs/workstream_tsdev_parity_plan.md` M.3) → gap recorded, not guessed |
+| Build > Verify command handler = `FUN_00451800` (WM_COMMAND 0x296A) | `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.2; Ghidra decompile `FUN_00451800` configures CELCompiler (+0x08 cat, +0x0C subtype, +0x10 ProgId from `+0x1e8/+0x1ea/+0x1ec`) and dispatches to `FUN_004d9480` → `_VerifyModule_New@20`; same handler for new and existing items |
+| Insert follows the static Build > Verify path; historical dynamic support unavailable | `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.2 (UI workflow and command chain); `FUN_00453f70` is verify-success 0x40A sender (18 DATA xrefs); historical Frida trace recorded verify-success → 0x40A but is not present in the tracked checkout |
+| Modify follows the static Build > Verify path; historical dynamic support unavailable | Same command handler `FUN_00451800` (WM_COMMAND 0x296A) for existing items; `docs/RE/RE_M3_0x40A_NOTIFICATION.md` §2.2 (the historical CLI-item re-verification observation); verify success → `FUN_00453f70` → 0x40A |
+| Upsert = composition of the static insert/modify paths | TSDev has no "upsert" UI command; CLI upsert resolves to the static insert path or static modify path; no current dynamic confirmation is asserted |
+| Identical-source no-op modify = UNRESOLVED (gap recorded) | No historical Frida capture is present in the tracked checkout; no static evidence either way; R-M.3.2 no-guessing rule (`docs/workstream_tsdev_parity_plan.md` M.3) → gap recorded, not guessed |
 | Delete sends `0x40A` gated `cat!=4` | Decompilation `FUN_10159ae0`; export wrapper `FUN_10159dd0` |
 | Import/export sends `0x40A` gated `cat!=1 && !=4` | Decompilation `FUN_1016b2f0`; callers `FUN_101743b0`←`FUN_1016bc20`←`EndImportExport` |
 | `_SaveModule_New@20` / `_VerifyModule_New@20` do NOT send `0x40A` | Decompilation `0x10159a70`/`0x10169630` |
-| Frida: 57 posts, all PostMessageW, 19 HWNDs, lParam 0x1a1e/1a1f/1a20, retval=1 | `tmp/frida_trace_verify.log` filter `msg_id=0x40a` (posts begin at line 105941, marker_generation 2) |
-| Frida: `_CreateEntryEX@24` retval=0x1a1e (=ProgId 6686) | `tmp/frida_trace_verify.log` line 783 |
-| Frida: `InitGlobalLookup` record-index arg = 0x1a1e | `tmp/frida_trace_verify.log` lines 751, 753, 767, 769, … |
-| Frida: verify-success ordering | `tmp/frida_trace_verify.log` lines ~105941+ (marker_generation 2) |
+| Historical Frida: 57 posts, all PostMessageW, 19 HWNDs, lParam 0x1a1e/1a1f/1a20, retval=1 (not current acceptance evidence) | Historical trace reference `tmp/frida_trace_verify.log` (not present in the tracked checkout), filtered for `msg_id=0x40a` (posts begin at line 105941, marker_generation 2) |
+| Historical Frida: `_CreateEntryEX@24` retval=0x1a1e (=ProgId 6686) | Historical trace reference `tmp/frida_trace_verify.log` (not present in the tracked checkout), line 783 |
+| Historical Frida: `InitGlobalLookup` record-index arg = 0x1a1e | Historical trace reference `tmp/frida_trace_verify.log` (not present in the tracked checkout), lines 751, 753, 767, 769, … |
+| Historical Frida: verify-success ordering | Historical trace reference `tmp/frida_trace_verify.log` (not present in the tracked checkout), lines ~105941+ (marker_generation 2) |
 | Strategy subtype = 0 (so low word cannot be subtype) | `docs/TS_COMPONENT_TYPES.md`: Strategy = category 0, subtype 0 |
 | orchart contains `0x40A` data constant | orchart `0x006f7df0`, `0x00710180` = `0A 04 00 00` |

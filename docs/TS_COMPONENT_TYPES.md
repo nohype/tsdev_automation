@@ -26,16 +26,18 @@ purposes and constraints (available/permitted keywords, libraries, functions):
 ## Mapping to orlib20 warehouse types
 
 orlib20 uses numeric warehouse types in `CreateEntryEX`, `FindExistPos`, etc.
-The mapping is partially confirmed. Current evidence:
+The mapping is partially confirmed. The five confirmed component-to-warehouse mappings are Strategy=0, Indicator=2, Function=4, TradingApp=5122 (0x1402), and ShowMe=1282 (0x0502). The three unconfirmed component mappings remain ActivityBar, PaintBar, and ProbabilityMap; this document does not assign warehouse types to them.
 
-| WHType | MasterRec count | Component type | Status | Evidence |
-|--------|----------------|----------------|--------|----------|
-| 0 | 1454 | Strategy | **CONFIRMED** | CreateEntryEX(0,...) creates entries visible in TSDev strategy list |
-| 1 | 51 | ??? | UNCONFIRMED | |
-| 2 | 406 | Indicator (base) + subtypes | **CONFIRMED** (base) | Type converter has 7 subtypes for type 2 |
-| 3 | 5 | ??? | UNCONFIRMED | |
-| 4 | 393 | Function | **CONFIRMED** | FindExistPos("Average", 4) = 76; "Average" is a Function |
-| 5122 (0x1402) | — | TradingApp | **CONFIRMED** | Expanded whType = (subType 0x14 << 8) \| category 2. See `tmp/re_artifacts/tradingapp_whtype.md` + `tmp/re_artifacts/c1_adversarial_review.md` |
+The `MasterRec` values below are retained only as historical/transient observations from a mutable warehouse snapshot. They are not stable current inventory facts.
+
+| WHType | Historical/transient MasterRec observation | Component type | Status | Evidence |
+|--------|--------------------------------------------|----------------|--------|----------|
+| 0 | 1454 (historical/transient) | Strategy | **CONFIRMED** | CreateEntryEX(0,...) creates entries visible in TSDev strategy list |
+| 1 | 51 (historical/transient) | ??? | UNCONFIRMED | |
+| 2 | 406 (historical/transient) | Indicator (base) + subtypes | **CONFIRMED** (base) | Type converter has category-2 outputs listed below |
+| 3 | 5 (historical/transient) | ??? | UNCONFIRMED | |
+| 4 | 393 (historical/transient) | Function | **CONFIRMED** | Historical/transient observation: `FindExistPos("Average", 4) = 76`; "Average" is a Function |
+| 5122 (0x1402) | — | TradingApp | **CONFIRMED** | Expanded whType = (subType 0x14 << 8) \| category 2. Durable Ghidra RE: `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md` §§2a, 2d–2f, 5a; source mapping/decomposition: `src/tsdev_lib.h:45-67`, `src/tsdev_lib.cpp:1346-1362` |
 | 1282 (0x0502) | — | ShowMe | **CONFIRMED** | Expanded whType = (subType 0x05 << 8) \| category 2. Confirmed via Ghidra RE (GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280). See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`. Canonical subtype 0x05; raw subtypes 0x03 and 0x05 both map to ShowMe. |
 
 ### Encoding formula: expanded whType
@@ -56,12 +58,12 @@ For types with sub-type 0 (Strategy=0, Indicator=2, Function=4), the expanded wh
 FindExistPos takes `(name, warehouseType)` where warehouseType is the **category** (low 8 bits of the expanded whType):
 - Type 0: Strategy — **CONFIRMED (whType=0, working in CLI)**
 - Type 2: Indicator / TradingApp / ShowMe (TradingApp confirmed: FindExistPos with category=2 finds TradingApp entries; ShowMe confirmed: same category=2)
-- Type 4: Function — confirmed: FindExistPos("Average", 4) = 76, FindExistPos("MACD", 4) = 20
+- Type 4: Function — confirmed: historical/transient observations `FindExistPos("Average", 4) = 76` and `FindExistPos("MACD", 4) = 20`
 
 ### Type converter (from static analysis of orlib20.dll RVA 0x1D43A0)
 - Type 0: {type=0, subtype=0x200, extra=-1}
 - Type 1: {type=1, subtype=-1}
-- Type 2: {type=2, subtypes=[0x502, 0x402, 0x602, 0x802, 0xA02, 0xC02, 0xE02]} (7 subtypes — Indicator/PaintBar/ShowMe/ActivityBar). **0x502 = ShowMe CONFIRMED** (Ghidra RE, TVS-C.8). **0x402 = PaintBar CONFIRMED** (Ghidra RE — the §5.2 subtype table in FEASIBILITY.md previously had PaintBar/ShowMe subtypes SWAPPED; corrected: subtypes 2,4 = PaintBar, subtypes 3,5 = ShowMe).
+- Type 2: {type=2, expanded outputs=[0x0002, 0x0502, 0x0402, 0x0602, 0x0802, 0x0A02, 0x0C02, 0x0E02, 0x1002, 0x1202, 0x1402]} (11 outputs, followed by the `-1` terminator). **0x0502 = ShowMe CONFIRMED** and **0x1402 = TradingApp CONFIRMED**. Other category-2 subtype attributions are not confirmed as CLI component mappings here. Complete converter evidence: `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md` §2f and §5a.
 - Type 3: {type=3, subtype=-1}
 - Type 4: {type=4, subtype=-1}
 

@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    TDD RED-phase test script for the sigtool CLI.
+    Regression test script for the sigtool CLI.
 
 .DESCRIPTION
     This script exercises every sigtool subcommand against the baseline
     orlib20_baseline.dll and the committed v9.50.01.3344 signature set.
 
-    It is the RED phase of TDD: sigtool.exe does NOT exist yet, so every
-    test is expected to fail (the script exits 1). Once sigtool is
-    implemented, the same script should go GREEN (exit 0).
+    sigtool.exe is built by the CMake sigtool target and is checked before the
+    cases run. A successful run exits 0; missing prerequisites or failed cases
+    exit 1.
 
     Exit codes:
         0 = all tests passed
@@ -16,7 +16,7 @@
 
 .NOTES
     Run with:
-        powershell -ExecutionPolicy Bypass -File src/test_sigtool.ps1
+        powershell -ExecutionPolicy Bypass -File tests/test_sigtool.ps1
 #>
 
 # ---------------------------------------------------------------------------

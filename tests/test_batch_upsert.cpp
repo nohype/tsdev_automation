@@ -45,7 +45,7 @@
 //   9. For each probe: findExistPos — ASSERT returns SAME ProgId (KEY
 //      batch-upsert invariant: preserved after modify, no per-item flush)
 //  10. Cleanup — deleteEntry for each probe
-//  11. closeWarehouse() ONCE at the end (the batch "flush once" pattern)
+//  11. closeWarehouse() ONCE at the end (the batch "flush once" pattern), assert status
 //  12. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -77,9 +77,10 @@ const char* kTestNameB = "zzz_test_batch_upsert_b";
 
 // Minimal valid EasyLanguage strategy source (initial) for probe A. In
 // EasyLanguage `{ ... }` is a multi-line COMMENT block, so the actual code
-// must be OUTSIDE it. The leading comment names the strategy (TSDev
-// convention); the body issues a simple market buy order. This mirrors the
-// proven source from test_upsert.cpp.
+// must be OUTSIDE it. The brace text is arbitrary fixture source content only;
+// it is not a metadata convention or lookup mechanism. The name and ProgId
+// come from warehouse records/APIs. This mirrors the proven source from
+// test_upsert.cpp.
 const char* kSourceA_A =
     "{ zzz_test_batch_upsert_a }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
@@ -341,8 +342,12 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 11: closeWarehouse ONCE at the end (batch "flush once") ---
     std::fprintf(stdout, "\n[11] closeWarehouse() (single flush at end)...\n");
-    lib->closeWarehouse();
-    std::fprintf(stdout, "    closeWarehouse done\n");
+    bool closed = lib->closeWarehouse();
+    std::fprintf(stdout, "    closeWarehouse = %s\n",
+                 closed ? "true" : "false");
+    if (!closed) {
+        st->exitCode = fail("closeWarehouse returned false", 95);
+    }
 
     // --- Step 12: Result ---
     if (st->exitCode == 0) {

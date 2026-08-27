@@ -2,10 +2,13 @@
 //
 // DIAGNOSTIC ONLY (not part of the regression suite). Read-only with respect
 // to production code: this file does NOT modify any src/ file.
+// Historical rejected-path investigation; current M.4 uses the linker and
+// linked per-element dep-lists, not GetDependencies.
 //
-// Purpose: investigate the raw master record structure to understand why
-// GetDependencies (orlib20 ordinal 487) returns empty dep lists for a
-// Strategy that calls a Function.
+// Historical purpose: investigate the raw master-record structure to understand
+// why the forward GetDependencies export (orlib20 ordinal 487) returned empty
+// dep lists for a Strategy that calls a Function. This is not the current M.4
+// reverse-dependent path.
 //
 // GetDependencies internally:
 //   1. Calls FUN_101a9650(0) to get the warehouse.
@@ -18,13 +21,14 @@
 //        element[i] = base + i*0xb5
 //        element + 0x73 -> dep-record list length (int)
 //        element + 0x7b -> dep-record list pointer (int*)
-//      and scans the dep-record list for opcode 0xFA4 (function ref).
+//      and scans the dep-record list for the historical opcode 0xFA4
+//      expectation (current evidence identifies compiler-written refs as 0xFA3).
 //
 // The 0x10A-byte master record from _GetMasterRecByType@16 is a COPY of the
-// master record. The task hypothesis is that this copy has the SAME layout
-// as the in-memory ctx record (element count at +0x29, element array ptr at
-// +0x4f, etc.). This diagnostic dumps the raw 0x10A bytes and checks those
-// offsets to confirm or refute that hypothesis.
+// master record. The historical task hypothesis was that this copy had the
+// SAME layout as the in-memory ctx record (element count at +0x29, element
+// array ptr at +0x4f, etc.). This diagnostic dumps the raw 0x10A bytes and
+// records those offsets alongside the current linker-based findings.
 //
 // This diagnostic:
 //   1. Constructs a TsDevLib (test-only ctor, real COM, no hooks) on a 64MB
@@ -42,8 +46,9 @@
 //   8. Reads + prints the fields at the specified offsets.
 //   9. If element count > 0 AND element array pointer is non-NULL, iterates
 //      elements and reads +0x73 (dep list len) and +0x7b (dep list ptr),
-//      and looks for opcode 0xFA4 entries.
-//  10. Skips Ordinal_69 and Ordinal_28 (ABI unknown — would risk a crash).
+//      and looks for the historical 0xFA4 function-reference expectation.
+//  10. Intentionally skips Ordinal_69 and Ordinal_28; their ABI/live-record
+//      behavior is covered by the separate M.4 ordinal diagnostics.
 //  11. Cleans up: deletes both items.
 //
 // All raw pointer reads are SEH-protected (__try/__except) because the
@@ -60,6 +65,7 @@
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
 #include "tsdev_lib.h"
+#include "process_inspection.h"
 
 #include <cstdio>
 #include <cstring>
@@ -68,8 +74,28 @@
 #include <windows.h>
 
 using namespace tsdev;
+using diag_m4_process::ProcessInspectionResult;
 
 namespace {
+
+ProcessInspectionResult reportCrashReporter(const char* phase) {
+    std::printf("[%s] Checking for TSCrashReport.exe...\n", phase);
+    const ProcessInspectionResult result =
+        diag_m4_process::inspectProcessByName(L"TSCrashReport.exe");
+    if (result == ProcessInspectionResult::Found) {
+        std::printf("[%s] TSCrashReport.exe IS running (crash report detected)\n",
+                    phase);
+    } else if (result == ProcessInspectionResult::NotFound) {
+        std::printf("[%s] TSCrashReport.exe NOT running (no crash report detected)\n",
+                    phase);
+    } else {
+        std::fprintf(stderr,
+                     "[%s] FATAL: process enumeration inspection failure for "
+                     "TSCrashReport.exe\n",
+                     phase);
+    }
+    return result;
+}
 
 // -------------------------------------------------------------------------
 // SEH-protected call wrapper for _GetMasterRecByType@16.
@@ -385,9 +411,10 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
                     std::printf("      [SEH reading dep-list bytes]\n");
                 }
 
-                // Scan the dep-record list for opcode 0xFA4 (function ref).
-                // Per FUN_10153ad0: each dep record starts with an int
-                // opcode; the record stride is *(byte*)(cur + 1). We walk
+                // Scan the dep-record list for the historical 0xFA4
+                // function-reference expectation. Per FUN_10153ad0: each dep
+                // record starts with an int opcode; the record stride is
+                // *(byte*)(cur + 1). We walk
                 // until we've consumed depListLen bytes.
                 const unsigned char* cur = (const unsigned char*)depListPtr;
                 size_t consumed = 0;
@@ -628,10 +655,13 @@ DWORD WINAPI runDiag(LPVOID param) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // Pre-check: is TSCrashReport.exe already running?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [PRE] TSCrashReport.exe IS "
-           "running || echo [PRE] TSCrashReport.exe NOT running");
+    // Pre-check: inspect TSCrashReport.exe without terminating it.
+    if (reportCrashReporter("PRE") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be "
+                     "inspected before the diagnostic; no process was terminated.\n");
+        return 97;
+    }
 
     // Run on a 64 MB-stack worker thread (EasyLanguage compiler / hidden
     // EDIT control need this, and TsDevLib is thread-affine).
@@ -643,14 +673,21 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — kill the thread if it hangs.
+    // 60-second hard timeout — report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
-        std::fprintf(stderr, "\nFATAL: diagnostic timed out after 60s, "
-                     "terminating.\n");
-        TerminateThread(hThread, 99);
-        // Best-effort cleanup of any TSCrashReport spawned by a crash.
-        system("taskkill /F /IM TSCrashReport.exe >NUL 2>&1");
+        std::fprintf(stderr,
+                     "\nFATAL: diagnostic timed out after 60s; worker was "
+                     "not forcibly terminated and no process cleanup was "
+                     "attempted. Manual exact-PID recovery is required.\n");
+        CloseHandle(hThread);
+        return 98;
+    }
+    if (wait == WAIT_FAILED) {
+        std::fprintf(stderr,
+                     "\nFATAL: waiting for diagnostic worker failed: %lu; "
+                     "no thread or process was forcibly terminated.\n",
+                     GetLastError());
         CloseHandle(hThread);
         return 98;
     }
@@ -659,10 +696,12 @@ int main() {
     CloseHandle(hThread);
 
     // Post-check: did TSCrashReport.exe spawn (indicating a crash)?
-    system("tasklist /FI \"IMAGENAME eq TSCrashReport.exe\" 2>NUL | "
-           "findstr /I TSCrashReport && echo [POST] TSCrashReport.exe IS "
-           "running (crash occurred) || echo [POST] TSCrashReport.exe NOT "
-           "running (no crash)");
+    if (reportCrashReporter("POST") != ProcessInspectionResult::NotFound) {
+        std::fprintf(stderr,
+                     "FATAL: TSCrashReport.exe was detected or could not be inspected after the "
+                     "diagnostic; no process cleanup was attempted.\n");
+        return 97;
+    }
 
     return st.exitCode;
 }

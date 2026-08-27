@@ -2,8 +2,16 @@
 """tsdev_automation -- Python wrapper driving the ``tsdev_cli`` executable.
 
 This package provides a high-level, stdlib-only Python API
-(:class:`TsDevClient`) for the three TSDev Library operations -- insert,
-modify, delete -- plus batch variants, against the TradeStation Development
+(:class:`TsDevClient`) for six single-item operations:
+:meth:`TsDevClient.insert`, :meth:`TsDevClient.modify`,
+:meth:`TsDevClient.delete`, :meth:`TsDevClient.exists`,
+:meth:`TsDevClient.get_source`, and :meth:`TsDevClient.upsert`.
+It also provides batch methods :meth:`TsDevClient.batch_insert`,
+:meth:`TsDevClient.batch_modify`, :meth:`TsDevClient.batch_delete`, and
+:meth:`TsDevClient.batch_upsert`, plus directory-batch methods
+:meth:`TsDevClient.batch_insert_dir`, :meth:`TsDevClient.batch_modify_dir`,
+:meth:`TsDevClient.batch_delete_dir`, and
+:meth:`TsDevClient.batch_upsert_dir`, against the TradeStation Development
 Environment warehouse.  It shells out to the 32-bit ``tsdev_cli.exe`` (which
 loads ``orlib20.dll``) using its ``--json`` structured output and batch
 subcommands, so it works from 64-bit Python.
@@ -21,6 +29,7 @@ from __future__ import annotations
 from .client import BatchItem, TsDevClient
 from .exceptions import (
     AlreadyExistsError,
+    ArtifactMissingError,
     CompileError,
     ElevationRequiredError,
     EllMissingError,
@@ -52,6 +61,7 @@ __all__ = [
     "NotFoundError",
     "OutputWriteError",
     "AlreadyExistsError",
+    "ArtifactMissingError",
     "EntryOpError",
     "ElevationRequiredError",
     "SaveSourceError",

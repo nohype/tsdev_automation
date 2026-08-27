@@ -17,6 +17,7 @@
 //   tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--ts-path <directory>] serve [--serve-pipe-file <path>]
 //
 //   <type>        "strategy", "function", "indicator", "tradingapp", or "showme" (case-insensitive)
 //   <name>        component name
@@ -49,13 +50,16 @@
 // error, 4=init failure, 5=not-found (modify/delete) OR already-exists
 // (insert), 6=entry op failure (insert/modify/delete), 7=saveSource failure,
 // 8=compile error, 9=.ell missing,
-// 10=CreateThread failure.
+// 10=CreateThread failure, 11=not elevated.
+// Every direct tsdev_cli subcommand, including serve, requires an elevated
+// administrator process; when the guard runs non-elevated it returns exit 11.
 //
 // Batch subcommands (batch-insert/batch-modify/batch-delete) use a separate
 // exit-code scheme (they are distinct subcommands, so no conflict):
 //   0 = all items succeeded
 //   1 = usage error / manifest file not found / manifest empty (batch did not run)
-//   2 = batch ran but one or more items failed (per-item details in the JSON array)
+//   2 = batch ran but one or more items failed (including an explicit close
+//       failure; per-item details are in the JSON array)
 //
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
@@ -409,16 +413,51 @@ void emitOutput(const CliResult& r, bool jsonMode) {
 // that includes type / ProgId / .ell path / .xml path.
 
 // sha256FileCli: compute the uppercase-hex SHA-256 of a regular file at
-// `path` via the native Win32 bcrypt provider. Returns empty string on any
-// failure (missing file, directory, read/hash error). Mirrors the validator's
-// internal hasher; kept local to this TU because persistence_integrity.h
-// exposes only validatePersistenceIntegrity() (matched exactly — no extra
-// declarations added).
-std::string sha256FileCli(const std::string& path) {
+// `path` via the native Win32 bcrypt provider. The status is deliberately
+// separate from the hash: an absent path is the only condition that may be
+// converted to the no-prior-artifact sentinel by doModify(). An existing path
+// that is a directory, cannot be opened/read, or cannot be hashed is an Error
+// and must fail closed. Mirrors the validator's internal hasher; kept local to
+// this TU because persistence_integrity.h exposes only
+// validatePersistenceIntegrity() (matched exactly — no extra declarations
+// added).
+enum class Sha256FileStatus {
+    Hashed,
+    Absent,
+    Error,
+};
+
+struct Sha256FileResult {
+    Sha256FileStatus status;
+    std::string hash;
+};
+
+Sha256FileResult sha256FileCli(const std::string& path) {
+    // GetFileAttributesA distinguishes a genuinely absent artifact from an
+    // existing artifact that the hash operation cannot evaluate. In
+    // particular, do not turn ERROR_ACCESS_DENIED (or any other non-absence
+    // error) into the no-prior-artifact sentinel.
+    DWORD attributes = GetFileAttributesA(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return {Sha256FileStatus::Absent, std::string()};
+        }
+        return {Sha256FileStatus::Error, std::string()};
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return {Sha256FileStatus::Error, std::string()};
+    }
+
     HANDLE hFile = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                nullptr, OPEN_EXISTING,
                                FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) return std::string();
+    if (hFile == INVALID_HANDLE_VALUE) {
+        // The path existed at the classification point. A race that removes
+        // it before this open is treated as an error rather than guessed to be
+        // a missing pre-op artifact; fail closed for the modify operation.
+        return {Sha256FileStatus::Error, std::string()};
+    }
     struct FileGuard {
         HANDLE h;
         ~FileGuard() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); }
@@ -427,7 +466,7 @@ std::string sha256FileCli(const std::string& path) {
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM,
                                                   nullptr, 0);
-    if (status != 0) return std::string();
+    if (status != 0) return {Sha256FileStatus::Error, std::string()};
     struct AlgGuard {
         BCRYPT_ALG_HANDLE h;
         ~AlgGuard() { if (h) BCryptCloseAlgorithmProvider(h, 0); }
@@ -437,18 +476,22 @@ std::string sha256FileCli(const std::string& path) {
     status = BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH,
                                reinterpret_cast<PUCHAR>(&hashObjLen),
                                sizeof(DWORD), &cbResult, 0);
-    if (status != 0) return std::string();
+    if (status != 0 || hashObjLen == 0) {
+        return {Sha256FileStatus::Error, std::string()};
+    }
     DWORD hashLen = 0;
     status = BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH,
                                reinterpret_cast<PUCHAR>(&hashLen),
                                sizeof(DWORD), &cbResult, 0);
-    if (status != 0) return std::string();
+    if (status != 0 || hashLen == 0) {
+        return {Sha256FileStatus::Error, std::string()};
+    }
 
     std::vector<uint8_t> hashObj(hashObjLen);
     BCRYPT_HASH_HANDLE hHash = nullptr;
     status = BCryptCreateHash(hAlg, &hHash, hashObj.data(), hashObjLen,
                               nullptr, 0, 0);
-    if (status != 0) return std::string();
+    if (status != 0) return {Sha256FileStatus::Error, std::string()};
     struct HashGuard {
         BCRYPT_HASH_HANDLE h;
         ~HashGuard() { if (h) BCryptDestroyHash(h); }
@@ -459,15 +502,15 @@ std::string sha256FileCli(const std::string& path) {
     for (;;) {
         DWORD bytesRead = 0;
         BOOL ok = ReadFile(hFile, chunk.data(), chunkSize, &bytesRead, nullptr);
-        if (!ok) return std::string();
+        if (!ok) return {Sha256FileStatus::Error, std::string()};
         if (bytesRead == 0) break;  // EOF
         status = BCryptHashData(hHash, chunk.data(), bytesRead, 0);
-        if (status != 0) return std::string();
+        if (status != 0) return {Sha256FileStatus::Error, std::string()};
     }
 
     std::vector<uint8_t> hash(hashLen);
     status = BCryptFinishHash(hHash, hash.data(), hashLen, 0);
-    if (status != 0) return std::string();
+    if (status != 0) return {Sha256FileStatus::Error, std::string()};
 
     static const char* hex = "0123456789ABCDEF";
     std::string out;
@@ -476,7 +519,8 @@ std::string sha256FileCli(const std::string& path) {
         out.push_back(hex[(b >> 4) & 0xF]);
         out.push_back(hex[b & 0xF]);
     }
-    return out;
+    if (out.empty()) return {Sha256FileStatus::Error, std::string()};
+    return {Sha256FileStatus::Hashed, out};
 }
 
 // emptyBufferSha256: the SHA-256 of a zero-byte buffer, computed once and
@@ -973,9 +1017,16 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    validation (steps 5–7) succeeds, so that any cleanupCreatePathFailure
     //    branch above could still call deleteEntry() against an open warehouse.
     //    In the batch/serve path (flushPerItem == false) the warehouse is left
-    //    open for the session lifetime.
-    if (flushPerItem) {
-        lib.closeWarehouse();
+    //    open for the session lifetime. A failed explicit close is an operation
+    //    failure; do not report the insert as successful.
+    if (flushPerItem && !lib.closeWarehouse()) {
+        r.exitCode = 6;
+        r.progId = progId;
+        r.errorMessage = std::string("closeWarehouse failed for ProgId=")
+                         + std::to_string(progId);
+        r.humanStderr = std::string("tsdev_cli: closeWarehouse failed for ProgId=")
+                        + std::to_string(progId) + "\n";
+        return r;
     }
 
     // 9. Success.
@@ -1028,21 +1079,69 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
         preEllPath = lib.getEllPath(type, preProgId);
         preXmlPath = lib.getXmlPath(type, preProgId);
 
-        // Snapshot pre-op hashes ONLY when the files already exist. When they
-        // do not (corrupt prior state), use the no-prior-artifact sentinel so
-        // the validator forces ellChanged/xmlChanged = true for the post-op
-        // artifacts (a real refresh after recovery from a missing prior .ell).
-        if (lib.ellFileExists(type, preProgId)) {
-            preEllHash = sha256FileCli(preEllPath);
-            if (preEllHash.empty()) preEllHash = noPriorArtifactHash();
-        } else {
-            preEllHash = noPriorArtifactHash();
+        // Snapshot pre-op hashes. sha256FileCli() classifies the result into
+        // three states so that a genuinely absent artifact (Hashed::Absent) is
+        // distinguished from an existing-but-unreadable one (Hashed::Error):
+        //   - Hashed:  use the computed hash.
+        //   - Absent:  use the no-prior-artifact sentinel (normal absent-file
+        //              semantics; the validator forces ellChanged/xmlChanged =
+        //              true for the post-op artifacts).
+        //   - Error:   the artifact EXISTS but cannot be opened/read/hashed.
+        //              Fail closed with exit 9 (artifact_missing, the existing
+        //              persistence-integrity error code) BEFORE modifyEntry
+        //              mutates anything — do NOT treat the unreadable file as a
+        //              new/absent artifact (the original bug: empty string was
+        //              silently converted to the no-prior-artifact sentinel).
+        auto snapshotPreHash = [&](const std::string& artifactPath,
+                                   bool fileExists,
+                                   const char* artifactLabel,
+                                   std::string& outHash) -> bool {
+            if (!fileExists) {
+                outHash = noPriorArtifactHash();
+                return true;
+            }
+            Sha256FileResult h = sha256FileCli(artifactPath);
+            switch (h.status) {
+                case Sha256FileStatus::Hashed:
+                    outHash = h.hash;
+                    return true;
+                case Sha256FileStatus::Absent:
+                    // Race: the library reported existence but the file is now
+                    // gone. Treat as absent (normal absent-file semantics).
+                    outHash = noPriorArtifactHash();
+                    return true;
+                case Sha256FileStatus::Error:
+                    // Existing-but-unreadable: fail closed with exit 9
+                    // (artifact_missing), the existing persistence-integrity
+                    // error path reused by all persistence-failure paths.
+                    r.success = false;
+                    r.exitCode = 9;
+                    r.progId = preProgId;
+                    r.errorMessage = std::string("pre-operation ") + artifactLabel
+                        + " artifact exists but cannot be hashed (unreadable"
+                        " or hash error) — refusing to treat as a new file"
+                        + " [type=" + typeStr
+                        + ", name=\"" + name + "\""
+                        + ", ProgId=" + std::to_string(preProgId)
+                        + ", " + artifactLabel + "=" + artifactPath + "]";
+                    r.humanStderr = std::string("tsdev_cli: pre-operation ")
+                        + artifactLabel + " artifact exists but cannot be"
+                        " hashed at " + artifactPath
+                        + " (ProgId=" + std::to_string(preProgId)
+                        + ") — aborting modify before mutation"
+                        " (detect-and-fail; no rollback/retry attempted)\n";
+                    return false;
+            }
+            return false;  // unreachable
+        };
+
+        if (!snapshotPreHash(preEllPath, lib.ellFileExists(type, preProgId),
+                             ".ell", preEllHash)) {
+            return r;  // exit 9 — pre-op .ell unreadable
         }
-        if (lib.xmlFileExists(type, preProgId)) {
-            preXmlHash = sha256FileCli(preXmlPath);
-            if (preXmlHash.empty()) preXmlHash = noPriorArtifactHash();
-        } else {
-            preXmlHash = noPriorArtifactHash();
+        if (!snapshotPreHash(preXmlPath, lib.xmlFileExists(type, preProgId),
+                             ".xml", preXmlHash)) {
+            return r;  // exit 9 — pre-op .xml unreadable
         }
 
         // Explicit get-source equality: prove the new source is byte-identical
@@ -1166,17 +1265,15 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    // TVS-L.12: deleteEntry now reports a disk-cleanup failure (a stale
-    // .ell/.xml left on disk) by returning false AND populating
-    // `diskCleanupError` with the residual path(s) + Windows error(s). The
-    // delete orchestrator has ALREADY run in that case, so the warehouse entry
-    // was removed — only the on-disk artifact(s) remain. We extend the
-    // existing exit-6 / entry_op_failure message (no new error code/hierarchy)
-    // to surface the residual path/error and to state that the warehouse entry
-    // was already removed, so the operator knows the on-disk state is stale.
-    // `diskCleanupError` is empty for non-cleanup failures (not found is
-    // handled above; orchestrator SEH aborts earlier), so an empty value here
-    // means an earlier deleteEntry failure and keeps the original message.
+    // TVS-L.12: deleteEntry reports a disk-cleanup failure (a stale .ell/.xml
+    // left on disk) by returning false AND populating `diskCleanupError` with
+    // the residual path(s) + Windows error(s). The delete orchestrator has
+    // ALREADY run in that case, so the warehouse entry was removed — only the
+    // on-disk artifact(s) remain. An explicit closeWarehouse failure also
+    // returns false, but occurs before disk cleanup and leaves this diagnostic
+    // string empty. Both cases use the existing exit-6 / entry_op_failure
+    // result; the populated diagnostic is reserved for the stale-artifact
+    // case.
     std::string diskCleanupError;
     bool deleted = lib.deleteEntry(type, name, flushPerItem, &diskCleanupError);
     if (!deleted) {
@@ -2182,8 +2279,24 @@ DWORD WINAPI runBatch(LPVOID param) {
     }
 
     // Flush the warehouse ONCE at the end of the batch (per the TsDevLib
-    // header note: "safe to call once at the end of a batch").
-    lib->closeWarehouse();
+    // header note: "safe to call once at the end of a batch"). A failed
+    // explicit close makes every otherwise-successful mutation uncertain, so
+    // convert those per-item successes to the existing entry-op failure result
+    // and return the existing nonzero aggregate batch status.
+    if (!lib->closeWarehouse()) {
+        std::fprintf(stderr,
+            "tsdev_cli: closeWarehouse failed at end of batch\n");
+        anyFailed = true;
+        for (auto& result : p->results) {
+            if (!result.success) continue;
+            result.success = false;
+            result.exitCode = 6;
+            result.errorMessage = "closeWarehouse failed at end of batch";
+            result.humanStdout.clear();
+            result.humanStderr =
+                "tsdev_cli: closeWarehouse failed at end of batch\n";
+        }
+    }
 
     // Destruct TsDevLib (OrlibExit persists; EDIT control destroyed on this
     // thread).
@@ -2784,6 +2897,15 @@ HANDLE createServePipe(const std::string& pipeName) {
     return hPipe;
 }
 
+// Return the existing generic infrastructure status for a ConnectNamedPipe
+// attempt. ERROR_PIPE_CONNECTED is the documented normal race where a client
+// connected before ConnectNamedPipe was called; every other failed call is
+// unexpected and must not fall through as a successful serve session.
+int serveConnectExitCode(BOOL connected, DWORD connectError) {
+    if (connected || connectError == ERROR_PIPE_CONNECTED) return 0;
+    return 1;
+}
+
 // Parameters passed to the serve worker thread.
 struct ServeParams {
     HANDLE             pipe = INVALID_HANDLE_VALUE;
@@ -2817,8 +2939,17 @@ DWORD WINAPI runServe(LPVOID param) {
     // ConnectNamedPipe failure).
     while (!p->quit.load()) {
         BOOL connected = ConnectNamedPipe(pipe, nullptr);
-        if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
-            // ConnectNamedPipe failed unexpectedly — stop the broker.
+        DWORD connectError = connected ? ERROR_SUCCESS : GetLastError();
+        int connectExitCode = serveConnectExitCode(connected, connectError);
+        if (connectExitCode != 0) {
+            // ConnectNamedPipe failed unexpectedly — stop the broker with a
+            // nonzero infrastructure result instead of falling through as a
+            // successful serve session. ERROR_PIPE_CONNECTED is handled by
+            // serveConnectExitCode as the normal client-connect race.
+            p->exitCode = connectExitCode;
+            std::fprintf(stderr,
+                "tsdev_cli: ConnectNamedPipe failed (err=%lu)\n",
+                connectError);
             break;
         }
 
@@ -2901,7 +3032,14 @@ DWORD WINAPI runServe(LPVOID param) {
 
     // Flush the warehouse once at the end of the serve session, then destruct
     // TsDevLib (OrlibExit persists; EDIT control destroyed on this thread).
-    lib->closeWarehouse();
+    // A failed explicit close is an infrastructure failure; preserve any
+    // earlier nonzero status (for example, an unexpected ConnectNamedPipe
+    // failure) and never let the session fall through to exit 0.
+    if (!lib->closeWarehouse()) {
+        std::fprintf(stderr,
+            "tsdev_cli: closeWarehouse failed at end of serve session\n");
+        if (p->exitCode == 0) p->exitCode = 1;
+    }
     delete lib;
     return 0;
 }

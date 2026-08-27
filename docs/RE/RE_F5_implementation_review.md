@@ -1,7 +1,14 @@
 # TVS-F.5 enumerateRecords Implementation — Adversarial Review
 
+> **Status: historical/superseded review record.** This review covers an earlier
+> implementation snapshot whose Phase 2 parsed `{ name }` from mutable source
+> comments. That behavior is not current implementation guidance. Current stored
+> names, types, and ProgIds come from orlib20 warehouse records/APIs; the current
+> direct fallback uses the warehouse BST and verbatim-name getter. The historical
+> reverse-engineering findings below are retained for provenance.
+
 **Reviewer:** Independent adversarial reviewer (subagent with Ghidra MCP access)
-**Date:** 2026-09-02
+**Date:** 2026-09-02 *(unverified historical metadata; retained for provenance)*
 **Implementation under review:** TVS-F.5 `enumerateRecords` + `refreshCache` rewrite
 **Files reviewed:**
 - `src/tsdev_lib.h` — header changes (new members, array expansions)
@@ -15,17 +22,17 @@
 
 ---
 
-## Verdict: APPROVE
+## Historical Verdict for the Reviewed Snapshot: APPROVE
 
-The implementation is correct, well-structured, and production-ready. The two-phase
-approach is sound, the FindExistPos case-insensitivity claim is independently verified
-via Ghidra decompilation, and all orlib20 calls are SEH-protected with proper resource
-balancing. Two MINOR issues and one non-blocking observation are noted below; none
-warrant disapproval.
+The reviewed snapshot was correct for the historical scope described at the time,
+except that its source-comment metadata fallback is superseded. Its two-phase
+warehouse search, the FindExistPos case-insensitivity finding, and the SEH/resource
+observations remain useful historical evidence. This verdict does not approve parsing
+mutable source text and is not a current implementation-status claim.
 
 ---
 
-## Findings
+## Historical Findings
 
 ### Finding 1 (MINOR): Stale comment in test_sigtool.ps1 — "18 signatures"
 
@@ -76,19 +83,21 @@ claim that `[warehouse+0x5E]` is set after INSERT/MODIFY/DELETE.
 
 **Impact:** If `refreshCache()` fails to obtain a valid COM interface, Phase 1
 (`_LoadMasterRecsEX@16`) will use a stale cache and may not find newly created
-records. However, the implementation correctly falls back to Phase 2
-(`FindExistPos` + `getSource`), which does NOT depend on `[warehouse+0x5E]` or
-the COM interface. The two-phase design provides defense in depth.
+records. In the reviewed historical snapshot, the fallback was Phase 2
+(`FindExistPos` + `getSource`), which did NOT depend on `[warehouse+0x5E]` or
+the COM interface. That snapshot's source-text metadata step is superseded;
+the current warehouse/API-backed fallback uses the BST and stored-name getter.
 
-**No fix required** — the fallback to Phase 2 handles this case. The defensive
-code in `refreshCache()` (restoring the old interface if cmd 0x0D fails, returning
-early if `[warehouse+0x5E]` is NULL after cmd 0x0F) prevents crashes.
+**No fix required for the reviewed snapshot** — its fallback handled this case.
+The defensive code in `refreshCache()` (restoring the old interface if cmd 0x0D
+fails, returning early if `[warehouse+0x5E]` is NULL after cmd 0x0F) prevented
+crashes.
 
 ---
 
-## Verified Claims
+## Verified Historical Claims
 
-The following claims were independently verified:
+The following claims were independently verified for the reviewed snapshot:
 
 ### 1. FindExistPos IS case-insensitive (VERIFIED via Ghidra)
 
@@ -128,22 +137,24 @@ Both the search key AND the BST node names are normalized to lowercase via
 `tolower`, making the comparison case-insensitive for ALL names (not just
 all-lowercase names).
 
-### 2. Two-phase approach is correct
+### 2. Two-phase approach in the historical snapshot
 
 - **Phase 1** (`_LoadMasterRecsEX@16` + `_stricmp`): Correctly enumerates cached
   records case-insensitively. The `_stricmp` comparison is inherently
   case-insensitive. The TradingApp subtype filter (checking `rec[0xE9]`) is
   correct for distinguishing Indicators from TradingApps within category 2.
 
-- **Phase 2** (`FindExistPos` + `getSource`): Correctly handles newly created
-  records. `FindExistPos` uses the in-memory BST (updated immediately by
-  `createEntry`), which is case-insensitive (verified above). `getSource`
-  parses the verbatim name from the EasyLanguage source comment `{ name }`.
+- **Historical Phase 2** (`FindExistPos` + `getSource`): The snapshot used the
+  in-memory BST (updated immediately by `createEntry`) and then parsed the
+  stored name from an EasyLanguage source comment `{ name }`. This source-text
+  metadata lookup is historical/superseded and must not be implemented or used
+  as current guidance.
 
-- **Fallback**: Phase 2 triggers when Phase 1 doesn't find a match
-  (`result.exists` is false after Phase 1). This is correct — Phase 1 may
-  fail to find newly created records if the cache is stale, and Phase 2
-  covers this gap.
+- **Current Phase 2 guidance:** When Phase 1 does not find a match, use the
+  warehouse-backed BST search (`FUN_101d05e0`) and the warehouse verbatim-name
+  getter (`FUN_101c36d0`). Stored names and ProgIds must come from those
+  orlib20 records/APIs, never from source text. The fallback still covers
+  records absent from the enumeration cache.
 
 ### 3. Record layout offsets are correct
 
@@ -198,14 +209,19 @@ All orlib20 calls in `enumerateRecords` and `refreshCache` are SEH-protected:
 - `applyThreadCheckPatches`: applies 8 patches (tc1 through tc8) ✓
 - Destructor: `for (int i = 0; i < 8; i++)` ✓
 
-### 9. Source text parsing is robust
+### 9. Historical source-text parsing observations (superseded)
 
-- Finds first `{` and first `}` after it ✓
-- Trims leading/trailing whitespace ✓
-- Handles empty comment blocks (`{}`) gracefully (storedName remains empty) ✓
-- Handles missing comment blocks gracefully (storedName remains empty) ✓
-- If parsing fails, `exists=true` and `progId>0` are still set (degraded but
-  not incorrect) ✓
+The following observations describe the former source-comment fallback only;
+they are retained for historical review and are not current implementation
+guidance:
+
+- The former code found the first `{` and first `}` after it.
+- It trimmed leading/trailing whitespace.
+- It handled empty comment blocks (`{}`) by leaving `storedName` empty.
+- It handled missing comment blocks by leaving `storedName` empty.
+- If parsing failed, the former path still set `exists=true` and `progId>0`,
+  but that did not make source-derived metadata an acceptable result. Current
+  stored names and ProgIds must come from warehouse records/APIs.
 
 ### 10. All 4 component types are handled
 
@@ -236,9 +252,9 @@ and TradingApps) based on the subtype byte at offset 0xE9. Verified against
 
 ---
 
-## Test Quality Assessment
+## Historical Test Quality Assessment
 
-### What the test covers (test_enumerate.cpp)
+### What the test covered (test_enumerate.cpp)
 - ✓ Creates a new Strategy entry (createEntry + saveSource + verifyModule)
 - ✓ Queries with UPPERCASE name, asserts case-insensitive match (exists=true,
   storedName=verbatim lowercase name, progId>0)
@@ -257,19 +273,19 @@ and TradingApps) based on the subtype byte at offset 0xE9. Verified against
    Pre-existing records (from a previous process) would exercise Phase 1 without
    Phase 2 fallback.
 
-These gaps are acceptable for the current TVS scope. The Ghidra verification of
-FindExistPos case-insensitivity provides confidence that the implementation works
-for all name casings and all component types.
+These gaps were acceptable for the reviewed historical TVS scope. The Ghidra
+verification of FindExistPos case-insensitivity provided confidence in that
+snapshot's behavior; it does not change the current warehouse/API metadata rule.
 
 ---
 
-## Required Fixes
+## Historical Required Fixes
 
-None (APPROVE).
+None for the reviewed snapshot (historical verdict: APPROVE).
 
 ---
 
-## Recommendations (optional improvements)
+## Historical Recommendations (optional improvements)
 
 1. **Fix the stale comment** in `tests/test_sigtool.ps1:163` — change "18 signatures"
    to "19 signatures".

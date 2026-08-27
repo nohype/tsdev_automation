@@ -1,6 +1,7 @@
 // test_enumerate.cpp
 //
-// Integration test (TDD RED) for the `enumerateRecords` method of TsDevLib.
+// Integration test for the current warehouse/API-backed `enumerateRecords`
+// behavior of TsDevLib.
 //
 // TVS-F.5 subtask F5-S2: this test exercises the library-level
 // case-insensitive existence-query primitive that the `exists
@@ -57,9 +58,10 @@ const char* kTestNameUpper = "ZZZ_TEST_CI_PROBE";
 const char* kNonExistentName = "NONEXISTENTNAMEXYZ";
 
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
-// multi-line COMMENT block, so the actual code must be OUTSIDE it. The leading
-// comment names the strategy (TSDev convention); the body issues a simple
-// market buy order. This mirrors the proven source from test_exists.cpp.
+// multi-line COMMENT block, so the actual code must be OUTSIDE it. The brace
+// text is arbitrary fixture source content only; it is not a metadata
+// convention or lookup mechanism. The name and ProgId come from warehouse
+// records/APIs. This mirrors the proven source from test_exists.cpp.
 const char* kTestSource =
     "{ zzz_test_ci_probe }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";

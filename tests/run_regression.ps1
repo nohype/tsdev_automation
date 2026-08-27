@@ -9,10 +9,12 @@
       1. sigtool verify gate   (tests/test_sigtool.ps1)
          12 sigtool CLI tests against the baseline DLL. Fast, no live TS.
       2. C++ unit tests        (tests/run_unit_tests.ps1)
-         27 C++ test executables (or 10 with -NoTs). Medium duration.
+         The C++ unit-test inventory and the non-TS classification are
+         authoritative in tests/run_unit_tests.ps1; the -NoTs path runs the
+         non-TS subset of that inventory.
       3. E2E CLI tests         (tests/run_e2e_tests.ps1)
-         34 E2E CLI test cases per E2E_TEST_SPEC.md. Slowest; creates and
-         deletes real warehouse entries.
+         E2E CLI test cases are specified in docs/E2E_TEST_SPEC.md. Slowest;
+         creates and deletes real warehouse entries.
       4. exists E2E tests      (tests/test_exists.ps1)
          5 exists-subcommand E2E test cases (D1.1-D1.3). Requires live TS;
          skipped under -NoTs or -SkipExists. Creates and deletes a real
@@ -38,12 +40,14 @@
          skipped under -NoTs or -SkipBatchUpsert. Inserts and deletes real
          warehouse entries.
      10. directory-batch E2E tests (tests/test_directory_batch.ps1)
-         9 directory-batch-subcommand E2E test cases (DB1-DB9). Requires live
-         TS; skipped under -NoTs or -SkipDirectoryBatch. Inserts and deletes
-         real warehouse entries.
+         9 directory-batch-subcommand E2E test cases (DB1-DB9). This suite
+         drives live warehouse operations and requires live TS; it is distinct
+         from the non-TS C++ test_directory_batch parser unit executable. It is
+         skipped under -NoTs or -SkipDirectoryBatch.
      11. serve E2E tests        (tests/run_serve_e2e.ps1)
-         2 serve-mode end-to-end pytest cases. Requires live TS AND an
-         elevated parent shell; skipped under -NoTs or -SkipServeE2e.
+         Three default tests plus one opt-in stress test gated by
+         TS_SERVE_STRESS=1. Requires live TS AND an elevated parent shell;
+         skipped under -NoTs or -SkipServeE2e.
          Launches an unelevated Python client via Task Scheduler that
          connects to an elevated broker through a named pipe.
      12. ShowMe E2E tests      (tests/test_showme_e2e.ps1)
@@ -51,11 +55,12 @@
          skipped under -NoTs or -SkipShowMeE2e. Inserts and deletes real
          warehouse entries.
      13. Unknown Link regression (tests/test_unknown_link_regression.ps1)
-        249 assertions across all 5 component types (TVS-L.1+L.4+L.5:
-        artifact invariants, mutations, semantic errors). Requires live TS;
-        skipped under -NoTs. Inserts and deletes real warehouse entries and
-        verifies the ELL/XML finalization artifacts, GUID byte match, source
-        round-trip, and cleanup. Mandatory in normal mode (no dedicated skip
+        Artifact invariants, mutations, and semantic-error checks across all 5
+        component types (TVS-L.1+L.4+L.5). Requires live TS; skipped under
+        -NoTs. Inserts and deletes real warehouse entries and verifies the
+        ELL/XML finalization artifacts, GUID byte match, source round-trip,
+        and cleanup. Historical aggregate counts are not current acceptance
+        evidence. Mandatory in normal mode (no dedicated skip
         flag).
      14. Unknown Link stress (tests/test_unknown_link_stress.ps1)
         REPEATED-INSTANCE lifecycle stress: 600 insert/delete cycles
@@ -105,7 +110,9 @@
       - Skip the ShowMe E2E suite entirely (prints "SKIP: showme tests require live TS").
       - Skip the Unknown Link regression suite entirely (prints "SKIP: unknown-link tests require live TS").
       - Skip the Unknown Link stress suite entirely (prints "SKIP: unknown-link stress tests require live TS").
-      - Pass -NoTs to run_unit_tests.ps1 (runs only the 10 non-TS unit tests).
+      - Pass -NoTs to run_unit_tests.ps1 (runs only the non-TS unit tests;
+        see tests/run_unit_tests.ps1 for the authoritative inventory and
+        non-TS classification).
       - Still run the sigtool suite (it does not need live TS, only the
         baseline DLL).
 
@@ -161,25 +168,28 @@
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
     Processes all 14 suite banners (Suite 14 skipped by default; opt-in via
-    -ExtendedStress): sigtool + 27 unit tests + 34 E2E tests + 5 exists
-    tests + 8 batch-stdin tests + 9 upsert tests + 7 get-source tests + 9
-    exists-ci tests + 5 batch-upsert tests + 9 directory-batch tests + 2
-    serve E2E tests + 9 ShowMe tests + 249 unknown-link regression
-    assertions.
+    -ExtendedStress): sigtool + the C++ unit tests (see
+    tests/run_unit_tests.ps1 for the inventory) + the E2E CLI tests (see
+    docs/E2E_TEST_SPEC.md for the case list) + 5 exists tests + 8 batch-stdin
+    tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5
+    batch-upsert tests + 9 directory-batch tests + three default serve E2E
+    tests (plus one opt-in stress test when TS_SERVE_STRESS=1) + 9 ShowMe
+    tests + the unknown-link regression suite.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
-    Runs sigtool + 10 non-TS unit tests; skips E2E, exists, batch-stdin,
+    Runs sigtool + the non-TS C++ unit tests (see tests/run_unit_tests.ps1
+    for the authoritative inventory); skips E2E, exists, batch-stdin,
     upsert, get-source, exists-ci, batch-upsert, directory-batch, serve,
     ShowMe, and unknown-link E2E suites (regression and stress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -SkipE2e
-    Runs sigtool + all 27 unit tests + 5 exists tests + 8 batch-stdin
-    tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5
-    batch-upsert tests + 9 directory-batch tests + 9 ShowMe tests +
-    249 unknown-link regression assertions; skips E2E and the stress
-    suite (opt-in: -ExtendedStress).
+    Runs sigtool + all C++ unit tests (see tests/run_unit_tests.ps1 for the
+    inventory) + 5 exists tests + 8 batch-stdin tests + 9 upsert tests + 7
+    get-source tests + 9 exists-ci tests + 5 batch-upsert tests + 9
+    directory-batch tests + 9 ShowMe tests + the unknown-link regression
+    suite; skips E2E and the stress suite (opt-in: -ExtendedStress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose
@@ -211,10 +221,14 @@
         user to copy it from the TradeStation installation. If the user
         declines, the sigtool suite and test_orlib_resolver are marked
         FAILED; other suites still run.
-      - No TradeStation processes/services should be running for the E2E,
-        exists, batch-stdin, upsert, get-source, exists-ci, batch-upsert,
-        directory-batch, serve, ShowMe, and unknown-link E2E suites (including
-        the stress suite when -ExtendedStress is used).
+      - Runs that execute suites invoking tsdev_cli.exe directly must start
+        this runner from an elevated administrator process. The elevation
+        contract (including the non-elevated direct-CLI exit code 11
+        behavior and the non-TS/sigtool path having no direct-CLI elevation
+        prerequisite) is authoritative in AGENTS.md and docs/BUILD.md.
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies to these CLI/library suites. A suite that explicitly exercises
+        Desktop state must document that state in its own procedure.
 #>
 
 param(
@@ -816,9 +830,8 @@ else {
 # ---------------------------------------------------------------------------
 # Suite 11: serve E2E tests
 # ---------------------------------------------------------------------------
-# serve E2E requires an elevated parent shell (it temporarily modifies
-# HKLM registry for ConsentPromptBehaviorAdmin). If not elevated, skip
-# with a clear message rather than failing with a registry access error.
+# serve E2E requires an elevated parent shell for its Task Scheduler harness.
+# If not elevated, skip with a clear message rather than launching the suite.
 $script:Elevated = $false
 try {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()

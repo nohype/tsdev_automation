@@ -1,7 +1,8 @@
 // test_orlib_resolver.cpp
 //
-// TVS-B.4 TDD — Cycle 1: construction (test-mode in-memory ctor), PE header
-// parsing, and accessors.
+// TVS-B.4 resolver coverage — Cycle 1: construction (test-mode in-memory
+// ctor), PE header parsing, and accessors. The RED/GREEN notes below are
+// historical TDD context; the current resolver implementation is not a stub.
 //
 // This test loads tests/fixtures/orlib20_baseline.dll into an in-memory
 // buffer and constructs an OrlibResolver via the test constructor
@@ -10,15 +11,13 @@
 //   - baseAddress() == 0x10000000 (the simulated base passed to the ctor)
 //   - moduleHandle() == nullptr (test mode acquires no HMODULE)
 //   - textSectionBounds() == {0x1000, 0x1F7400} (.text RVA + raw size)
-//   - signatureSet() == SIGSET_NONE (stub detectVersion returns default)
+//   - signatureSet() == SIGSET_V9_50_01_3344 (known baseline fixture)
 //
-// RED phase (Cycle 1): Against the current stubs, parsePeHeaders() is empty
-// so m_textRva / m_textRawSize stay 0 → textSectionBounds() returns {0,0}
-// and the textSectionBounds assertion FAILS. The other assertions pass
-// against the stub (the ctor sets m_testMode/m_base/m_module correctly).
-//
-// GREEN phase (later subagent): Implement parsePeHeaders() to populate
-// m_textRva=0x1000, m_textRawSize=0x1F7400 → all assertions pass.
+// HISTORICAL RED phase (Cycle 1): the pre-implementation stubs left
+// m_textRva / m_textRawSize at 0, so textSectionBounds() returned {0,0} and
+// that assertion failed. The later GREEN implementation populated
+// m_textRva=0x1000 and m_textRawSize=0x1F7400; those phase results are retained
+// as historical TDD context.
 //
 // Exit codes:
 //   0  = all assertions passed
@@ -167,11 +166,8 @@ int main() {
     std::printf("OrlibResolver constructed OK (test mode)\n");
 
     // --- 3. Cycle 1 assertions ---
-    // NOTE: Against the stubs, textSectionBounds() returns {0,0} (parsePeHeaders
-    // is empty) → that assertion FAILS (RED). The others pass against the stub
-    // because the test ctor sets m_testMode=true, m_base=0x10000000,
-    // m_module=nullptr, and detectVersion returns a default VersionDescriptor
-    // whose signatureSet is SIGSET_NONE.
+    // The historical stub behavior is documented above; the current test
+    // asserts the parsed section bounds and known baseline signature set.
 
     CHECK(resolver->isTestMode() == true,
           "isTestMode()==true");
@@ -188,14 +184,12 @@ int main() {
           "signatureSet()==SIGSET_V9_50_01_3344 (known DLL, detectVersion at construction)");
 
     // ===================================================================
-    // Cycle 2: 8 internal-function signature resolvers + failure path.
+    // Cycle 2: 8 core internal-function resolver cases + failure path.
     //
-    // Each resolver is called inside a try/catch. Against the current
-    // stubs (RED phase), every resolver throws OrlibResolverError
-    // ("not implemented") → the catch block fires → CHECK(false) → FAIL.
-    // After implementation (GREEN phase), each resolver returns a typed
-    // function pointer at the expected RVA → the try block computes the
-    // RVA and CHECK(rva == EXPECTED) → PASS.
+    // Each resolver is called inside a try/catch. The historical RED phase
+    // used stubs that threw OrlibResolverError; the current implementation
+    // returns a typed function pointer at the expected RVA, so the test can
+    // compute the RVA and compare it with the catalog.
     //
     // Expected RVAs are taken from signatures.gen.h
     // (the `rva` field of each SignatureDef), cross-checked against
@@ -508,7 +502,7 @@ int main() {
     // headers directly from the buffer (DOS → NT → sections → ".text").
     // This mirrors what parsePeHeaders() does internally but is done
     // inline here so the test is self-contained and does not rely on the
-    // (stub) resolver's own parsing.
+    // resolver's own parsing.
     // ===================================================================
     std::printf("\n--- Cycle 2: failure-path (corrupted .text, AC6) ---\n");
 
@@ -636,16 +630,15 @@ int main() {
     // test ctor, so exports must be resolved from the buffer's PE export
     // directory.
     //
-    // Each specific resolver is called inside a try/catch. Against the
-    // current stubs (RED phase), every resolver throws OrlibResolverError
-    // ("not implemented") → the catch block fires → CHECK(false) → FAIL.
-    // After implementation (GREEN phase), each resolver returns a typed
-    // function pointer at the expected RVA → the try block computes the
-    // RVA and CHECK(rva == EXPECTED) → PASS.
+    // Each specific resolver is called inside a try/catch. The historical RED
+    // phase used stubs that threw OrlibResolverError; the current implementation
+    // returns a typed function pointer at the expected RVA, so the test computes
+    // the RVA and compares it with the catalog.
     //
-    // Expected RVAs are taken from tmp/re_artifacts/b1_export_confirmation.md
-    // (the authoritative dumpbin /exports confirmation), cross-checked
-    // against docs/SIGNATURE_CATALOG.md §5.
+    // Expected RVAs are derived from the generated catalog and cross-checked
+    // against docs/SIGNATURE_CATALOG.md §5. The original dumpbin record at
+    // tmp/re_artifacts/b1_export_confirmation.md is historical/transient and
+    // unavailable in a fresh tracked checkout.
     // ===================================================================
     std::printf("\n=== Cycle 3: 7 export resolvers ===\n");
 
@@ -923,10 +916,9 @@ int main() {
     //   Tier 2: PE timestamp + file size cross-check.
     //   Tier 3: SHA-256 byte-identity confirmation.
     //
-    // Against the current stubs (RED phase), detectVersion() returns a
-    // default VersionDescriptor{known=false} → all Cycle 4 assertions
-    // FAIL. After implementation (GREEN phase), the 3-tier logic
-    // populates the descriptor correctly → all assertions PASS.
+    // The historical RED phase returned a default VersionDescriptor. The
+    // current implementation applies the 3-tier logic and the cases below
+    // assert the resulting descriptor and cache behavior.
     //
     // Cases 1-3 are MANDATORY. Case 4 is best-effort (soft skip if the
     // UTF-16LE version string is not found in the buffer).
@@ -1137,15 +1129,10 @@ int main() {
     // 24 bytes). detectVersion() must return known=false, tier=Unknown,
     // signatureSet=SIGSET_NONE.
     //
-    // FEASIBILITY NOTE: This case depends on readFileVersion() extracting
-    // the STRING form from the version resource's string table. If
-    // readFileVersion() instead uses VS_FIXEDFILEINFO (binary DWORDs),
-    // modifying the UTF-16LE string won't change the returned FileVersion,
-    // and this test will fail in GREEN. The implementer (B.4.17) must
-    // ensure readFileVersion returns the string form that matches the
-    // manifest key. If the UTF-16LE pattern is not found in the buffer
-    // (stored differently), this case is SKIPPED (soft skip — no
-    // failure, no increment to g_failCount).
+    // FEASIBILITY NOTE: This case mutates the UTF-16LE string in the version
+    // resource. If the pattern is not present in the fixture buffer (for
+    // example, if the version is stored only as VS_FIXEDFILEINFO), the case
+    // is SKIPPED (soft skip — no failure, no increment to g_failCount).
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 4 Case 4: unknown FileVersion (best-effort) ---\n");
     {
@@ -1245,18 +1232,17 @@ int main() {
     // ===================================================================
     // Cycle 5: patch-site resolution + validation + data globals.
     //
-    // This is the final implementation cycle (TVS-B.4 TDD red-green).
+    // This is the final resolver-coverage cycle for TVS-B.4.
     // It covers:
     //   Part A — 3 patch-site resolvers (resolvePatchSite by name).
     //   Part B — 3 validatePatchSite(descriptor) tests.
     //   Part C — 3 convenience methods (resolveThreadCheck1/2/3).
     //   Part D — 3 data-global RVA resolvers.
     //
-    // Against the current stubs (RED phase), resolvePatchSite and the
-    // data-global methods throw OrlibResolverError("not implemented") →
-    // the catch blocks fire → CHECK(false) → FAIL. After implementation
-    // (GREEN phase, later subagent), each resolver returns a populated
-    // PatchSiteDescriptor / RVA at the expected value → PASS.
+    // The historical RED phase used stubs that threw
+    // OrlibResolverError("not implemented"). The current implementation
+    // returns populated PatchSiteDescriptor/RVA values at the expected
+    // catalog locations, which the cases below verify.
     //
     // Expected values are looked up by NAME from signatures.gen.h
     // (kSignatures[] entries for the thread-check patch sites),
@@ -1318,7 +1304,7 @@ int main() {
     // findSignatureByName) so the test is robust against catalog edits
     // that shift positional indices.
     //
-    // Against stubs → catch fires → CHECK(false) → FAIL (RED).
+    // Resolution failures are reported by the checks below.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part A: 3 patch-site resolvers ---\n");
 
@@ -1452,13 +1438,12 @@ int main() {
     // Part B — 3 validatePatchSite(descriptor) tests.
     //
     // For each patch site, first resolve the descriptor (Part A). If the
-    // resolve threw (RED), we CANNOT validate (no descriptor) → skip the
-    // validation CHECK with a note documenting the RED behavior. The
-    // Part A CHECK(false) already records the RED failure for the throw.
+    // resolution throws, there is no descriptor to validate, so the
+    // validation check is skipped; the Part A check records the failure.
     //
-    // If the resolve succeeded (GREEN), call validatePatchSite(desc) and
-    // assert it returns true (the baseline DLL is unpatched — original
-    // bytes are present at the patch site).
+    // If the resolution succeeds, call validatePatchSite(desc) and assert it
+    // returns true (the baseline DLL is unpatched — original bytes are
+    // present at the patch site).
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part B: 3 validatePatchSite tests ---\n");
 
@@ -1467,13 +1452,11 @@ int main() {
         std::printf("\n[Part B] validatePatchSite(\"%s\")\n", e.name);
 
         if (!resolveOk[i]) {
-            // RED behavior: resolvePatchSite threw in Part A, so we have
-            // no descriptor to validate. Skip the validation CHECK (the
-            // Part A failure already records the RED state). This avoids
-            // double-counting the same stub-not-implemented failure.
+            // Resolution failed in Part A, so there is no descriptor to
+            // validate. Skip this dependent check; Part A already records
+            // the resolution failure.
             std::printf("SKIP: cannot validate \"%s\" — resolvePatchSite "
-                        "threw in Part A (RED: stub not implemented). "
-                        "Validation deferred until resolve is implemented.\n",
+                        "failed in Part A.\n",
                         e.name);
             continue;
         }
@@ -1513,7 +1496,7 @@ int main() {
     // the returned descriptor's patchRva matches the expected patch RVA,
     // looked up by NAME from the catalog (not positional index).
     //
-    // Against stubs → throws → FAIL (RED).
+    // Resolution failures are reported by the checks below.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part C: 3 convenience methods ---\n");
 
@@ -1620,7 +1603,7 @@ int main() {
     // resolveErrorHinstRva()   → kDataGlobals_v9_50_01_3344[2] (DAT_1023aab8, string-table
     //   HINSTANCE).
     //
-    // Against stubs → throws → FAIL (RED).
+    // Resolution failures are reported by the checks below.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part D: 3 data-global RVA resolvers ---\n");
 
@@ -1718,12 +1701,11 @@ int main() {
     //   size_t getSignatureCount() const;
     //   const OrlibSignatureDef& getSignatureByIndex(size_t index) const;
     //
-    // Against the current stubs (RED phase), these methods do not exist
-    // → the test fails to compile. After implementation (GREEN phase),
-    // getSignatureCount() returns kSignatureCount (currently 24) and
-    // getSignatureByIndex(i) returns a const reference to the
-    // OrlibSignatureDef at that index, throwing std::out_of_range for
-    // index >= count.
+    // The historical RED phase had no implementations for these methods. The
+    // current implementation returns kSignatureCount (22 for the current
+    // baseline), and getSignatureByIndex(i) returns a const reference to the
+    // OrlibSignatureDef at that index, throwing std::out_of_range for index >=
+    // count.
     // ===================================================================
     std::printf("\n=== Cycle 6: public iterator API ===\n");
 

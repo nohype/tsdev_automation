@@ -4,8 +4,8 @@ This test MUST run from a NON-elevated Python process. When run elevated,
 it skips automatically (serve mode is not used when already elevated).
 
 Run via: tests/run_serve_e2e.ps1 (launches this test unelevated via Task
-Scheduler with ConsentPromptBehaviorAdmin=0 for auto-elevation without
-UAC prompts).
+Scheduler; the serve broker's normal elevation request is handled by Windows
+UAC consent).
 """
 from __future__ import annotations
 
@@ -333,10 +333,14 @@ class TestServeE2E:
         # --- Invariant 1: fail if serve is bypassed -----------------------
         # The serve path is active ONLY when not elevated and use_serve is
         # True (the default). If this is False, the batch ops below would
-        # silently fall back to subprocess.run (which fails with
-        # ERROR_ELEVATION_REQUIRED from a non-elevated session) or, if
-        # elevated, bypass the broker entirely — neither is what this test
-        # is verifying. Note: the pre-cleanup loop below may already start
+        # fall back to direct subprocess.run: the default
+        # requireAdministrator manifest uses normal Windows UAC handling and
+        # a launch that cannot be elevated may fail with
+        # ERROR_ELEVATION_REQUIRED (Windows error 740) before the CLI starts;
+        # an asInvoker build reaches the runtime guard and returns exit 11
+        # (not_elevated). If elevated, the direct path bypasses the broker —
+        # neither is what this test is verifying. Note: the pre-cleanup loop
+        # below may already start
         # the broker (its delete calls route through serve), so the handle
         # may be non-None before the first batch op. The real bypass/lifetime
         # proof is the stable same-handle assertion across all batch ops

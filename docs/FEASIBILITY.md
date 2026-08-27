@@ -4,12 +4,22 @@
 **Date:** 2026-08-15
 **Scope:** Determine how a standalone C++ CLI can implement three TSDev Library operations (insert / delete / modify, each followed by compile/verify) without using the TSDev.exe GUI, with least custom implementation and least complexity.
 
-> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15. No new Desktop runtime re-gate is claimed without an L.17 result.**
+> **Current status:** Workstream L is closed because its team completed it and a
+> final independent review was completed.
+>
+> The L chronology and verification claims in this dated synthesis report are
+> retained as historical provenance. Current CLI/library procedures have no
+> general TradeStation Desktop/TSDev running-state prerequisite; a procedure
+> that explicitly exercises Desktop state documents that state in its own
+> procedure. Current Workstream M status is: M.1/M.2/M.3 are approved historical
+> slices; M.3b is planned; M.4 implementation exists but is blocked by the
+> CLI-created object-code defect; M.5 is pending. No approved post-TVS
+> production-E2E claim exists for M.4.
 
-> **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation)**
+> **HISTORICAL SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation)**
 >
 > Confirmed Unknown-link findings have invalidated several core claims in this
-> document. **Production runtime acceptance is currently BROKEN.** Strategies
+> document. **Historical record:** Production runtime acceptance was recorded as **BROKEN.** Strategies
 > inserted/modified/upserted by the production `tsdev_cli` appear VERIFIED in
 > TSDev but fail at runtime in TradeStation Desktop with "Unknown link error
 > occurred." A full Desktop restart does not repair a broken CLI Strategy, so
@@ -20,8 +30,9 @@
 > remain accurate *only* for the warehouse/compile-persistence layer; they do
 > **not** constitute runtime-link acceptance.
 >
-> **Workstream L (Runtime-Link Root-Cause Fix) is NOT YET CLOSED.** The
-> approved plan is `docs/workstream_unknown_link_fix_plan.md`. TVS-L.1 (RED
+> **Historical status at the time of this 2026-08-23 record:** Workstream L
+> (Runtime-Link Root-Cause Fix) had not yet been closed. The approved plan was
+> `docs/workstream_unknown_link_fix_plan.md`. TVS-L.1 (RED
 > harness), TVS-L.2 (STA COM lifecycle guard), and TVS-L.3 (the `FUN_10011230`
 > persistence bypass is removed; the real finalization path now runs) are
 > COMPLETE. The TVS-L.4/L.5 completion claim was **FALSIFIED by persistence
@@ -30,8 +41,9 @@
 > BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
 > modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks
 > are necessary but not sufficient). **No new Desktop runtime re-gate is
-> claimed without an L.17 result.** Workstream M remains BLOCKED until L.17
-> independent final verification. Durable static evidence:
+> claimed without an L.17 result.** At the time of this historical record,
+> Workstream M remained BLOCKED pending L.17. Current M status is at the top of
+> this document. Durable static evidence:
 > `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md`. Approved research plan:
 > `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`. Dynamic A/B proof artifacts:
 > `tmp/com_unpatched_probe/`, `tmp/com_nopatch_6689.ell`,
@@ -58,7 +70,7 @@
 >    bytes. The patch's `RET 0x0C` changes that cleanup contract — a static ABI
 >    hazard, not a correct ABI match.
 >
-> **TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
+> **HISTORICAL TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
 > `FUN_10011230` persistence patch has been **completely removed** from
 > production code in TVS-L.3. The real finalization path
 > (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
@@ -67,9 +79,11 @@
 > TVS-L.2. The earlier "still present ... slated for complete removal ... No
 > implementation has been performed" statement below is **superseded** by this
 > completion note (historical text preserved rather than destructively
-> rewritten). Signature/catalog counts are now **24 signatures / 11 patch
-> sites** (the former `FUN_10011230_persistence_patch` entry and its patch site
-> are gone); see `docs/SIGNATURE_CATALOG.md`.
+> rewritten). The historical post-L.3/pre-M.1 catalog phase and the current
+> tracked totals (signature definitions, tracked exports, data globals, and
+> patch sites) — including the former `FUN_10011230_persistence_patch` entry
+> and its patch site being gone — are documented in the SSOT
+> `docs/SIGNATURE_CATALOG.md` (current and historical resolver/catalog counts).
 >
 > The historical text immediately below (preserved) read: "The patch is still
 > present in production code and is slated for **complete removal** in TVS-L.3
@@ -80,8 +94,8 @@
 
 ## 1. Executive Summary
 
-> **EXECUTIVE STATUS CORRECTION — 2026-08-23 (updated TVS-L.3 — patch
-> removed; Workstream L NOT YET CLOSED):** The "All three core functions
+> **HISTORICAL EXECUTIVE STATUS CORRECTION — 2026-08-23 (updated TVS-L.3 — patch
+> removed; this dated record predates Workstream L closure):** The "All three core functions
 > (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED — the primary
 > acceptance criteria ... is satisfied at the library level" statement below
 > is **accurate only at the library/warehouse-persistence layer**. It is
@@ -89,8 +103,8 @@
 > findings showed that CLI-produced strategies failed in TradeStation Desktop
 > with "Unknown link error occurred" despite TSDev reporting them VERIFIED.
 > **Production runtime acceptance was BROKEN** while the `FUN_10011230`
-> persistence patch was present. Workstream L
-> (`docs/workstream_unknown_link_fix_plan.md`) is **NOT YET CLOSED**:
+> persistence patch was present. At that time, Workstream L had not yet been closed. The approved plan was
+> `docs/workstream_unknown_link_fix_plan.md`;
 > TVS-L.1 (RED harness), TVS-L.2 (STA COM lifecycle guard), and TVS-L.3 (the
 > `FUN_10011230` persistence bypass is removed; the real finalization path
 > now runs under the per-thread STA COM prerequisite) are COMPLETE. The
@@ -99,14 +113,23 @@
 > **implemented on branch `workstream-L-recovery`** (L.8 BLOCKED — no
 > invented TSDev recovery; L.9 detect-and-fail stale-ELL modify/upsert; L.12
 > detect-and-report orphan-ELL delete; existence checks are necessary but
-> not sufficient). **No new Desktop runtime re-gate is claimed without an
-> L.17 result.** Workstream M remains BLOCKED until L.17 independent final
-> verification. The `FUN_10011230` patch referenced below was the bypass
+> not sufficient). The historical record did not claim a new Desktop
+> runtime re-gate without an L.17 result. Current Workstream M status is
+> recorded at the top of this document; M.4 remains blocked by the CLI-created
+> object-code defect. The `FUN_10011230` patch referenced below was the bypass
 > that caused the runtime-unlinkable output; it is no longer present in
 > production code. See the top-of-file supersession banner and §5.6 for the
 > corrected root cause.
+>
+> **Historical narrative note:** The executive prose below retains the feasibility
+> study's pre-L/M implementation narrative; it is not a current acceptance or
+> workstream-status claim.
 
-We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete). Parameter orders for the key primitives are now **CONFIRMED**, and standalone INSERT persistence (compile + `.ell` file write) has been **demonstrated** without TSDev.exe and without Frida, via an in-process patch to `FUN_10011230` in orlib20.dll (see §5.6). **DELETE is IMPLEMENTED and APPROVED** — the orchestrator-based approach calling `FUN_101a8360` (RVA `0x1A8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.3 DELETE and §5.7). **MODIFY is IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` timestamp updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.3 MODIFY and §5.8). The headless `_OrlibInit` smoke test has **PASSED**. **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is satisfied at the library level. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. Remaining unknowns are narrow: three warehouse-type mappings remain unresolved (ActivityBar/PaintBar/ProbabilityMap), while five component types are confirmed (Strategy 0, Indicator 2, Function 4, TradingApp 5122, ShowMe 1282); minor unmapped fields (see §5.5).
+We reverse-engineered the TradeStation Development Environment (TSDev 9.5) to determine how a standalone CLI can insert, delete, and modify EasyLanguage strategies/functions in the TSDev Library and compile/verify them, without the TSDev GUI. Two viable approaches were identified. **Approach 1** drives `ELIS.exe`, the registered COM LocalServer that wraps the library engine (`IELServices` dispatch interface, 7 methods). **Approach 2** loads `orlib20.dll` directly and calls its exported C functions, which are the same primitives TSDev.exe itself uses. Approach 1 is cleaner to call but has structural gaps (no name-to-ProgId resolution, XML-file import rather than raw source, void error reporting on delete/verify, and a likely TradeStation Desktop coupling). Approach 2 exposes every primitive needed (lookup, create, set-source, compile/verify, error retrieval, save, delete). Parameter orders for the key primitives were recorded as **CONFIRMED** in this
+historical study. The standalone INSERT persistence observation was
+**historical/pre-L.3 and patch-based** (compile + `.ell` file write via an
+in-process patch to `FUN_10011230`; see historical §5.6), not current runtime
+acceptance. **Historical DELETE implementation record: IMPLEMENTED and APPROVED** — the orchestrator-based approach calling `FUN_101a8360` (RVA `0x1A8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.3 DELETE and §5.7). **Historical MODIFY implementation record: IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` timestamp updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.3 MODIFY and §5.8). The headless `_OrlibInit` smoke test has **PASSED**. **Historical implementation record: all three core functions (INSERT, DELETE, MODIFY) were IMPLEMENTED and APPROVED** — the primary acceptance criteria ("the three functions must work reliably and consistently via a CLI") is satisfied at the library level. **Recommendation:** adopt Approach 2 (orlib20.dll direct) as the primary path because it is the only approach that can satisfy all three acceptance criteria headless; retain Approach 1 as a fallback for the subset of operations it supports. Remaining unknowns are narrow: three warehouse-type mappings remain unresolved (ActivityBar/PaintBar/ProbabilityMap), while five component types are confirmed (authoritative type→whType mapping in `docs/TS_COMPONENT_TYPES.md`); minor unmapped fields (see §5.5).
 
 ---
 
@@ -118,7 +141,7 @@ The project must provide a C++ CLI that performs three operations against the TS
 2. **Delete** — Given the name of an existing strategy/function, delete it from the library. **Notify** if it does not exist.
 3. **Modify** — Given the name of an existing strategy/function and new EasyLanguage source, replace its code and recompile/re-verify. **Notify** if it does not exist; **fail loudly** if compilation of the new code fails.
 
-All three must work via a CLI built with the Visual Studio Build Tools. The TradeStation installation is **read-only** and must never be modified.
+All three must work via a CLI built with the Visual Studio Build Tools. **Normal CLI operations keep the TradeStation installation read-only and never modify it; the opt-in L7 fault-injection path is the scoped exception described in §7.**
 
 ---
 
@@ -127,7 +150,7 @@ All three must work via a CLI built with the Visual Studio Build Tools. The Trad
 | Component | Path | Role |
 |-----------|------|------|
 | TSDev.exe | `Program\TSDev.exe` | 32-bit PE32, 2,178,032 bytes. The GUI host that orchestrates library operations. READ-ONLY. |
-| TSDev Library | `MyWork\Bin` | 3,413 `.ell` (compiled/encrypted, magic `RNAM`) + 6,871 `.xml` (symbol/debug metadata, root `<symbols file=... version={GUID}>`). Files named `elmodule_<X>_<N>.ell/.xml` and `tss<hex>.xml`. X in {0,1,2,3,4,1026,1282,4610,5122}. No index/catalog file. *(See `evidence_A_filesystem_survey.md` §E for the MyWork\Bin inventory and `evidence_A2_binary_static_survey.md` §1b/§2a for the exact file counts and the `RNAM` magic-bytes finding.)* |
+| TSDev Library | `MyWork\Bin` | **Historical/transient inventory snapshot (report date 2026-08-15; not a current filesystem count):** 3,413 `.ell` (compiled/encrypted, magic `RNAM`) + 6,871 `.xml` (symbol/debug metadata, root `<symbols file=... version={GUID}>`). Files named `elmodule_<X>_<N>.ell/.xml` and `tss<hex>.xml`. X in {0,1,2,3,4,1026,1282,4610,5122}. No index/catalog file. The cited `evidence_A_filesystem_survey.md` and `evidence_A2_binary_static_survey.md` survey files are not checked in and are unavailable in the current tracked repository; no current inventory is implied. |
 | orlib20.dll | `Program\orlib20.dll` | 32-bit PE32, image base `0x10000000`, 699 exports. The library engine: init/teardown, name lookup, create entry, set source, compile/verify, error retrieval, save, delete, path building. |
 | ELRte.dll | `Program\ELRte.dll` | EL runtime: `CreateRte`/`DestroyRte`/`GetVault`. |
 | ELMDCore.dll | `Program\ELMDCore.dll` | Metadata vault: `MDVault::SaveModule`, `RemoveModule`, `RemoveChainedModules`. |
@@ -155,7 +178,13 @@ orlib20.dll dependencies (all in the TS Program directory): `TsShare.dll`, `tsli
 
 ### 4.2 Method table
 
-> **Evidence:** The method signatures, dispids, and parameter types below are from the `LoadTypeLibEx` type-library dump in `evidence_C1_elis_typelib.md` §2.5 (IELServices TypeInfo [2]). The COM registration facts (ProgID/CLSID/AppID/TypeLib) are in `evidence_C1_elis_typelib.md` §1; the ELIS.exe string-extracted ProgID/CLSID/method-name strings are corroborated in `evidence_A2_binary_static_survey.md` §5 (ELIS.exe).
+> **Historical/transient evidence (not checked in; unavailable in the tracked
+> checkout):** The method signatures, dispids, and parameter types below are from
+> the `LoadTypeLibEx` type-library dump in `evidence_C1_elis_typelib.md` §2.5
+> (IELServices TypeInfo [2]). The COM registration facts (ProgID/CLSID/AppID/
+> TypeLib) are in `evidence_C1_elis_typelib.md` §1; the ELIS.exe string-extracted
+> ProgID/CLSID/method-name strings are corroborated in
+> `evidence_A2_binary_static_survey.md` §5 (ELIS.exe).
 
 | memid | Method | Signature | Notes |
 |-------|--------|-----------|-------|
@@ -190,7 +219,7 @@ orlib20.dll dependencies (all in the TS Program directory): `TsShare.dll`, `tsli
 
 ## 5. Approach 2: orlib20.dll Direct Invocation
 
-All findings below are from static PE analysis (pefile + capstone) of `orlib20.dll`; these initial findings remain valid. Live RE was initially blocked by a Frida helper-path bug (frida-core 17.15.4 in Luma 1.2.3); the initial static analysis was performed with pefile+capstone as a read-only substitute. Live RE has since been enabled by switching to a Python frida MCP server running Frida 17.17.0 (which includes the fix). The frida MCP provides `create_interactive_session` + `execute_in_session` giving the full Frida JS API (symbol resolution, disassembly, `Interceptor.attach` for function tracing, `NativeFunction`, memory reads). The tool surface is simpler than Luma's (no radare2/decompile) but sufficient for all RE needs. Evidence is cited by evidence file (`evidence_C2a_orlib20_lifecycle.md` for init/lookup/delete; `evidence_C2b_orlib20_build.md` for build/compile/verify/save/error), `re_report.md` section, and disasm file/line ranges. All cited files are in `tmp\re_artifacts\` (see §9 Evidence Index).
+All findings below are from the historical static PE analysis (pefile + capstone) of `orlib20.dll`; the initial findings are retained as historical research. The raw evidence files named by the original study (`evidence_C2a_orlib20_lifecycle.md`, `evidence_C2b_orlib20_build.md`, `re_report.md`, and the disassembly files) were under gitignored `tmp\re_artifacts\`; they are not checked in and are unavailable in the current tracked checkout. The current durable references are `docs/SIGNATURE_CATALOG.md`, `docs/TS_COMPONENT_TYPES.md`, and the tracked `docs/RE/` findings. **Historical RE method note:** Live RE was initially blocked by a Frida helper-path bug; a later Python Frida MCP workflow was recorded, but that workflow is superseded and is not current guidance. Current runtime RE follows `AGENTS.md`: use Frida directly from the CLI and the working `ghidra` MCP server for static analysis. The historical evidence is cited by section and function where possible; no replacement raw artifact is implied.
 
 ### 5.1 Primitive table
 
@@ -202,14 +231,14 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Subtype lookup | `int __stdcall _FindExistPosSubType@12(const char* name, int WHType, int* outSubType) -> int` | MED | `evidence_C2a_orlib20_lifecycle.md` §2.5; re_report 2.5; `re_disasm2.txt` L342-384. |
 | Get master record | `BOOL __stdcall _GetMasterRecByName@12(const char* name, int WHType, void* outRecord)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.3; re_report 2.3; `re_disasm.txt` L451-484. Copies 268-byte (0x42 dwords + 1 word) master record. |
 | Create entry | `int __stdcall _CreateEntryEX@24(int whType, int secondary, const char* name, int param4, char param5, int* outErrCode) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §3; `orlib_param_orders.md` §5. **Confirmed order:** `(whType, 0, name, 0, 0, &errCode)`. Returns new `ProgId` on success. `*outErrCode` = 0xBFFE (alloc-fail) / 0xBFFD (create-failed/name-conflict). `secondary=0`, `param4=0`, `param5=0` observed. |
-| Set source text (non-GUI) | `void* _SaveTextEX@16(void* p1, const char* sourceTextAnsi, const char* name, void* p4)` | MED | `evidence_C2b_orlib20_build.md` §9 (`_SaveTextEX@16` disasm). p2 = source text (HIGH; lstrlenA'd -> warehouse.SetSource). p3 = name (MED). p1 nonzero-checked + lstrlenA'd (uncertain). p4 unused in visible path (uncertain). |
+| Set source text (**historical/non-production; unused by current CLI**) | `int __stdcall _SaveTextEX@16(const char* sourceTextAnsi, int whType, int progId, void* passwordMetadataBuffer)` | **CONFIRMED historical ABI** | Tracked correction: `docs/RE/RE_F4_loadtextfileex_findings.md` §5.1–§5.3. p1 = source text (lstrlenA'd and nonzero-checked); p2 = whType; p3 = ProgId; p4 = password/metadata buffer. The current CLI does not call this export; it uses `_SaveModule_New@20` for source text. |
 | Start compile | `void StartCompilingProcess(void)` (cdecl, 0 params) | CONFIRMED | `evidence_C2b_orlib20_build.md` §1; `orlib_param_orders.md` §9. Resets error array `[0x1023cea0]` + count `[0x1023cea4]`; record stride 0x129 (297); allocs compiler state `[0x1023ceb0]`. **Required before `VerifyModule_New`.** |
 | End compile | `void EndCompilingProcess(int arg)` (__fastcall, 1 arg; pass `0`) | CONFIRMED | `evidence_C2b_orlib20_build.md` §2; `orlib_param_orders.md` §9. Tears down compiler state. **Required after `VerifyModule_New`**; call with `0`. |
 | Verify module | `int __stdcall _VerifyModule_New@20(HWND hwnd, int whType, int progId, int flag, void* compilerObj) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §5; `orlib_param_orders.md` §7. **Confirmed:** `(hwnd, whType, progId, 1, compilerObj)`. `compilerObj` is a **`CELCompiler` object (88 bytes), NOT NULL** (see §5.6). **Compiles AND persists the `.ell` file** — this is the function that actually writes the compiled module to disk. Returns `1` on success. **CAVEAT (2026-08-23, updated TVS-L.3):** Under the now-**removed** `FUN_10011230` production patch, the persisted `.ell` output was **runtime-unlinkable** — the patch bypassed `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save`, so the module was marked VERIFIED despite incomplete link-finalization and failed in TradeStation Desktop with "Unknown link error occurred." The patch has been **completely removed in TVS-L.3**; the real finalization path now runs under the per-thread STA COM prerequisite from TVS-L.2. This row describes the primitive's nominal contract; see §5.6 supersession for the historical broken-patch root cause and the Workstream L remediation. |
 | Verify by name (wrapper) | `BOOL VerifyATechnique(const char* name, int WHType) -> BOOL` | HIGH | `evidence_C2b_orlib20_build.md` §5 (`VerifyATechnique` wrapper disasm). Looks up module internally; preferred for CLI. |
 | Get errors | `std::string _GetCompilingErrors@4(std::string* hiddenRetPtr)` | CONFIRMED | `evidence_C2b_orlib20_build.md` §7; `orlib_param_orders.md` §10. Builds concatenated "name: msg\n..." across all error records; if array empty, reads `VERIFY.ERR`. An empty buffer = success. **CORRECTED (TVS-A.2/A.4):** The actual ABI is `std::vector<ErrorOutputRecord>*` (3 pointers, 12 bytes), NOT `std::string` return-by-value. The singular `GetCompilingError` (not plural) DOES use std::string hidden return ptr. The production code bypasses GetCompilingErrors entirely and reads the global error array directly. See AGENTS.md DONE entries for TVS-A.2 and TVS-A.4. |
 | Get error level | `int _GetErrorLevel@4(int idx) -> int` | HIGH | `evidence_C2b_orlib20_build.md` §8 (`_GetErrorLevel@4` disasm). 1 if record[0]==0x7775 sentinel (error), 0 = warning/none. Error count = global `[0x1023cea4]`. No single "overall level"; caller checks count>0 + per-record levels. |
-| Persist/save (source text) | `int __stdcall _SaveModule_New@20(int whType, int progId, void* arg3, HWND editorHwnd, void* arg5) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §6; `orlib_param_orders.md` §6. **Confirmed:** `(whType, progId, NULL, hwnd, NULL)`. Reads source via `WM_GETTEXT` from an `IsWindow`-checked `EDIT` control, converts wide→UTF-8, sets warehouse source text. **Does NOT persist `.ell`/`.xml` files** — persistence is performed by `VerifyModule_New` (see above). Returns `1` on success. |
+| Persist/save (source text) | `int __stdcall _SaveModule_New@20(int whType, int progId, void* arg3, HWND editorHwnd, void* arg5) -> int` | CONFIRMED | `evidence_C2b_orlib20_build.md` §6; `orlib_param_orders.md` §6. The current production call is `(whType, progId, &saveFlags, hwnd, savePasswordBuf)`: arg3 and arg5 are both non-NULL; `savePasswordBuf` is zero-initialized first and then populated with the internal default `"!p$Kn@aSus"`, leaving only its unused tail zero. Reads source via `WM_GETTEXT` from an `IsWindow`-checked `EDIT` control, converts wide→UTF-8, sets warehouse source text. **Does NOT persist `.ell`/`.xml` files** — persistence is performed by `VerifyModule_New` (see above). Returns `1` on success. The earlier `(whType, progId, NULL, hwnd, NULL)` call was a superseded pre-M.2 implementation state. |
 | Mark deleted (flag only) | `void __stdcall _SetSigDeleted@4(void* masterRecord)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.6; `evidence_C2b_orlib20_build.md` §10; re_report 2.6; `re_disasm.txt` L1127-1141. Sets byte@0x79 bit0, clears word@0xD8 bit1. NO file I/O. |
 | Is deleted | `BOOL __stdcall _IsSigDeleted@4(const void* rec)` | HIGH | `evidence_C2a_orlib20_lifecycle.md` §2.7; `evidence_C2b_orlib20_build.md` §10; re_report 2.7; `re_disasm.txt` L1347-1361. |
 | File removal | `void FILEDELETE(void* moduleInfo, ?, LPCWSTR path)` (export) | MED | `evidence_C2b_orlib20_build.md` §11 (`FILEDELETE` disasm) + DeleteFile xref map. DeleteFileW + dependent files. |
@@ -222,36 +251,37 @@ All findings below are from static PE analysis (pefile + capstone) of `orlib20.d
 | Direct save (alt) | `MDVault::SaveModule(ModuleInfo*, std::wstring&...)` (ELMDCore.dll, mangled) | LOW (unconfirmed) | `evidence_C2b_orlib20_build.md` §6 (mangled import symbol referenced in `_SaveModule_New` semantics). Bypasses the GUI-bound `_SaveModule_New`. |
 | Get source text | `HGLOBAL __stdcall _LoadTextFileEX@16(void* unused, int whType, int progId, void* passwordBuffer)` — returns a global memory handle containing the source text (caller must `GlobalLock`/`GlobalFree`); returns NULL on failure. | CONFIRMED (TVS-F.4) | Named export confirmed via Ghidra (addr 0x101081A0, xref EXTERNAL). Parameter order confirmed via Ghidra static analysis in TVS-F.4 (thunk + authoritative mirror caller FUN_10108630; Frida NOT needed). Implemented in the `get-source` subcommand. Counterpart to `_SaveTextEX@16` (which sets source text). See note below. |
 
-> **Corrected note (`_LoadTextFileEX@16`, 2026-08-23):** Source text is stored in the warehouse (`MWRKArea.wrk`), not in `.ell` files (compiled RNAM modules). Inner logic (`FUN_101a0f90`) performs warehouse lookup, command `0x11`, allocation, and optional decryption; the command dispatcher requires the validated thread-check patch. The earlier "standard/password-protected" interpretation was wrong: library items do not expose user password protection. For internally encrypted storage (master-record flag `0x400`), TSDev passes a non-NULL zeroed 64-byte buffer; the loader fills metadata and returns decrypted plaintext. Production `getSource()` now matches that behavior. See `docs/PM_WORKING_MEMORY.md` "PASSWORD PROTECTION HYPOTHESIS IS WRONG" and the dated correction required in `docs/RE/RE_F4_loadtextfileex_findings.md`.
+> **Corrected note (`_LoadTextFileEX@16`, 2026-08-23):** Source text is stored in the warehouse (`MWRKArea.wrk`), not in `.ell` files (compiled RNAM modules). Inner logic (`FUN_101a0f90`) performs warehouse lookup, command `0x11`, allocation, and optional decryption; the command dispatcher requires the validated thread-check patch. The earlier "standard/password-protected" interpretation was wrong: library items do not expose user password protection. For internally encrypted storage (master-record flag `0x400`), the get-side path passes a separate 64-byte buffer initialized to zero before the call; the loader then fills it from the embedded password and returns decrypted plaintext. Production `getSource()` now matches that behavior. See `docs/RE/RE_M2_SAVEMODULE_NEW.md` §6 and the dated correction in
+> `docs/RE/RE_F4_loadtextfileex_findings.md`.
 
 ### 5.2 WHType enum
 
-> **Evidence:** `orlib_param_orders.md` §1. The mappings below are **CONFIRMED** by live RE. The remaining TradeStation component types (ActivityBar, PaintBar, ProbabilityMap) are **UNRESOLVED** — their warehouse-type codes have NOT been confirmed and must NOT be treated as known. ShowMe is now **CONFIRMED** (whType 1282, TVS-C.8). The static-analysis-derived entries for WHType 1/3 and the Indicator subtypes (PaintBar/ProbabilityMap etc.) below are retained from the earlier static survey for reference only and are **UNCONFIRMED**.
-
-| WHType | Name | Letter | Subtypes | Status |
-|--------|------|--------|----------|--------|
-| 0 | Strategy | S | 0,1 = Strategy; 2,3 = Strategy Group | **CONFIRMED** |
-| 1 | Function | F | (single) | UNCONFIRMED (static survey) |
-| 2 | Indicator | I | 0,1 = Indicator; 2,4 = PaintBar; 3,5 = ShowMe; 6,7 = Expert; 8,9 = Expiration Rule; 0xa,0xb = Volatility Model; 0xc,0xd = Pricing Model; 0xe,0xf = Bid/Ask Model; 0x10,0x11 = Search Strategy; 0x12,0x13 = ProbabilityMap; 0x14 = TradingApp | **CONFIRMED** (base type); subtype attributions UNCONFIRMED except TradingApp |
-| 3 | ActivityBar | B | (single) | UNCONFIRMED (static survey) |
-| 4 | Function | M | (single) | **CONFIRMED** |
-| 5122 (0x1402) | TradingApp | — | expanded whType = (subType 0x14 << 8) \| category 2 | **CONFIRMED** — see `tmp/re_artifacts/tradingapp_whtype.md` + `tmp/re_artifacts/c1_adversarial_review.md` |
-| 1282 (0x0502) | ShowMe | — | expanded whType = (subType 0x05 << 8) \| category 2 | **CONFIRMED** — Ghidra RE confirmed via GetFileTypeName1, FUN_1019f510, ConvertToPowerType, FUN_101d4280. See `docs/RE/RE_SHOWME_WHTYPE_FINDINGS.md`. CLI support added (TVS-C.8). |
-| 0x32 (50) | Unknown (composite/project?) | — | Appears in verify/save; meaning unknown. | UNCONFIRMED |
-
-**TradingApp** uses an **expanded whType** of 5122 (0x1402), encoded as `(subType << 8) | category` = `(0x14 << 8) | 2`. The orlib20 API functions (`CreateEntryEX`, `FindExistPos`, `SaveModule_New`, `VerifyModule_New`, delete orchestrator) take **category=2** (the low 8 bits — same as Indicator), with the sub-type 0x14 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 5122 (`elmodule_5122_<progId>.ell`). For Strategy/Indicator/Function (sub-type 0), the expanded whType equals the category, so no decomposition is needed.
-
-**ShowMe** uses an **expanded whType** of 1282 (0x0502), encoded as `(subType << 8) | category` = `(0x05 << 8) | 2`. Like TradingApp, the orlib20 API functions take **category=2** (same as Indicator), with the sub-type 0x05 passed as `CreateEntryEX`'s 2nd parameter. The `.ell` filename uses the full expanded whType 1282 (`elmodule_1282_<progId>.ell`). CLI support added in TVS-C.8.
-
-**UNRESOLVED component types** (warehouse-type code NOT confirmed — do not claim as known): ActivityBar, PaintBar, ProbabilityMap. Any code written today must restrict itself to the five confirmed types (0=Strategy, 2=Indicator, 4=Function, 5122=TradingApp, 1282=ShowMe).
+> **Evidence:** `orlib_param_orders.md` §1. The authoritative type→whType
+> mapping (5 confirmed: Strategy, Indicator, Function, TradingApp, ShowMe;
+> 3 unconfirmed: ActivityBar, PaintBar, ProbabilityMap), the expanded-whType
+> encoding formula, the per-type API category/sub-type decomposition, and the
+> `.ell` filename conventions are documented in the SSOT
+> `docs/TS_COMPONENT_TYPES.md` (code SSOT: `src/tsdev_lib.h` enum). The
+> historical static-survey entries for WHType 1/3, the Indicator subtypes
+> (PaintBar/ProbabilityMap etc.), and the WHType 0x32 (50) special case that
+> appears in verify/save are **UNCONFIRMED** and are also tracked in
+> `docs/TS_COMPONENT_TYPES.md` rather than restated here.
 
 TypeConvert (`0x101d43a0`) expands a WHType into a composite-ID list (subtype<<8 | WHType) terminated by -1, used by warehouse lookups to search all subtypes.
 
 ### 5.3 Proposed call sequences (pseudocode)
 
-> **Evidence:** `orlib_param_orders.md` §15 (complete INSERT flow). The INSERT flow below is **CONFIRMED** — standalone disk persistence of `.ell` files has been demonstrated without TSDev.exe and without Frida (see §5.6). The MODIFY flow is **IMPLEMENTED and APPROVED** — it composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (see §5.3 MODIFY and §5.8). DELETE is **IMPLEMENTED and APPROVED** — the orchestrator-based approach (see §5.7) has been verified by two independent test runs.
+> **Historical evidence:** The original `orlib_param_orders.md` §15 complete-flow
+> record is a gitignored transient artifact and unavailable in the tracked
+> checkout. Its INSERT persistence observation was **historical/pre-L.3** and
+> patch-based, not current runtime-acceptance evidence. The current production
+> flow is represented by the tracked `TsDevLib::saveSource()`,
+> `TsDevLib::verifyModule()`, `TsDevLib::deleteEntry()` implementation and the
+> current catalog in `docs/SIGNATURE_CATALOG.md`. The dated MODIFY and DELETE
+> run claims below are retained as historical/transient records, not current
+> acceptance results.
 
-**Common preamble (CONFIRMED):**
+**Historical/pre-L.3 common preamble (patch-based; superseded):**
 ```cpp
 // 1. Set DLL search directory to the TS Program folder
 SetDllDirectoryW(L"C:\\Program Files (x86)\\TradeStation 9.5\\Program");
@@ -290,7 +320,7 @@ BOOL ok = OrlibInit(NULL, 1);   // workDirPath = NULL sentinel, contextId = 1
 if (!ok) { /* fail loudly */ }
 ```
 
-**INSERT — CONFIRMED (standalone persistence demonstrated):**
+**Historical/pre-L.3 INSERT pseudocode (patch-based; superseded):**
 ```cpp
 int whType = 0;  // Strategy (0=Strategy, 2=Indicator, 4=Function — CONFIRMED)
 int errCode = 0;
@@ -311,8 +341,15 @@ if (progId == 0) {
 HWND hEdit = CreateWindowW(L"EDIT", L"", WS_POPUP, 0,0,0,0, NULL, NULL, hInst, NULL);
 SetWindowTextW(hEdit, widen(sourceText));
 
-// 9. SaveModule_New — saves source text into the warehouse entry (does NOT persist files)
-SaveModule_New(whType, progId, NULL, hEdit, NULL);
+// 9. SaveModule_New — current production passes non-NULL flags and password
+//    pointers. The 64-byte password buffer is zeroed first, then its leading
+//    10 bytes are populated with TSDev's internal default; only the unused
+//    tail remains zero. SaveModule_New saves source text into the warehouse
+//    entry (does NOT persist files).
+unsigned int saveFlags = (static_cast<unsigned int>(whType) & 0x7u) | 0x60u;
+char savePasswordBuf[64] = {};
+memcpy(savePasswordBuf, "!p$Kn@aSus", 10);
+SaveModule_New(whType, progId, &saveFlags, hEdit, savePasswordBuf);
 
 // 10. Allocate 88-byte CELCompiler and call its constructor (FUN_10165a00, __fastcall, ECX=this)
 void* compilerObj = malloc(88);
@@ -353,14 +390,15 @@ OrlibExit();
 //     (e.g. elmodule_0_2572.ell, magic RNAM)
 ```
 
-**MODIFY — IMPLEMENTED & APPROVED (composes existing INSERT primitives; see §5.8):**
+**Historical MODIFY implementation record — IMPLEMENTED & APPROVED (composes existing INSERT primitives; see §5.8):**
 ```cpp
 int whType = 0;
 // 6. Look up the existing component
 int progId = FindExistPos(name, whType);
 if (progId == 0) { notify_not_found(name); return; }
-// 8-17. Same as INSERT from step 8 onward (hidden EDIT control, SaveModule_New,
-//       CELCompiler setup, StartCompilingProcess, VerifyModule_New, error check,
+// 8-17. Same as INSERT from step 8 onward (hidden EDIT control, current
+//       non-NULL SaveModule_New flags/password arguments, CELCompiler setup,
+//       StartCompilingProcess, VerifyModule_New, error check,
 //       EndCompilingProcess, CloseWarehouseForCurrentThreadAndPath, dtor, OrlibExit)
 // 19. Verify elmodule_<whType>_<progId>.ell exists on disk
 ```
@@ -374,7 +412,7 @@ if (progId == 0) { notify_not_found(name); return; }
 >
 > **Known follow-up (pre-existing, not a MODIFY bug):** `GetCompilingErrors` returns an empty buffer in headless mode; `verifyModule` has a fallback that synthesizes a message when `VerifyModule_New != 1`. This affects error-message fidelity, not correctness of the modify/verify outcome.
 
-**DELETE — IMPLEMENTED & APPROVED (orchestrator-based; see §5.7):**
+**Historical DELETE implementation record — IMPLEMENTED & APPROVED (orchestrator-based; see §5.7):**
 ```cpp
 int whType = expectedType;
 
@@ -410,7 +448,7 @@ OrlibExit();
 > and all prior persistence attempts (command `0x45`, dirty-flag manipulation
 > at offset `+0xBE` with command `0x27`, killing `WHServer.exe`, manual worker
 > command sequencing) have been **rejected** — they either crashed, did not
-> persist, or violated the standalone constraint. See §5.7 and
+> persist, or violated the standalone constraint. See §5.7 and the unavailable historical record
 > `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` for the full rejection record.
 
 ### 5.4 SaveModule_New — source text only (no file persistence)
@@ -427,9 +465,9 @@ OrlibExit();
 
 `_SaveModule_New@20` is GUI-bound in its source-retrieval path: it reads source via `WM_GETTEXT` from an `IsWindow`-checked EDIT control, converts wide→UTF-8, and sets the warehouse source text. **It does NOT persist `.ell`/`.xml` files** — it saves source text into the warehouse entry only (see §5.1 primitive table). Persistence of the compiled `.ell` file is performed by `VerifyModule_New` (historically "with the `FUN_10011230` patch applied — see §5.6"; that patch has been **completely removed in TVS-L.3**, and `VerifyModule_New` now drives the real finalization path `FUN_1008E640` → `SymInfo::AdjustOffsets` → `SymWriter::Save` → `ModuleInfo::SetGuid` / `MDVault::SaveModule` under the per-thread STA COM prerequisite from TVS-L.2), which compiles the source and calls `ELMeta::MDVault::SaveModule` to write `elmodule_<X>_<N>.ell` to disk.
 
-**Hidden-EDIT workaround (CONFIRMED, low complexity):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. This workaround has been demonstrated working in the standalone INSERT flow (see §5.3 and §5.6).
+**Hidden-EDIT workaround (current implementation; historical demonstration):** Create a hidden `EDIT` control (`WS_POPUP`, zero-size), `SetWindowTextW` it with the source, and pass its HWND as `editorHwnd`. This satisfies the `IsWindow` + `WM_GETTEXT` path without a visible UI. The retained standalone INSERT demonstration is historical/transient (see the historical §5.3 and §5.6 records).
 
-> **NOTE:** An earlier version of this section stated that `_SaveModule_New` "calls `MDVault::SaveModule` (which writes `elmodule_<X>_<N>.ell/.xml`)." That was incorrect — `_SaveModule_New` sets warehouse source text only. File persistence is via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (see §5.6).
+> **NOTE:** An earlier version of this section stated that `_SaveModule_New` "calls `MDVault::SaveModule` (which writes `elmodule_<X>_<N>.ell/.xml`)." That was incorrect — `_SaveModule_New` sets warehouse source text only. File persistence is via `VerifyModule_New` → `CompileText` → `MDVault::SaveModule`; the `patched CompileText` wording describes only the historical pre-L.3 bypass and is superseded (see historical §5.6).
 
 ### 5.5 Remaining unknowns / blockers
 
@@ -440,17 +478,24 @@ OrlibExit();
 > runtime-unlinkable output, and has now been **completely removed in TVS-L.3**.
 > See §5.6 supersession banner and `docs/workstream_unknown_link_fix_plan.md`.
 
-> **Resolved items:** The following were previously listed as unknowns and are now **CONFIRMED** — see §5.1 (primitive table) and §5.6 (persistence fix): `_CreateEntryEX` params 2-5, `_VerifyModule_New` p3/p4/p5, `_SaveModule_New` GUI dependency (hidden-EDIT workaround confirmed), `_SaveTextEX` persistence semantics (SaveModule_New saves source only; VerifyModule_New persists `.ell`), `_GetCompilingErrors` formatting, `contextId` valid values (contextId=1), and the GUI-save persistence path (resolved via the `FUN_10011230` patch — see §5.6).
+> **Historical resolved-items record:** The following were listed as unknowns and
+were recorded as **CONFIRMED** at the time — see §5.1 and the historical §5.6:
+`_CreateEntryEX` params 2-5, `_VerifyModule_New` p3/p4/p5, `_SaveModule_New`
+GUI dependency (hidden-EDIT workaround), `_SaveTextEX` persistence semantics,
+`_GetCompilingErrors` formatting, `contextId=1`, and the GUI-save persistence
+path as exercised with the `FUN_10011230` patch. The patch-based persistence
+record is historical/pre-L.3 and superseded; current source/catalog evidence is
+used for production status.
 
 **Genuinely unresolved:**
 
-1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to WHType 0/2/4/5122/1282 (TradingApp is CONFIRMED as whType 5122, Workstream C complete; ShowMe is CONFIRMED as whType 1282, TVS-C.8 complete).
+1. **Warehouse type mappings for ActivityBar / PaintBar / ProbabilityMap** — not confirmed; do NOT treat as known (see §5.2). Any code today must restrict itself to the five confirmed types (authoritative type→whType mapping in `docs/TS_COMPONENT_TYPES.md`).
 2. ~~**DELETE flow not yet tested end-to-end**~~ — **RESOLVED — IMPLEMENTED & APPROVED.** The orchestrator-based approach (`FUN_101a8360`) persists deletions to `MWRKArea.wrk` standalone, verified by two independent test runs (see §5.7). Prior approaches (`SetSigDeleted` + `RemoveMetaDataModules` + `CleanMastersEX`, command `0x45`, dirty-flag manipulation, `WHServer.exe` termination) are RETIRED/rejected.
-3. **`_SaveTextEX` p1/p4 roles** — uncertain (MED confidence). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead. `_SaveTextEX` remains unmapped for completeness.
+3. **Historical/non-production `_SaveTextEX@16` ABI:** the tracked correction confirms p1 = source text, p2 = whType, p3 = ProgId, and p4 = password/metadata buffer (`docs/RE/RE_F4_loadtextfileex_findings.md` §5.1–§5.3). `_SaveTextEX@16` is unused by the current CLI; the current source-text path uses `_SaveModule_New@20` instead.
 4. **Error record field layout** (stride 297) beyond the 0x7775 sentinel — unmapped.
 5. **WHType 0x32 special case** — meaning unknown; may affect verify/save.
 
-### 5.6 Persistence fix — SymWriter bypass (CONFIRMED, breakthrough) — SUPERSEDED, see banner
+### 5.6 Historical pre-L.3 persistence observation — SymWriter bypass (superseded; see banner)
 
 > **SUPERSESSION BANNER — 2026-08-23 (Workstream L root-cause confirmation).**
 > The narrative in this section is **superseded** in three places (corrections
@@ -487,7 +532,7 @@ OrlibExit();
 >    correct ABI match. No claim is made that an observed historical crash was
 >    caused by it.
 >
-> **TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
+> **HISTORICAL TVS-L.3 UPDATE — 2026-08-23 (persistence bypass removed):** The
 > `FUN_10011230` persistence patch has been **completely removed** from
 > production code in TVS-L.3. The real finalization path
 > (`FUN_10011230` → `FUN_1008E640` → `SymInfo::AdjustOffsets` →
@@ -498,8 +543,10 @@ OrlibExit();
 > statement immediately below is **superseded** by this completion note
 > (historical text preserved rather than destructively rewritten). The former
 > `FUN_10011230_persistence_patch` signature entry and its patch site are gone;
-> current counts are **24 signatures / 11 patch sites** (see
-> `docs/SIGNATURE_CATALOG.md`).
+> the post-L.3/pre-M.1 catalog phase and current tracked totals (signature
+> definitions, tracked exports, data globals, and patch sites) are documented
+> in the SSOT `docs/SIGNATURE_CATALOG.md` (current and historical
+> resolver/catalog counts).
 >
 > The historical text immediately below (preserved) read: "The patch is still
 > present in production code and is slated for **complete removal** in TVS-L.3
@@ -507,7 +554,7 @@ OrlibExit();
 > STA COM prerequisite that makes the unpatched path safe to run. No
 > implementation has been performed."
 
-> **Evidence:** `orlib_param_orders.md` §12. This is the critical fix that enables standalone disk persistence of `.ell` files without TSDev.exe and without Frida.
+> **Historical evidence (transient/unavailable in the tracked checkout):** `orlib_param_orders.md` §12. This pre-L.3 patch observation showed standalone disk persistence of `.ell` files, but it was not runtime-link acceptance. The current production source leaves the target unpatched; see `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §C and `docs/SIGNATURE_CATALOG.md` current totals.
 >
 > **SUPERSEDED 2026-08-23 (Workstream L, updated TVS-L.3 — patch removed):**
 > The "critical fix" referenced here is **only historical persistence
@@ -583,9 +630,12 @@ C2 0C 00          RET 0x0C
 > `tmp/com_unpatched_probe/` is the durable proof of the corrected
 > root cause and fix direction.
 
-### 5.7 DELETE — orchestrator approach (IMPLEMENTED & APPROVED)
+### 5.7 Historical DELETE implementation record — orchestrator approach
 
-> **Evidence:** `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` (current/production section). Adversarial review: APPROVED (7 non-blocking findings addressed in cleanup).
+> **Historical evidence (transient/unavailable in the tracked checkout):**
+> `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` (the original production section).
+> The retained adversarial review was recorded as APPROVED; current delete
+> behavior is represented by `TsDevLib::deleteEntry()` and the tracked source.
 
 **Approach:** DELETE calls the internal orlib20 **delete orchestrator** `FUN_101a8360` (RVA `0x1A8360`) — the same high-level routine TSDev.exe's own delete path drives. It encapsulates the full worker-command sequence (open warehouse → delete + commit storages → update BST → close) so the CLI does not replicate individual worker commands.
 
@@ -607,11 +657,13 @@ C2 0C 00          RET 0x0C
 
 **Standalone constraint maintained:** No TSDev.exe required, no `WHServer.exe` killing. The READ-ONLY TradeStation install is never modified (patches are in-process to the loaded DLL image only).
 
-**Retired/rejected approaches (do NOT use):** Direct lookup path (`FUN_101d05e0` — crashed); `CloseWarehouseForCurrentThreadAndPath` alone (did not persist); dirty-flag manipulation at offset `+0xBE` with command `0x27` (command `0x27` is not a save — it is a thin COM wrapper with no file I/O); command `0x45` / commit-all-storages (accepted but did not persist standalone); killing `WHServer.exe` (did not persist, caused crash-report popups); manual worker command sequencing `0x0F`→`0x32`→`0x17` (superseded by the orchestrator). See `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` for the full historical record.
+**Retired/rejected approaches (do NOT use):** Direct lookup path (`FUN_101d05e0` — crashed); `CloseWarehouseForCurrentThreadAndPath` alone (did not persist); dirty-flag manipulation at offset `+0xBE` with command `0x27` (command `0x27` is not a save — it is a thin COM wrapper with no file I/O); command `0x45` / commit-all-storages (accepted but did not persist standalone); killing `WHServer.exe` (did not persist, caused crash-report popups); manual worker command sequencing `0x0F`→`0x32`→`0x17` (superseded by the orchestrator). See the unavailable historical record `tmp/re_artifacts/DELETE_WORKING_MEMORY.md` for the full historical record.
 
-### 5.8 MODIFY — composition of INSERT primitives (IMPLEMENTED & APPROVED)
+### 5.8 Historical MODIFY implementation record — composition of INSERT primitives
 
-> **Evidence:** Two independent test runs, exit 0, all 8 phases pass. Adversarial review: APPROVED.
+> **Historical/transient evidence:** Two independent test runs were recorded as
+> exit 0 with all 8 phases passing; the retained adversarial review was APPROVED.
+> These results are not current acceptance evidence.
 
 **Approach:** MODIFY introduces **no new orlib20 calls and no new RVAs**. It composes only existing, already-confirmed INSERT primitives in sequence:
 
@@ -653,18 +705,22 @@ The only difference from INSERT is that `CreateEntryEX` is skipped — the exist
 | Raw-source insert | No — XML file import only | `_CreateEntryEX` + `_SaveModule_New` (CONFIRMED) |
 | Compile/verify | `VerifyAll` (whole library, void) | `StartCompilingProcess` + `VerifyModule_New` (CONFIRMED) |
 | Error reporting | Void on delete/verify; results BSTR on import only | `_GetCompilingErrors` + `_GetErrorLevel` + count global (CONFIRMED) |
-| Delete | `DeleteAnalysisTechnique(WHType,ProgId)` void; needs ProgId | Orchestrator `FUN_101a8360` (`__fastcall`, SEH-protected) + thread-check INT3 NOP patches + `FILEDELETE` (IMPLEMENTED & APPROVED; see §5.7) |
-| Modify | No primitive (delete+insert) | Set source + verify + save (same primitives as insert; IMPLEMENTED & APPROVED — see §5.8) |
-| Complexity / risk | Low call complexity, HIGH gap-filling complexity (XML synth, name resolution, error inference) | MED call complexity, LOW risk (param orders CONFIRMED, persistence CONFIRMED) |
-| Headless viability | Uncertain (Desktop coupling suspected; void errors) | YES (smoke test PASSED; no TSDev/TS import) |
+| Delete | `DeleteAnalysisTechnique(WHType,ProgId)` void; needs ProgId | Historical implementation record: orchestrator `FUN_101a8360` (`__fastcall`, SEH-protected) + thread-check INT3 NOP patches + `FILEDELETE` (see historical §5.7) |
+| Modify | No primitive (delete+insert) | Historical implementation record: set source + verify + save (same primitives as insert; see historical §5.8) |
+| Complexity / risk | Low call complexity, HIGH gap-filling complexity (XML synth, name resolution, error inference) | Historical study characterized this as MED call complexity; parameter orders were recorded CONFIRMED, while patch-based persistence was pre-L.3 and is superseded |
+| Headless viability | Uncertain (Desktop coupling suspected; void errors) | Historical smoke-test result was PASS; no current run is implied |
 
 ### Recommendation
 
-**Primary: Approach 2 (orlib20.dll direct invocation).** It is the only approach that exposes primitives for all three acceptance criteria, including targeted compile/verify with retrievable errors and name resolution. Parameter orders for the key primitives are **CONFIRMED**, standalone INSERT persistence has been demonstrated via the `FUN_10011230` patch (see §5.6), **DELETE is IMPLEMENTED and APPROVED** via the orchestrator approach (see §5.7), and **MODIFY is IMPLEMENTED and APPROVED** via composition of existing INSERT primitives (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining risks are narrow: warehouse-type mappings for three component types (ActivityBar, PaintBar, ProbabilityMap) and minor unmapped fields (see §5.5). It aligns with the project goal of least custom implementation: the CLI becomes a thin orchestrator over the same engine TSDev.exe uses.
+**Primary: Approach 2 (orlib20.dll direct invocation).** It is the only approach that exposes primitives for all three acceptance criteria, including targeted compile/verify with retrievable errors and name resolution. Parameter orders for the key primitives are **CONFIRMED**. The retained standalone INSERT persistence observation was **historical/pre-L.3 and patch-based** (see historical §5.6), not current runtime acceptance; current code/catalog evidence records the persistence-patch removal. **DELETE and MODIFY implementation records are historical/transient** (see §5.7 and §5.8), not current acceptance claims. Remaining risks are narrow: warehouse-type mappings for three component types (ActivityBar, PaintBar, ProbabilityMap) and minor unmapped fields (see §5.5). It aligns with the project goal of least custom implementation: the CLI becomes a thin orchestrator over the same engine TSDev.exe uses.
 
 **Fallback: Approach 1 (ELIS.exe COM).** Retain for the delete operation only, and only if name resolution is handled externally (e.g., XML scan) and the void return is acceptable. Not viable for insert/modify due to XML-only import and absent error reporting.
 
-Both de-risking gates have **PASSED**: (a) orlib20 parameter orders are **CONFIRMED** (see §5.1), and (b) the headless `_OrlibInit` smoke test succeeded without TradeStation Desktop running (see `headless_init_smoke_test.md`).
+Both de-risking gates were recorded as **PASSED in the historical study**: (a)
+`orlib20` parameter orders are documented in §5.1, and (b) the headless
+`_OrlibInit` smoke test succeeded without TradeStation Desktop running. The
+referenced `headless_init_smoke_test.md` is a gitignored transient artifact and
+unavailable in the tracked checkout; no current run is implied.
 
 ---
 
@@ -681,26 +737,42 @@ Both de-risking gates have **PASSED**: (a) orlib20 parameter orders are **CONFIR
 > production code so the real finalization path now runs. See §5.6 supersession
 > banner.
 
-> **Status update:** Items (a), (b), and (c) below are all **COMPLETED**. Parameter orders are CONFIRMED (see §5.1, `orlib_param_orders.md`), the headless init smoke test PASSED (see `headless_init_smoke_test.md`), standalone INSERT persistence has been demonstrated (see §5.6), DELETE is IMPLEMENTED & APPROVED (see §5.7), and MODIFY is IMPLEMENTED & APPROVED (see §5.8). **All three core functions (INSERT, DELETE, MODIFY) are now IMPLEMENTED and APPROVED** — the primary acceptance criteria is satisfied at the library level. Remaining work is follow-ups only (see §5.5 and §8).
+> **Historical status update:** Items (a), (b), and (c) below were recorded as
+> **COMPLETED** at the time of this feasibility report. The parameter-order and
+> headless-init results, the patch-based INSERT persistence observation, and the
+> DELETE/MODIFY implementation records are historical/transient; they are not
+> current acceptance evidence. Current production status is maintained by the
+> tracked source, catalog, and current workstream documents. Remaining work and
+> limitations are in §5.5 and §8.
 
 The highest-ROI next slice de-risks the recommendation before any broad implementation:
 
 **a) Resolve orlib20 unknown parameter orders (RE) — COMPLETED.**
-Primary approach — **live tracing via the frida MCP** (Frida 17.17.0): spawn or attach to TSDev.exe via `create_interactive_session`, hook the orlib20 functions (`_CreateEntryEX@24`, `_SaveTextEX@16`, `_SaveModule_New@20`, `_VerifyModule_New@20`) with `Interceptor.attach` to capture `args[0..N]` in `onEnter`, then trigger insert/delete/modify operations in the TSDev UI to observe the actual argument values passed by the authoritative caller. This gives dynamic, authoritative argument values and is more reliable than static disassembly.
+**Historical/superseded MCP procedure:** The original primary approach used **live tracing via a Python frida MCP server** (Frida 17.17.0): it spawned or attached to TSDev.exe via `create_interactive_session`, hooked the orlib20 functions (`_CreateEntryEX@24`, `_SaveTextEX@16`, `_SaveModule_New@20`, `_VerifyModule_New@20`) with `Interceptor.attach` to capture `args[0..N]` in `onEnter`, then triggered insert/delete/modify operations in the TSDev UI to observe the actual argument values passed by the authoritative caller. This gives the historical dynamic observations retained by the study; the MCP procedure is not current and must not be used.
 
 Secondary/confirmatory approach — **RE the caller sites in TSDev.exe** (static, deterministic): disassemble the call sites of the same functions within TSDev.exe to recover the exact argument order and types the GUI host uses. Use this to corroborate the live-trace findings.
 
-As a quick preliminary to the headless smoke test (step b), hook `_OrlibInit@8` in ELIS.exe at startup via the frida MCP to capture its actual arguments (`workDirPath`, `contextId`) — this resolves open question #2 (`contextId` valid values) directly from the authoritative caller.
+**Historical/superseded MCP procedure:** As a quick preliminary to the headless smoke test (step b), the study hooked `_OrlibInit@8` in ELIS.exe at startup via the frida MCP to capture its actual arguments (`workDirPath`, `contextId`) — this resolved open question #2 (`contextId` valid values) from the authoritative caller.
+
+**Current direct-CLI guidance:** Follow-up runtime instrumentation uses Frida directly from the CLI — `frida-trace`, `frida -l script.js`, or `frida -p PID` — and never Frida MCP, as required by `AGENTS.md`. The static caller-site RE above remains the confirmatory method for argument order and types.
 
 **b) Headless init smoke test (critical gate) — COMPLETED (PASSED).**
-Build a minimal 32-bit C++ test that loads orlib20.dll, sets the DLL search directory to the TS Program folder, and calls `_OrlibInit(workDirPath, contextId)` with a candidate `contextId` (try 0 and small integers). Assert the return is nonzero and that `ELRte::CreateRte` succeeded (observable via a subsequent `FindExistPos` call returning a known existing name). Run this **without** TradeStation Desktop running. This is the critical headless-viability gate. If it fails, the recommendation must be revisited.
+The historical smoke procedure built a minimal 32-bit C++ test that loaded
+orlib20.dll, set the DLL search directory to the TS Program folder, and called
+`_OrlibInit(workDirPath, contextId)` with candidate `contextId` values. It
+asserted a nonzero return and `ELRte::CreateRte` success via a subsequent
+`FindExistPos` call. That historical run used no TradeStation Desktop; this is
+not a general current Desktop-state prerequisite. The result was treated as
+the critical headless-viability gate for the feasibility study.
 
-**c) Implement the CLI with TDD (red-green). — COMPLETED (all three functions IMPLEMENTED & APPROVED).**
+**c) Historical CLI TDD record (red-green) — COMPLETED at study time.**
 1. ~~**DELETE**~~ — **DONE & APPROVED.** Orchestrator-based approach (`FUN_101a8360`) with thread-check INT3 NOP patches; persistence verified by two independent test runs (see §5.7).
-2. ~~**INSERT**~~ — **DONE.** Standalone persistence demonstrated via `elevated_test20.exe` + `FUN_10011230` patch (see §5.6); production CLI wraps the confirmed 20-step flow.
+2. ~~**INSERT**~~ — **Historical/pre-L.3 DONE record.** Standalone persistence was demonstrated via `elevated_test20.exe` + `FUN_10011230` patch (see historical §5.6); the current production path is represented by the unpatched source/catalog.
 3. ~~**MODIFY**~~ — **DONE & APPROVED.** Composes only existing INSERT primitives (`findExistPos` → `saveSource` → `verifyModule`) with no new orlib20 calls and no new RVAs; verified by two independent test runs (exit 0, ProgId preserved, `.ell` updated, compile errors surfaced, negative + compile-error tests return `success=false`; see §5.8).
 
-Each function gets a red-green TDD cycle against a disposable test library copy (never the real install).
+**Historical planning language (superseded):** Each function was planned to get a red-green TDD cycle against a disposable test library copy (never the real install).
+
+**Current L7 behavior (repository evidence):** The opt-in `-IncludeRedFaultInjection` path targets the configured TradeStation installation/MyWork path (by default the real installation) and mutates only its exact L7 artifacts to exercise Fault A/B; it is not part of normal regression. The current harness derives `<TsPath>\MyWork\Bin` when `-TsPath` is supplied and uses `C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin` when it is omitted; see `AGENTS.md` and `tests/test_unknown_link_regression.ps1`.
 
 ---
 
@@ -715,31 +787,33 @@ Each function gets a red-green TDD cycle against a disposable test library copy 
 > removal is done). See §5.6 supersession banner and
 > `docs/workstream_unknown_link_fix_plan.md`.
 
-> **Resolved since initial study:** Items #1 (headless `CreateRte` — smoke test PASSED), #2 (`contextId` — CONFIRMED as 1), #3 (`_CreateEntryEX` params — CONFIRMED, see §5.1), #5 (`_SaveModule_New` GUI binding — hidden-EDIT workaround CONFIRMED, persistence via `VerifyModule_New` + §5.6 patch), #6 (`MDVault::SaveModule` direct — no longer needed; persistence achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule`), #8 (`_GetCompilingErrors` formatting — CONFIRMED, see §5.1), #11 (`_SaveTextEX` persistence — RESOLVED; `SaveModule_New` saves source only, `VerifyModule_New` persists `.ell`), and #13 (Frida live RE — enabled via Python frida MCP, Frida 17.17.0).
+> **Resolved since initial study:** Items #1 (headless `CreateRte` — smoke test PASSED), #2 (`contextId` — CONFIRMED as 1), #3 (`_CreateEntryEX` params — CONFIRMED, see §5.1), #5 (`_SaveModule_New` GUI binding — hidden-EDIT workaround CONFIRMED, historical/pre-L.3 patch-based persistence via `VerifyModule_New` + §5.6 (superseded)), #6 (`MDVault::SaveModule` direct — no longer needed; historical/pre-L.3 patch-based persistence via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (superseded)), #8 (`_GetCompilingErrors` formatting — CONFIRMED, see §5.1), #11 (`_SaveTextEX` persistence — RESOLVED; `SaveModule_New` saves source only, `VerifyModule_New` persists `.ell`), and #13 (**historical MCP result; procedure superseded:** Frida live RE was enabled via Python frida MCP, Frida 17.17.0).
 
 **Still open:**
 
-1. ~~**Headless `CreateRte`**: Does `ELRte::CreateRte` succeed without TradeStation Desktop?~~ **RESOLVED — YES** (smoke test PASSED; see `headless_init_smoke_test.md`).
+1. ~~**Headless `CreateRte`**: Does `ELRte::CreateRte` succeed without TradeStation Desktop?~~ **Historical study result — RESOLVED: YES** (smoke test recorded as PASSED; `headless_init_smoke_test.md` is transient and unavailable in the tracked checkout).
 2. ~~**`contextId` valid values`**: What integer(s) are valid for `_OrlibInit`'s second argument?~~ **RESOLVED — `contextId = 1`** (CONFIRMED; see §5.1).
 3. ~~**`_CreateEntryEX` params 2-5**: Exact order/meaning of WHType and flags.~~ **RESOLVED — CONFIRMED** `(whType, 0, name, 0, 0, &errCode)` (see §5.1).
-4. **`_SaveTextEX` p1/p4**: Roles of param 1 (nonzero-checked, lstrlenA'd) and param 4 (unused in visible path). Still uncertain (MED). Note: `_SaveTextEX` is NOT used in the confirmed INSERT/MODIFY flow; `_SaveModule_New` is used instead.
-5. ~~**`_SaveModule_New` GUI binding`: Does the hidden-EDIT workaround fully suppress the MessageBox?~~ **RESOLVED — hidden-EDIT workaround CONFIRMED working** in the standalone INSERT flow (see §5.3, §5.6). Persistence is via `VerifyModule_New`, not `_SaveModule_New`.
-6. ~~**`MDVault::SaveModule` direct**: Feasible as a GUI-free alternative?~~ **RESOLVED — not needed.** Persistence is achieved via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule` (see §5.6).
+4. **Historical/non-production `_SaveTextEX@16` ABI:** the tracked correction confirms p1 = source text, p2 = whType, p3 = ProgId, and p4 = password/metadata buffer (`docs/RE/RE_F4_loadtextfileex_findings.md` §5.1–§5.3). It is unused by the current CLI; `_SaveModule_New@20` is the current source-text path.
+5. ~~**`_SaveModule_New` GUI binding`: Does the hidden-EDIT workaround fully suppress the MessageBox?~~ **RESOLVED in the historical study — hidden-EDIT workaround was recorded working** in the standalone INSERT flow (see historical §5.3, §5.6). Current persistence is via `VerifyModule_New`, not `_SaveModule_New`.
+6. ~~**`MDVault::SaveModule` direct**: Feasible as a GUI-free alternative?~~ **RESOLVED — not needed.** Historical/pre-L.3 persistence was achieved in the study via `VerifyModule_New` → patched `CompileText` → `MDVault::SaveModule`; this patch-based result is superseded by the current unpatched source/catalog (see §5.6).
 7. ~~**Persistence after `_SetSigDeleted`**: Which call persists the master index with the deleted flag before `FILEDELETE` removes files?~~ **RESOLVED — DELETE IMPLEMENTED & APPROVED.** The orchestrator `FUN_101a8360` handles persistence internally (`DeleteFromTree` → `closeWarehouse` → commit storages → `MWRKArea.wrk` written). The `SetSigDeleted`-based approach is RETIRED. See §5.7.
 8. ~~**`_GetCompilingErrors` formatting**: Exact string format for error reporting.~~ **RESOLVED — CONFIRMED** (builds concatenated "name: msg\n..." across all error records; empty buffer = success; see §5.1).
 9. **Error record layout** (stride 297): Fields beyond the 0x7775 sentinel are unmapped. — **STILL OPEN**.
 10. **WHType 0x32**: Meaning unknown; may affect verify/save. — **STILL OPEN**.
 11. ~~**`_SaveTextEX` persistence`: Does it persist alone, or is `_SaveModule_New` always mandatory?~~ **RESOLVED — `_SaveModule_New` saves source text only; `VerifyModule_New` persists the `.ell` file** (see §5.1, §5.6).
 12. **Registry dependence**: orlib20 uses `orshr20.dll!_TSGetRegistryRootKeyA` and ADVAPI32 registry functions; the TS install's registry keys must be present. — **STILL OPEN**.
-13. ~~**Frida live RE**: Live RE was initially blocked by a Frida helper-path bug.~~ **RESOLVED — live RE enabled** via Python frida MCP server running Frida 17.17.0 (which includes the fix), providing the full Frida JS API via `execute_in_session` for runtime value confirmation.
+13. ~~**Frida live RE**: Live RE was initially blocked by a Frida helper-path bug.~~ **HISTORICAL RESOLUTION (MCP workflow superseded):** The study recorded live RE enabled via a Python frida MCP server running Frida 17.17.0 (which included the fix), providing the full Frida JS API via `execute_in_session` for runtime value confirmation. **Current guidance:** use direct CLI `frida-trace`, `frida -l script.js`, or `frida -p PID`; do not use Frida MCP (see `AGENTS.md`).
 
 ---
 
 ## 9. Evidence Index
 
-All artifacts in `tmp\re_artifacts\`:
+The following names are historical/transient artifacts that were stored under
+`tmp\re_artifacts\`; they are gitignored, not checked in, and unavailable as
+tracked repository evidence. No replacement files or current results are implied.
 
-| File | Contents |
+| Historical artifact name | Contents |
 |------|----------|
 | `evidence_A_filesystem_survey.md` | TradeStation install + MyWork\Bin layout, .ell RNAM magic, file counts, DLL inventory. |
 | `evidence_A2_binary_static_survey.md` | PE imports/exports, orlib20 export list, ELIS strings/ProgID/CLSID, .ell header bytes, XML schema, WHType names. |
@@ -757,6 +831,10 @@ All artifacts in `tmp\re_artifacts\`:
 | `re_analysis.py` .. `re_analysis5.py` | The pefile+capstone analysis scripts that produced the disasm artifacts. |
 | `TlbDump.cs` / `TlbDump.exe` | TypeLib dumper used to extract the ELIS.exe COM interface (IELServices method table, IIDs, ProgID/CLSID/AppID). |
 
-The five `evidence_*.md` files are the persisted, citable copies of the subagent investigation reports that underpin the technical claims in this document. The `re_disasm*.txt` files are the raw capstone disassembly per function; the `re_analysis*.py` files are the static PE analysis scripts; `TlbDump.cs`/`TlbDump.exe` is the typelib dumper tool used for the C1 evidence.
+The five `evidence_*.md` names above are historical source names, not persisted
+tracked copies: the files are unavailable in the current checkout. The
+`re_disasm*.txt`, `re_analysis*.py`, and `TlbDump.cs`/`TlbDump.exe` names likewise
+refer to untracked historical artifacts. Current technical status must use the
+tracked `docs/RE/`, source, and catalog documents.
 
-**Note on RE method:** The initial RE was performed via static PE analysis (pefile+capstone) because live Frida RE was temporarily unavailable (blocked by a Frida helper-path bug in frida-core 17.15.4 / Luma 1.2.3). Live RE is now available via the frida MCP (Python frida MCP server running Frida 17.17.0, which includes the fix) for follow-up verification and the TVS-2 live-tracing work. The static findings above remain valid.
+**Note on RE method:** The initial RE was performed via static PE analysis (pefile+capstone) because live Frida RE was temporarily unavailable (blocked by a Frida helper-path bug in frida-core 17.15.4 / Luma 1.2.3). **Historical MCP record (superseded):** The study later recorded live RE as available via a Python frida MCP server running Frida 17.17.0 (which included the fix) for follow-up verification and the TVS-2 live-tracing work. That MCP workflow is not current. **Current repository guidance:** use Frida directly from the CLI — `frida-trace`, `frida -l script.js`, or `frida -p PID` — and never Frida MCP, as required by `AGENTS.md`. The static findings above remain valid.

@@ -1,34 +1,29 @@
 // test_persistence_integrity.cpp
 //
-// Unit test (RED-GREEN TDD) for TVS-L.9: a SHARED persistence-integrity
-// validator that classifies the cross-store (.ell vs .xml) consistency of a
-// modify/upsert operation.
+// Unit test for TVS-L.9: a SHARED persistence-integrity validator that
+// classifies the cross-store (.ell vs .xml) consistency of a modify/upsert
+// operation.
 //
 // This is a PURE UNIT TEST. It does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, does NOT construct TsDevLib, and does NOT need a
 // 64 MB stack. It builds in-memory fixture bytes for the `.ell` and `.xml`
-// artifacts, writes them to temp files in %TEMP%, and calls the validator
-// declared in src/persistence_integrity.h.
+// artifacts, writes them to temp files in %TEMP%, and calls the implemented
+// validator declared in src/persistence_integrity.h.
 //
-// TDD RED step:
-//   src/persistence_integrity.h DECLARES validatePersistenceIntegrity() but
-//   there is NO src/persistence_integrity.cpp yet. This test calls the symbol,
-//   so the test executable FAILS TO LINK (unresolved external) until the GREEN
-//   step adds the implementation. That link failure IS the RED signal. No
-//   assertion can run until the symbol resolves; the test is written so that
-//   once the GREEN implementation exists, the three fixture scenarios below
-//   drive the verdict matrix in the header and the assertions pass.
+// The implementation in src/persistence_integrity.cpp is linked into this
+// test. The three fixture scenarios below drive the verdict matrix in the
+// header and the assertions pin the implemented behavior.
 //
-// Why this test exists (the defect it targets):
+// Why this test exists (historical defect it guards against):
 //   Fault A (docs/RE/RE_L8_STALE_WRITE_FAULT_A.md): a modify/upsert reports
 //   `exit 0 / success=true` while the `.ell` is left STALE (SHA-256 unchanged)
 //   and the `.xml` is rewritten with a NEW GUID that has ZERO occurrences in
 //   the stale `.ell`. The item is runtime-unlinkable but reported as success.
-//   The existing `.ell`/`.xml` existence checks do NOT catch this. A shared
-//   validator that combines (a) ELL hash change, (b) XML hash change, (c) new
-//   XML GUID present in the ELL, and (d) source-equal-proven precondition is
-//   required to distinguish a real refresh from Fault A and from a legitimate
-//   no-op. This test pins that contract.
+//   Before this validator, the existing `.ell`/`.xml` existence checks did NOT
+//   catch this. The implemented shared validator combines (a) ELL hash change,
+//   (b) XML hash change, (c) new XML GUID present in the ELL, and (d) the
+//   source-equal-proven precondition to distinguish a real refresh from Fault A
+//   and from a legitimate no-op. This test pins that contract.
 //
 // Fixture scenarios (each writes pre-op + post-op temp files):
 //
@@ -66,8 +61,6 @@
 // this test's fixture builder) use it for the ELL GUID-occurrence check.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
-// (Until the GREEN step links the validator, the executable does not build, so
-//  no exit code is produced — that is the RED.)
 
 #include "../src/persistence_integrity.h"
 
@@ -208,7 +201,7 @@ std::vector<uint8_t> guidToMixedEndian(const GuidParts& p) {
 
 // ---------------------------------------------------------------------------
 // Minimal XML fixture containing a GUID in a <Guid>...</Guid> element. The
-// validator (GREEN) parses the GUID out of the XML; this fixture gives it
+// validator implementation parses the GUID out of the XML; this fixture gives it
 // exactly one GUID to find.
 // ---------------------------------------------------------------------------
 std::vector<uint8_t> makeXmlFixture(const std::string& guidWithBraces) {

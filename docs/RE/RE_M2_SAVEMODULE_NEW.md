@@ -1,8 +1,11 @@
 # TVS-M.2 Foundation Research — `_SaveModule_New@20` Flags, CELProperties, and Save-Side Encryption
 
-> **Status:** READ-ONLY foundation research. No production code modified. No `tsdev_cli`
-> or warehouse-mutating operation run. No new Frida sessions executed (existing traces
-> only). One new findings document created (this file).
+> **Original status at foundation-research time (2026-08-24):** READ-ONLY
+> foundation research. No production code was modified by that research pass, no
+> `tsdev_cli` or warehouse-mutating operation was run, and no new Frida session was
+> executed (existing traces only). This document preserves that historical snapshot
+> and its later corrections; it is not a statement that the current production tree
+> still uses the pre-M.2 call described in the original findings.
 >
 > **Method:** Existing Frida traces + RE notes examined FIRST, then Ghidra static
 > analysis via the `ghidra-mcp` MCP server against the `TSDevAnalysis` project
@@ -88,10 +91,10 @@ closest match to the captured trace (Strategy, progId 6686, pre-verify).
 The password buffer (arg5) is **NOT purely zeroed**. `FUN_00452290` constructs
 it as:
 
-1. `memset(buffer, 0, 0x40)` — 64 bytes zeroed (matches the §4e / §6
-   "zeroed 64-byte buffer" observation at the buffer level);
+1. `memset(buffer, 0, 0x40)` — all 64 bytes are initialized to zero;
 2. `memcpy(buffer, password_string, length)` — the password string is then
-   copied in, overwriting the leading bytes.
+   copied in, overwriting the leading bytes, so only the unused tail remains
+   zero at the `_SaveModule_New@20` call.
 
 For **unprotected items** (the TSDev-forced-protection `else` branch), the
 password string is the **internal default `"!p$Kn@aSus"`** (10 bytes at
@@ -145,9 +148,12 @@ call. See §8d for the new evidence-index entries.
 
 - **R-M.2.1 (flags/arg5):** TSDev passes **non-NULL** for both arg3 (flags pointer =
   `0x8fdf34`, a stack address) and arg5 (password pointer = `0x8fdef0`, a stack
-  address) at the single captured pre-verify `_SaveModule_New@20` call
-  (`tmp/frida_trace_verify.log` line 20412). The CLI passes NULL for both
-  (`src/tsdev_lib.cpp:1109-1110`). Ghidra decompilation of the implementation
+  address) at the single captured pre-verify `_SaveModule_New` call
+  (`tmp/frida_trace_verify.log` line 20412). Current production `saveSource()`
+  also passes non-NULL pointers — `&saveFlags` and `savePasswordBuf` at
+  `TsDevLib::saveSource()` in `src/tsdev_lib.cpp`. The 64-byte `savePasswordBuf` is zero-initialized
+  first, then populated with the internal default `"!p$Kn@aSus"`, leaving only
+  its unused tail zero. Ghidra decompilation of the implementation
   `FUN_10159770` (reached via the `_SaveModule_New@20` wrapper at `0x10159A70`)
   confirms arg3 is `uint *flags` and arg5 is `void *password`, and gives the
   **bitfield decomposition of `*flags`**: bit 4 (0x10) → metadata bit 2; bit 5
@@ -196,7 +202,7 @@ call. See §8d for the new evidence-index entries.
 - **R-M.2.5 (no user password):** Confirmed. Any password-shaped buffer passed on save
   must be an **internal fixed buffer mirroring TSDev**, never a user-supplied secret.
   The constant salt across items, `_IsUnicodePassword→0`, and the root-cause doc
-  (`RE_UNKNOWN_LINK_ROOT_CAUSE.md` L256: "This is not a user password feature") all
+  (`RE_UNKNOWN_LINK_ROOT_CAUSE.md` §L, "Historical follow-up TSDev parity work": this is not a user password feature) all
   confirm this is internal encryption, not password protection. **2026-08-25
   correction (UPDATE Correction 2):** the buffer is not "zeroed" in content — it
   contains the internal TSDev default `"!p$Kn@aSus"` (10 bytes at `0x00567b40`), which
@@ -209,12 +215,17 @@ call. See §8d for the new evidence-index entries.
 
 ### 2a. Parameter mapping (1-based arg numbering, matching the task and the CLI call)
 
-The CLI call (`src/tsdev_lib.cpp:1109-1110`):
+The original pre-M.2 CLI call (historical; superseded) was:
 ```cpp
 result = m_pSaveModuleNew(getCategory(type), progId, NULL, m_editorHwnd, NULL);
 //                           arg1          arg2  arg3   arg4        arg5
 ```
-So **arg3 = flags pointer**, **arg5 = password pointer** (1-based). The Frida script
+Current production `saveSource()` instead calls
+`m_pSaveModuleNew(getCategory(type), progId, &saveFlags, m_editorHwnd,
+ savePasswordBuf)` (`TsDevLib::saveSource()` in `src/tsdev_lib.cpp`). Thus current arg3 and arg5
+are both non-NULL; the save buffer is zero-initialized, then populated with
+`"!p$Kn@aSus"`, leaving only its unused tail zero. So **arg3 = flags pointer**,
+**arg5 = password pointer** (1-based). The Frida script
 reads 6 slots (0-based `args[0..5]`); the 6th slot (`args[5]`) is an over-read past the
 `@20` frame and is NOT a declared parameter (`tmp/m1_trace_reanalysis.md` §1.1, item 8).
 
@@ -238,7 +249,9 @@ buffer addresses for calls #1/#2):
 - Line 182793: `args=[0x0,0x1a1f,0x8fdf34,0x132f6e,0x8fdef0,0x1b5f0f30]` (progId 6687)
 - Line 266469: `args=[0x0,0x1a20,0x8fdf7c,0x4d2c20,0x8fdf38,0x1b5f0bc8]` (progId 6688)
 
-All three: **arg3 non-NULL, arg5 non-NULL**. The CLI passes NULL for both.
+All three: **arg3 non-NULL, arg5 non-NULL**. Current production `saveSource()`
+uses the same non-NULL argument shape; the old NULL-for-both CLI call is retained
+above only as superseded pre-M.2 history.
 
 ### 2c. Ghidra — wrapper ABI and implementation
 
@@ -286,7 +299,8 @@ than `^`):
 | bit 5 | `0x20` | `uStack_b9` bit 10 (`0x400`) — the "internally encrypted" master-record flag | `(uVar1 << 5) & 0x400` → uVar1 bit 5 → bit 10 |
 | bit 6 | `0x40` | `local_2b` bit 3 (`0x8`) | `((char)(uVar1 >> 6) << 3) & 8` → uVar1 bit 6 → bit 3 |
 
-The NULL-flags fallback (`FUN_10159770`):
+The orlib20 NULL-flags fallback (used only when a caller supplies NULL; not used
+by the current production CLI) is:
 ```c
 local_14 = 0;
 if (param_3 == (uint *)0x0) {
@@ -512,7 +526,7 @@ each with the **same salt `0xe1ca1015`**.
 ### 4d. The get-side parallel (Branch C, `FUN_101a0f90`)
 
 `FUN_101a0f90` (the `_LoadTextFileEX` implementation referenced by the CLI
-`getSource` comment at `src/tsdev_lib.cpp:1126-1146`):
+`TsDevLib::getSource()` implementation in `src/tsdev_lib.cpp`):
 ```c
 if (param_5 == (void *)0x0) {
   memcpy(_Dst, _Src, local_8);                       // NULL password → plain copy
@@ -523,13 +537,15 @@ if (param_5 == (void *)0x0) {
   FUN_10151880(_Dst, ..., param_4, ...);                       // decrypt source body
 }
 ```
-**Mirror symmetry:** On SAVE, a non-NULL password buffer supplies the (empty) password
-that gets embedded in the header and used to encrypt. On GET, a non-NULL password
-buffer is **overwritten** with the embedded password extracted from the header, then
-used to decrypt. This is why the get-side CLI comment is correct that "any non-NULL
-pointer works" for decryption (the buffer is overwritten), while on the save-side the
-buffer content **is** used (it becomes the embedded password) — hence it must be the
-same fixed/zeroed buffer TSDev uses, to produce a decryptable artifact.
+**Mirror symmetry:** On SAVE, a non-NULL password buffer supplies the fixed internal
+TSDev default `"!p$Kn@aSus"` that gets embedded in the header and used to encrypt.
+The 64-byte save buffer is zeroed first, then populated, leaving only its unused tail
+zero at the call. On GET, a non-NULL password buffer is **overwritten** with the
+embedded password extracted from the header, then used to decrypt. This is why the
+get-side CLI comment is correct that "any non-NULL pointer works" for decryption (the
+buffer is overwritten), while on the save-side the buffer content **is** used (it
+becomes the embedded password) — hence it must mirror the fixed buffer content TSDev
+uses to produce a decryptable artifact.
 
 ### 4e. Answer to R-M.2.3
 
@@ -598,9 +614,10 @@ one of each per operation:
 
 There is **no second `_SaveModule_New` call after any `_VerifyModule_New` call** for
 the same item. The root-cause doc confirms the ordering
-(`RE_UNKNOWN_LINK_ROOT_CAUSE.md` L47): "The UI path saves before compiling:
-`_SaveModule_New@20` enters/returns success at trace L20412... `StartCompilingProcess`
-follows at L21662, then `_VerifyModule_New@20` at L21682."
+(`RE_UNKNOWN_LINK_ROOT_CAUSE.md` §B, "Symptom and reproduction facts"): "The UI path saves before compiling:
+`_SaveModule_New@20` enters/returns success, `StartCompilingProcess` follows, and then
+`_VerifyModule_New@20`. The raw trace line numbers are retained in the transient trace
+record below."
 
 **Answer:** Only a pre-verify save is performed. The CLI's single `saveSource()` before
 `verifyModule()` matches TSDev. **No post-verify save is required.**
@@ -609,47 +626,53 @@ follows at L21662, then `_VerifyModule_New@20` at L21682."
 
 ## 6. R-M.2.5 — No user-facing password parameter
 
-Evidence that the password buffer is an internal zeroed buffer, never a user secret:
+Evidence that the password buffer is fixed internal material, not a user secret:
 
 1. **Constant salt across items:** `_GetPasswordSalt@8(passwordBuf, 2)` returns
    `0xe1ca1015` for progIds 6686, 6687, and 6688 (lines 20436, 182819, 266495). A
-   user-supplied or per-item password would produce varying salts. Constant salt ⇒
-   fixed (zeroed/empty) password content.
+   user-supplied or per-item password would produce varying salts. The constant salt,
+   together with the caller decompilation in the UPDATE block, is consistent with
+   the fixed internal default `"!p$Kn@aSus"`.
 2. **`_IsUnicodePassword` returns 0** in all three calls (lines 20434, 182817, 266493)
-   ⇒ the buffer is an empty/zeroed ANSI buffer, not a unicode password string.
-3. **Get-side parallel:** the CLI `getSource` (`src/tsdev_lib.cpp:1147`) uses a zeroed
-   `char decryptBuffer[64] = {};` and the comment (L1144-1146) states "TSDev does the
-   same (`FUN_10108630` uses a zeroed 64-byte buffer)."
-4. **Root-cause doc:** `RE_UNKNOWN_LINK_ROOT_CAUSE.md` L256 — "SaveModule parity:
-   reproduce TSDev's non-NULL flags, internal metadata/encryption buffer, and
-   CELProperties state after parameter semantics are confirmed. **This is not a user
-   password feature** and is not the link fix."
+   ⇒ the fixed string is treated as ANSI. It does not establish an empty or all-zero
+   buffer; the static caller evidence identifies the 10-byte default string.
+3. **Get-side parallel, a separate path:** current `getSource` (`TsDevLib::getSource()` in `src/tsdev_lib.cpp`)
+   uses a separate `char decryptBuffer[64] = {};` and passes it non-NULL; the loader
+   overwrites that buffer with the embedded password during decryption. This does not
+   describe the save-side buffer, whose leading bytes are populated before the call.
+4. **Root-cause doc:** `RE_UNKNOWN_LINK_ROOT_CAUSE.md` §L ("Historical follow-up
+   TSDev parity work") — SaveModule parity covers TSDev's non-NULL flags, internal
+   metadata/encryption buffer, and CELProperties state. **This is not a user password
+   feature** and is not the link fix.
 5. **Save-side semantics (§4b):** the password buffer content is embedded into the
    encrypted data header and used to derive the encryption key. For the artifact to be
-   decryptable by the same internal path on get-side, the password must be the same
-   fixed empty buffer TSDev uses — a user secret would break the internal
-   encrypt/decrypt round-trip.
+   decryptable by the same internal path on get-side, the save-side buffer must mirror
+   TSDev's fixed internal default; a user secret would change the internal
+   encrypt/decrypt material.
 
-**Answer:** Confirmed. No user-facing password parameter is needed or appropriate. Any
-password-shaped buffer passed to `_SaveModule_New` arg5 must be an internal zeroed
-buffer mirroring TSDev, never a user-supplied secret.
+**Answer:** Confirmed. No user-facing password parameter is needed or appropriate. The
+current production call passes an internal 64-byte buffer whose leading 10 bytes are
+`"!p$Kn@aSus"`; it was zero-initialized first, so only the unused tail remains zero.
+It is never a user-supplied secret.
 
 ---
 
-## 7. Implementation recommendations
+## 7. Implementation implications (current code and superseded recommendations)
 
-### 7a. Changes indicated for `src/tsdev_lib.cpp:1109-1110` (`saveSource`)
+### 7a. SaveModule_New argument shape in `src/tsdev_lib.cpp` (`saveSource`)
 
 > **UPDATED 2026-08-25.** The code example below reflects the resolved flags
 > computation (UPDATE Correction 1) and the corrected password buffer content
 > (UPDATE Correction 2). The earlier inferential `0x20` flags value and the
 > "zeroed password buffer" characterization are both superseded.
 
-Current:
+Pre-M.2 implementation (historical; superseded):
 ```cpp
 result = m_pSaveModuleNew(getCategory(type), progId, NULL, m_editorHwnd, NULL);
 ```
-Indicated (resolved 2026-08-25 — no longer inferential):
+Current production `saveSource()` already uses the resolved non-NULL argument
+shape below (`TsDevLib::saveSource()` in `src/tsdev_lib.cpp`). Indicated (resolved 2026-08-25 —
+no longer inferential):
 ```cpp
 // arg3 (flags): non-NULL pointer to a flags word computed exactly as TSDev's
 //   FUN_00452290 does. Bitfield (UPDATE 2026-08-25, Correction 1):
@@ -695,7 +718,7 @@ result = m_pSaveModuleNew(getCategory(type), progId, &saveFlags, m_editorHwnd, s
 
 | Concern | Achievable from CLI? | Evidence |
 |---|---|---|
-| Non-NULL arg5 (password buffer with `"!p$Kn@aSus"`) → trigger internal encryption | **YES** | §4 — `FUN_101a08b0` encrypt path is gated only on `param_5 != NULL`; buffer is a local 64-byte array initialized with the fixed internal default string (UPDATE Correction 2) |
+| Non-NULL arg5 (password buffer with `"!p$Kn@aSus"`) → trigger internal encryption | **YES** | §4 — `FUN_101a08b0` encrypt path is gated only on `param_5 != NULL`; buffer is a local 64-byte array zero-initialized first, then populated with the fixed internal default string (UPDATE Correction 2), leaving only its unused tail zero |
 | Non-NULL arg3 (flags) → set master-record metadata bits | **YES (fully resolved 2026-08-25)** | §2d + UPDATE Correction 1 — both the bit decomposition AND the exact value are now known (computed by `FUN_00452290`); pre-verify values: Strategy=0x60, Indicator/ShowMe/TradingApp=0x62, Function=0x64 |
 | Editor HWND (arg4) | **YES (already done)** | §3e — CLI already passes `m_editorHwnd` |
 | Reading source from the editor HWND via WM_GETTEXT | **YES (already done)** | §4a — CLI already `setSourceText(m_editorHwnd, source)` before save |
@@ -748,7 +771,8 @@ result = m_pSaveModuleNew(getCategory(type), progId, &saveFlags, m_editorHwnd, s
 
 A targeted Frida hook on `_SaveModule_New@20` entry that reads, for one TSDev UI save:
 - `*(uint*)args[2]` (4 bytes at the flags buffer) — to get the exact flags word;
-- `args[4]` and the first ~16 bytes at the password buffer — to confirm it is zeroed;
+- `args[4]` and the first ~16 bytes at the password buffer — to resolve its
+  then-unknown byte content (later resolved as zero-initialized, then populated);
 - a backtrace of the `_SaveModule_New` caller — to locate the TSDev.exe save function
   that builds these buffers.
 
@@ -759,7 +783,13 @@ recommendation for the PM to decide on.
 
 ## 8. Evidence index
 
-### 8a. Frida trace (`tmp/frida_trace_verify.log`)
+The `tmp/` files listed in this index are gitignored historical/transient raw
+artifacts. They are unavailable as tracked repository evidence in a fresh
+checkout; their line references are retained only for historical traceability.
+Current production statements in this document point to named source functions
+and tracked catalog/RE sections instead.
+
+### 8a. Frida trace (`tmp/frida_trace_verify.log`; historical/transient, unavailable in tracked checkout)
 - L20412 — `_SaveModule_New@20` ENTER, args (progId 6686): the primary captured call.
 - L20422, L20425 — `SendMessageW(hwnd=0x162bb6, 0xe/0xd)` inside the save (WM_GETTEXT).
 - L20433-20440 — `_IsUnicodePassword`/`_GetPasswordSalt`/`_DoEncryption2`×2 (encrypt path).
@@ -785,13 +815,16 @@ recommendation for the PM to decide on.
   is NOT statically imported by TSDev.exe.
 - `tmp/m1_trace_reanalysis.md` §2 — single SaveModule call table; §5(a) editorHwnd ==
   VerifyModule hwnd; §7 item 1 — no buffer memory dumped.
-- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` L47 — save-before-compile ordering; L98 —
-  save ordering parity; L256 — "SaveModule parity... not a user password feature";
-  L279 — SaveModule flags/CELProperties listed as deferred parity item.
+- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §B ("Symptom and reproduction facts") —
+  save-before-compile ordering; §D ("Why TSDev UI succeeds and CLI fails") — save
+  ordering parity; §L ("Historical follow-up TSDev parity work") — SaveModule
+  parity is not a user password feature.
 - `docs/M1_HANDOFF.md` §1 (R-M.1.4) — `+0x18` = notification HWND; TSDev does not
   import `_SaveModule_New` into the automation path; CLI uses `m_editorHwnd`.
-- `src/tsdev_lib.cpp:1103-1115` — current `saveSource` (NULL arg3/arg5).
-- `src/tsdev_lib.cpp:1122-1165` — get-side Branch C (zeroed 64-byte buffer).
+- `TsDevLib::saveSource()` in `src/tsdev_lib.cpp` — current `saveSource` (non-NULL arg3/arg5;
+  save buffer zero-initialized first, then populated with the internal default).
+- `TsDevLib::getSource()` in `src/tsdev_lib.cpp` — get-side Branch C (separate buffer is
+  zero-initialized before the call, then populated by the loader).
 
 ### 8d. Ghidra static evidence (`ghidra-mcp`, `TSDevAnalysis` project)
 - `/orlib20.dll` `0x10159A70` — `_SaveModule_New@20` wrapper (disasm + decompile);
@@ -808,8 +841,8 @@ recommendation for the PM to decide on.
   master `+0x79`/`+0xde`); else plain-text save.
 - `/orlib20.dll` `0x101a0f90` — `FUN_101a0f90` (get-side `_LoadTextFileEX` impl):
   `param_5 == NULL` → plain copy; else Branch C (extract embedded password + decrypt).
-- `/orlib20.dll` `0x10107bf0` — `FUN_10107bf0` (NULL-flags-path callee; `IsWindow` +
-  `SendMessageW(0x40f)`; not security-relevant).
+- `/orlib20.dll` `0x10107bf0` — `FUN_10107bf0` (callee for the historical
+  NULL-flags fallback; `IsWindow` + `SendMessageW(0x40f)`; not security-relevant).
 - `get_xrefs_to(0x10159A70)` on `/orlib20.dll` — only Entry Point + DATA ref
   (`0x1021d978`); **no internal orlib20 caller**.
 - `/TSDev.exe` `0x005bbfa4` — string `_SaveModule_New@20` (inside a GetProcAddress
@@ -880,13 +913,15 @@ recommendation for the PM to decide on.
    confirmed from Ghidra; the value is inferentially `0x20` (bit 5) but NOT
    directly observed. **The inferred `0x20` was incomplete — the resolved
    pre-verify Strategy value is `0x60` (bits 5,6), not `0x20`.**
-2. **Exact byte content of the TSDev password buffer `*0x8fdef0` (arg5).** Not
-   dumped. Inferred zeroed/fixed from the constant salt `0xe1ca1015` and
-   `_IsUnicodePassword→0`. **CORRECTED 2026-08-25 (UPDATE Correction 2):** the
-   inference "zeroed" was wrong — the buffer contains the internal TSDev
-   default password `"!p$Kn@aSus"` (10 bytes at `0x00567b40`), copied in after
-   a `memset(buf, 0, 0x40)`. The salt `0xe1ca1015` and the `_DoEncryption2`
-   length `0xa = 10` both derive from this string. See §4e.
+2. **Original trace limitation (superseded): exact byte content of the TSDev
+   password buffer `*0x8fdef0` (arg5) was not dumped.** The old inference that
+   it was zeroed/fixed came from the constant salt `0xe1ca1015` and
+   `_IsUnicodePassword→0`; the "zeroed" part was wrong. **CORRECTED 2026-08-25
+   (UPDATE Correction 2):** static caller evidence shows the buffer is first
+   zeroed with `memset(buf, 0, 0x40)` and then receives the internal TSDev
+   default password `"!p$Kn@aSus"` (10 bytes at `0x00567b40`). The salt
+   `0xe1ca1015` and the `_DoEncryption2` length `0xa = 10` both derive from
+   this string. See §4e.
 3. **The specific DLL that exports `CELProperties::Get/SetNotificationWindow`.**
    Confirmed NOT orlib20; not positively identified among the loaded receivers
    (`list_imports` did not surface the entry; likely delay-load/manual table).

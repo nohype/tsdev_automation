@@ -8,34 +8,33 @@ Library without the TSDev UI. It contains:
 - **`tsdev_automation/`** — a stdlib-only Python wrapper package that drives
   `tsdev_cli.exe` as a subprocess from 64-bit Python.
 
-## Known Critical Issue — Current Status
+## Known Critical Issue — Historical Workstream L record
 
-> **Workstream L is NOT YET CLOSED — see docs/PM_WORKING_MEMORY.md. Recovery L.6–L.15 is implemented on branch `workstream-L-recovery`; L.4/L.5 completion was FALSIFIED and is superseded by L.6–L.15.**
+> **Current status:** Workstream L is closed; current Workstream M status is
+> tracked in the project repository's `AGENTS.md` §"Current state and TODO".
+>
+> The L.1–L.17 claims, results, and fault records below are retained for provenance.
 
-**Strategies inserted/modified/upserted by `tsdev_cli.exe` / the Python wrapper
-may appear VERIFIED in TSDev but fail at runtime in TradeStation Desktop with
-"Unknown link error occurred."** A full Desktop restart does not repair a
-broken CLI Strategy. Other supported component types use the common
-compile/finalization path and are included in Workstream L validation, but an
-equivalent runtime failure has not been claimed without type-specific evidence.
+**Historical L evidence records that strategies inserted/modified/upserted by
+`tsdev_cli.exe` / the Python wrapper could appear VERIFIED in TSDev but fail at
+runtime in TradeStation Desktop with "Unknown link error occurred."** A full
+Desktop restart did not repair a broken CLI Strategy in that historical
+observation. Other supported component types used the common
+compile/finalization path and were included in the historical Workstream L
+validation, but an equivalent runtime failure was not claimed without
+type-specific evidence.
 
-The only known workaround is to open the item in TSDev, make a harmless edit,
-and re-Verify — this re-runs the original finalization path. **This is a
-workaround only and is not an acceptable fix for an automated tool.**
+The historical workaround was to open the item in TSDev, make a harmless edit,
+and re-Verify — this re-ran the original finalization path. **This was a
+workaround only and was not an acceptable fix for an automated tool.**
 
-This is a confirmed root-cause defect in the CLI's orlib20 finalization path.
-The other operations (insert/modify/delete/exists/get-source/upsert/batch)
-remain functional at the CLI/library level. **Workstream L** is the workstream
-addressing the root cause and the Desktop runtime-execution regression gate.
-Current status: L.1–L.3 remain COMPLETE; the L.4/L.5 completion claim was
-FALSIFIED by persistence and deletion fault injection and is superseded by the
-L.6–L.15 recovery, which is implemented on branch `workstream-L-recovery`
-(L.8 BLOCKED — no invented TSDev recovery; L.9 detect-and-fail stale-ELL
-modify/upsert; L.12 detect-and-report orphan-ELL delete; existence checks are
-necessary but not sufficient; the `FUN_10011230` persistence bypass is
-removed). Workstream L is not yet CLOSED. No new Desktop runtime re-gate is
-claimed without an L.17 result. Workstream M remains BLOCKED until L.17
-independent final verification. For details, see the project repository's
+The retained L record describes a confirmed root-cause defect in the CLI's
+orlib20 finalization path and the historical L remediation/verification work.
+It does not change the current status above or imply that its historical test
+counts are current acceptance evidence. For current Workstream M status, see
+`AGENTS.md` §"Current state and TODO".
+
+For details, see the project repository's
 `docs/workstream_unknown_link_fix_plan.md` (Workstream L plan) and
 `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` (durable root-cause record).
 
@@ -45,11 +44,18 @@ independent final verification. For details, see the project repository's
   DLLs) from the TradeStation install directory at runtime. Nothing is bundled.
 - **Python 3.14+ 64-bit** (only if you use the Python wrapper). The wrapper is
   stdlib-only — no third-party packages required.
-- **Administrator privileges.** `tsdev_cli.exe` requires an elevated token
-  (TradeStation's TSDev Library is only accessible to elevated processes). Run
-  your terminal or Python session as Administrator — **one UAC prompt per
-  session**, then all CLI invocations are silent (subprocesses inherit the
-  elevated token).
+- **Administrator privileges for direct CLI use.** Every direct
+  `tsdev_cli.exe` subcommand, including `serve`, requires an already elevated
+  administrator process; if the CLI reaches its elevation guard without an
+  elevated token, it returns exit code **11** (`not_elevated`). The
+  `sigtool.exe` file-analysis CLI does not access the live TSDev Library and
+  does not have this requirement. The Python wrapper's `TsDevClient(use_serve=True)`
+  (the default) starts a separate elevated broker through normal Windows UAC
+  consent, so the Python process itself need not be elevated; with
+  `use_serve=False`, non-elevated Python raises `ElevationRequiredError` before
+  launch. For the full elevation contract (direct-CLI / exit 11 / serve broker),
+  see the project repository's `docs/BUILD.md` (operational) and `AGENTS.md`
+  (rule).
 
 ## CLI usage
 

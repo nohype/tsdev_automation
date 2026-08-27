@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    TVS-D.3: Batch mode test for tsdev_cli (TDD red-green).
+    TVS-D.3: Batch mode integration test for the implemented tsdev_cli batch
+    subcommands.
 
 .DESCRIPTION
     Validates the batch-insert / batch-modify / batch-delete subcommands of
@@ -37,7 +38,11 @@
     Prerequisites:
       - The project must be built: cmake --build build --config Release --target tsdev_cli
       - TradeStation 9.5 must be installed (or -TsPath provided)
-      - No TradeStation processes/services should be running
+      - The invoking PowerShell process must be an elevated administrator
+        process because this suite invokes tsdev_cli.exe directly. A
+        non-elevated direct CLI invocation returns exit code 11 (not_elevated).
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies; this suite does not use the Desktop UI
 #>
 
 param(
@@ -457,7 +462,9 @@ try {
     # Strategy source (valid, compiles).
     $srcStrat = "Inputs: Length(10);`r`nIf Close > Average(Close, Length) Then Buy next bar at Market;"
     $fStrat = Write-SourceFile "mixstrat" $srcStrat
-    # Function source: name must match the component name; returns 1.
+    # Function source: the name must match the component for EasyLanguage
+    # compiler syntax, not for metadata lookup; returns 1. Stored metadata
+    # comes from warehouse records/APIs.
     $srcFunc = "$n7f = 1;"
     $fFunc = Write-SourceFile "mixfunc" $srcFunc
     # Indicator source: a simple plot (valid for indicators).

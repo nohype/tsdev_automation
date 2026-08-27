@@ -117,16 +117,16 @@ struct TsDevLibTestConfig {
     //                             int passwordBufSize,
     //                             int componentType,
     //                             int progId)
-    //     flags          — pointer to the flags word passed as arg3 (may be
-    //                      NULL in the current production code; the GREEN
-    //                      phase will pass a non-NULL pointer to a word
-    //                      computed as (getCategory(type) & 0x7) | 0x60).
-    //     passwordBuf    — pointer to the 64-byte password buffer passed as
-    //                      arg5 (may be NULL in the current production code;
-    //                      the GREEN phase will pass a non-NULL pointer to a
-    //                      zeroed-then-!p$Kn@aSus-filled buffer).
-    //     passwordBufSize— size of the password buffer (64 in GREEN; 0 while
-    //                      production still passes NULL).
+    //     flags          — pointer to the non-NULL flags word passed as arg3
+    //                      by current production: (getCategory(type) & 0x7)
+    //                      | 0x60, with 0x10 added for a verified-item
+    //                      re-save (modify).
+    //     passwordBuf    — pointer to the non-NULL 64-byte buffer passed as
+    //                      arg5. It is zero-initialized first, then the
+    //                      10-byte internal default string is copied into the
+    //                      leading bytes; only the unused tail remains zero.
+    //     passwordBufSize— size of the password buffer (64 in current
+    //                      production).
     //     componentType  — static_cast<int>(type) being saved.
     //     progId         — the ProgId passed to saveSource.
     //
@@ -186,9 +186,9 @@ struct TsDevLibTestConfig {
     // ERROR SEMANTICS (R-M.3.3): Ordinal_57 always returns 1; send failure
     // is silently ignored; no receiver = silent no-op. The hook therefore
     // does NOT model receiver delivery — it only captures the would-be send
-    // arguments. Receiver-aware testing is the test's responsibility (it
-    // registers via _OrlibRegisterNotificationHandle@4 / ordinal 595 in the
-    // GREEN phase; the RED test asserts only the hook capture).
+    // arguments. Receiver-aware testing is the test's responsibility; the
+    // receiver fixture is implemented via _OrlibRegisterNotificationHandle@4
+    // / ordinal 595.
     void (*onNotifyReady)(UINT msg, WPARAM wParam, LPARAM lParam,
                           int componentType, int progId) = nullptr;
 
@@ -208,13 +208,24 @@ struct TsDevLibTestConfig {
     //       int traversalDepth)
     //
     // When nullptr (the default), verifyModule() does NOT invoke any hook
-    // and behaves exactly as in production. RED STATE: the hook is stored
-    // but NEVER invoked because no traversal code exists yet.
+    // and behaves exactly as in production. When configured by a test, the
+    // current linker-based traversal invokes the hook at traversal entry and
+    // for discovered dependents; CLI-created object-code version=0 can leave
+    // the linker element arrays empty (the M.3b blocker).
     void (*onReverseDependentRevalidationReady)(
         int, int, int, int, int, int, int, int, int) = nullptr;
 };
 
 namespace tsdev {
+
+// Test-only seam for the SEH-protected warehouse-close call. The production
+// close export has a void return type, so the wrapper's bool is the explicit
+// status: true when the call completes and false when it raises SEH. Tests
+// inject a no-op or an SEH-raising function without constructing TsDevLib or
+// loading orlib20.dll. This is the same wrapper used by
+// TsDevLib::closeWarehouse().
+using CloseWarehouseTestFn = void (__stdcall *)(int);
+bool invokeCloseWarehouseForTest(CloseWarehouseTestFn fn);
 
 // Test-only factory. DECLARED here and DEFINED in src/tsdev_lib.cpp as a
 // thin wrapper around the private TsDevLib(const wchar_t*,

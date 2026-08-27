@@ -17,7 +17,8 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
     entry_op_failure    -> EntryOpError
     save_source_failure -> SaveSourceError
     compile_error       -> CompileError
-    ell_missing         -> EllMissingError
+    artifact_missing    -> ArtifactMissingError
+    ell_missing         -> EllMissingError (legacy compatibility)
     thread_failure      -> ThreadFailure
 """
 
@@ -85,6 +86,10 @@ class CompileError(TsDevError):
     """
 
 
+class ArtifactMissingError(TsDevError):
+    """Persistence artifact missing or inconsistent after compile (exit 9)."""
+
+
 class EllMissingError(TsDevError):
     """.ell file not produced after compile (exit 9)."""
 
@@ -113,14 +118,17 @@ class TsDevCrashError(TsDevError):
 
 
 class ElevationRequiredError(TsDevError):
-    """Process is not elevated and ``use_serve=False`` (exit 12).
+    """Non-elevated Python caller requested direct mode (client exit 12).
 
-    The ``tsdev_cli.exe`` binary has a ``requireAdministrator`` manifest, so
-    launching it from a non-elevated Python process via ``subprocess.run``
-    fails with ``ERROR_ELEVATION_REQUIRED`` (Windows error 740) — a confusing
-    non-zero exit code with no actionable message.  This error is raised
-    *before* the subprocess call (in the ``use_serve=False`` / non-elevated
-    code path) so the user gets a clear, actionable message instead.
+    Direct ``tsdev_cli`` subprocess mode requires an elevated administrator
+    process; a non-elevated direct CLI invocation returns a not-elevated
+    error.  The authoritative elevation contract (direct-CLI / serve broker /
+    use_serve / exit code) lives in AGENTS.md and docs/BUILD.md; see those
+    instead of restating the exit-code detail here.  For ``use_serve=False``,
+    the Python client raises this error *before* launching the subprocess
+    instead, so the caller gets a clear, actionable message.  Direct mode is
+    valid when the Python process is already elevated; non-elevated callers
+    must use the serve-broker path.
 
     This is a client-side error (no ``TsDevResult``); it is NOT produced by
     the C++ CLI and is therefore intentionally absent from
@@ -153,6 +161,7 @@ ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "entry_op_failure": EntryOpError,
     "save_source_failure": SaveSourceError,
     "compile_error": CompileError,
+    "artifact_missing": ArtifactMissingError,
     "ell_missing": EllMissingError,
     "thread_failure": ThreadFailure,
 }
@@ -177,6 +186,7 @@ __all__ = [
     "EntryOpError",
     "SaveSourceError",
     "CompileError",
+    "ArtifactMissingError",
     "EllMissingError",
     "ThreadFailure",
     "TsDevCrashError",

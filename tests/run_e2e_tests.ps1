@@ -67,12 +67,23 @@
       4 = Init failure
       5 = Not found / already exists
       8 = Compile error
-      9 = .ell file missing
+      9 = Missing/inconsistent persistence artifact (artifact_missing), including
+          missing .ell/.xml artifacts or a detected Fault A stale/inconsistent .ell
+      11 = Not elevated (not_elevated), when an asInvoker build reaches the
+           runtime elevation guard
 
     Prerequisites:
       - The project must be built: cmake --build build --config Release
       - TradeStation 9.5 must be installed (or --ts-path provided)
-      - No TradeStation processes/services should be running
+      - The invoking PowerShell process must be an elevated administrator
+        process because this runner invokes the default requireAdministrator
+        tsdev_cli.exe directly. A non-elevated launch follows normal Windows
+        UAC/manifest handling and may fail at process creation with
+        ERROR_ELEVATION_REQUIRED (Windows error 740), before the CLI emits an
+        exit code. An asInvoker build reaches the runtime guard and returns
+        exit code 11 (not_elevated).
+      - No general TradeStation Desktop/TSDev running-state prerequisite
+        applies; this suite does not use the Desktop UI
 #>
 
 param(
@@ -98,8 +109,13 @@ $artifactsDir = Join-Path $ProjectRoot "tmp\re_artifacts"
 $tmpDir = Join-Path $ProjectRoot "tmp\e2e_run_$runId"
 $reportPath = Join-Path $artifactsDir "e2e_all_types_$runId.md"
 
-# Warehouse Bin directory (default TradeStation install) for orphan .ell checks.
-$binDir = Join-Path "C:\Program Files (x86)\TradeStation 9.5" "MyWork\Bin"
+# Warehouse Bin directory for orphan .ell checks. Match the CLI's selected
+# TradeStation root when -TsPath is supplied; otherwise retain the default.
+if ($TsPath) {
+    $binDir = Join-Path $TsPath "MyWork\Bin"
+} else {
+    $binDir = Join-Path "C:\Program Files (x86)\TradeStation 9.5" "MyWork\Bin"
+}
 
 # Results collector: list of result objects.
 $Results = New-Object System.Collections.Generic.List[object]
