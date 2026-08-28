@@ -27,7 +27,7 @@ Counts, listings, and details that could drift live in ONE authoritative locatio
 | Elevation contract (direct-CLI / exit 11 / serve broker) | `AGENTS.md` (rule) + `docs/BUILD.md` (operational); code: `src/tsdev_cli.cpp`, `src/tsdev_automation/exceptions.py` |
 | E2E CLI test cases (34 + 16/8/10 parts) | `docs/E2E_TEST_SPEC.md` |
 | Sub-suite case counts + "14 sub-suites" | `tests/run_regression.ps1` |
-| Workstream status (L closed; M.1-3 approved; M.3b planned; M.4 blocked; M.5 pending) | `AGENTS.md` §"Current state and TODO" |
+| Workstream status (L closed; M.1–M.3b.2c complete; M.4a complete; M.4b.1 RE-OPENED; M.4b.2 pending; M.5 pending) | `AGENTS.md` §"Current state and TODO"; detail: `docs/workstream_tsdev_parity_plan.md`, `docs/M4B1_HANDOFF.md` |
 | Ordinals 66/67/57 | `docs/SIGNATURE_CATALOG.md` |
 | 0x40A packing | `docs/RE/RE_M3_0x40A_NOTIFICATION.md` |
 
@@ -90,7 +90,7 @@ Read this file first. Read the following on demand:
 - `docs/FEASIBILITY.md` — orlib20 primitives, parameter order, and INSERT/MODIFY/DELETE pseudocode.
 - `docs/workstream_serve_plan.md` — Workstream K serve mode (K.1–K.6b complete).
 - `docs/workstream_unknown_link_fix_plan.md` — Workstream L reference plan.
-- `docs/workstream_tsdev_parity_plan.md` — Workstream M TSDev parity; M.1–M.3 are approved historical slices, M.3b is planned, M.4 is implemented but manual/blocked, and M.5 is pending.
+- `docs/workstream_tsdev_parity_plan.md` — Workstream M TSDev parity (M.1–M.3b.2c complete; M.4a complete; M.4b.1 RE-OPENED; M.4b.2 pending; M.5 pending). Current M.4b.1 detail in `docs/M4B1_HANDOFF.md`.
 
 **Python integration**
 - `docs/INTEGRATION_APPROACH_EVALUATION.md` — chosen Option A+ (batch CLI + JSON) for 64-bit Python ↔ 32-bit orlib20 integration; current wrapper also has completed serve-mode support.
@@ -113,25 +113,25 @@ The PM keeps this list current and identifies the next 1–3 highest-ROI steps t
 
 ### Completed
 
-- Workstreams A–J are complete. Workstream K (serve mode) K.1–K.6b, crash handling (C++ VEH plus Python `TsDevCrashError`), ShowMe (`TVS-C.8`), and CI are complete.
-- Implementation and happy-path support for INSERT, DELETE, MODIFY, `exists`, `get-source`, and `upsert` is present through both CLI and Python; this implementation status is distinct from production acceptance. Stdin batches, case-insensitive exists with warehouse stored-name/ProgId return, directory batches, serve mode (`_pipe.py` broker), and distribution packaging are implemented. Serve mode has historical E2E verification and is enabled by default (`use_serve=True`); Python and `_cli.py` expose the batch/directory operations.
-- Directory commands are `batch-<op>-dir <type> <dir_path>` for insert/modify/delete/upsert. File stem is the item name and file content is source; `-t <ext>` defaults to `.el` and `.txt`, the first `-t` replaces defaults, and the flag is repeatable. Batch logic is shared via `runBatchAndEmit()`; `batch-upsert` exists in manifest, `--batch-stdin`, and directory modes.
-- Signature resolution is data-driven: production has no hardcoded RVAs. Fresh clones build without `tmp/` dependencies. The case-insensitive exists algorithm is the two-phase warehouse search described above.
+- Workstreams A–J, K (serve mode K.1–K.6b), crash handling (C++ VEH + Python `TsDevCrashError`), ShowMe (`TVS-C.8`), and CI.
+- All six operations implemented (happy-path, not production acceptance) through CLI and Python: insert, delete, modify, exists, get-source, upsert. Stdin/directory batches, case-insensitive exists, serve mode (`use_serve=True` default), distribution packaging.
+- Directory commands: `batch-<op>-dir <type> <dir_path>`; file stem = item name, content = source; `-t <ext>` (default `.el`/`.txt`, repeatable, first replaces defaults). Shared via `runBatchAndEmit()`.
+- Signature resolution is data-driven (no hardcoded RVAs); fresh clones build without `tmp/`.
 
 ### Workstream L — closed
 
-- Workstream L is closed because its team completed it and a final independent review was completed.
+- Completed and independently reviewed.
 
 ### Next planned work
 
-- **M (TSDev parity):** M.1/M.2/M.3 are approved historical slices. M.3b is planned. M.4 implementation exists but remains manual/blocked by the existing CLI-created object-code defect and the three separate M.4 blocker escalations below. M.5 is pending. There is no approved post-TVS production-E2E claim for M.4. Scope: compiler-object setup/use ordinals 66/67, explicit SaveModule flags/`CELProperties` metadata, post-success event `0x40A`, and reverse-dependent revalidation. Plan: `docs/workstream_tsdev_parity_plan.md`.
+- **M (TSDev parity):** M.1–M.3b.2c complete (M.3b "defect" was a test artifact — declaration-free source legitimately has elemCount=0; see `docs/workstream_tsdev_parity_plan.md`). M.4a complete (warehouse provides reverse dependents via cmd 0x3B / IProgram::Callers). M.4b.1 RE-OPENED — 13 missing warehouse commands identified via Frida trace of TSDev.exe; next: Ghidra-analyze them; see `docs/M4B1_HANDOFF.md` §10. M.4b.2 (wire into revalidation + fix blockers + remove linker code) pending. M.5 pending.
 
 ### M.4 blocker escalations (pre-existing review findings)
 
-- **Dependent revalidation flag:** `callVerify()` hardcodes `_VerifyModule_New@20`'s fourth argument to `1`: the exact `verifyFn(hwnd, whType, progId, 1, compilerMem)` call is at `src/tsdev_lib.cpp:178` (within `callVerify()`, `src/tsdev_lib.cpp:173-183`). `traverseReverseDependents()` calls that helper for the dependent at `src/tsdev_lib.cpp:2132-2136` (function `src/tsdev_lib.cpp:2078-2175`), despite its local comment saying `flag=0`. The TSDev RE shows `primary=0` for a reverse dependent and passes that value as the fourth argument (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:155-190`). This is a separate M.4 blocker/escalation.
-- **Old master-record capture:** The checked-in `m_hasOldMasterRec` and `m_oldMasterRec` members are initialized to `false`/zero (`src/tsdev_lib.h:630-631`); `TsDevLib::saveSource()` contains no assignment that captures the old record (`src/tsdev_lib.cpp:1413-1448`), while `TsDevLib::verifyModule()` only conditionally compares the stored record and then resets `m_hasOldMasterRec` (`src/tsdev_lib.cpp:1788-1801`). The TSDev-derived RE contract requires comparing the root's old record captured before `saveSource` with the new record after verification (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:1127-1138`). Consequently, the metadata contract-change gate is effectively inactive and `contractChanged` defaults true. This is a separate M.4 blocker/escalation.
-- **Cycle safety under the default change gate:** Because the missing old-master-record capture leaves `contractChanged=true` (`TsDevLib::verifyModule()`, `src/tsdev_lib.cpp:1789-1801`), `TsDevLib::traverseReverseDependents()` checks `visited` but skips an already-visited node only when `!contractChanged`, then marks nodes before verification (`src/tsdev_lib.cpp:2108-2127`). Its dependent recursion continues through the same function (`src/tsdev_lib.cpp:2170-2172`); an already-visited node can therefore be reverified and recursion can continue. The current logic does not establish safe termination for a reachable cycle; this is not a claim that an infinite loop definitely occurs. The existing cycle case only pins hook signatures (including `traversalDepth`) and explicitly defers a live warehouse cycle (`tests/test_reverse_dependent_revalidation.cpp:741-766`); its direct synthetic hook calls do not execute runtime cycle traversal (`tests/test_reverse_dependent_revalidation.cpp:770-851`). The RE likewise records no explicit visited-set/depth or max depth for TSDev and says static analysis cannot fully rule out unbounded recursion (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:672-747`, `docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:749-769`). This is a separate M.4 blocker/escalation.
-- These three M.4 blockers/escalations are pre-existing review findings, not newly introduced by this cleanup. M.4 remains manual/blocked; the CLI-created object-code defect remains a separate existing blocker.
+- **Dependent revalidation flag:** `callVerify()` hardcodes the 4th arg to `1` (`src/tsdev_lib.cpp:178`); `traverseReverseDependents()` calls it for dependents (`src/tsdev_lib.cpp:2629`) despite comment saying `flag=0`. TSDev RE shows `primary=0` for reverse dependents (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:103-105`).
+- **Old master-record capture:** `m_hasOldMasterRec`/`m_oldMasterRec` init to false/zero (`src/tsdev_lib.h:693-694`); `saveSource()` never captures the old record (`src/tsdev_lib.cpp:1543`); `verifyModule()` only conditionally compares then resets (`src/tsdev_lib.cpp:1978-1991`). RE contract requires old-vs-new comparison (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:16-17, 178-182`). `contractChanged` defaults true; metadata gate inactive.
+- **Cycle safety:** With `contractChanged=true` (`src/tsdev_lib.cpp:1979`), `traverseReverseDependents()` skips visited nodes only when `!contractChanged` (`src/tsdev_lib.cpp:2607`); recursion can revisit nodes (`src/tsdev_lib.cpp:2666`). Existing cycle test only pins hook signatures, defers live cycle (`tests/test_reverse_dependent_revalidation.cpp:741-851`). RE records no visited-set/depth for TSDev (`docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md:439-442, 481-483`).
+- These three blockers are pre-existing, addressed in M.4b.2 (M.4b.1 does not touch them). M.3b "defect" was a test artifact, no longer a blocker. M.4 remains manual/blocked pending M.4b.1; see `docs/M4B1_HANDOFF.md` §10.
 
 ### Deferred or resolved follow-ups
 

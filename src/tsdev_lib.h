@@ -227,6 +227,18 @@ public:
     std::string verifyModule(ComponentType type, int progId,
                              CreatePathFailureStage* outStage = nullptr);
 
+    // M.4b.1: Link a module after verification to populate the dep-list
+    // cache with 0xFA3 (function-call) dependency entries. TSDev calls
+    // orlib20 Ordinal_69 (FUN_101a3e00) before AND after _VerifyModule_New.
+    // For newly created items the pre-verify link fails (no object code
+    // yet); this post-verify call reads the now-compiled object code and
+    // caches the linked record at module+0x23d so subsequent Ordinal_85
+    // (linker) calls return a record with 0xFA3 entries. Emulates TSDev
+    // FUN_004d8fb0 (post-verify Ordinal_28 + Ordinal_69 + Ordinal_70).
+    // Returns true on success (linked record created and cached), false
+    // on failure or if exports are not resolved. SEH-protected.
+    bool linkModule(ComponentType type, int progId);
+
     // Refresh the warehouse cache so that the cached _LoadMasterRecsEX@16
     // enumeration sees items created/modified/deleted in the same process.
     // If [warehouse+0x5E] (COM interface) is NULL, dispatches cmd 0x0F to
@@ -321,6 +333,43 @@ public:
     // Return the discovered MWRKArea.wrk path (narrow, for debug logging / tests).
     const char* getWrkPath() const;
 
+    // M.4b.1: Warehouse-level reverse-dependent (Callers) enumeration
+    // primitive. Drives the orlib20 warehouse worker-thread command protocol
+    // (cmd 0x0D → cmd 0x3B) — the SAME mechanism TSDev.exe uses
+    // (FUN_004cad90 / FUN_004D91E0; see
+    // docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md §9). Read-only: does
+    // NOT compile, verify, or modify any item.
+    //
+    // Flow:
+    //   1. Resolve the root item's ProgId via findExistPos.
+    //   2. Get the warehouse singleton (callGetWarehouse).
+    //   3. Set warehouse+0x12 = category, warehouse+0x16 = ProgId.
+    //   4. Dispatch cmd 0x0D (ProgramById) via callCmdDispatcher — stores the
+    //      root CELProgram record at warehouse+0x5e.
+    //   5. Dispatch cmd 0x3B (IProgram::Callers) via callCmdDispatcher —
+    //      populates the reverse-dependent SafeArray at warehouse+0x26.
+    //   6. Guard: warehouse+0x4e == 0 (status/error).
+    //   7. Read the SafeArray from warehouse+0x26, parse entries per §9.7.
+    //   8. Return a vector of CallerInfo.
+    //
+    // All orlib20 calls are SEH-protected. Returns an empty vector on any
+    // failure (not found, warehouse unavailable, SEH, status error). The
+    // SafeArray is destroyed after parsing (matching TSDev's
+    // FUN_004cad90 behavior).
+    struct CallerInfo {
+        std::string name;      // verbatim stored name from the SafeArray entry
+        int category;          // 2-byte type/category field from the entry
+        int progId;            // 4-byte ID-like field from the entry (ProgId)
+    };
+    std::vector<CallerInfo> enumerateCallers(ComponentType type,
+                                             const std::string& name);
+    // ProgId-based overload: the warehouse cmd 0x0D takes a ProgId directly,
+    // so callers that already have the ProgId can bypass the name lookup
+    // (findExistPos), which can fail for existing items when the BST is not
+    // initialized or has different name casing.
+    std::vector<CallerInfo> enumerateCallersByProgId(ComponentType type,
+                                                     int progId);
+
 private:
     // --- COM apartment guard (TVS-L.2) ---
     // Declared FIRST among the members that participate in the init/teardown
@@ -410,6 +459,19 @@ private:
     // flag, outBuf). Returns 1 on success; writes a 0x10A-byte partial record.
     // Ordinal_70 (RVA 0x15DF30): __stdcall, 2 args (rec, flag). Releases a
     // refcounted record returned by the linker.
+    // Ordinal_69 (RVA 0x1A3E00): __cdecl (RET C3, caller cleans up 12
+    // bytes), 3 args (category, progId, partialBuf). Links a module:
+    // reads object code from the .ell file, resolves forward dependencies
+    // (populating 0xFA3 dep-list entries), and caches the linked record
+    // at module+0x23d. TSDev calls this BEFORE _VerifyModule_New
+    // (pre-verify link) and AFTER verify succeeds for categories 0/1/4
+    // (post-verify re-link in FUN_004d8fb0). For newly created items the
+    // pre-verify link fails (no object code yet); calling Ordinal_69
+    // after verify populates the dep-list cache so subsequent Ordinal_85
+    // (linker) calls return a record with 0xFA3 entries. Returns a linked
+    // record pointer (refcounted — release via Ordinal_70) or 0 on failure.
+    typedef void* (__cdecl *Ordinal69Fn)(int category, int progId,
+                                         void* partialBuf);
     typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
                                                   int flag, void* outBuf);
     typedef int (__stdcall *Ordinal70Fn)(void* rec, int flag);
@@ -428,6 +490,7 @@ private:
     DeleteDependencyListFn m_deleteDependencyList = nullptr;
     // Workstream M slice M.4: linker-based reverse-dependency state.
     Ordinal28Fn          m_ord28            = nullptr;  // partial-record copy
+    Ordinal69Fn          m_ord69            = nullptr;  // link module (populate deps)
     Ordinal70Fn          m_ord70            = nullptr;  // release linked record
     void*                m_linkerRaw        = nullptr;  // ordinal 85, inline-asm call
 

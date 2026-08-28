@@ -1,137 +1,71 @@
 # RE_M4 — Reverse-Dependent Revalidation (`FUN_004D91E0`)
 
-> **Status:** Research-only findings note for Workstream M, slice M.4.
-> **Date:** 2026-08-26
+> **Status:** Research-only RE evidence for M.4b.1/M.4b.2. Reference document.
+> **Date:** 2026-08-26 (§9.8 updated 2026-08-28)
 >
-> **CORRECTION NOTICE (2026-08-25, PM-applied):** The original note inverted the
-> contract-change gate logic in §1.6, §1.7, §2, §3.3, §3.4, and the R-M.4.2/R-M.4.3
-> Answers. `FUN_004d9040` returns 1 = no change, 0 = changed (correct in the
-> decompilation). `local_24 = (uint)(cVar3 == '\0')` = 1 when changed, 0 when no
-> change. The gate `if ((iVar7 == 0) || (local_24 == 1))` = recurse if (NOT
-> verified OR **changed**); skip if (verified AND **NOT changed**). The original
-> text said the opposite ("local_24 = 1 means no change", "skip if verified AND
-> changed"). All instances have been corrected below. The decompilation/
-> disassembly was always correct; only the interpretive comments were wrong.
-> Additionally, §6 step 3 was corrected: the contract-change check compares the
+> **Scope:** RE of `TSDev.exe!FUN_004D91E0`, the reverse-dependent reverify
+> wrapper between `FUN_004D9480` and `orlib20!_VerifyModule_New@20`.
+> **Method:** Ghidra static analysis of `TSDev.exe`, `orlib20.dll`,
+> `WHServer.exe` in `TSDevAnalysis`. PE export-table parsing via `pefile`.
+> **Binaries:** `C:\Program Files (x86)\TradeStation 9.5\Program\TSDev.exe`,
+> `...\orlib20.dll` (baseline `9.50.01.3344`).
+>
+> **Correction history (gate logic):** `FUN_004d9040` returns 1 = no change,
+> 0 = changed. `local_24 = (uint)(cVar3 == '\0')` = 1 when changed. Gate
+> `if ((iVar7 == 0) || (local_24 == 1))` = recurse if (NOT verified OR changed);
+> skip if (verified AND NOT changed). The contract-change check compares the
 > ROOT's old vs new record (done once), not each dependent's record.
-> **Scope:** Reverse-engineering of `TSDev.exe!FUN_004D91E0`, the reverse-dependent
-> reverify wrapper that sits between `FUN_004D9480` and
-> `orlib20!_VerifyModule_New@20` in the UI Verify command chain. No production or
-> test code was changed for this task.
-> **Method:** Ghidra static analysis of `TSDev.exe` and `orlib20.dll` in the
-> `TSDevAnalysis` project. PE export-table parsing via `pefile` (Python) to map
-> ordinal-only exports to RVAs. No TSDev reverse-traversal dynamic trace was
-> captured for the original slice; §8 adds runtime diagnostic evidence for the
-> linker/object-code behavior. Where static evidence is insufficient, the gap
-> is recorded.
-> **Binaries analyzed (read-only):**
-> `C:\Program Files (x86)\TradeStation 9.5\Program\TSDev.exe`,
-> `...\orlib20.dll` (baseline `9.50.01.3344`, SHA-256
-> `318DB24A4F41BDB9FF69E2E647026B788706904CF887CBB0A953E003DB22EC18`).
 >
-> **CORRECTION NOTICE (2026-08-26):** The earlier pre-linker analysis in §§5.3–5.4
-> (including its Option B2 reverse-by-inverting-forward recommendation), §6, and
-> the R-M.4.5 answer is historical and superseded for production by the
-> linker-based approach in §8.7. The current implementation calls the linker
-> (ordinal 85), reads linked
-> per-element dep-lists, and does not use `GetDependencies` or
-> `_GetStaticDependencyList@12` for reverse-dependent enumeration. The §8
-> diagnostic figures are unverified historical/transient evidence, not M.4
-> acceptance evidence. CLI-created object code currently has version=0, which
-> leaves linker element arrays empty and blocks the M.4 dependency test.
+> **Supersession history:** §§5.3–5.4 (Option B2 reverse-by-inverting-forward)
+> and §6 are superseded. §8.7 linker-based approach is superseded by §9 (M.4a):
+> the warehouse provides reverse dependents via cmd `0x3B` (`IProgram::Callers`),
+> not by enumerating master records or parsing linker dep-lists. M.4b replaces
+> the linker-based approach with this warehouse-level mechanism. See
+> `docs/workstream_tsdev_parity_plan.md` §M.4.
 
 ---
 
 ## 0. Executive Summary
 
-`FUN_004D91E0` is the **TSDev.exe-side** reverse-dependent reverify wrapper. It
-is **not** present in orlib20.dll; it is private to TSDev.exe. Its behavior:
+`FUN_004D91E0` is **TSDev.exe-private** (not in orlib20.dll). Behavior:
 
-1. **Verifies the current module** by calling `orlib20!_VerifyModule_New@20`
-   (ordinal 700) — the same primitive the standalone CLI already uses.
-2. **Only on success**, and only for certain categories (0, 1, 4), it
-   **enumerates reverse dependents** of the just-verified module via a
-   TSDev-internal `CELPrograms` BST that is populated from the orlib20
-   warehouse (worker-thread command `0x0D` = `IWHouse::ProgramById`, or a
-   cached BST lookup via `Ordinal_71`/`InitGlobalLookup`).
-3. For each reverse dependent, it performs a **metadata-based contract-change
-   comparison** (`FUN_004d9040`) between the old and new module records. This
-   comparison is **purely warehouse-record metadata** — it does NOT parse
-   EasyLanguage source text. (R-M.4.2 — no AGENTS.md violation.)
-4. It **recurses** into itself (`FUN_004d91e0` at `0x004D9402`) for each
-   reverse dependent, subject to a per-dependent gate. There is **no
-   visited-set and no depth counter** — cycle protection relies entirely on the
-   contract-change check and a per-record "already-verified" flag
-   (`FUN_004ca5c0`, `*(byte*)(record+0x55) & 1`). (R-M.4.3.)
-5. Per-dependent verify failures are **accumulated, not aborting**: the
-   compiler object's `+0x04` field is `AND`-ed with each verify result
-   (`param_1[1] = param_1[1] & uVar6`), so any failure drives the aggregate to
-   0, but the loop continues. The root result (`+0x00`) is only set from the
-   root verify when the primary-flag is 1. (R-M.4.4.)
+1. **Verifies the current module** via `orlib20!_VerifyModule_New@20` (ordinal 700) — full `CompileText` recompile.
+2. **Only on success**, for categories 0/1/4 only, **enumerates reverse dependents** from a TSDev-internal `CELPrograms` BST populated from the orlib20 warehouse (worker-thread cmd `0x0D` = `IWHouse::ProgramById` for the root record, then cmd `0x3B` = `IProgram::Callers` for the reverse-dependent set; or cached BST via `Ordinal_71`/`InitGlobalLookup`).
+3. **Metadata-based contract-change comparison** (`FUN_004d9040`) between old and new root records — purely warehouse-record metadata, NO source-text parsing (R-M.4.2, AGENTS.md-compliant).
+4. **Recurses** into itself (`0x004D9402`) per reverse dependent, gated by per-record "verified" flag (`*(byte*)(record+0x55) & 1`) and contract-change result. **No visited-set, no depth counter.** (R-M.4.3.)
+5. Per-dependent failures **accumulated, not aborting**: `param_1[1] = param_1[1] & uVar6`. Root result (`+0x00`) set only when primary-flag=1. (R-M.4.4.)
 
-**Critical feasibility finding (R-M.4.5):** orlib20.dll does **not** export a
-single "reverse-dependent revalidation" API. The reverse-dependent enumeration
-is performed by TSDev.exe-private code (`FUN_004d7140`, `FUN_004c9670`,
-`FUN_004d85c0`) that drives the orlib20 warehouse via:
-- `Ordinal_10` (`GetWarehouse`, RVA `0x1A9650`) — warehouse singleton,
-- `Ordinal_71` (`InitGlobalLookup`, RVA `0x1A9460`) — global lookup init,
-- `Ordinal_28` (RVA `0x1A03F0`) — master-record lookup by type/name,
-- `Ordinal_69` (RVA `0x1A3E00`) — module-record retrieval,
-- `Ordinal_68` (RVA `0x1A87D0`) — count accessor (`*(obj+0x0C)`),
-- `Ordinal_70` (RVA `0x15DF30`) — refcount-decrement/free,
-- `_VerifyModule_New@20` (ordinal 700, RVA `0x169630`) — the verify primitive
-  the CLI already uses.
+**orlib20 does NOT export a reverse-dependent API.** The traversal is TSDev.exe-private code driving the warehouse via:
+`Ordinal_10` (GetWarehouse, RVA `0x1A9650`), `Ordinal_71` (InitGlobalLookup, RVA `0x1A9460`), `Ordinal_28` (RVA `0x1A03F0`), `Ordinal_69` (RVA `0x1A3E00`), `Ordinal_68` (RVA `0x1A87D0`), `Ordinal_70` (RVA `0x15DF30`), `_VerifyModule_New@20` (ordinal 700, RVA `0x169630`).
 
-orlib20 does export **forward** dependency-list APIs (`GetDependencies`
-ordinal 487, `_GetDynamicDependencyList@12` ordinal 489,
-`_GetStaticDependencyList@12` ordinal 531, `_DeleteDependencyList@4` ordinal
-397), but these return what a module depends on, not what depends on a module.
-The reverse-dependent set TSDev traverses is built in TSDev.exe from the
-warehouse master records, not from an orlib20 reverse-dependency export.
+orlib20 exports **forward** dependency APIs only (`GetDependencies` ord 487, `_GetDynamicDependencyList@12` ord 489, `_GetStaticDependencyList@12` ord 531, `_DeleteDependencyList@4` ord 397). `GetDependencies` is broken (§8.1: checks `0xFA4`, compiler writes `0xFA3`).
 
-**Historical recommendation (superseded by §8.7):** The original note proposed
-composing `GetWarehouse`/`Ordinal_10`, master-record enumeration, and
-`_VerifyModule_New@20` with a TSDev-equivalent metadata comparison. The current
-CLI implementation instead composes `_LoadMasterRecsEX@16`, Ordinal_28, the
-linker (ordinal 85), Ordinal_70, and `_VerifyModule_New@20`, scanning linked
-per-element dep-lists. It does not use `GetDependencies` for this path.
+**M.4a (§9) resolved the BST population gap:** reverse dependents come from cmd `0x3B` (`IProgram::Callers`), not master-record enumeration or linker dep-lists. M.4b replaces the linker-based approach with this warehouse-level mechanism.
 
 ---
 
 ## 1. R-M.4.1 — Exact Traversal
 
-### Question
+### 1.1 Function signature and entry
 
-Confirm the exact traversal `FUN_004D91E0` performs. Which warehouse records
-enumerate reverse dependents? In what order? What per-dependent work is done
-(reverify only? recompile? both?)? Trace the function and its callees.
-
-### Evidence
-
-#### 1.1 Function signature and entry
-
-`FUN_004D91E0` at `TSDev.exe:0x004D91E0` is `__thiscall` (`ECX` = compiler
-object). Disassembly entry (`0x004d9201`–`0x004d9206`):
+`FUN_004D91E0` at `TSDev.exe:0x004D91E0` is `__thiscall` (`ECX` = compiler object).
 
 ```asm
 004d9201  MOV EDI,[EBP + 0x8]    ; param_2 (stack) = category (whType)
 004d9204  MOV EBX,ECX           ; this = compiler object
 ```
 
-The caller `FUN_004D9480` (`0x004D9480`) sets up the call (`0x004D9488`–
-`0x004D94A0`):
+Caller `FUN_004D9480` (`0x004D9480`) setup:
 
 ```asm
-004D9488  PUSH dword ptr [ESI+0x10]   ; arg3 (stack) = compiler+0x10 = ProgId
+004D9488  PUSH dword ptr [ESI+0x10]   ; arg3 = compiler+0x10 = ProgId
 004D948B  MOV  ECX,ESI               ; this = compiler object
 004D948D  MOV  dword ptr [ESI],0      ; compiler+0x00 = 0 (root result)
-004D9493  PUSH dword ptr [ESI+0x0C]   ; arg2 (stack) = compiler+0x0C = subtype
+004D9493  PUSH dword ptr [ESI+0x0C]   ; arg2 = compiler+0x0C = subtype
 004D9496  MOV  dword ptr [ESI+4],0    ; compiler+0x04 = 0 (aggregate result)
-004D949D  PUSH dword ptr [ESI+8]      ; arg1 (stack) = compiler+0x08 = category
+004D949D  PUSH dword ptr [ESI+8]      ; arg1 = compiler+0x08 = category
 004D94A0  CALL 0x004D91E0
 ```
-
-Decompilation of `FUN_004D9480`:
 
 ```c
 void __fastcall FUN_004d9480(undefined4 *param_1) {
@@ -143,28 +77,23 @@ void __fastcall FUN_004d9480(undefined4 *param_1) {
 }
 ```
 
-So `FUN_004D91E0(this=compiler, category, subtype, ProgId)`. The compiler
-object layout (confirmed by M.1, `docs/M1_HANDOFF.md` §R-M.1.2, and
-`FUN_00451800` at `0x00451800`): `+0x08`=category, `+0x0C`=subtype,
-`+0x10`=ProgId, `+0x18`=HWND (notification window). `+0x00` and `+0x04` are
-result accumulators zeroed before the call.
+`FUN_004D91E0(this=compiler, category, subtype, ProgId)`. Compiler object layout
+(confirmed by M.1, `docs/M1_HANDOFF.md` §R-M.1.2): `+0x08`=category, `+0x0C`=subtype, `+0x10`=ProgId, `+0x18`=HWND. `+0x00` and `+0x04` are result accumulators zeroed before the call.
 
-#### 1.2 Step 1 — Verify the current (root) module
+### 1.2 Step 1 — Verify the current (root) module
 
-After normalizing the category via `FUN_004d7a30` (a category→power-type
-expander; e.g., category 2 maps to subtypes `0x402`, `0x502`, …, `0x1402`),
-`FUN_004D91E0` calls `_VerifyModule_New@20` (`0x004D9299`):
+After category normalization via `FUN_004d7a30`, calls `_VerifyModule_New@20` (`0x004D9299`):
 
 ```asm
-004d928b  PUSH EBX                      ; arg5 = compiler object (param_5)
+004d928b  PUSH EBX                      ; arg5 = compiler object
 004d928c  PUSH ECX                      ; arg4 = primary-flag (1 if root==this)
-004d928d  PUSH EAX                      ; arg3 = ProgId (param_4)
+004d928d  PUSH EAX                      ; arg3 = ProgId
 004d928e  PUSH EDI                      ; arg2 = category (whType)
 004d928f  PUSH dword ptr [EBX + 0x18]   ; arg1 = compiler+0x18 (HWND)
 004d9299  CALL 0x0053f5bc               ; _VerifyModule_New@20 thunk
 ```
 
-The primary-flag (`ECX`) is computed at `0x004d9278`–`0x004d928b`:
+Primary-flag (`ECX`) computed at `0x004d9278`–`0x004d928b`:
 
 ```asm
 004d9278  CMP [EBX + 0x8], EDI    ; compiler+0x08 (saved category) == param_2?
@@ -176,14 +105,6 @@ The primary-flag (`ECX`) is computed at `0x004d9278`–`0x004d928b`:
 004d9289  XOR ECX, ECX            ; primary = 0 (this is a reverse dependent)
 ```
 
-So the primary-flag is 1 only when the current `(category, ProgId)` matches the
-compiler object's saved root `(+0x08, +0x10)`. This is the "+0x10 root
-bookkeeping/primary-flag selection" noted in prior RE
-(`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F
-("Disproved or non-causal hypotheses")).
-
-Decompiled verify + result handling:
-
 ```c
 uVar6 = _VerifyModule_New_20(param_1[6], uVar2, param_4, param_2, param_1);
 if (param_2 == (undefined4 *)0x1) {   // if primary-flag was 1
@@ -192,18 +113,9 @@ if (param_2 == (undefined4 *)0x1) {   // if primary-flag was 1
 param_1[1] = param_1[1] & uVar6;       // compiler+0x04 &= verify result (aggregate)
 ```
 
-`_VerifyModule_New@20` (`orlib20.dll:0x10169630`, ordinal 700) compiles a
-single module via `CELBasicCompiler::CompileText` and returns 1 on success
-(decompilation confirms: it calls `FUN_101a9650`/GetWarehouse,
-`FUN_101cff60`/master-record lookup, `CELBasicCompiler::CompileText`, then
-`FUN_101698f5` for finalization; no reverse-dependent traversal inside
-orlib20). So **the root verify is a full recompile** (CompileText), not a
-lightweight check.
+`_VerifyModule_New@20` (`orlib20.dll:0x10169630`, ordinal 700) compiles a single module via `CELBasicCompiler::CompileText`, returns 1 on success. Root verify is a **full recompile**, not a lightweight check.
 
-#### 1.3 Step 2 — Gate: only verify dependents on success, only for categories 0/1/4
-
-After the root verify returns, the reverse-dependent path is gated
-(`0x004d92a9`–`0x004d92bd`):
+### 1.3 Step 2 — Gate: only verify dependents on success, only for categories 0/1/4
 
 ```asm
 004d92a9  CMP EAX, 0x1          ; verify returned 1?
@@ -216,15 +128,9 @@ After the root verify returns, the reverse-dependent path is gated
 004d92bd  JNZ 0x004d945f         ; otherwise skip to cleanup
 ```
 
-So reverse dependents are processed **only when the root verify succeeded AND
-the category is 0 (Strategy), 1 (Function), or 4 (SystemFunction)**. Other
-categories (2 Indicator, 3 ActivityBar, etc.) skip the reverse-dependent
-traversal entirely.
+Reverse dependents processed **only when root verify succeeded AND category is 0 (Strategy), 1 (Function), or 4 (SystemFunction)**.
 
-#### 1.4 Step 3 — Build the reverse-dependents enumerator
-
-On the gated path, `FUN_004D91E0` calls `Ordinal_10` (GetWarehouse) at
-`0x004d92c5`, then `FUN_004d7140` at `0x004d92e9`:
+### 1.4 Step 3 — Build the reverse-dependents enumerator
 
 ```c
 iVar5 = Ordinal_10(0);                         // GetWarehouse(NULL) -> warehouse
@@ -235,7 +141,7 @@ if (iVar5 != 0) {
 }
 ```
 
-`FUN_004d7140` (`0x004D7140`) has two paths (decompilation):
+`FUN_004d7140` (`0x004D7140`) has two paths:
 
 ```c
 bool __thiscall FUN_004d7140(int param_1, undefined4 param_2, undefined4 param_3, int *param_4) {
@@ -250,26 +156,12 @@ bool __thiscall FUN_004d7140(int param_1, undefined4 param_2, undefined4 param_3
 }
 ```
 
-- **Cached path** (`*(warehouse + 0xc2) == 1`): calls `Ordinal_71`
-  (`InitGlobalLookup`, orlib20 RVA `0x1A9460`) then `FUN_004e79d0`, which does
-  a BST search by ProgId (`param_3`) in a per-type tree; if not found, falls
-  back to `Ordinal_10` + `FUN_004d75b0`.
-- **Worker path** (`FUN_004d75b0`, `0x004D75B0`): sets
-  `*(warehouse + 0x12) = param_2` (type), `*(warehouse + 0x16) = param_3`
-  (ProgId), `*(warehouse + 4) = 0xd` (**command 0x0D = `IWHouse::ProgramById`**),
-  signals the worker thread, waits, and on success allocates a `0x241`-byte
-  record via `FUN_004c71f0` and increments its `+0x210` refcount.
+- **Cached path** (`*(warehouse + 0xc2) == 1`): `Ordinal_71` (`InitGlobalLookup`, orlib20 RVA `0x1A9460`) then `FUN_004e79d0` (BST search by ProgId in a per-type tree; falls back to `Ordinal_10` + `FUN_004d75b0` on miss).
+- **Worker path** (`FUN_004d75b0`, `0x004D75B0`): sets `*(warehouse + 0x12) = type`, `*(warehouse + 0x16) = ProgId`, `*(warehouse + 4) = 0xd` (**cmd 0x0D = `IWHouse::ProgramById`**), signals worker thread, waits, allocates a `0x241`-byte record via `FUN_004c71f0`, increments `+0x210` refcount.
 
-The output `*param_4` is a **module record pointer** for the just-verified
-module — this becomes the "current record" used for the contract-change
-comparison.
+Output `*param_4` = module record pointer for the just-verified module (the "current record" for contract-change comparison).
 
-#### 1.5 Step 4 — Initialize the `CELPrograms` BST and get the dependent count
-
-`FUN_004D91E0` then constructs a `CELPrograms` enumerator object
-(`FUN_004d80d0` at `0x004d92fa`, which sets `*param_1 = CELPrograms::vftable`
-and builds a BST via `FUN_004d8a90`), initializes it (`FUN_004c9670` at
-`0x004d930a`), and gets the count via `Ordinal_68` at `0x004d931c`:
+### 1.5 Step 4 — Initialize the `CELPrograms` BST and get the dependent count
 
 ```c
 FUN_004d80d0(local_40);              // construct CELPrograms
@@ -280,45 +172,20 @@ if (iVar5 == 1) {
 }
 ```
 
-- `FUN_004c9670` (`0x004C9670`) calls `FUN_004cad90` which (under a
-  `CSingleLock`) calls `FUN_004d7040` to get a record, then if a SafeArray is
-  present at `*(record + 0x26)`, calls `SafeArrayAccessData` +
-  `FUN_004d88c0` to populate the BST from the SafeArray, then
-  `SafeArrayDestroy`. So the BST is populated from warehouse SafeArray data
-  (binary records, not source text). `FUN_004c9670` then reads the populated
-  count **internally** via `FUN_004d85b0` (`TSDev.exe:0x004D85B0`, called at
-  `0x004c9699`) — a one-line TSDev-side accessor `return *(undefined4
-  *)(param_1 + 0xc);` — and iterates `0..count-1` calling `FUN_004d85c0` per
-  index. `FUN_004d85b0` is therefore the in-process counterpart of the
-  orlib20 count accessor (see next bullet) and is part of the M.4 path.
-- `Ordinal_68` (`orlib20.dll:0x101A87D0`, ordinal 68) is a thunk to
-  `FUN_101e5970` which returns `*(param_1 + 0x0C)` — the count field of the
-  `CELPrograms`/record object. `FUN_004D91E0` itself reads the count a second
-  time via this export at `0x004d931c` (the loop bound used by the
-  reverse-dependent loop in §1.7). Both `FUN_004d85b0` (inside
-  `FUN_004c9670`) and `Ordinal_68` (in `FUN_004D91E0`) read the same
-  `*(obj + 0x0C)` count field; this is the **reverse-dependent count**.
+- `FUN_004c9670` (`0x004C9670`) calls `FUN_004cad90` which (under `CSingleLock`) calls `FUN_004d7040` to get a record, then if a SafeArray is present at `*(warehouse + 0x26)`, calls `SafeArrayAccessData` + `FUN_004d88c0` to populate the BST from the SafeArray, then `SafeArrayDestroy`. BST populated from warehouse SafeArray data (binary records, not source text). `FUN_004c9670` reads count internally via `FUN_004d85b0` (`0x004D85B0`: `return *(undefined4 *)(param_1 + 0xc);`) and iterates `0..count-1` calling `FUN_004d85c0` per index.
+- `Ordinal_68` (`orlib20.dll:0x101A87D0`, ordinal 68) thunks to `FUN_101e5970` returning `*(param_1 + 0x0C)` — the count field. `FUN_004D91E0` reads count again via this export at `0x004d931c` (loop bound). Both read the same `*(obj + 0x0C)` = **reverse-dependent count**.
 
-#### 1.6 Step 5 — Build the "new" record and compare contracts
-
-Before the loop, `FUN_004D91E0` builds a fresh "new" record via `FUN_004d8fb0`
-(`0x004d9336`) and runs the contract-change comparison `FUN_004d9040`
-(`0x004d9346`):
+### 1.6 Step 5 — Build the "new" record and compare contracts
 
 ```c
 FUN_004d8fb0(param_3, uVar2);            // build "new" record (calls Ordinal_28 + Ordinal_69)
-cVar3 = FUN_004d9040(&local_18);         // compare old vs new; returns 1 if SAME (no change), 0 if CHANGED
-local_24 = (uint)(cVar3 == '\0');        // 1 if CHANGED, 0 if no change (CORRECTED — see notice)
+cVar3 = FUN_004d9040(&local_18);         // compare old vs new; returns 1 if SAME, 0 if CHANGED
+local_24 = (uint)(cVar3 == '\0');        // 1 if CHANGED, 0 if no change
 ```
 
-`FUN_004d8fb0` (`0x004D8FB0`) mirrors the root setup: it calls `Ordinal_28`
-(master-record lookup by type/name) and, on success, `Ordinal_69` (module
-record retrieval) to produce the freshly-verified record. (See R-M.4.2 for the
-comparison.)
+`FUN_004d8fb0` (`0x004D8FB0`) calls `Ordinal_28` (master-record lookup) + `Ordinal_69` (module-record retrieval) to produce the freshly-verified record. See §2 for comparison.
 
-#### 1.7 Step 6 — Per-dependent loop
-
-The loop (`0x004d9357`–`0x004d9415`) iterates `iVar5 = 0 .. local_20-1`:
+### 1.7 Step 6 — Per-dependent loop
 
 ```c
 for (iVar5 = 0; iVar5 < local_20; iVar5 = iVar5 + 1) {
@@ -326,7 +193,6 @@ for (iVar5 = 0; iVar5 < local_20; iVar5 = iVar5 + 1) {
     iVar7 = FUN_004d85c0(iVar5, &param_4);   // get reverse-dependent record by index
     if (iVar7 == 1) {
         local_2c = param_1[6];                // save compiler+0x18 (HWND)
-        // resolve the dependent's "module record" pointer:
         if (*(char *)(param_4 + 0x8e) == '\0') {
             iVar7 = FUN_004c9ef0();           // returns *(record + 0x8f)
         } else {
@@ -334,8 +200,7 @@ for (iVar5 = 0; iVar5 < local_20; iVar5 = iVar5 + 1) {
         }
         param_1[6] = *(uint *)(iVar7 + 0xe4); // compiler+0x18 = dependent's record+0xe4
         iVar7 = FUN_004ca5c0();               // per-dependent "already verified?" check
-        if ((iVar7 == 0) || (local_24 == 1)) { // recurse if NOT verified OR contract CHANGED (CORRECTED)
-            // re-resolve record, get type/subtype/sig, then recurse:
+        if ((iVar7 == 0) || (local_24 == 1)) { // recurse if NOT verified OR contract CHANGED
             ...
             FUN_004d91e0(uVar4);              // RECURSE (0x004D9402)
         }
@@ -345,21 +210,12 @@ for (iVar5 = 0; iVar5 < local_20; iVar5 = iVar5 + 1) {
 }
 ```
 
-- `FUN_004d85c0` (`0x004D85C0`) is the per-index BST accessor: it validates
-  `0 <= index < *(obj + 0x0C)` (the count), walks the BST via `FUN_004d7c40`
-  (an in-order BST traversal by index), and returns the record at that index
-  via `FUN_004d70a0` (cached path: `Ordinal_71` + `FUN_004e7840`) or
-  `FUN_004d7190` (worker path). The record's name is at `+0x0e` (or `+0x10` if
-  the string is heap-allocated, gated by `*(uint*)(record+0x24) > 0xf`).
-- **Order**: the BST is traversed in **ascending in-order** (left-root-right)
-  via `FUN_004d7c40`, which is a standard red-black-tree successor/predecessor
-  walk. The records are keyed by ProgId. So reverse dependents are visited in
-  **ascending ProgId order**. This is now confirmed by direct decompilation
-  (see "Traversal-order evidence" below).
+- `FUN_004d85c0` (`0x004D85C0`): per-index BST accessor. Validates `0 <= index < *(obj + 0x0C)`, walks BST via `FUN_004d7c40` (in-order traversal by index), returns record via `FUN_004d70a0` (cached: `Ordinal_71` + `FUN_004e7840`) or `FUN_004d7190` (worker). Record name at `+0x0e` (or `+0x10` if heap-allocated, gated by `*(uint*)(record+0x24) > 0xf`).
+- **Order**: BST traversed in **ascending in-order** (left-root-right) via `FUN_004d7c40` (standard red-black-tree successor walk). Records keyed by ProgId → reverse dependents visited in **ascending ProgId order**.
 
-##### Traversal-order evidence (FUN_004d7c40, FUN_004e79d0, FUN_004e7840)
+##### Traversal-order evidence (`FUN_004d7c40`, `FUN_004e79d0`, `FUN_004e7840`)
 
-`FUN_004d7c40` (`TSDev.exe:0x004D7C40`) is the in-order walk. Decompilation:
+`FUN_004d7c40` (`0x004D7C40`) — in-order successor walk:
 
 ```c
 void FUN_004d7c40(int *param_1, int param_2) {
@@ -403,17 +259,9 @@ void FUN_004d7c40(int *param_1, int param_2) {
 }
 ```
 
-Node layout (MSVC `std::_Tree` node): `piVar4[0]` = `_Left`, `piVar4[1]` =
-`_Parent`, `piVar4[2]` = `_Right`, the byte at `+0xd` (high byte of
-`piVar4[3]`) = `_Isnil`/color flag, and `piVar4[4]` (offset `0x10`) = the key.
-The forward branch implements the textbook BST successor: descend the right
-subtree then walk to its leftmost node; if no right subtree, walk up the
-parent chain until the node is a left child. This is an in-order
-(left→node→right) traversal advanced one step per call, confirming
-**ascending in-order order**.
+Node layout (MSVC `std::_Tree`): `piVar4[0]`=`_Left`, `piVar4[1]`=`_Parent`, `piVar4[2]`=`_Right`, byte at `+0xd` (high byte of `piVar4[3]`)=`_Isnil`/color, `piVar4[4]` (offset `0x10`)=key. Textbook BST successor: descend right subtree then leftmost; if no right, walk up parent chain until left child. **Ascending in-order order confirmed.**
 
-`FUN_004e79d0` (`0x004E79D0`, cached BST lookup) confirms the key is ProgId.
-Decompilation (key comparison excerpt):
+`FUN_004e79d0` (`0x004E79D0`, cached BST lookup) — key is ProgId:
 
 ```c
 int __thiscall FUN_004e79d0(int param_1, undefined4 param_2, int param_3) {
@@ -445,14 +293,9 @@ int __thiscall FUN_004e79d0(int param_1, undefined4 param_2, int param_3) {
 }
 ```
 
-`param_3` is the ProgId (passed from `FUN_004d7140` as the second stack arg,
-which is the root module's ProgId — see §1.4). The BST search compares
-`puVar3[4]` (node offset `0x10`) against `param_3` (ProgId), so **the BST key
-is ProgId at node offset `0x10`**. The value at node offset `0x14`
-(`puVar4[5]`) is the module-record pointer returned to the caller.
+`param_3` = ProgId. BST search compares `puVar3[4]` (node offset `0x10`) against `param_3` → **BST key is ProgId at node offset `0x10`**. Value at node offset `0x14` (`puVar4[5]`) = module-record pointer.
 
-`FUN_004e7840` (`0x004E7840`, the per-record cached lookup used by
-`FUN_004d85c0`'s cached path) confirms the same keying:
+`FUN_004e7840` (`0x004E7840`, per-record cached lookup) confirms same keying:
 
 ```c
 int __thiscall FUN_004e7840(int param_1, int param_2) {
@@ -464,7 +307,7 @@ int __thiscall FUN_004e7840(int param_1, int param_2) {
         puVar9 = (undefined4 *)puVar2[1];
         do {
             puVar4 = puVar9;
-            if ((int)puVar4[4] < *(int *)(param_2 + 0x1e)) {  // node KEY (puVar4[4], +0x10) vs record's ProgId (+0x1e)
+            if ((int)puVar4[4] < *(int *)(param_2 + 0x1e)) {  // node KEY (+0x10) vs record's ProgId (+0x1e)
                 puVar9 = (undefined4 *)puVar4[2];             // go right
                 puVar4 = puVar3;
             } else {
@@ -480,65 +323,25 @@ int __thiscall FUN_004e7840(int param_1, int param_2) {
 }
 ```
 
-Here the lookup key is `*(int *)(param_2 + 0x1e)` — the ProgId field of the
-dependent's record (`param_2` is a record pointer, `+0x1e` is its ProgId) —
-again compared against the node key at `puVar4[4]` (offset `0x10`).
+Lookup key is `*(int *)(param_2 + 0x1e)` — the ProgId field of the dependent's record — compared against node key at `puVar4[4]` (offset `0x10`).
 
-**Correction to a prior draft of this note:** an earlier version cited the
-key as `puVar4[4]` / `*(int*)(node+0x14)`. The `+0x14` citation was wrong:
-`+0x14` (`puVar4[5]`) is the **value** (module-record pointer), not the key.
-The key is `puVar4[4]` at node offset **`0x10`**, compared with the ProgId.
-The order conclusion (ascending ProgId, BST in-order) is unaffected and is
-now confirmed by direct decompilation of all three functions.
-- **Per-dependent work**: the recursive call `FUN_004d91e0(uVar4)` re-enters
-  the whole function for the dependent, which calls `_VerifyModule_New@20` →
-  `CompileText`. So each reverse dependent is **recompiled+verified** (full
-  `CompileText`), not merely checked.
+- **Per-dependent work**: recursive `FUN_004d91e0` re-enters the whole function, calling `_VerifyModule_New@20` → `CompileText`. Each reverse dependent is **recompiled+verified** (full `CompileText`), not merely checked.
 
-#### 1.8 Step 7 — Cleanup
+### 1.8 Step 7 — Cleanup
 
-After the loop, the enumerator record is released via `Ordinal_70`
-(`0x004d941b` region: `if (local_1c != 0) Ordinal_70(local_1c, 0)`), the
-`CELPrograms` object is destroyed (`FUN_004d81f0` at `0x004d942a`-area), and
-the function returns through `FUN_004d945f` which calls `Ordinal_70` on the
-remaining record. `Ordinal_70` (`orlib20.dll:0x1015DF30`, ordinal 70) is a
-refcount-decrement-and-free: it decrements `*(param_1 + 0xca)`, and on
-reaching 1 frees `+0xd2` and the object itself.
+After the loop: `Ordinal_70` releases the enumerator record (`0x004d941b`), `FUN_004d81f0` destroys the `CELPrograms` object, `FUN_004d945f` calls `Ordinal_70` on remaining record. `Ordinal_70` (`orlib20.dll:0x1015DF30`, ordinal 70) = refcount-decrement-and-free (decrements `*(param_1 + 0xca)`, on reaching 1 frees `+0xd2` and the object).
 
 ### Answer (R-M.4.1)
 
-- **Traversal**: `FUN_004D91E0` first verifies the root module via
-  `_VerifyModule_New@20` (full `CompileText` recompile). On success, for
-  categories 0/1/4 only, it builds a `CELPrograms` BST of reverse dependents
-  from the orlib20 warehouse (command `0x0D` `ProgramById` or cached
-  `InitGlobalLookup` BST), then iterates them in **ascending ProgId (BST
-  in-order) order**.
-- **Per-dependent work**: each reverse dependent is **recompiled+verified**
-  via a recursive `FUN_004d91e0` call, which invokes
-  `_VerifyModule_New@20`/`CompileText`. It is not a lightweight check.
-- **Records**: the reverse dependents are enumerated from a TSDev-internal
-  `CELPrograms` BST populated from warehouse SafeArray data (binary master
-  records), keyed by ProgId (node key at offset `0x10`, confirmed by
-  decompilation of `FUN_004e79d0`/`FUN_004e7840` — see §1.7 "Traversal-order
-  evidence"). The orlib20 warehouse provides the data via
-  `GetWarehouse`/`Ordinal_10`, `InitGlobalLookup`/`Ordinal_71`, and the
-  worker-thread command `0x0D`.
+- **Traversal**: verify root via `_VerifyModule_New@20` (full recompile). On success, for categories 0/1/4 only, build `CELPrograms` BST of reverse dependents from warehouse (cmd `0x0D` `ProgramById` or cached `InitGlobalLookup` BST), iterate in **ascending ProgId (BST in-order) order**.
+- **Per-dependent work**: each reverse dependent **recompiled+verified** via recursive `FUN_004d91e0` → `_VerifyModule_New@20`/`CompileText`.
+- **Records**: reverse dependents from TSDev-internal `CELPrograms` BST populated from warehouse SafeArray data (binary master records), keyed by ProgId (node key at offset `0x10`, confirmed by decompilation of `FUN_004e79d0`/`FUN_004e7840`). Warehouse provides data via `GetWarehouse`/`Ordinal_10`, `InitGlobalLookup`/`Ordinal_71`, and worker-thread cmd `0x0D`.
 
 ---
 
 ## 2. R-M.4.2 — Contract-Change Detection
 
-### Question
-
-Confirm how TSDev detects an interface/contract change (signature comparison,
-version field, GUID, parameter list, etc.). CRITICAL: the detection must be
-warehouse/metadata-derived. If it parses EasyLanguage SOURCE TEXT, flag it.
-
-### Evidence
-
-The contract-change check is `FUN_004d9040` at `TSDev.exe:0x004D9040`, called
-at `0x004d9346` with `&local_18` (where `local_18` was set by `FUN_004d9040`'s
-caller from the old and new record pointers). Full decompilation:
+Contract-change check is `FUN_004d9040` at `TSDev.exe:0x004D9040`, called at `0x004d9346`. Full decompilation:
 
 ```c
 uint __thiscall FUN_004d9040(int *param_1, int *param_2) {
@@ -592,11 +395,7 @@ uint __thiscall FUN_004d9040(int *param_1, int *param_2) {
 }
 ```
 
-**Return convention**: returns **1 if NO contract change** (records are
-contract-equivalent), **0 if changed** (or null/incompatible). The caller
-inverts: `local_24 = (uint)(cVar3 == '\0')` → `local_24 = 1` means **changed**
-(CORRECTED — the original text said "no change", which was wrong: `cVar3 == 0`
-is true when the function returned 0 = changed).
+**Return convention**: 1 = NO contract change (records contract-equivalent), 0 = changed (or null/incompatible). Caller inverts: `local_24 = (uint)(cVar3 == '\0')` → `local_24 = 1` means **changed**.
 
 #### Fields compared (all warehouse-record metadata, NO source text)
 
@@ -615,51 +414,19 @@ is true when the function returned 0 = changed).
 | elem `+0x87` | short | Compared for equality |
 | elem `+0xb1` | dword | Compared for equality |
 
-Every compared field is a **fixed-offset numeric/bitmask field inside the
-warehouse record structure** (the `0x10A`-byte master record format, or the
-module record derived from it). There are **no string reads, no source-text
-pointers, no EasyLanguage parsing** in `FUN_004d9040`. The array at `+0x4f`
-with stride `0xb5` is a parameter/contract-element table stored as binary
-metadata in the record.
-
-The records being compared are obtained from the warehouse via `Ordinal_28`
-and `Ordinal_69` (both metadata-record lookups), not from source files. The
-"new" record is built by `FUN_004d8fb0` which calls `Ordinal_28` (master
-record) + `Ordinal_69` (module record) — pure warehouse metadata.
+Every compared field is a **fixed-offset numeric/bitmask field inside the warehouse record structure**. No string reads, no source-text pointers, no EasyLanguage parsing. Records obtained from warehouse via `Ordinal_28` and `Ordinal_69` (metadata-record lookups), not from source files.
 
 ### Answer (R-M.4.2)
 
-- **Mechanism**: `FUN_004d9040` performs a **field-by-field metadata
-  comparison** of two warehouse module records (old vs new), checking type
-  pointer (`+0xd6`), several bitmask fields (`+0x15`, `+0x7f`, `+0x81`), an
-  element count (`+0x29`), and a per-element comparison of a contract array
-  (`+0x4f`, stride `0xb5`, comparing `+0xd`/`+0x11`/`+0x15`/`+0x83`/`+0x87`/
-  `+0xb1` per element).
-- **No source-text parsing**: confirmed. Every compared field is a
-  fixed-offset numeric/bitmask field in the warehouse record. No string
-  reads, no source-text pointers, no EasyLanguage tokenization. This is
-  **fully compliant with AGENTS.md** — metadata comes from orlib20 warehouse
-  records, not item source content.
-- **Return**: 1 = contracts equivalent (no change), 0 = changed. The caller
-  inverts this into `local_24` (1 = changed, 0 = no change) and uses it to gate
-  recursion: recursion is skipped only when the dependent is already verified
-  AND the contract did NOT change (see R-M.4.3). If the contract changed,
-  recursion always proceeds (CORRECTED — original text inverted the gate).
+- **Mechanism**: field-by-field metadata comparison of two warehouse module records (old vs new), checking type pointer (`+0xd6`), bitmask fields (`+0x15`, `+0x7f`, `+0x81`), element count (`+0x29`), and per-element comparison of a contract array (`+0x4f`, stride `0xb5`, comparing `+0xd`/`+0x11`/`+0x15`/`+0x83`/`+0x87`/`+0xb1`).
+- **No source-text parsing**: confirmed. AGENTS.md-compliant — metadata from orlib20 warehouse records.
+- **Return**: 1 = contracts equivalent (no change), 0 = changed. Caller inverts into `local_24` (1 = changed) and gates recursion: skip only when dependent already verified AND contract NOT changed. If contract changed, recursion always proceeds.
 
 ---
 
 ## 3. R-M.4.3 — Recursion / Cycle Handling
 
-### Question
-
-Confirm recursion/cycle handling. Does `FUN_004D91E0` guard against cycles
-(A depends on B depends on A)? What is the visited-set mechanism? Max depth?
-
-### Evidence
-
-#### 3.1 The recursive call
-
-The recursive call is at `0x004D9402`:
+### 3.1 The recursive call
 
 ```asm
 004d93ff  MOV ECX, EBX            ; this = compiler object (same as parent)
@@ -667,122 +434,60 @@ The recursive call is at `0x004D9402`:
 004d9402  CALL 0x004d91e0          ; RECURSE
 ```
 
-The recursive call passes the **same compiler object** (`EBX`) as `this`, with
-the dependent's category/subtype/ProgId derived from the dependent's record.
+Passes the **same compiler object** (`EBX`) as `this`, with the dependent's category/subtype/ProgId derived from the dependent's record.
 
-#### 3.2 No visited-set, no depth counter
+### 3.2 No visited-set, no depth counter
 
-Exhaustive review of the disassembly and decompilation of `FUN_004D91E0`
-reveals:
-- **No visited-set data structure** is allocated or checked. There is no
-  `std::set`, no hash table, no per-call bitmap tracking visited ProgIds.
-- **No depth counter** is passed or incremented. The function's stack frame
-  (`SUB ESP, 0x13c` = 316 bytes) contains only locals for the current
-  iteration; no depth/visited field is threaded through the recursive call.
-- The only state threaded through recursion is the **compiler object** itself
-  (`EBX`/`param_1`), whose `+0x18` field is saved/restored around each
-  dependent (`local_2c = param_1[6]` ... `param_1[6] = local_2c`).
+- **No visited-set**: no `std::set`, hash table, or per-call bitmap tracking visited ProgIds.
+- **No depth counter**: stack frame (`SUB ESP, 0x13c` = 316 bytes) contains only locals for the current iteration; no depth/visited field threaded through the recursive call.
+- Only state threaded through recursion is the **compiler object** (`EBX`/`param_1`), whose `+0x18` field is saved/restored around each dependent (`local_2c = param_1[6]` ... `param_1[6] = local_2c`).
 
-#### 3.3 The cycle-protection mechanism: per-record "verified" flag + contract gate
-
-The recursion is gated by two checks at `0x004d93a8`–`0x004d93b5`:
+### 3.3 Cycle-protection: per-record "verified" flag + contract gate
 
 ```c
 iVar7 = FUN_004ca5c0();              // check dependent's "verified" flag
-if ((iVar7 == 0) || (local_24 == 1)) {   // recurse if NOT verified OR contract CHANGED (CORRECTED)
+if ((iVar7 == 0) || (local_24 == 1)) {   // recurse if NOT verified OR contract CHANGED
     // ... recurse ...
 }
 ```
-
-- `FUN_004ca5c0` (`0x004CA5C0`) returns `*(byte *)(param_1 + 0x55) & 1` after
-  optionally calling `FUN_004cb430` (a lazy-init). So it reads **bit 0 of the
-  dependent record's `+0x55` field** — a per-record "already verified" flag.
-- `local_24` is the contract-change result inverted: `local_24 == 1` means
-  **contract CHANGED** (CORRECTED — original text said "no contract change",
-  which was wrong; `local_24 = (cVar3 == 0)` is 1 when `FUN_004d9040` returned
-  0 = changed).
-
-**Gate logic** (decompiled, `0x004d93ad`–`0x004d93b5`):
 
 ```asm
 004d93a8  CALL 0x004ca5c0       ; iVar7 = verified-flag
 004d93ad  TEST EAX, EAX
 004d93af  JZ   0x004d93b7       ; if iVar7 == 0 (NOT verified) -> recurse
-004d93b1  CMP  [EBP - 0x20], 1  ; local_24 == 1? (contract CHANGED — CORRECTED)
-004d93b5  JNZ  0x004d9407       ; if verified AND contract NOT changed (local_24 != 1) -> skip recurse
+004d93b1  CMP  [EBP - 0x20], 1  ; local_24 == 1? (contract CHANGED)
+004d93b5  JNZ  0x004d9407       ; if verified AND contract NOT changed -> skip recurse
 ```
 
-So recursion happens when:
-- `iVar7 == 0` (dependent NOT yet verified), OR
-- `local_24 == 1` (contract CHANGED — re-verify needed because the root's
-  signature/contract is different, CORRECTED).
+- `FUN_004ca5c0` (`0x004CA5C0`) returns `*(byte *)(param_1 + 0x55) & 1` after optional lazy-init via `FUN_004cb430`. Reads **bit 0 of the dependent record's `+0x55` field** — a per-record "already verified" flag.
+- `local_24 == 1` means **contract CHANGED**.
 
-Recursion is **skipped** only when the dependent is **already verified AND**
-the contract **did NOT change**. The rationale: if the root's contract is
-unchanged and the dependent was already verified against that same contract,
-there is nothing to revalidate; TSDev skips it. If the contract DID change,
-the dependent must be revalidated even if already verified (CORRECTED —
-original text said the opposite).
+**Gate logic**: recursion happens when `iVar7 == 0` (NOT verified) OR `local_24 == 1` (contract CHANGED). Recursion **skipped** only when dependent is already verified AND contract did NOT change. If contract changed, recursion proceeds regardless of verified status.
 
-#### 3.4 How cycles are actually bounded
+### 3.4 How cycles are bounded
 
-There is **no explicit cycle guard**. The protection is implicit:
-1. The `+0x55` "verified" flag is set during `_VerifyModule_New@20`/compile
-   (a successfully verified module is marked). On a second visit, if the
-   contract did NOT change, the gate `(verified && NOT changed)` skips
-   recursion (CORRECTED — original text said the gate skips on "changed").
-2. If a true cycle existed (A→B→A) with no contract change, the recursion
-   would be skipped on the second visit because the dependent is already
-   verified AND the contract didn't change. The bound is the
-   **contract-change check**: once a module is verified, its record's
-   contract fields don't change, so `FUN_004d9040` returns "no change"
-   (1), `local_24 = 0` (not changed), and the gate `(verified AND NOT
-   changed)` skips. If the contract DID change, the recursion proceeds
-   regardless of verified status (CORRECTED).
+No explicit cycle guard. Protection is implicit:
+1. The `+0x55` "verified" flag is set during `_VerifyModule_New@20`/compile. On a second visit with no contract change, the gate `(verified && NOT changed)` skips recursion.
+2. If a true cycle (A→B→A) existed with no contract change, recursion skipped on second visit because dependent already verified AND contract didn't change. Bound is the contract-change check: once a module is verified, its record's contract fields don't change, so `FUN_004d9040` returns "no change" (1), `local_24 = 0`, and the gate skips.
 
-**Static analysis cannot fully rule out unbounded recursion in a pathological
-cycle.** The `+0x55` flag and contract gate reduce the cascade but are not a
-hard visited-set. A dedicated dynamic trace with a synthetic cycle would be
-needed to confirm whether the warehouse's reverse-dependent set can ever
-contain a cycle (the warehouse likely prevents cycles at insert time, but
-that is not proven here).
+Static analysis cannot fully rule out unbounded recursion in a pathological cycle. The `+0x55` flag and contract gate reduce the cascade but are not a hard visited-set. A dynamic trace with a synthetic cycle would confirm whether the warehouse's reverse-dependent set can ever contain a cycle.
 
-#### 3.5 No max depth
+### 3.5 No max depth
 
-No depth limit is enforced. Stack overflow is bounded only by the 316-byte
-frame per level and the OS stack (the TSDev verify thread is not documented
-to have an enlarged stack for this path).
+No depth limit. Stack overflow bounded only by the 316-byte frame per level and the OS stack.
 
 ### Answer (R-M.4.3)
 
-- **Visited-set**: **none.** There is no visited-set, no depth counter, no
-  per-call bitmap. The only cycle mitigation is a **per-record "verified"
-  flag** at `*(byte*)(record + 0x55) & 1`, read by `FUN_004ca5c0`.
-- **Gate**: recursion is skipped only when the dependent is already verified
-  (`+0x55` bit 0 set) **AND** the contract did NOT change (`FUN_004d9040`
-  returned "no change" = 1, `local_24 = 0`). If the contract changed
-  (`local_24 = 1`), recursion always proceeds regardless of verified status
-  (CORRECTED — original text inverted the gate).
-- **Max depth**: **none.** No depth limit is enforced.
-- **Cycle safety**: not guaranteed by an explicit guard. The protection is
-  implicit (verified flag + contract-change gate). Whether the warehouse
-  prevents cycles in the reverse-dependent set is **not proven statically**
-  — see §7 ("Gaps / Open Questions").
+- **Visited-set**: **none.** No visited-set, no depth counter, no per-call bitmap. Only cycle mitigation is a per-record "verified" flag at `*(byte*)(record + 0x55) & 1`, read by `FUN_004ca5c0`.
+- **Gate**: recursion skipped only when dependent already verified (`+0x55` bit 0 set) AND contract did NOT change (`FUN_004d9040` returned 1, `local_24 = 0`). If contract changed (`local_24 = 1`), recursion always proceeds regardless of verified status.
+- **Max depth**: **none.**
+- **Cycle safety**: not guaranteed by an explicit guard. Protection is implicit (verified flag + contract-change gate). Whether the warehouse prevents cycles in the reverse-dependent set is **not proven statically** — see §7.
 
 ---
 
 ## 4. R-M.4.4 — Failure Reporting
 
-### Question
-
-When a reverse-dependent reverify fails, does TSDev fail the whole operation,
-collect per-dependent errors, or warn? How are dependent failures surfaced?
-
-### Evidence
-
-#### 4.1 Aggregate result accumulation
-
-The verify result handling (`0x004d929e`–`0x004d92a6`):
+### 4.1 Aggregate result accumulation
 
 ```c
 uVar6 = _VerifyModule_New_20(param_1[6], uVar2, param_4, param_2, param_1);
@@ -792,24 +497,15 @@ if (param_2 == (undefined4 *)0x1) {   // primary-flag was 1 (root)
 param_1[1] = param_1[1] & uVar6;       // compiler+0x04 &= result (aggregate AND)
 ```
 
-This applies to **every** verify call — root and recursive. The compiler
-object's `+0x04` is a running **logical AND** of all verify results. Any
-single failure (return 0) drives `+0x04` to 0 permanently. The `+0x00` field
-holds the **root** result (only set when primary-flag == 1).
+Applies to **every** verify call (root and recursive). `+0x04` is a running logical AND of all verify results — any failure drives it to 0 permanently. `+0x00` holds the **root** result (only set when primary-flag == 1).
 
-#### 4.2 The loop does NOT abort on failure
+### 4.2 Loop does NOT abort on failure
 
-The per-dependent loop (`0x004d9357`–`0x004d9415`) has no early-exit on
-verify failure. The recursive `FUN_004d91e0` call returns, the loop increments
-`EDI` (`0x004d9415: INC EDI`) and continues to the next dependent regardless
-of the returned result. There is no `break` on failure.
+The per-dependent loop (`0x004d9357`–`0x004d9415`) has no early-exit on verify failure. `INC EDI` at `0x004d9415` continues to the next dependent regardless of returned result.
 
-#### 4.3 How the result is consumed
+### 4.3 How the result is consumed
 
-The caller `FUN_004D9480` does not inspect the result directly — it calls
-`EndCompilingProcess()` and returns. The result is read in `FUN_00451800`
-(the UI Verify handler) after `FUN_004d9480` returns. Decompilation of
-`FUN_00451800` (`TSDev.exe:0x00451800`), compiler-object setup and branch:
+`FUN_00451800` (`TSDev.exe:0x00451800`, UI Verify handler) sets up the compiler object and branches on the root result:
 
 ```c
 piVar10 = (int *)Ordinal_66();                              // allocate+ctor the compiler object
@@ -828,122 +524,46 @@ if (*piVar10 == 1) {                                        // compiler+0x00 (ro
 }
 ```
 
-**(a) `piVar10` mapping — confirmed.** `piVar10 = (int *)Ordinal_66()`
-(`Ordinal_66` is the CELCompiler alloc+ctor, orlib20 RVA `0x165F70`; see
-§5.2) returns a pointer to the **start** of the freshly allocated compiler
-object. The subsequent field writes index from that
-base: `piVar10[2]`→`+0x08` (category), `piVar10[3]`→`+0x0C` (subtype),
-`piVar10[4]`→`+0x10` (ProgId), `piVar10[6]`→`+0x18` (HWND) — exactly the
-layout established in §1.1. The branch condition `if (*piVar10 == 1)`
-therefore reads `piVar10[0]` = **`compiler+0x00` (the root result)**, not
-`+0x04`. The Ghidra-generated name `piVar10` is anchored to `+0x00` by the
-`Ordinal_66()` assignment, so the snippet proves which field is checked.
+`piVar10 = (int *)Ordinal_66()` (CELCompiler alloc+ctor, orlib20 RVA `0x165F70`) returns pointer to the start of the compiler object. `piVar10[0]` = **`compiler+0x00` (the root result)**. The branch `if (*piVar10 == 1)` reads `+0x00`, not `+0x04`.
 
-**(b) `+0x04` not checked downstream — confirmed for `FUN_00451800` and its
-immediate callees.** After the `if (*piVar10 == 1)` branch, the compiler
-pointer (`piVar10` / saved `local_14`) is consumed only by:
+**`+0x04` not consumed by the immediate UI path:** After the branch, the compiler pointer is consumed only by:
+- success path: virtual call `(**(code **)(*(int *)param_1 + 0x1f8))()` on the **CDocument** (does not receive the compiler pointer, cannot read `+0x04`);
+- failure path: `FUN_0044a1e0()` (CELProgramWriter constructor — does not receive the compiler object);
+- `FUN_0044c410()` (calls `_GetCompilingErrors_4()`, iterates compiler's error list — does NOT read `+0x04`);
+- `FUN_0044b880()` (AfxGetThread message-pump — no compiler access);
+- `FUN_004502f0()` (receives CDocument, not compiler);
+- `Ordinal_67()` (CELCompiler dtor+free — does not branch on `+0x04`).
 
-- the success path: a virtual call `(**(code **)(*(int *)param_1 + 0x1f8))()`
-  on the **CDocument** (`param_1`), which does **not** receive the compiler
-  pointer and therefore cannot read `+0x04`;
-- the failure path: `FUN_0044a1e0()` (constructs a `CELProgramWriter`
-  object — sets `CELProgramWriter::vftable` and zeroes `+0x241..+0x26d`; it
-  does not receive or read the compiler object);
-- `FUN_0044c410()` (called with `piStack_2c0 = piVar10`); decompilation
-  shows it calls `_GetCompilingErrors_4()` and iterates the compiler's
-  **error list** (record fields `+0x0e`, `+0x20`, `+0x34`, `+0x38`, `+0x50`,
-  `+0x68`, `+0x80`, …) — it does **not** read `piVar10[1]` (`+0x04`);
-- `FUN_0044b880()` (no args; just `AfxGetThread` message-pump calls);
-- `FUN_004502f0()` (receives the **CDocument** `param_1`, not the compiler;
-  reads CDocument fields `+0x7a`, `+0x1ea`, `+0x75`, …);
-- `Ordinal_67()` (CELCompiler dtor+free — frees the object, does not branch
-  on `+0x04`).
+None read `compiler+0x04`. The aggregate is computed by `FUN_004D91E0` but is dead with respect to this UI path. (Whether `+0x04` is consumed by any deeper downstream path was not exhaustively traced — see §7.)
 
-None of these read `compiler+0x04`. So within `FUN_00451800` and its
-immediate callees after the branch, **the aggregate `+0x04` is not
-consulted**; the UI success/failure decision is driven solely by the root
-result `+0x00`. The `+0x04` aggregate is computed by `FUN_004D91E0`
-(`param_1[1] = param_1[1] & uVar6` per dependent) but is dead with respect
-to this UI path. (Whether `+0x04` is consumed by any deeper downstream
-UI/reporting path beyond the immediate callees listed above was not
-exhaustively traced — see §7 Gaps.)
+`+0x00` is written only by the root verify (primary-flag == 1); recursive calls pass primary-flag 0 and do not write `+0x00`. A dependent failure does NOT overwrite `+0x00`. **The UI reports success/failure based on the root verify result alone**; dependent failures are collected as compiler errors but do not flip the root success flag.
 
-Because `*param_1 = uVar6` is executed only when `param_2 == 1` (primary),
-and the recursive calls pass `param_2 == 0` (the dependent's
-`(category, ProgId)` does not match the compiler's root `(+0x08, +0x10)`),
-`+0x00` is written only by the root verify. A dependent failure does **not**
-overwrite `+0x00`. Combined with (b), this means **the UI reports
-success/failure based on the root verify result alone**; dependent failures
-are collected as compiler errors (via the standard `CompileText` error
-machinery) but do not flip the root success flag and do not affect the
-`FUN_00451800` branch.
+### 4.4 Compiler error collection
 
-#### 4.4 Compiler error collection
-
-`_VerifyModule_New@20` → `CompileText` populates the compiler's error list
-(the `StartCompilingProcess`/`EndCompilingProcess` pair and the
-`FUN_101559b0`/error-collection machinery in orlib20). Errors from each
-compile are collected in the compiler object's error structures. On the
-failure branch, `FUN_00451800` calls `FUN_0044c410`, which invokes
-`_GetCompilingErrors_4()` and iterates the error list to surface per-record
-errors (file-type/name/path/line fields per error entry). So per-dependent
-compile errors are collected in the compiler's error list and surfaced
-through `FUN_0044c410`, but the **success/failure decision is the root
-result**. (`FUN_0044a1e0`, also called on the failure branch, is a
-`CELProgramWriter` constructor — it sets `CELProgramWriter::vftable` and
-zeroes `+0x241..+0x26d`; it is not the error-display routine.)
+`_VerifyModule_New@20` → `CompileText` populates the compiler's errors list. On the failure branch, `FUN_00451800` calls `FUN_0044c410`, which invokes `_GetCompilingErrors_4()` and iterates the error list to surface per-record errors. Per-dependent compile errors are collected and surfaced through `FUN_0044c410`, but the **success/failure decision is the root result**.
 
 ### Answer (R-M.4.4)
 
-- **No abort**: the per-dependent loop does NOT abort on a dependent verify
-  failure. It continues to the next dependent.
-- **Aggregate accumulation**: the compiler's `+0x04` field is a running AND
-  of all verify results (root + every dependent). Any failure drives `+0x04`
-  to 0.
-- **Root result drives UI (confirmed with evidence, §4.3)**: the UI
-  success/failure branch in `FUN_00451800` checks `compiler+0x00` (the
-  **root** result), established by the assignment `piVar10 = (int
-  *)Ordinal_66()` (compiler base) and the branch `if (*piVar10 == 1)`.
-  `+0x00` is only set by the root verify (primary-flag == 1); recursive
-  dependent calls pass primary-flag 0 and do not write `+0x00`. A dependent
-  failure does NOT overwrite `+0x00`. So **the UI reports success/failure
-  based on the root verify alone**; dependent failures are collected as
-  compiler errors but do not flip the root success flag.
-- **`+0x04` not consumed by the immediate UI path (confirmed with evidence,
-  §4.3)**: decompilation of `FUN_00451800` and its immediate callees
-  (`FUN_0044a1e0`, `FUN_0044c410`, `FUN_0044b880`, `FUN_004502f0`,
-  `Ordinal_67`) shows none read `compiler+0x04` after the branch. The
-  aggregate is computed by `FUN_004D91E0` but is dead with respect to this UI
-  path. Whether `+0x04` is consumed by any deeper downstream UI/reporting
-  path beyond these immediate callees was not exhaustively traced (see §7
-  Gaps).
-- **Error surfacing**: per-dependent compile errors are collected in the
-  compiler's error list (via the standard `CompileText` error machinery) and
-  displayed through `FUN_0044c410` on the failure path. There is no separate
-  per-dependent error report structure in `FUN_004D91E0` itself.
-- **No warning-only path**: there is no "warn but succeed" branch. The
-  function either verifies (1) or not (0); errors are collected but the
-  decision is binary on the root result.
+- **No abort**: per-dependent loop does NOT abort on failure; continues to next dependent.
+- **Aggregate accumulation**: `+0x04` is a running AND of all verify results. Any failure drives `+0x04` to 0.
+- **Root result drives UI**: `FUN_00451800` checks `compiler+0x00` (root result). `+0x00` only set by root verify (primary-flag == 1). Dependent failure does NOT overwrite `+0x00`. UI reports success/failure based on root verify alone; dependent failures collected as compiler errors.
+- **`+0x04` not consumed by immediate UI path**: decompilation of `FUN_00451800` and immediate callees confirms none read `+0x04` after the branch. Aggregate is dead w.r.t. this UI path.
+- **Error surfacing**: per-dependent compile errors collected in compiler's error list, displayed through `FUN_0044c410` on failure path. No separate per-dependent error report structure in `FUN_004D91E0` itself.
+- **No warning-only path**: function either verifies (1) or not (0); decision is binary on root result.
 
 ---
 
-## 5. R-M.4.5 — Map to orlib20 / Warehouse Primitives for the Standalone CLI
+## 5. R-M.4.5 — orlib20 Export Map (historical; superseded by §9)
 
-### Question
+> **Superseded:** The original Option B2 (reverse-by-inverting-forward) and
+> Option B1 (worker-thread coupling) recommendations below are historical.
+> §9 (M.4a) resolved the approach: drive cmd `0x0D` then cmd `0x3B` through
+> the warehouse worker protocol. The export tables below remain valid
+> reference data.
 
-Map the TSDev.exe wrapper's behavior onto supported orlib20/warehouse
-primitives available to the standalone CLI. Do NOT call TSDev.exe's private
-`FUN_004D91E0`. (a) Does orlib20 export a reverse-dependent revalidation API?
-(b) If not, what primitives compose the traversal? (c) Compare direct API
-vs. minimal replication and recommend.
+### 5.1 orlib20 export table — dependency APIs
 
-### Evidence
-
-#### 5.1 orlib20 export table — reverse-dependent / dependency APIs
-
-PE export-table scan (`pefile` on
-`C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll`, ordinal base
-10) for dependency-related exports:
+PE export-table scan (`pefile`, ordinal base 10):
 
 | Ordinal | Name | RVA | Direction |
 |---:|---|---:|---|
@@ -952,7 +572,7 @@ PE export-table scan (`pefile` on
 | 531 | `_GetStaticDependencyList@12` | `0x1A8F70` | **forward** (static dep list) |
 | 396/397 | `_DeleteChangedModulesList@4` / `_DeleteDependencyList@4` | `0x1A9150` | free a dep list |
 
-Decompilation of `GetDependencies` (`0x10153F00`):
+`GetDependencies` decompilation (`0x10153F00`):
 
 ```c
 undefined4 GetDependencies(int param_1, undefined4 param_2, undefined4 param_3, undefined4 *param_4) {
@@ -972,270 +592,62 @@ undefined4 GetDependencies(int param_1, undefined4 param_2, undefined4 param_3, 
 }
 ```
 
-`GetDependencies` returns the **forward** dependency list of a module (what it
-depends on), gated on `local_d3 & 4` (a "has dependencies" flag in the
-record). `_GetDynamicDependencyList@12` and `_GetStaticDependencyList@12`
-both walk `DAT_1023dccc` (a global tree) and build arrays of
-`{param_2, param_3, ...}` entries — these are **forward** dependencies (the
-module's own deps), not reverse dependents (callers).
+`GetDependencies` returns **forward** dependency list, gated on `local_d3 & 4`. `_GetDynamicDependencyList@12` and `_GetStaticDependencyList@12` walk `DAT_1023dccc` (global tree) building arrays of `{param_2, param_3, ...}` entries — also **forward**. **No orlib20 export performs reverse-dependent enumeration or revalidation.**
 
-**No orlib20 export performs reverse-dependent enumeration or
-reverse-dependent revalidation.** The reverse-dependent traversal is
-entirely in TSDev.exe-private code (`FUN_004D91E0` and its helpers).
-
-#### 5.2 orlib20 primitives TSDev uses (all available to the CLI)
+### 5.2 orlib20 primitives TSDev uses (all available to the CLI)
 
 | Primitive | orlib20 export | RVA | CLI already uses? |
 |---|---|---:|---|
-| Warehouse singleton | `Ordinal_10` (GetWarehouse, no name) | `0x1A9650` | Yes (resolved, used by delete orchestrator) |
+| Warehouse singleton | `Ordinal_10` (GetWarehouse, no name) | `0x1A9650` | Yes (delete orchestrator) |
 | Master-record lookup by type/name | `Ordinal_28` (no name) | `0x1A03F0` | Not directly (CLI uses `_GetMasterRecByType@16`) |
 | Module-record retrieval | `Ordinal_69` (no name) | `0x1A3E00` | No |
 | Count accessor (`*(obj+0x0C)`) | `Ordinal_68` (no name) | `0x1A87D0` | No |
 | Refcount-dec / free | `Ordinal_70` (no name) | `0x15DF30` | No |
-| Global lookup init | `Ordinal_71` (InitGlobalLookup, no name) | `0x1A9460` | Yes (resolved as signature target) |
+| Global lookup init | `Ordinal_71` (InitGlobalLookup, no name) | `0x1A9460` | Yes (signature target) |
 | Verify (compile) | `_VerifyModule_New@20` (ordinal 700) | `0x169630` | **Yes (core CLI verify)** |
 | CELCompiler alloc+ctor | `Ordinal_66` (no name) | `0x165F70` | Yes (M.1) |
 | CELCompiler dtor+free | `Ordinal_67` (no name) | `0x165FD0` | Yes (M.1) |
 | Type→power-type expansion | `FUN_101d43a0` (internal) | `0x1D43A0` | No (CLI has its own type map) |
 
-All ordinals 10, 28, 68, 69, 70, 71 are **ordinal-only `[NONAME]` exports**
-(confirmed via `pefile`: `name=None` for each), resolvable by
-`GetProcAddress(hModule, MAKEINTRESOURCEA(ordinal))` — the same mechanism the
-CLI already uses for ordinals 66/67 (M.1).
+All ordinals 10, 28, 66, 67, 68, 69, 70, 71 are **ordinal-only `[NONAME]` exports** (confirmed via `pefile`), resolvable by `GetProcAddress(hModule, MAKEINTRESOURCEA(ordinal))`.
 
-#### 5.3 Historical pre-linker implementation snapshot (superseded by §8.7)
+### 5.3–5.4 Historical recommendations (superseded — see §9)
 
-1. **Root verify**: `_VerifyModule_New@20` — the CLI already does this.
-2. **Reverse-dependent enumeration**: TSDev builds a `CELPrograms` BST from
-   warehouse SafeArray data (command `0x0D` `ProgramById` via the worker
-   thread, or cached `InitGlobalLookup` BST). In the historical pre-linker
-   snapshot, the CLI did not enumerate reverse dependents. Its existing
-   `exists` enumeration (`_LoadMasterRecsEX@16` / `_GetMasterRecsBuf@12`)
-   enumerated **all** records of a type, not the reverse-dependent subset.
-3. **Contract-change comparison**: `FUN_004d9040` compares two warehouse
-   records' metadata fields. The CLI would need to read the old and new
-   records (via `Ordinal_28`/`Ordinal_69` or `_GetMasterRecByType@16`) and
-   compare the same fields.
-4. **Per-dependent recompile**: `_VerifyModule_New@20` per dependent — the
-   CLI already has this primitive.
-5. **Cycle/visited handling**: TSDev uses a per-record `+0x55` flag, not a
-   visited-set. A CLI replication should use an explicit visited-set (safer
-   than TSDev's implicit approach).
+The original note proposed **Option B2** (reverse-by-inverting-forward using exported APIs: `_LoadMasterRecsEX@16` ord 568, `_GetMasterRecsBuf@12` ord 512, `_GetMasterRecByType@16` ord 510, `GetDependencies` ord 487, `_GetStaticDependencyList@12` ord 531, `_DeleteDependencyList@4` ord 397, `_VerifyModule_New@20` ord 700 — all named exports) and rejected **Option B1** (driving the worker thread / `CELPrograms` BST) as high-risk coupling. Both are superseded by §9: the warehouse provides reverse dependents directly via cmd `0x3B` (`IProgram::Callers`), which IS the worker-thread approach (Option B1) that the original note rejected — the "high-risk coupling" concern was overstated since the CLI already drives cmd `0x0D` for `exists`.
 
-#### 5.4 (a) Historical export-availability snapshot (superseded as production guidance)
+### Historical answer (R-M.4.5; superseded by §9)
 
-**No.** orlib20.dll exports no "reverse-dependent revalidation" or
-"reverse-dependent enumeration" API. The closest exports
-(`GetDependencies`, `_GetDynamicDependencyList@12`,
-`_GetStaticDependencyList@12`) are **forward** dependency APIs. The
-reverse-dependent traversal is TSDev.exe-private.
-
-#### 5.4 (b) Historical composable-primitives analysis (superseded by §8.7)
-
-A minimal behavioral replication of `FUN_004D91E0` using orlib20 primitives:
-
-1. `_VerifyModule_New@20` (ordinal 700) — verify the root (already done by
-   the CLI).
-2. To enumerate reverse dependents, the CLI would need to either:
-   - **(Option B1)** Replicate TSDev's `CELPrograms` BST population: call
-     `Ordinal_10` (GetWarehouse) + `Ordinal_71` (InitGlobalLookup) + the
-     worker-thread command `0x0D` path (`FUN_004d75b0` equivalent) — but this
-     requires driving the orlib20 worker thread, which is internal and not
-     exported as a clean enumeration API. This is high-risk coupling to
-     internal warehouse mechanics.
-   - **(Option B2)** Use the existing master-record enumeration
-     (`_LoadMasterRecsEX@16` / `_GetMasterRecsBuf@12`, already used by
-     `exists`) to get **all** records of the relevant type(s), then filter to
-     those whose **forward dependency list** (via `GetDependencies` /
-     `_GetStaticDependencyList@12`) contains the root module's ProgId. This
-     is a "reverse by inverting forward" approach: for each candidate record
-     R, get R's dependencies; if the root ProgId is in R's dependency list, R
-     is a reverse dependent. This uses only **exported** orlib20 APIs.
-3. For each reverse dependent, read its record (via `_GetMasterRecByType@16`
-   or `Ordinal_28`/`Ordinal_69`) and compare metadata fields per
-   `FUN_004d9040` (the field offsets are documented in §2 above).
-4. Recurse per dependent with an explicit visited-set (ProgId set) to avoid
-   cycles — a **stricter** guard than TSDev's implicit one.
-5. Call `_VerifyModule_New@20` per dependent.
-
-#### 5.4 (c) Historical recommendation (superseded by §8.7)
-
-**The original note recommended Option B2 (reverse-by-inverting-forward) using
-exported orlib20 APIs**, because:
-
-- It uses only **exported** orlib20 primitives (`GetDependencies` (ord 487),
-  `_GetStaticDependencyList@12` (ord 531), `_GetMasterRecByType@16` (ord 510,
-  RVA `0x1A0460`), `_LoadMasterRecsEX@16` (ord 568, RVA `0x1A5360`),
-  `_GetMasterRecsBuf@12` (ord 512, RVA `0x1A0C70`), `_VerifyModule_New@20`
-  (ord 700), `_DeleteDependencyList@4` (ord 397)), all of which are
-  resolvable by name (no ordinal-only risk). The export status of the three
-  master-record APIs was confirmed by `pefile` (see §8 "PE export-table
-  evidence"): all three are **named exports**, not ordinal-only and not
-  byte-signature targets.
-- It avoids coupling to TSDev.exe-private code (`FUN_004D91E0`) and to
-  orlib20 internal worker-thread mechanics (command `0x0D` path).
-- It is **stricter** on cycle safety (explicit visited-set) than TSDev's
-  implicit `+0x55` flag.
-- The contract-change comparison (`FUN_004d9040`'s field offsets) can be
-  replicated by reading the two records via `_GetMasterRecByType@16` and
-  comparing the documented offsets — this is metadata-only, AGENTS.md
-  compliant.
-
-**Do NOT use Option B1** (driving the worker thread / `CELPrograms` BST):
-it couples to orlib20 internal mechanics that are not exported and not
-stable across versions, violating the "no coupling to TSDev.exe internals"
-and "least complexity" principles.
-
-**No direct exported API exists** for the full reverse-dependent
-revalidation. The closest single export is `GetDependencies` (forward), which
-is a building block for Option B2, not a complete solution.
-
-### Historical answer (R-M.4.5; superseded by the current linker/ordinal path)
-
-- **(a) Historical finding:** No. orlib20.dll does not export a reverse-dependent
-  revalidation or reverse-dependent enumeration API. The reverse-dependent
-  traversal is TSDev.exe-private (`FUN_004D91E0`). The dependency exports
-  (`GetDependencies`, `_GetDynamicDependencyList@12`,
-  `_GetStaticDependencyList@12`) are **forward** only.
-- **(b) Historical composition:** The original analysis composed the traversal
-  from exported orlib20 primitives: `_VerifyModule_New@20` (verify),
-  `GetDependencies`/`_GetStaticDependencyList@12` (forward deps, to invert),
-  `_GetMasterRecByType@16` (record reads), and `_DeleteDependencyList@4`
-  (cleanup). The contract-change check was replicated by comparing the
-  documented metadata field offsets.
-- **(c) Historical recommendation (superseded):** The original note recommended
-  **Option B2** (reverse-by-inverting-forward, using exported APIs + an explicit
-  visited-set). It was retained for its historical RE value, but is not the
-  current production path; see §8.7 for the linker (ordinal 85) approach.
+- **(a)** No orlib20 export provides reverse-dependent enumeration/revalidation. Forward dependency exports only. `GetDependencies` is broken (§8.1: checks `0xFA4`, compiler writes `0xFA3`).
+- **(b)** Historical composition: `_VerifyModule_New@20` + `GetDependencies`/`_GetStaticDependencyList@12` (forward deps, to invert) + `_GetMasterRecByType@16` (record reads) + `_DeleteDependencyList@4` (cleanup).
+- **(c)** Historical recommendation: Option B2 (reverse-by-inverting-forward). Superseded by §9 warehouse-level approach.
 
 ---
 
-## 6. Historical Synthesis & Implementation Recommendation (superseded by §8.7)
+## 6. Historical Synthesis (superseded by §9)
 
-### What the original plan proposed for replicating `FUN_004D91E0`
+The original plan proposed Option B2 (reverse-by-inverting-forward) with 7 steps: root verify via `_VerifyModule_New@20`, reverse-dependent enumeration via `_LoadMasterRecsEX@16`/`_GetMasterRecsBuf@12` + `GetDependencies`/`_GetStaticDependencyList@12` filtering, contract-change check via `_GetMasterRecByType@16` comparing §2 field offsets, per-dependent recompile, explicit visited-set for cycle safety, AND-aggregate failure handling with root result driving UI, and category gating (0/1/4 only). **All superseded by §9.**
 
-1. **Root verify**: continue using `_VerifyModule_New@20` (ordinal 700) —
-   already implemented.
-2. **Reverse-dependent enumeration**: implement Option B2 —
-   enumerate all records of the root's category (via the existing
-   `_LoadMasterRecsEX@16` (ord 568, RVA `0x1A5360`) /
-   `_GetMasterRecsBuf@12` (ord 512, RVA `0x1A0C70`) enumeration used by
-   `exists` — both confirmed named exports, see §8), and for each
-   candidate, call `GetDependencies` (ordinal 487) or
-   `_GetStaticDependencyList@12` (ordinal 531) to get its forward dependency
-   list; if the root ProgId appears in that list, the candidate is a reverse
-   dependent. Free the dep list via `_DeleteDependencyList@4` (ordinal 397).
-3. **Contract-change check (ROOT, done once)**: compare the ROOT's old
-   warehouse record (captured before `saveSource`) vs the ROOT's new record
-   (read after root verify succeeds, via `_GetMasterRecByType@16` (ord 510,
-   RVA `0x1A0460`) — confirmed named export, see §8) using the metadata
-   fields documented in §2 (`+0xd6`, `+0x15`, `+0x7f`, `+0x81`, `+0x29`,
-   `+0x4f` array with stride `0xb5`, element fields `+0xd`/`+0x11`/`+0x15`/
-   `+0x83`/`+0x87`/`+0xb1`). This is metadata-only, AGENTS.md compliant.
-   The result gates the traversal: if the contract changed, reverse
-   dependents are revalidated; if unchanged, verified dependents are skipped
-   (CORRECTED — original text said the check was per-dependent and inverted
-   the gate; per §1.6, the check is done once for the root, and per §3.3,
-   the gate skips on verified AND not-changed).
-4. **Per-dependent recompile**: call `_VerifyModule_New@20` for each reverse
-   dependent (full recompile, matching TSDev).
-5. **Cycle safety**: use an **explicit visited-set** of ProgIds (stricter
-   than TSDev's `+0x55` flag). Skip already-visited dependents.
-6. **Failure handling**: AND all verify results into an aggregate; the root
-   result (`+0x00`) drives success/failure (matching TSDev — confirmed in
-   §4.3 that `FUN_00451800` branches on `+0x00`, and `+0x04` is not consumed
-   by the immediate UI path). Collect per-dependent compile errors via the
-   existing compiler error machinery.
-7. **Gating**: only run the reverse-dependent traversal for categories 0
-   (Strategy), 1 (Function), 4 (SystemFunction), matching TSDev's gate at
-   `0x004d92b2`–`0x004d92bd`.
-
-### Whether a direct exported API exists
-
-**No.** See §5.4(a). The reverse-dependent revalidation must be composed
-from exported primitives; there is no single orlib20 export that performs it.
-
-### Key parity note
-
-The prior RE conclusion (`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F
-("Disproved or non-causal hypotheses")) that "reverse-dependent revalidation
-is not required for root linkability" is
-**consistent** with these findings: `FUN_004D91E0`'s root verify
-(`_VerifyModule_New@20`) is the linkability-critical step; the
-reverse-dependent cascade is a propagation step for already-running
-consumers, not a root-link requirement. The CLI's current single-module
-verify is linkable; reverse-dependent revalidation is a **parity** feature
-(M.4), not a linkability fix (Workstream L).
+**Key parity note:** Reverse-dependent revalidation is a **parity** feature (M.4), not a linkability fix (Workstream L). The root verify (`_VerifyModule_New@20`) is the linkability-critical step; the reverse-dependent cascade is a propagation step for already-running consumers.
 
 ---
 
 ## 7. Gaps / Open Questions
 
-1. **Cycle safety — dynamic confirmation needed.** Static analysis shows no
-   explicit visited-set; cycle protection is implicit (per-record `+0x55`
-   flag + contract-change gate). Whether the orlib20 warehouse can ever
-   contain a cycle in the reverse-dependent set is **not proven statically**.
-   A dynamic Frida trace with a synthetic A→B→A dependency cycle would
-   confirm whether the recursion terminates. (Recommendation: the CLI's
-   replication should use an explicit visited-set regardless, which is
-   strictly safer.)
+1. **Cycle safety — dynamic confirmation needed.** No explicit visited-set; cycle protection is implicit (`+0x55` flag + contract-change gate). Whether the warehouse can contain a cycle in the reverse-dependent set is not proven statically. CLI replication should use an explicit visited-set (strictly safer).
 
-2. **`+0x18` field overload.** `FUN_004D91E0` temporarily overwrites
-   `compiler+0x18` (normally the HWND per M.1) with a record-derived value
-   (`*(record + 0xe4)`) during the reverse-dependent loop, and passes it as
-   the first arg (HWND) to `_VerifyModule_New@20` in the recursive call.
-   Static analysis cannot fully determine whether `+0xe4` is a notification
-   handle, a record pointer that orlib20 tolerates as HWND, or a genuine
-   ProgId-as-HWND. This does not affect the CLI replication (which uses its
-   own HWND), but is noted for completeness. A dynamic trace capturing the
-   `+0x18` value and the `_VerifyModule_New@20` first-arg during a
-   reverse-dependent verify would resolve this.
+2. **`+0x18` field overload.** `FUN_004D91E0` temporarily overwrites `compiler+0x18` (HWND) with `*(record + 0xe4)` during the reverse-dependent loop. Does not affect CLI replication (which uses its own HWND).
 
-3. **`CELPrograms` BST population source.** `FUN_004c9670`/`FUN_004cad90`
-   populates the BST from a SafeArray at `*(record + 0x26)`. The exact
-   command/COM method that produces this SafeArray for the reverse-dependent
-   set (vs. the forward `GetDependencies` path) was not fully traced. The
-   worker-thread command `0x0D` (`ProgramById`) is used by `FUN_004d75b0`,
-   but how `ProgramById` returns a **set** of reverse dependents (rather than
-   a single record) is not fully resolved statically. This gap did not block the
-   historical Option B2 analysis (which used forward-dep inversion); the current
-   production path is the linker-based approach in §8.7.
+3. **`CELPrograms` BST population source — RESOLVED by §9 (M.4a).** SafeArray at `*(warehouse + 0x26)`, produced by cmd `0x3B` (`IProgram::Callers`). Cmd `0x0D` retrieves the root module's single record; cmd `0x3B` returns the reverse-dependent set. See §9.1–§9.3.
 
-4. **Contract-change field semantics.** The exact semantic meaning of each
-   compared field in `FUN_004d9040` (e.g., what `+0x15` bit 2 represents) is
-   not labeled in the binary. The offsets and comparison logic are exact, but
-   the field names are inferred. A dynamic trace correlating a known
-   contract change (e.g., adding a parameter to a Function) with the bit
-   flips would label the fields. The CLI replication can compare the same
-   offsets without knowing the semantic names.
+4. **Contract-change field semantics.** Exact semantic meaning of each compared field in `FUN_004d9040` is not labeled in the binary. Offsets and comparison logic are exact; field names are inferred. CLI can compare the same offsets without knowing semantic names.
 
-5. **No TSDev UI reverse-traversal trace was captured for the original M.4
-   slice.** The §8 runtime diagnostic is not a TSDev UI trace; it records
-   linker/object-code behavior and does not establish a current acceptance
-   result. A Frida trace of a UI Verify that triggers reverse-dependent
-   revalidation (e.g., modifying a Function that a Strategy calls, then
-   verifying the Function) would confirm: (a) the recursion order, (b) the
-   `+0x55` flag behavior, (c) the `+0x18` overload, and (d) the
-   failure-reporting aggregate. This remains a recommendation, not a blocker
-   for the static findings.
+5. **No TSDev UI reverse-traversal trace captured for original M.4 slice.** A Frida trace of a UI Verify triggering reverse-dependent revalidation would confirm recursion order, `+0x55` flag behavior, `+0x18` overload, and failure-reporting aggregate. (Partially addressed by §9.8 session 3 Frida trace.)
 
-6. **`compiler+0x04` (dependent-failure aggregate) downstream consumption
-   not exhaustively traced.** §4.3 confirms — by decompiling `FUN_00451800`
-   and its immediate callees (`FUN_0044a1e0`, `FUN_0044c410`,
-   `FUN_0044b880`, `FUN_004502f0`, `Ordinal_67`) — that none read
-   `compiler+0x04` after the success/failure branch, so the aggregate is
-   dead with respect to the immediate UI path. Whether `+0x04` is consumed
-   by any deeper downstream UI/reporting path beyond those immediate
-   callees (e.g., inside the virtual `+0x1f8` success callback on the
-   CDocument, or inside `_GetCompilingErrors_4`'s callees) was not
-   exhaustively traced statically. This does not affect the M.4.4 conclusion
-   for the `FUN_00451800` branch (which is provably on `+0x00`), but is
-   recorded for completeness. A dynamic trace reading `compiler+0x04` after
-   `FUN_004d9480` returns would close this gap.
+6. **`compiler+0x04` downstream consumption not exhaustively traced.** §4.3 confirms none of `FUN_00451800`'s immediate callees read `+0x04` after the branch. Whether deeper downstream paths consume it was not traced. Does not affect the M.4.4 conclusion (UI branch is provably on `+0x00`).
 
 ---
 
-## 8. Evidence Index
+## Evidence Index
 
 ### TSDev.exe (image base `0x00400000`)
 
@@ -1306,112 +718,394 @@ verify is linkable; reverse-dependent revalidation is a **parity** feature
 
 ### PE export-table evidence
 
-- `pefile` scan of `C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll`:
-  ordinal base = 10; ordinals 10, 28, 66, 67, 68, 69, 70, 71 are all
-  `[NONAME]` (ordinal-only) at the RVAs listed above.
-  Dependency-named exports: ordinals 487 (`GetDependencies`), 489
-  (`_GetDynamicDependencyList@12`), 531 (`_GetStaticDependencyList@12`),
-  396/397 (`_DeleteChangedModulesList@4`/`_DeleteDependencyList@4`).
-- Master-record enumeration exports (confirmed named, resolvable by
-  `GetProcAddress(hModule, "<name>")` — no ordinal-only risk):
-  - ordinal **510** `_GetMasterRecByType@16`, RVA `0x1A0460`
-    (`0x101A0460`)
-  - ordinal **568** `_LoadMasterRecsEX@16`, RVA `0x1A5360`
-    (`0x101A5360`)
-  - ordinal **512** `_GetMasterRecsBuf@12`, RVA `0x1A0C70`
-    (`0x101A0C70`)
-  All three are **named exports** (verified via `pefile`: `e.name` is
-  non-`None` for each). The historical Option B2 recommendation (§5.4(c), §6)
-  relied on these named exports plus `GetDependencies`/
-  `_GetStaticDependencyList@12`/`_DeleteDependencyList@4`/
-  `_VerifyModule_New@20`; that recommendation is superseded by the
-  linker-based production path documented in §8.7.
+- `pefile` scan: ordinal base = 10; ordinals 10, 28, 66, 67, 68, 69, 70, 71 are all `[NONAME]` (ordinal-only).
+- Named exports: ord 510 `_GetMasterRecByType@16` (RVA `0x1A0460`), ord 568 `_LoadMasterRecsEX@16` (RVA `0x1A5360`), ord 512 `_GetMasterRecsBuf@12` (RVA `0x1A0C70`). All resolvable by `GetProcAddress(hModule, "<name>")`.
 
 ### Prior RE cited
 
 - `docs/RE/RE_UNKNOWN_LINK_GHIDRA_EVIDENCE.md` §6 (Verify chain static evidence)
-- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F ("Disproved or non-causal
-  hypotheses") — +0x10 / outer recursive wrapper and the finding that
-  reverse-dependent revalidation is not required for root linkability
-- `docs/RE/RE_M3_0x40A_NOTIFICATION.md` (format pattern + GetWarehouse RVA
-  `0x1A9650` cross-reference)
-- `docs/M1_HANDOFF.md` §R-M.1.2 (compiler field layout: +0x08 category,
-  +0x0C subtype, +0x10 ProgId, +0x18 HWND)
-- `docs/SIGNATURE_CATALOG.md` §4.7 (GetWarehouse RVA `0x1A9650`), §5
-  (ordinals 66/67 resolution mechanism)
+- `docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md` §F (reverse-dependent revalidation not required for root linkability)
+- `docs/RE/RE_M3_0x40A_NOTIFICATION.md` (format pattern + GetWarehouse RVA cross-reference)
+- `docs/M1_HANDOFF.md` §R-M.1.2 (compiler field layout)
+- `docs/SIGNATURE_CATALOG.md` §4.7, §5 (GetWarehouse RVA, ordinals 66/67 resolution)
 
 ---
 
-## 8. GetDependencies Type-Code Mismatch and Linker-Based Dep-List Approach
+## 8. GetDependencies Mismatch & Linker-Based Dep-List Approach (superseded by §9)
 
-**Date:** 2026-08-26
-**Method:** Ghidra static analysis (agent c6d57810) + runtime diagnostic `diag_m4_deplist_dump` (agent 6f30a931)
+> **Superseded by §9 (M.4a):** The linker-based approach below parses orlib20
+> internal buffer layouts that TSDev.exe never touches directly. M.4b replaces
+> it with the warehouse-level cmd `0x0D`/`0x3B` approach. Retained as RE
+> reference for the linker/internal-buffer layout.
 
 ### 8.1 GetDependencies is broken: type-code mismatch (0xFA4 vs 0xFA3)
 
-`FUN_10153ad0` (the GetDependencies internal helper) checks for dep-list entry type `0xFA4` to identify function dependencies. However, the ACTUAL function-dependency entry type written by `MakeSymbol` (RVA 0x10021800) during compilation is `0xFA3`, not `0xFA4`. This was confirmed by runtime diagnostic `diag_m4_deplist_dump`:
-
-- 7 `0xFA3` entries found in 2 existing Indicators (ProgId=3 and ProgId=8)
-- Zero `0xFA4` entries found across all 25 tested items (10 Strategies, 10 Indicators, 5 Functions)
-- GetDependencies returns empty for ALL items because it checks for the wrong type code
-
-This is the REAL root cause of GetDependencies returning empty — not a field mismatch (the earlier "record+0x6f vs element+0x7b" theory was incorrect; record+0x6f is a compilation working buffer, not a dep-list).
+`FUN_10153ad0` checks for dep-list entry type `0xFA4`, but `MakeSymbol` (RVA `0x10021800`) writes `0xFA3`. Confirmed by runtime diagnostic: 7 `0xFA3` entries in 2 Indicators, zero `0xFA4` across all 25 tested items. GetDependencies returns empty for ALL items.
 
 ### 8.2 record+0x6f is NOT a dependency list
 
-The buffer at `record+0x6f` (size at `record+0x73`) is a **64KB compilation working buffer**, not a dependency list. Three independent readers confirm this:
+`record+0x6f` (size at `record+0x73`) is a **64KB compilation working buffer**, not a dep-list. Confirmed by `GetTokenOnlyInfo` (`0x1001f310`), `FUN_10151550` (record destructor), and `FUN_101158d0` (LinkModules) — all read it as compiled tokens.
 
-1. `GetTokenOnlyInfo` (0x1001f310): reads record+0x6f, searches for it in a global array at 0x1023db14, then frees or releases it.
-2. `FUN_10151550` (record destructor): same pattern — searches global array, frees/releases.
-3. `FUN_101158d0` (LinkModules): reads record+0x6f as compiled tokens (compares first byte with 0x8a).
+### 8.3 Actual dep-lists are at element+0x7b (per-element)
 
-The `9c 29 00 00` "magic" at the start of the buffer is just the first bytes of compiled token data, not a structured header. The `00 04` and `00 37` are compiled token data, not category/ProgId fields.
-
-### 8.3 The actual dep-lists are at element+0x7b (per-element)
-
-The real dependency lists are stored per-element:
 - `element+0x7b` = dep-list buffer pointer
 - `element+0x73` = dep-list byte size
-
-Element stride is `0xb5` (181 bytes). The element array is at `record+0x4f` (pointer) with count at `record+0x29`.
+- Element stride `0xb5` (181 bytes). Element array at `record+0x4f` (pointer), count at `record+0x29`.
 
 ### 8.4 Dep-list entry format
 
-Each entry in the dep-list has this layout:
-- `+0x00` (4 bytes): type (dword) — e.g., 0xFA3 for function dependency
-- `+0x04` (1 byte): total entry length (used as iteration stride)
+- `+0x00` (4 bytes): type (dword) — e.g., `0xFA3` for function dependency
+- `+0x04` (1 byte): total entry length (iteration stride)
 - `+0x05` (4 bytes): source line
 - `+0x09` (4 bytes): source column
-- `+0x0d` (4 bytes): payload — for 0xFA3/0xFA4 entries, this is the **dependent Function's ProgId** (int)
+- `+0x0d` (4 bytes): payload — for `0xFA3`/`0xFA4` entries, the **dependent Function's ProgId** (int)
 
-Entry iteration: advance by the length byte at entry+4. Continue while `(cursor - base) < depListSize`.
+Entry iteration: advance by length byte at `entry+4`. Continue while `(cursor - base) < depListSize`.
 
-### 8.5 The function reference at entry+0xd IS a ProgId
+### 8.5 entry+0xd IS a ProgId
 
-Ghidra analysis of `MakeSymbol` (RVA 0x10021800) confirms that the value written at entry+0xd is `(int)(param_9 + 0.5)` — a float-to-int round of the symbol's numeric value. The very next line passes this same int to `GetFunctionReturnType(1, progId)`, which resolves it via BST lookup keyed by ProgId (outer tree `std::map<int ProgId, InnerTree>`, node key at +0x10). Therefore the value at entry+0xd IS the warehouse ProgId of the dependent Function.
-
-`ExpandFuncList` (0x1001c890) is a trivial dedup-collect utility (static method, no `this` needed). It does NOT resolve the ProgId — it just appends it to a GlobalAlloc'd array. No resolution step is needed; the value at entry+0xd can be directly compared to the modified Function's ProgId.
+`MakeSymbol` writes `(int)(param_9 + 0.5)` (float-to-int round) at `entry+0xd`. Next line passes it to `GetFunctionReturnType(1, progId)`, which resolves via BST lookup keyed by ProgId. `ExpandFuncList` (`0x1001c890`) is a trivial dedup-collect utility — no resolution needed; `entry+0xd` can be directly compared to the modified Function's ProgId.
 
 ### 8.6 Category-specific dep-list presence
 
-Runtime diagnostic confirmed:
-- **Strategies (cat 0):** dep-lists exist (size=38 bytes, 2 entries per element). First 10 tested had only 0xBB8/0xBB9 entries (no function calls). Strategies that call Functions would have 0xFA3 entries.
-- **Indicators (cat 2):** dep-lists exist (size 35/38/80). 0xFA3 entries found in items that call Functions.
-- **Functions (cat 4):** dep-lists are empty (size=0, ptr=NULL for all elements), observed in the sampled existing Functions; design intent is unconfirmed.
+- **Strategies (cat 0):** dep-lists exist (size=38, 2 entries/element). Tested items had only `0xBB8`/`0xBB9` entries (no function calls).
+- **Indicators (cat 2):** dep-lists exist (size 35/38/80). `0xFA3` entries in items calling Functions.
+- **Functions (cat 4):** dep-lists empty (size=0, ptr=NULL) in sampled existing Functions.
 
-### 8.7 M.4 implementation approach (linker-based, bypasses GetDependencies)
+### 8.7 Linker-based approach (superseded by §9)
 
-Since GetDependencies is broken (type-code mismatch), M.4 must enumerate reverse dependents by:
+Enumerate reverse dependents by: (1) call linker (ordinal 85) per candidate, (2) read element array (`record+0x4f`/`+0x29`, stride `0xb5`), (3) read dep-list (`element+0x7b`/`+0x73`), (4) parse entries checking type `0xFA3` AND `0xFA4` (ProgId at `entry+0xd`), (5) match against `rootProgId`. Linker call requires partial record buffer (via `Ordinal_28`), release via `Ordinal_70`.
 
-1. For each candidate item (in all categories), call the linker (ordinal 85) to get the linked record
-2. Read the element array (record+0x4f/+0x29, stride 0xb5)
-3. For each element, read the dep-list (element+0x7b/+0x73)
-4. Parse entries: check for type 0xFA3 AND 0xFA4 (both have ProgId at entry+0xd)
-5. If any entry's ProgId matches rootProgId, that item is a reverse dependent
+### 8.8 Known limitation (corrected per M.3b.2c)
 
-This bypasses the broken GetDependencies entirely. The linker call requires a partial record buffer (obtained via Ordinal_28) and the record must be released via Ordinal_70 after use.
+Original claim that CLI-compiled items have empty element arrays was a **test artifact** — declaration-free source (`X = 1;`) legitimately has `elemCount=0`. M.3b.2c verified CLI-compiled items WITH declarations have populated element arrays across all 5 types (Strategy/Indicator/Function/TradingApp/ShowMe).
 
-### 8.8 Known limitation
+**Remaining linker limitation:** Linker (ordinal 85) and `Ordinal_28` take the EXPANDED whType (enum value: 0, 2, 4, 5122, 1282), NOT the category (low 8 bits). For TradingApp (5122) and ShowMe (1282), passing category=2 causes NULL return. This is bypassed by M.4b's warehouse-level approach.
 
-This approach only works for items where the linker can populate element arrays (existing TSDev-created items). CLI-compiled items have empty element arrays due to the separate CLI-created object-code defect (version=0, element count=0), which is tracked by M.3b. M.4 remains blocked until that defect is resolved; this is not an M.4 acceptance result.
+---
+
+## 9. M.4a Findings — Warehouse-Level `CELPrograms` BST Population
+
+> **Date:** 2026-08-28. **Method:** Ghidra static analysis of `TSDev.exe`,
+> `orlib20.dll`, `WHServer.exe`. **Scope:** Research-only.
+
+### 9.0 Architecture overview
+
+The reverse-dependent enumeration is a **warehouse COM operation**, not a linker/internal-buffer operation. Full call chain:
+
+```
+FUN_004D91E0 (TSDev.exe, reverse-dependent reverify wrapper)
+  └─ FUN_004c9670 (TSDev.exe, init CELPrograms BST)           [§1.5]
+       └─ FUN_004cad90 (TSDev.exe, populate BST from SafeArray)
+            ├─ FUN_004d7040 (TSDev.exe, cmd 0x0D requester)   → root record
+            ├─ *(warehouse+0x5e) = root record                 → set current record
+            ├─ FUN_004d6f00(0x3B) (TSDev.exe, cmd 0x3B requester)
+            │    └─ [orlib20 worker thread] FUN_101d2150 case 0x3B
+            │         └─ (*IProgram_vtable[+0x38])(pProgram)   → IProgram::Callers
+            ├─ SafeArrayAccessData(*(warehouse+0x26))          → SafeArray of callers
+            ├─ FUN_004d88c0 (parse SafeArray entries → BST)
+            └─ SafeArrayDestroy
+```
+
+> **warehouse vs. record:** The cmd `0x3B` result SafeArray is at **`warehouse+0x26`** in the `CELWHouse` singleton, NOT in the `CELProgram` record. The CELProgram record (the "current record" for `IProgram::Callers`) is a separate object at **`warehouse+0x5e`** with its own metadata fields (`+0xd6`, `+0x15`, `+0x29`, `+0x4f`; used by `FUN_004d9040`; see §9.6).
+
+The warehouse is a **COM STA object**. `CELWHouse` class (`FUN_101cf1f0`, orlib20 RVA `0x1cf1f0`) creates completion event (`+0x6a`), command-ready event (`+0x6e`), mutex (`+0x72`), and starts a **worker thread** via `_beginthreadex(FUN_101d4110, ...)` in `FUN_101d1310` (RVA `0x1d1310`). Worker thread (`FUN_101d4110` → `FUN_101d2150`, RVA `0x1d2150`) calls `CoInitialize`, creates `WHServer` COM object via `CoCreateInstance` (CLSID `CLSID_WHouse`, IID `IID_IWHouse`), enters command-dispatch loop: waits on `+0x6e`, switches on `*(warehouse+0x04)` (command), calls corresponding `IWHouse`/`IProgram` vtable method, stores result, signals `+0x6a`.
+
+`CELWHouse` constructor sets `*(warehouse+0x76) = GetCurrentThreadId()` (owning thread). Generic command requester `FUN_101cf5b0` (RVA `0x1cf5b0`): acquires mutex `+0x72`, checks `GetCurrentThreadId() == *(warehouse+0x76)` (asserts `int 3` on mismatch, except cmd `0x1e`), sets `*(warehouse+0x04) = cmd`, signals `+0x6e`, waits on `+0x6a`. TSDev-side equivalent: `FUN_004d6f00` (`0x004d6f00`), same protocol.
+
+`WHServer.exe` COM server implements three dual `IDispatch` interfaces (confirmed via RTTI):
+- **`IWHouse`** (class `CWHouse`, CLSID `CLSID_WHouse`, IID `IID_IWHouse`) — warehouse server.
+- **`IProgram`** (class `CProgram`, CLSID `CLSID_Program`, IID `IID_IProgram`) — per-program object.
+- **`ICategory`** (class `CCategory`, IID `IID_ICategory`).
+
+`IProgram` exposes **`Callers`** (reverse dependents) and **`Callees`** (forward dependents), confirmed by ASCII strings at `WHServer.exe:0x004318e8` ("Callers") and `0x004318f0` ("Callees"), referenced from type-library descriptor at `0x0043e06c`/`0x0043e070`.
+
+### 9.1 R-M.4a.1 — cmd 0x0D retrieves the ROOT module's single record
+
+`FUN_004d7040` retrieves the ROOT module's single `CELProgram` record via cmd `0x0D` (`ProgramById`). It does NOT retrieve reverse dependents.
+
+Evidence (`FUN_004cad90`, `0x004cad90`):
+
+```c
+if (*(int *)(param_1 + 0x10) == 0)
+    *(int *)(param_1 + 0x10) =
+        FUN_004d7040((int)*(short *)(param_1 + 0x15),     // type
+                      *(undefined4 *)(param_1 + 0x18));    // ProgId
+*(undefined4 *)(*(int *)(param_1 + 0xc) + 0x5e) =
+    *(undefined4 *)(param_1 + 0x10);                       // warehouse+0x5e = root record
+FUN_004d6f00(0x3b);                                        // issue cmd 0x3B
+```
+
+`FUN_004d7040` (`0x004d7040`) performs cmd `0x0D`:
+
+```c
+*(undefined4 *)(param_1 + 0x12) = param_2;   // warehouse+0x12 = type
+*(undefined4 *)(param_1 + 0x16) = param_3;   // warehouse+0x16 = ProgId
+*(undefined4 *)(param_1 + 4)    = 0xd;       // warehouse+0x04 = cmd 0x0D
+SetEvent(*(HANDLE *)(param_1 + 0x6e));
+WaitForSingleObject(*(HANDLE *)(param_1 + 0x6a), 0xffffffff);
+return *(undefined4 *)(param_1 + 0x5e);      // result = single record
+```
+
+Type/ProgId from `CELPrograms` object's `+0x15` (type) and `+0x18` (ProgId) = the **root module**. orlib20 worker handler for cmd `0x0D` (`FUN_101d15c0`, RVA `0x1d15c0`) accepts type + ProgId, allocates a single `CELProgram` object, returns single record. `FUN_101d04f0` (RVA `0x1d04f0`) and `FUN_101e3990` (cached BST lookup by ProgId) confirm both paths return a single record by type/ProgId.
+
+`FUN_004d7040` enforces thread-affinity check `GetCurrentThreadId() == *(warehouse+0x76)` (asserts `int 3` on mismatch). **M.4b must issue both cmd `0x0D` and cmd `0x3B` from the warehouse-owning thread.**
+
+### 9.2 R-M.4a.2 — cmd 0x3B populates the SafeArray at warehouse+0x26
+
+cmd `0x3B` dispatches to `IProgram` COM vtable method at offset `+0x38` (the `Callers` method). Operates on the "current record" (root program, set at `warehouse+0x5e` before the command). Result SafeArray stored at **`warehouse+0x26`**.
+
+Worker thread dispatch (`FUN_101d2150`, RVA `0x1d2150`), case `0x3b`:
+
+```c
+case 0x3b:
+    piVar9 = *(int **)(...);                          // the IProgram COM object
+    uVar11 = (**(code **)(*piVar9 + 0x38))(piVar9);   // vtable[+0x38](this)
+    *(undefined4 *)(...) = uVar11;                    // store result
+    break;
+```
+
+Sibling commands → `IProgram` vtable methods:
+- **cmd `0x39`** → vtable `+0x54` (save/modify path, reads string list via `CMemFile`).
+- **cmd `0x3A`** → vtable `+0x40` (UI list path, builds "Name"/"Category" strings — likely "Callees"/forward-dependents view).
+- **cmd `0x3B`** → vtable `+0x38` (reverse-dependent revalidation path).
+
+All three take only the COM `this` pointer (no type/ProgId args). Operate on current record at `*(warehouse+0x5e)`. Result SafeArray read by `FUN_004cad90` from `*(warehouse + 0x26)`:
+
+```c
+// FUN_004cad90, after FUN_004d6f00(0x3b):
+pvVar = SafeArrayAccessData(*(SAFEARRAY **)(warehouse + 0x26));
+FUN_004d88c0(..., pvVar, count);    // populate BST from SafeArray
+SafeArrayDestroy(...);
+```
+
+`FUN_004cad90` first checks `*(warehouse + 0x4e) == 0` (status/error) and calls `FUN_004c9270` (uses `SafeArrayGetLBound`/`SafeArrayGetUBound`) to obtain element count before `SafeArrayAccessData`. **M.4b should replicate this guard.**
+
+### 9.3 R-M.4a.3 — SafeArray contains reverse dependents DIRECTLY
+
+The warehouse supplies reverse dependents DIRECTLY. TSDev does NOT enumerate all programs and filter. The SafeArray from cmd `0x3B` (`IProgram::Callers`) contains exactly the reverse dependents (callers) of the current (root) program.
+
+Evidence:
+1. **Semantic naming:** `IProgram` exposes "Callers" (reverse dependents) and "Callees" (forward dependents) — standard terms.
+2. **Exclusive use:** cmd `0x3B` called by exactly one TSDev.exe function: `FUN_004cad90` (sole caller: `FUN_004c9670` at `0x004c967b`). `FUN_004c9670` called by `FUN_004D91E0` (`0x004d930a`) and `FUN_004c9710`. On orlib20 side, cmd `0x3B` issuer (`FUN_101c51b0`) also reached from modify/rename flows — "Callers" is a general reverse-dependent query.
+3. **No filtering logic:** `FUN_004cad90` reads SafeArray and passes ALL entries to `FUN_004d88c0` for BST insertion. `FUN_004d88c0` iterates every entry (variable stride `8 + nameLength + 0x16`) and inserts each into BST via `FUN_004d7f40`. No predicate/filter — every SafeArray entry becomes a BST node.
+4. **Current-record context:** vtable `+0x38` takes no type/ProgId arguments. A "callers of this program" query needs only the current program context; a "all programs of a type" query would need a type argument.
+
+**Conclusion:** The warehouse COM server (`WHServer.exe` `CProgram`/
+`IProgram`) directly computes and returns the reverse-dependent (Callers) set.
+TSDev consumes it as-is. The CLI should rely on this same mechanism rather
+than enumerating all programs and filtering, or parsing linker dep-lists.
+
+### 9.4 R-M.4a.4 — CLI command sequence
+
+The CLI should reproduce the TSDev command sequence:
+
+1. **Get warehouse** via `Ordinal_10` (GetWarehouse, RVA `0x1a9650`).
+2. **Retrieve root program record** via cmd `0x0D`: set `*(warehouse+0x12) = type`, `*(warehouse+0x16) = ProgId`, `*(warehouse+0x04) = 0x0D`, signal `+0x6e`, wait on `+0x6a`, read result from `*(warehouse+0x5e)`. (orlib20 wrappers: `FUN_101d15c0` RVA `0x1d15c0` / `FUN_101d04f0` RVA `0x1d04f0`. CLI already drives cmd `0x0D` indirectly via `_GetMasterRecByType@16` for `exists`.)
+3. **Set current record:** `*(warehouse+0x5e) = root_record` (done internally by `FUN_004cad90` before cmd `0x3B`).
+4. **Issue cmd `0x3B` (Callers):** set `*(warehouse+0x04) = 0x3B`, signal `+0x6e`, wait on `+0x6a`. (orlib20 requester: `FUN_101cf5b0(0x3b)` RVA `0x1cf5b0`; TSDev-side: `FUN_004d6f00(0x3b)`.)
+5. **Guard, count, read SafeArray:** verify `*(warehouse+0x4e) == 0`, get element count via `SafeArrayGetLBound`/`SafeArrayGetUBound` (as `FUN_004c9270` does), read data from `*(warehouse+0x26)`.
+6. **Parse SafeArray entries** using `FUN_004d88c0` format (§9.7), build dependent set.
+7. **For each dependent,** recurse verify + contract-change gate as `FUN_004D91E0` does (§1.6–1.7, §2, §3).
+
+**Key caveat — cmd `0x3B` requester is NOT exported.** `FUN_101cf5b0` and `FUN_004d6f00` are internal/unexported. The CLI must drive the warehouse worker protocol directly (option (a)): write `*(warehouse+0x04)`, signal `+0x6e`, wait on `+0x6a` using the warehouse pointer from `Ordinal_10` — replicating `FUN_101cf5b0`'s protocol. Requires warehouse object layout offsets (`+0x04`, `+0x5e`, `+0x6a`, `+0x6e`, `+0x72`, `+0x76`), all documented in this note. No exported orlib20 wrapper for cmd `0x3B` was found (§9.5).
+
+### 9.5 R-M.4a.5 — Exported orlib20 APIs
+
+No exported orlib20 API provides pure reverse-dependent enumeration without side effects. cmd `0x3B` requester (`FUN_101cf5b0`) is internal/unexported.
+
+`_ChangeModuleFileName@20` (`0x1015e450`) transitively issues cmd `0x3B` but is a file-rename operation with side effects — NOT a clean enumeration primitive. Internal higher-level orchestrators (`FUN_101a4df0`, `FUN_101a50a0`, `FUN_101a4f90`) wrap the full `cmd 0x0D` → `cmd 0x3B` flow but are not exported.
+
+Required primitives:
+
+| Primitive | Role | Ordinal | orlib20 RVA | Exported? |
+|-----------|------|---------|-------------|-----------|
+| `GetWarehouse` | Warehouse singleton | 10 | `0x1a9650` | Yes |
+| `InitGlobalLookup` | Cached BST init | 71 | `0x1a9460` | Yes |
+| `_GetMasterRecByType@16` | Master-record lookup by type/name | 28 | `0x1a03f0` | Yes |
+| (module-record retrieval) | Module record from master | 69 | `0x1a3e00` | Yes |
+| (count accessor) | `*(obj+0x0C)` count | 68 | `0x1a87d0` | Yes |
+| (refcount-dec/free) | Release record | 70 | `0x15df30` | Yes |
+| `_VerifyModule_New@20` | Verify/recompile single module | 700 | `0x169630` | Yes |
+| cmd `0x0D` requester | ProgramById (single record) | — | `0x1d15c0` (`FUN_101d15c0`) | No (internal) |
+| cmd `0x0D` dispatcher | Cached/worker dispatch | — | `0x1d04f0` (`FUN_101d04f0`) | No (internal) |
+| **cmd `0x3B` requester** | **Callers (reverse dependents)** | — | `0x1cf5b0` (`FUN_101cf5b0`) | **No (internal)** |
+| cmd `0x3B` worker handler | Dispatch to IProgram::Callers | — | `0x1d2150` case 0x3b | No (internal) |
+| BST insert (SafeArray→BST) | Parse SafeArray entries | — | TSDev `0x004d88c0` | No (TSDev-private) |
+
+Forward-dependency exports (`GetDependencies` ord 487, `_GetDynamicDependencyList@12` ord 489, `_GetStaticDependencyList@12` ord 531) return Callees, not Callers, and `GetDependencies` is broken (§8.1). **CLI must drive the warehouse worker command protocol directly.**
+
+### 9.6 R-M.4a.6 — Contract-change comparison (warehouse-metadata, no source-text)
+
+Confirmed: `FUN_004d9040` (`0x004d9040`) compares warehouse-record metadata fields between old and new root records. NO source-text comparison, NO EasyLanguage parsing. AGENTS.md-compliant.
+
+Returns `1` if UNCHANGED, `0` if CHANGED. Exact field offsets and comparison masks (duplicates §2 table — see §2 for full decompilation):
+
+| Record offset | Size | Comparison | Meaning |
+|---------------|------|------------|---------|
+| `+0x00` | 4 | `*rec != 0` (both must be non-NULL) | record validity |
+| `+0xd6` | 4 | `old[+0xd6] == new[+0xd6]` | identity/version (must match) |
+| `+0x15` | 1 | `(old ^ new) & 0x7E == 0` | flags: bits 1–6 |
+| `+0x7f` | 2 | `(old ^ new) & 0xB007 == 0` | flags: low byte bits 0–2, plus bits 12,13,15 |
+| `+0x81` | 2 | `(old ^ new) & 0xF900 == 0` | flags: bits 8,11,12,13,14,15 |
+| `+0x29` | 4 | `old[+0x29] == new[+0x29]` | element count (must match) |
+| per-element (stride `0xb5`, base `*(rec+0x4f)`): | | | |
+| `elem+0xd` | 4 | `old == new` | per-element field 1 |
+| `elem+0x11` | 4 | `old == new` | per-element field 2 |
+| `elem+0x15` | 4 | `old == new` | per-element field 3 |
+| `elem+0x83` | 4 | `(old ^ new) & 4 == 0` | per-element flag bit 2 |
+| `elem+0x87` | 2 | `old == new` | per-element field 4 |
+| `elem+0xb1` | 4 | `old == new` | per-element field 5 |
+
+Returns `1` (UNCHANGED) only if ALL pass; `0` (CHANGED) on first mismatch. Per-element loop runs `*(rec+0x29)` iterations with stride `0xb5`.
+
+### 9.7 SafeArray entry format (`FUN_004d88c0`)
+
+`FUN_004d88c0` (`0x004d88c0`) parses the SafeArray from `IProgram::Callers`. Variable-length entries. Parsing starts at byte offset 4, advances by `8 + nameLength + 0x16` (`0x1e + nameLength`) per entry:
+
+| Entry offset | Size | Field |
+|--------------|------|-------|
+| `+0x00` | 2 | type/category-like field |
+| `+0x02` | 4 | ID-like field |
+| `+0x06` | 2 | string length (nameLength) |
+| `+0x08` | nameLength | name string bytes |
+| `+0x08+nameLength` | 0x16 | metadata block |
+
+8-byte header → nameLength name bytes → fixed `0x16` (22-byte) metadata block. Each entry inserted into BST via `FUN_004d7f40` (`0x004d7f40`).
+
+Metadata sub-fields (relative to `0x16` block start):
+
+| Meta offset | Size | Sub-field |
+|-------------|------|-----------|
+| `+0x00` | 1 | metadata[0] |
+| `+0x01` | 4 | metadata[1] |
+| `+0x05` | 4 | metadata[2] |
+| `+0x09` | 4 | metadata[3] |
+| `+0x0d` | 1 | metadata[4] |
+| `+0x0e` | 1 | metadata[5] |
+| `+0x0f` | 2 | metadata[6] |
+| `+0x11` | 1 | metadata[7] |
+| `+0x12` | 2 | metadata[8] |
+| `+0x14` | 2 | metadata[9] |
+
+**BST keying distinction:** TWO distinct BSTs:
+1. **Cached lookup BST** (`FUN_004e79d0`): keyed by **ProgId**. Node key at `+0x10`, value (module record ptr) at `+0x14`. Used by cached path in `FUN_004d7140`/`FUN_004d85c0`.
+2. **SafeArray-built `CELPrograms` BST** (`FUN_004d7f40`): keyed by **2-byte type/category field** (node `+0x0E`) and, on equal first fields, by **name string** (node `~+0x10`). Ordered by (type, name), NOT by ProgId.
+
+The reverse-dependent enumeration BST built by `FUN_004cad90`/`FUN_004d88c0` is the second kind. The iteration order observed by `FUN_004D91E0`'s loop (via `FUN_004d85c0` → `FUN_004d7c40` in-order walk) depends on which BST the accessor uses; `FUN_004d85c0` resolves records via the cached ProgId-keyed BST (`FUN_004e7840`) or the worker path (`FUN_004d7190`), so **iteration order is ascending ProgId** (§1.7), but **SafeArray-built BST insertion** is ordered by (type, name). These are separate data structures.
+
+### 9.8 Unresolved gaps
+
+1. **`IProgram` vtable offset → method-name mapping:** Semantic evidence that cmd `0x3B` = `IProgram::Callers` is conclusive, but the precise vtable index was not confirmed by locating the `CProgram` vtable in `WHServer.exe`. Type-library string order may not match vtable order. Does not affect M.4b (CLI drives cmd `0x3B` through the warehouse worker protocol, not a direct vtable call).
+
+2. **No dynamic verification:** All M.4a conclusions are static Ghidra analysis. A Frida trace of a live TSDev verify would confirm the SafeArray at `+0x26` contains exactly the reverse-dependent set. Per AGENTS.md, UI-click automation is prohibited; a dynamic trace requires an elevated live TSDev process with a verify triggered by non-automated means.
+
+3. **`IProgram::Callers` internal structure:** The COM-side computation that produces the Callers SafeArray (whether `WHServer.exe` queries a dependency database, traverses structured storage, or calls `elbardb.dll`) was not traced into `WHServer.exe`'s method implementation. `WHServer.exe` uses structured storage (`StgOpenStorage`/`StgCreateStorageEx`) and work-area files (`PWRKArea.wrk`, `SWRKArea.wrk`, `CWRKArea.wrk`, `DWRKArea.wrk`, `MBIFuncs.wrk`, `MCATArea.wrk`, `RWRKArea.wrk` — strings at `WHServer.exe:0x00431f98`–`0x00432040`). Outside M.4a scope.
+
+4. **cmd `0x3B` result field:** Worker thread proc stores the COM method's return value at a warehouse offset Ghidra rendered via confusing struct-field naming. TSDev-side `FUN_004cad90` reads the SafeArray from `*(warehouse + 0x26)`, confirming the result lands at `warehouse+0x26`. Does not affect M.4b.
+
+5. **DYNAMIC FINDING (M.4b.1, 2026-08-28) — COM server returns zero callers:**
+   The M.4b.1 implementation drives cmd `0x0D` then cmd `0x3B` through the
+   generic dispatcher (`FUN_101cf5b0`). Dynamic testing against a live
+   TradeStation 9.5 installation confirmed:
+   - cmd `0x0D` with `(category=4, ProgId=<Function>)` sets `warehouse+0x5E`
+     to a non-NULL IProgram COM object. ✓
+   - cmd `0x3B` succeeds with `warehouse+0x4E == 0` (status OK). ✓
+   - cmd `0x3B` populates `warehouse+0x26` with a NEW SafeArray (distinct
+     pointer after clearing `+0x26` to NULL before the command). ✓
+   - The SafeArray descriptor is: `cDims=1, fFeatures=0x0080
+     (FADF_HAVEVARTYPE), cbElements=1, cElements=4, lLbound=0`. VARTYPE
+     (at `psa-4`) is `0x0011` (VT_UI1). The data is **4 bytes of zeros**. ✗
+     (does not match §9.7 documented variable-length entry format)
+   - Per §9.7, parsing starts at byte offset 4. A 4-byte SafeArray means
+     ZERO entries. The COM server reports zero callers.
+
+   This occurs even when both items are created/verified, the Indicator's
+   source explicitly references the Function, `enumerateRecords` confirms
+   both exist, the root Function is re-verified immediately before the
+   query, and `refreshCache()` (cmd `0x0F` + cmd `0x4E`) is called.
+
+   The cmd `0x0D` worker handler (case `0x0d` in `FUN_101d2150`) calls
+   `IWHouse::vtable[+0x20]` (ProgramById) on the IWHouse interface at
+   `warehouse+0xAE`, then `FUN_101cf020()` to obtain the IProgram COM object
+   stored at `warehouse+0x5E`. The cmd `0x3B` handler calls
+   `IProgram::vtable[+0x38]` (Callers) on the object at `warehouse+0x5E`.
+   The protocol implementation is correct.
+
+   **IMPORTANT CORRECTION (2026-08-28 PM directive):** The original
+   characterization of this as a "stale dependency database" was WRONG.
+   TSDev.exe users routinely create new items, verify them, and verify
+   dependents — all without restarting TSDev. If the dependency database
+   were truly stale after init, TSDev would have the same problem. It
+   doesn't. Therefore the database IS updated during a session by some
+   mechanism that our CLI is not performing. The zero-callers result is
+   NOT a "discovery" — it is a RED test correctly failing because our
+   implementation is incomplete. We are missing a step that TSDev performs.
+
+   **WHServer.exe is an OUT-OF-PROCESS COM server** (LocalServer32
+   registration, CLSID {7CEEA90C-D59E-11D3-8394-00C04F7BDF10} →
+   `"C:\Program Files (x86)\TradeStation 9.5\Program\whserver.exe"`).
+   elbardb.dll is loaded by WHServer.exe as the in-process implementation.
+   The dependency database lives in WHServer.exe's process, NOT in ours.
+   WHServer.exe was NOT running when checked, so our CLI starts a fresh
+   instance with an empty dependency DB. The DB is empty for ALL items
+   including existing ones with known linker callers (ProgId=517 with 28
+   linker callers → 0 COM callers).
+
+   **Session 2 finding (empirical test):** TSDev.exe was started and fully
+   initialized (25-second wait); WHServer.exe spawned as its child COM
+   server (confirmed running). Then `test_callers_enumeration.exe` and
+   `tsdev_cli.exe dependents` were run. Result: COM Callers STILL returns 0
+   for ALL items. The DB is NOT populated eagerly at startup — it must be
+   populated by a specific UI action or COM command dispatched in response
+   to a user action.
+
+   **Session 3 finding — 13 missing commands:** Frida trace of TSDev.exe
+   verify (driven by reusable pywinauto UI automation, `uv run tsdev-ui`)
+   reveals 13 warehouse commands TSDev sends that our CLI never sends:
+
+   `0x32 / 0x33 / 0x34 / 0x35 / 0x38 / 0x3A / 0x4D / 0x4E / 0x4F / 0x53 / 0x57 / 0x58 / 0x65`
+
+   These commands call vtable methods on `param_1[7].Release` (same
+   interface as cmd 0x3B, which our CLI does dispatch; cmd 0x0D uses
+   `param_1[0xe]`). They are the leading candidates for populating the
+   dependency database. **Next step:** Ghidra-analyze these 13 commands'
+   vtable methods to identify which one(s) populate the dependency DB, then
+   replicate them in our CLI.
+
+   Investigation candidate statuses:
+   - (a) IWHouse vtable[+0xA8] (cmd 0x0F target) — **DISPROVED** (session 3):
+     `warehouse+0xAE` is non-zero and cmd 0x0F IS dispatched during CLI
+     verify. Empty DB is NOT caused by cmd 0x0F being skipped.
+   - (b) WHServer.exe startup scan — **DISPROVED** (session 2): TSDev.exe
+     fully initialized with WHServer.exe running, DB still empty.
+   - (c) elbardb.dll CWHouse initialization — **still open.**
+   - (d) Frida trace of TSDev.exe verify — **COMPLETED** (session 3): 13
+     missing commands found (listed above).
+   - (e) `0x40A` notification handler — lower priority (DB empty for ALL items).
+   - (f) Post-verify warehouse command — lower priority (DB empty for ALL items).
+
+   See `docs/M4B1_HANDOFF.md` §4.6/§4.7/§10 and `tmp/M4B1_FINDINGS.md` F5-F8
+   for full session 3 findings.
+
+### 9.9 M.4b implementation recommendation (summary)
+
+Based on the M.4a findings:
+
+1. **Replace** the linker-based `enumerateReverseDependents()` (§8.7, which
+   parses `record+0x4f`/`+0x29` element arrays, `element+0x7b`/`+0x73`
+   dep-lists, and `0xFA3`/`0xFA4` entries) with a warehouse-level approach
+   that drives cmd `0x0D` then cmd `0x3B` through the `Ordinal_10` warehouse
+   singleton.
+2. **Read** the reverse-dependent SafeArray from `*(warehouse + 0x26)`
+   after cmd `0x3B` completes.
+3. **Parse** SafeArray entries per the `FUN_004d88c0` format (§9.7).
+4. **Apply** the contract-change gate (`FUN_004d9040` field offsets, §9.6)
+   and recurse per `FUN_004D91E0`'s logic (§1.6–1.7, §3).
+5. **Eliminate** the `0xFA3`/`0xFA4` type-code workaround and the
+   expanded-whType-vs-category limitation (§8.8).
+
+This approach operates at TSDev's own abstraction level (warehouse COM
+commands), satisfies the AGENTS.md highest-level-abstraction directive, and
+removes coupling to orlib20 internal linker layouts.
 

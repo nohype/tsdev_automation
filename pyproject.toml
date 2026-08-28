@@ -7,10 +7,14 @@ authors = [
     { name = "Julian W.", email = "31277958+nohype@users.noreply.github.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pyperclip>=1.11.0",
+    "pywinauto>=0.6.9",
+]
 
 [project.scripts]
 tsdev-automation = "tsdev_automation:main"
+tsdev-ui = "tsdev_automation.tsdev_ui_cli:main"
 
 # uv_build uses src-layout discovery by default: it finds the importable
 # package at src/<normalized_name> (src/tsdev_automation).  The C++ sources

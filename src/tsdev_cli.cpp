@@ -8,6 +8,7 @@
 //   tsdev_cli [--json] [--ts-path <directory>] delete  <type> <name>
 //   tsdev_cli [--json] [--ts-path <directory>] exists  <type> <name> [--case-insensitive]
 //   tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> [--output <file>]
+//   tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>
 //   tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> <source_file>
 //   tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file>
 //   tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file>
@@ -164,6 +165,7 @@ void printUsage() {
         "[--case-insensitive]\n"
         "  tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> "
         "[--output <file>]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>\n"
         "  tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> "
         "<source_file>\n"
         "  tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin\n"
@@ -254,6 +256,10 @@ struct CliResult {
     bool        exists = false;  // "exists" op: whether the item was found
     std::string storedName;  // "exists" op: verbatim stored name (empty if not found)
     std::string sourceText;  // "get-source" op: retrieved EL source (JSON mode)
+    // M.4b.1: "dependents" op — reverse dependents (callers) from the
+    // warehouse-level cmd 0x0D → cmd 0x3B path. Empty when the op is not
+    // "dependents" or when no callers were found.
+    std::vector<TsDevLib::CallerInfo> callers;
 };
 
 // Map an exit code to the machine-readable error.code string (TVS-D.2 §3).
@@ -309,6 +315,21 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
         }
         // "get-source" op: emit the retrieved EL source text.
         if (r.op == "get-source") j["source"] = r.sourceText;
+        // "dependents" op: emit the callers array (M.4b.1). Each entry has
+        // name, type (category), and prog_id. An empty array is a valid
+        // result (the item has no callers).
+        if (r.op == "dependents") {
+            j["stored_name"] = r.storedName;
+            ordered_json arr = ordered_json::array();
+            for (const auto& c : r.callers) {
+                ordered_json entry;
+                entry["name"]    = c.name;
+                entry["type"]    = c.category;
+                entry["prog_id"] = c.progId;
+                arr.push_back(entry);
+            }
+            j["dependents"] = arr;
+        }
     } else {
         ordered_json err;
         err["code"]    = errorCodeString(r.exitCode, r.op);
@@ -1773,6 +1794,147 @@ int cmdExists(const std::string& typeStr, const std::string& name,
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runExists, &params, 0, nullptr);
+    if (!hThread) {
+        r.exitCode = 10;
+        r.errorMessage = std::string("CreateThread failed: ")
+                         + std::to_string(GetLastError());
+        r.humanStderr = std::string("tsdev_cli: CreateThread failed: ")
+                        + std::to_string(GetLastError()) + "\n";
+        emitOutput(r, jsonMode);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    emitOutput(params.result, jsonMode);
+    return params.result.exitCode;
+}
+
+// --- The DEPENDENTS subcommand (M.4b.1) ---
+
+// doDependents: enumerate reverse dependents (callers) of a library item by
+// name + type. This is a READ-ONLY query (no compilation, no modification).
+// Returns exit 0 on success (even if zero callers are found — empty is a
+// valid result, not an error). Returns exit 5 if the root item is not found.
+CliResult doDependents(TsDevLib& lib, ComponentType type,
+                       const std::string& typeStr, const std::string& name) {
+    CliResult r;
+    r.op = "dependents";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    // First check the root item exists (enumerateRecords is case-insensitive
+    // and returns the verbatim stored name + ProgId).
+    EnumerateResult er = lib.enumerateRecords(type, name);
+    if (!er.exists) {
+        r.success = false;
+        r.exitCode = 5;
+        r.errorMessage = "component not found";
+        r.humanStderr = std::string("tsdev_cli: ") + typeStr + " \"" + name
+                        + "\" not found\n";
+        return r;
+    }
+
+    // Enumerate callers via the warehouse-level cmd 0x0D → cmd 0x3B path.
+    std::vector<TsDevLib::CallerInfo> callers =
+        lib.enumerateCallers(type, name);
+
+    r.success = true;
+    r.exitCode = 0;
+    r.progId = er.progId;
+    r.storedName = er.storedName;
+
+    // Human output: one line per caller: name=... type=... progId=...
+    std::string human;
+    human += "exists=1\n";
+    human += "stored_name=" + er.storedName + "\n";
+    human += "progId=" + std::to_string(er.progId) + "\n";
+    human += "dependents_count=" + std::to_string(callers.size()) + "\n";
+    for (const auto& c : callers) {
+        human += "dependent name=" + c.name
+               + " type=" + std::to_string(c.category)
+               + " progId=" + std::to_string(c.progId) + "\n";
+    }
+    r.humanStdout = human;
+
+    // JSON output: the callers array is serialized in cliResultToJson via
+    // the r.callers field.
+    r.callers = callers;
+
+    return r;
+}
+
+// Parameters passed to the worker thread.
+struct DependentsParams {
+    ComponentType  type;
+    std::string    typeStr;
+    std::string    name;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    CliResult      result;          // populated by runDependents
+};
+
+// The DEPENDENTS flow, running on a large-stack worker thread. TsDevLib is
+// constructed AND destructed here so the thread-affine EDIT control lives
+// and dies on the same thread that uses it.
+DWORD WINAPI runDependents(LPVOID param) {
+    DependentsParams* p = static_cast<DependentsParams*>(param);
+
+    // Construct TsDevLib.
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        CliResult& r = p->result;
+        r.op = "dependents";
+        r.typeStr = p->typeStr;
+        r.name = p->name;
+        r.exitCode = 4;
+        r.errorMessage = std::string("init failed: ") + e.what();
+        r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
+        return 0;
+    }
+
+    p->result = doDependents(*lib, p->type, p->typeStr, p->name);
+
+    delete lib; // calls OrlibExit + destroys EDIT control (same thread)
+    return 0;
+}
+
+int cmdDependents(const std::string& typeStr, const std::string& name,
+                  const wchar_t* tsPathOverride, bool jsonMode) {
+    CliResult r;
+    r.op = "dependents";
+    r.typeStr = typeStr;
+    r.name = name;
+
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.exitCode = 2;
+        r.errorMessage = std::string("unknown type \"") + typeStr
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
+        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    if (name.empty()) {
+        r.exitCode = 2;
+        r.errorMessage = "component name must not be empty";
+        r.humanStderr = "tsdev_cli: component name must not be empty\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    // Run the orlib flow on a 64 MB-stack worker thread.
+    DependentsParams params;
+    params.type     = type;
+    params.typeStr  = typeStr;
+    params.name     = name;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runDependents, &params, 0, nullptr);
     if (!hThread) {
         r.exitCode = 10;
         r.errorMessage = std::string("CreateThread failed: ")
@@ -3376,6 +3538,25 @@ int main(int argc, char** argv) {
         }
         return cmdExists(exArgs[0], exArgs[1], caseInsensitive,
                          tsPathWidePtr, jsonMode);
+    }
+
+    if (iequals(subcommand, "dependents")) {
+        // dependents takes <type> <name>. It is a read-only query (M.4b.1).
+        // Valid form: dependents <type> <name>  (reducedArgc == 4)
+        if (reducedArgc != 4) {
+            CliResult r;
+            r.op = "dependents";
+            r.exitCode = 1;
+            r.errorMessage = "dependents requires exactly 2 arguments: <type> <name>";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdDependents(reducedArgvPtr[2], reducedArgvPtr[3],
+                             tsPathWidePtr, jsonMode);
     }
 
     if (iequals(subcommand, "upsert")) {

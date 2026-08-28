@@ -93,7 +93,8 @@ add_library(tsdev_lib STATIC
     src/delete_disk_cleanup.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
-target_link_libraries(tsdev_lib PRIVATE Ole32)
+target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
+target_compile_definitions(tsdev_lib PRIVATE TSDEV_DEBUG)
 
 # --- INSERT integration test (historical TDD red-green) --------------------------------
 add_executable(test_insert tests/test_insert.cpp)
@@ -815,6 +816,51 @@ add_executable(test_reverse_dependent_revalidation tests/test_reverse_dependent_
 target_include_directories(test_reverse_dependent_revalidation PRIVATE src)
 target_link_libraries(test_reverse_dependent_revalidation PRIVATE tsdev_lib Ole32)
 
+# --- TVS-M.3b.2c: Manual admin diagnostic for CLI object-code version/count ---
+# Manual admin diagnostic (NOT in test_regression / $TestDefinitions /
+# run_regression). The M.3b "defect" was a TEST ARTIFACT (M.3b.2b finding):
+# the original RED test used a declaration-free Function source which
+# legitimately has elemCount=0 because there are no Inputs:/Variables:/Array:
+# declarations to trigger the Record* count-populators. This test is NO LONGER
+# expected to fail: it now uses declaration-rich sources for 4 types
+# (Strategy, Indicator, Function, ShowMe) and asserts elemCount > 0; TradingApp
+# with `using elsystem;` (no declarations) asserts elemCount == 0 as the
+# expected no-declarations pattern. The test remains a manual admin diagnostic,
+# NOT in test_regression or $TestDefinitions, because it tests orlib20 internal
+# buffer layouts at the linker/ordinal-85 abstraction level (no higher-level
+# API for the "element arrays populated" property); M.4b will abandon this
+# linker-based approach in favor of warehouse-level APIs. Requires TradeStation
+# (real orlib20.dll, real warehouse). Run manually from an elevated process
+# only. Do NOT add to test_regression or run_regression.
+# Reference: docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md §12-14
+add_executable(test_m3b_object_code_version tests/test_m3b_object_code_version.cpp)
+target_include_directories(test_m3b_object_code_version PRIVATE src)
+target_link_libraries(test_m3b_object_code_version PRIVATE tsdev_lib orlib_resolver Ole32)
+
+# --- M.4b.1: Warehouse-level reverse-dependent (Callers) enumeration test ---
+# MANUAL ADMIN DIAGNOSTIC for Workstream M slice M.4b.1. Verifies
+# TsDevLib::enumerateCallers() returns the correct reverse dependents
+# (callers) of a library item via the orlib20 warehouse worker-thread
+# command protocol (cmd 0x0D → cmd 0x3B → SafeArray parse).
+#
+# This test is NOT part of the regression suite and is intentionally NOT
+# wired into `test_regression` / `$TestDefinitions` / `run_regression.ps1`.
+# It is a standalone, self-contained diagnostic-style executable run
+# manually from an elevated process against live TradeStation. It follows
+# the same pattern as `test_m3b_object_code_version` (manual admin target,
+# requires TradeStation, real orlib20.dll, real warehouse).
+#
+# Build:
+#   cmake --build build --config Release --target test_callers_enumeration
+# Run (must be elevated):
+#   .\build\Release\test_callers_enumeration.exe
+#
+# Reference: docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md §9 (R-M.4a.1
+# through R-M.4a.6, §9.7 SafeArray entry format).
+add_executable(test_callers_enumeration tests/test_callers_enumeration.cpp)
+target_include_directories(test_callers_enumeration PRIVATE src)
+target_link_libraries(test_callers_enumeration PRIVATE tsdev_lib orlib_resolver Ole32)
+
 # --- TVS-D.1: Batch feasibility stress test (opt-in, NOT in regression suite) -
 # Validates ONE TsDevLib instance can do N (default 600) sequential
 # insert+compile+verify ops then delete all N, leaving a clean warehouse, all
@@ -893,6 +939,8 @@ set(TSDEV_ADMIN_TARGETS
     test_save_module
     test_0x40a_notification
     test_reverse_dependent_revalidation
+    test_m3b_object_code_version
+    test_callers_enumeration
     test_stress_batch
     diag_m4_enum_speed
     diag_m4_deps

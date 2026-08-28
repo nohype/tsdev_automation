@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <string>
 #include <sstream>
+#include <oleauto.h>        // M.4b.1: SafeArray APIs for cmd 0x3B result parsing
 
 // Compile-time debug logging gate. Define TSDEV_DEBUG at build time to
 // enable stderr diagnostics in deleteEntry. Production builds are clean.
@@ -638,6 +639,20 @@ bool callOrd70(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
     return true;
 }
 
+// SEH-protected call to Ordinal_69 (link module, RVA 0x1A3E00).
+// __cdecl (RET C3, NOT RET 0xC — caller cleans up 12 bytes), 3 args
+// (category, progId, partialBuf). Returns a linked record pointer
+// (refcounted — release via Ordinal_70) or 0 on failure.
+typedef void* (__cdecl *Ordinal69Fn)(int category, int progId, void* partialBuf);
+struct Ord69SehResult { void* result; };
+bool callOrd69(Ordinal69Fn fn, int category, int progId, void* partialBuf,
+               Ord69SehResult* out) {
+    out->result = nullptr;
+    __try { out->result = fn(category, progId, partialBuf); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
 // callLinkerManual — calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
@@ -714,6 +729,119 @@ bool sehReadUInt(const void* p, unsigned int* out) {
 bool sehMemcpy(const void* src, void* dst, size_t n) {
     __try { std::memcpy(dst, src, n); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// M.4b.1: SEH-protected SafeArray access + raw byte copy for
+// enumerateCallers. POD-only (no C++ objects with destructors) so
+// __try/__except is legal under MSVC C2712.
+//
+// Accesses the SafeArray (GetDim/LBound/UBound/AccessData), copies the
+// raw data into a malloc'd buffer (*outBuf), unaccesses, and destroys the
+// SafeArray (matching TSDev's FUN_004cad90 behavior per §9.0). The caller
+// parses the copy outside any SEH boundary and must std::free(*outBuf).
+//
+// Returns true on success (with *outBuf and *outSize set; *outBuf may be
+// NULL with *outSize == 0 for an empty SafeArray). Returns false on SEH,
+// access failure, or OOM (in which case the SafeArray is still unaccessed
+// and destroyed if possible).
+//
+// The SafeArray is 1-dimensional and packs variable-length entries into a
+// single contiguous blob. The total byte count is elemCount * cbElements.
+bool callersCopySafeArray(SAFEARRAY* psa, unsigned char** outBuf,
+                          size_t* outSize) {
+    *outBuf = nullptr;
+    *outSize = 0;
+
+    unsigned short dims = 0;
+    long lb = 0, ub = 0;
+    long elemCount = 0;
+    unsigned short cbElements = 0;
+    void* pData = nullptr;
+    HRESULT accessHr = S_OK;
+    bool accessOk = false;
+
+    __try {
+        dims = SafeArrayGetDim(psa);
+        if (dims == 0) {
+            TSDEV_DBG("callersCopySA: dims=0\n");
+            accessOk = false;
+        } else if (SafeArrayGetLBound(psa, 1, &lb) != S_OK) {
+            TSDEV_DBG("callersCopySA: LBound failed\n");
+            accessOk = false;
+        } else if (SafeArrayGetUBound(psa, 1, &ub) != S_OK) {
+            TSDEV_DBG("callersCopySA: UBound failed\n");
+            accessOk = false;
+        } else {
+            elemCount = (ub >= lb) ? (ub - lb + 1) : 0;
+            TSDEV_DBG("callersCopySA: dims=%d lb=%ld ub=%ld elemCount=%ld cbElements=%u\n",
+                      dims, lb, ub, elemCount, psa->cbElements);
+            if (elemCount <= 0) {
+                // Empty SafeArray (zero callers) — valid state, not an error.
+                // Destroy and return true with *outBuf=NULL, *outSize=0.
+                SafeArrayDestroy(psa);
+                return true;
+            } else {
+                cbElements = psa->cbElements;
+                accessHr = SafeArrayAccessData(psa, &pData);
+                if (SUCCEEDED(accessHr) && pData) {
+                    accessOk = true;
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        accessOk = false;
+    }
+
+    if (!accessOk) {
+        // Try to destroy the SafeArray even on failure (it may be in a
+        // partially valid state). SafeArrayDestroy is safe to call without
+        // prior AccessData.
+        __try { SafeArrayDestroy(psa); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    }
+
+    size_t totalBytes = (size_t)elemCount * (size_t)cbElements;
+    if (totalBytes == 0) {
+        __try {
+            SafeArrayUnaccessData(psa);
+            SafeArrayDestroy(psa);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return true;  // empty SafeArray — *outBuf remains NULL
+    }
+
+    unsigned char* rawBuf =
+        static_cast<unsigned char*>(std::malloc(totalBytes));
+    if (!rawBuf) {
+        // OOM — unaccess and destroy.
+        __try {
+            SafeArrayUnaccessData(psa);
+            SafeArrayDestroy(psa);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    }
+
+    bool copyOk = false;
+    __try {
+        std::memcpy(rawBuf, pData, totalBytes);
+        copyOk = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        copyOk = false;
+    }
+
+    __try {
+        SafeArrayUnaccessData(psa);
+        SafeArrayDestroy(psa);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    if (!copyOk) {
+        std::free(rawBuf);
+        return false;
+    }
+
+    *outBuf = rawBuf;
+    *outSize = totalBytes;
     return true;
 }
 
@@ -1141,6 +1269,7 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     // (the linker, FUN_101a3340). The linker is a __fastcall/__stdcall hybrid
     // and is invoked via an inline-asm wrapper.
     m_ord28 = reinterpret_cast<Ordinal28Fn>(m_resolver->resolveExportByOrdinal(28));
+    m_ord69 = reinterpret_cast<Ordinal69Fn>(m_resolver->resolveExportByOrdinal(69));
     m_ord70 = reinterpret_cast<Ordinal70Fn>(m_resolver->resolveExportByOrdinal(70));
     m_linkerRaw = (void*)m_resolver->resolveExportByOrdinal(85);
 
@@ -1746,10 +1875,41 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         m_onCompilerReady(compilerMem, static_cast<int>(type), progId);
     }
 
+    // --- 5b. M.4b.1: Pre-verify link (TSDev FUN_004d91e0 parity).
+    //     TSDev calls Ordinal_28 + Ordinal_69 BEFORE _VerifyModule_New.
+    //     The pre-verify link populates the module cache (module+0x23d)
+    //     and makes function names resolvable during compilation. Without
+    //     this, the compiler cannot resolve called function names to
+    //     ProgIds, and no 0xFA3 function-call dependency entries are
+    //     written. For newly created modules the .ell file may not exist
+    //     yet, so the link may fail — that is non-fatal (the module can
+    //     still be verified if it has no unresolved function calls). ---
+    linkModule(type, progId);
+
     // --- 6. VerifyModule_New, SEH-guarded. Error text is read directly from
     //     the global error array after this call (see readErrorsFromArray).
     //     Args unchanged: HWND=m_editorHwnd, category=getCategory(type),
     //     ProgId=progId, flag=1, compiler=compilerMem. ---
+
+    // M.4b.1 DEBUG: Trace warehouse state around _VerifyModule_New.
+    // cmd 0x13 (dispatched inside _VerifyModule_New via FUN_101a9a90)
+    // uses warehouse+0x5E (IProgram) and checks warehouse+0xB2.
+    // M.4b.1 DEBUG (DB-population probe): FUN_101d0950 (cmd 0x0F dispatcher)
+    // checks warehouse+0xAE != 0 before dispatching cmd 0x0F, which writes
+    // the dependency DB used by cmd 0x3B (Callers). If 0xAE is NULL here,
+    // cmd 0x0F is skipped and the DB stays empty (zero callers for all).
+    {
+        void* wh = nullptr;
+        if (callGetWarehouse(reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0, &wh) && wh) {
+            char* whp = reinterpret_cast<char*>(wh);
+            void* iface5E = *reinterpret_cast<void**>(whp + 0x5E);
+            int b2 = *reinterpret_cast<int*>(whp + 0xB2);
+            void* ifaceAE = *reinterpret_cast<void**>(whp + 0xAE);
+            TSDEV_DBG("verifyModule: BEFORE VerifyModule_New cat=%d progId=%d 0x5E=%p 0xB2=%d 0xAE=%p\n",
+                      getCategory(type), progId, iface5E, b2, ifaceAE);
+        }
+    }
+
     VerifySehResult seh;
     if (!callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
@@ -1760,6 +1920,21 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
                     compilerMem);
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehVerify;
         return "tsdev: VerifyModule_New raised an exception";
+    }
+
+    // M.4b.1 DEBUG: Trace warehouse state after _VerifyModule_New.
+    // Also re-read warehouse+0xAE to see whether verify (which calls
+    // FUN_101d0950 -> cmd 0x0F inside CompileText) sets it.
+    {
+        void* wh = nullptr;
+        if (callGetWarehouse(reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0, &wh) && wh) {
+            char* whp = reinterpret_cast<char*>(wh);
+            void* iface5E = *reinterpret_cast<void**>(whp + 0x5E);
+            int b2 = *reinterpret_cast<int*>(whp + 0xB2);
+            void* ifaceAE = *reinterpret_cast<void**>(whp + 0xAE);
+            TSDEV_DBG("verifyModule: AFTER VerifyModule_New cat=%d progId=%d result=%d 0x5E=%p 0xB2=%d 0xAE=%p\n",
+                      getCategory(type), progId, seh.verifyResult, iface5E, b2, ifaceAE);
+        }
     }
 
     // --- 7. Build the error string from the global error array ---
@@ -1783,6 +1958,18 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
     //     FUN_004D9480 which calls EndCompilingProcess after FUN_004D91E0
     //     returns). The compiler object stays alive during the traversal. ---
     if (seh.verifyResult == 1) {
+        // M.4b.1: Post-verify link. TSDev calls Ordinal_69 (FUN_101a3e00)
+        // after _VerifyModule_New succeeds to link the module and populate
+        // the dep-list cache (module+0x23d) with 0xFA3 function-call
+        // dependency entries. TSDev FUN_004d8fb0 does this for categories
+        // 0/1/4; we do it for ALL categories because our automation needs
+        // the dep-list populated on the first verification (TSDev relies on
+        // the pre-verify link during subsequent re-verifications for other
+        // categories). Without this, enumerateReverseDependents finds no
+        // 0xFA3 entries for newly created items. SEH-protected; failure is
+        // non-fatal (the module is still verified, just not linked).
+        linkModule(type, progId);
+
         int rootCategory = getCategory(type);
         if (rootCategory == 0 || rootCategory == 1 || rootCategory == 4) {
             // Contract-change check: compare old vs new master record.
@@ -1870,6 +2057,54 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
     return errors;
 }
 
+bool TsDevLib::linkModule(ComponentType type, int progId) {
+    if (!m_ord28 || !m_ord69 || !m_ord70) {
+        TSDEV_DBG("linkModule: exports not resolved (ord28=%p ord69=%p ord70=%p)\n",
+                  m_ord28, m_ord69, m_ord70);
+        return false;
+    }
+
+    const int kRecordSize = 0x10A;
+    const int cat = getCategory(type);
+
+    // Step 1: get the partial record via Ordinal_28.
+    unsigned char partialBuf[kRecordSize] = {};
+    Ord28SehResult ord28r;
+    if (!callOrd28(m_ord28, cat, progId, /*flag=*/0, partialBuf, &ord28r)) {
+        TSDEV_DBG("linkModule: cat=%d pid=%d ord28 SEH\n", cat, progId);
+        return false;
+    }
+    if (ord28r.result != 1) {
+        TSDEV_DBG("linkModule: cat=%d pid=%d ord28 result=%d\n",
+                  cat, progId, ord28r.result);
+        return false;
+    }
+
+    // Step 2: link the module via Ordinal_69. This reads the object code
+    // from the .ell file, resolves forward dependencies (populating 0xFA3
+    // dep-list entries), and caches the linked record at module+0x23d.
+    Ord69SehResult ord69r;
+    if (!callOrd69(m_ord69, cat, progId, partialBuf, &ord69r)) {
+        TSDEV_DBG("linkModule: cat=%d pid=%d ord69 SEH\n", cat, progId);
+        return false;
+    }
+    void* linkedRec = ord69r.result;
+    if (!linkedRec) {
+        TSDEV_DBG("linkModule: cat=%d pid=%d ord69 returned NULL\n", cat, progId);
+        return false;
+    }
+
+    TSDEV_DBG("linkModule: cat=%d pid=%d ord69 OK linkedRec=%p\n",
+              cat, progId, linkedRec);
+
+    // Step 3: release the caller's reference. The cache at module+0x23d
+    // holds its own reference, so the linked record stays alive.
+    Ord70SehResult r70;
+    callOrd70(m_ord70, linkedRec, 0, &r70);
+
+    return true;
+}
+
 void TsDevLib::refreshCache() {
     if (!m_pGetWarehouse || !m_pCmdDispatcher) {
         return;
@@ -1903,6 +2138,8 @@ void TsDevLib::refreshCache() {
 
     char* wh = reinterpret_cast<char*>(warehouse);
     void* iface5E = *reinterpret_cast<void**>(wh + 0x5E);
+    void* ifaceAE_entry = *reinterpret_cast<void**>(wh + 0xAE);
+    TSDEV_DBG("refreshCache: ENTRY 0x5E=%p 0xAE=%p\n", iface5E, ifaceAE_entry);
 
     // Step 1a: If [warehouse+0x5E] is null, dispatch cmd 0x0F to initialize.
     if (!iface5E && m_pCmd0FDispatcher && m_pBuildTypeArray &&
@@ -1916,6 +2153,9 @@ void TsDevLib::refreshCache() {
                                 typeArray, 0, writerBuf);
             // Re-read [warehouse+0x5E] after cmd 0x0F.
             iface5E = *reinterpret_cast<void**>(wh + 0x5E);
+            void* ifaceAE_after0F = *reinterpret_cast<void**>(wh + 0xAE);
+            TSDEV_DBG("refreshCache: AFTER cmd 0x0F 0x5E=%p 0xAE=%p\n",
+                      iface5E, ifaceAE_after0F);
         }
     }
 
@@ -2012,7 +2252,11 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
                 continue;
             }
             void* linkedRec = linkr.ptr;
-            if (!linkedRec) continue;
+            if (!linkedRec) {
+                TSDEV_DBG("  enumerateReverseDependents: cat=%d pid=%d linker returned NULL\n",
+                          cat, (int)candidateProgId);
+                continue;
+            }
 
             // Step 3: walk the element array and scan dep-lists.
             bool isReverseDep = false;
@@ -2025,6 +2269,9 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
                 callOrd70(m_ord70, linkedRec, 0, &r70);
                 continue;
             }
+
+            TSDEV_DBG("  enumerateReverseDependents: cat=%d pid=%d elemCount=%d elemArray=%p\n",
+                      cat, (int)candidateProgId, elemCount, elemArray);
 
             unsigned char depBuf[kMaxDepListCopy] = {};
             if (elemCount > 0 && elemArray) {
@@ -2039,7 +2286,11 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
                         continue;  // skip this element on SEH
                     }
 
-                    if (!depListPtr || depListSize == 0) continue;
+                    if (!depListPtr || depListSize == 0) {
+                        TSDEV_DBG("    elem[%d]: depList empty (size=%u ptr=%p)\n",
+                                  ei, depListSize, depListPtr);
+                        continue;
+                    }
 
                     size_t copySize = depListSize < kMaxDepListCopy
                                           ? depListSize
@@ -2050,6 +2301,13 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
 
                     std::vector<DepListEntry> entries =
                         parseDepList(depBuf, copySize);
+                    TSDEV_DBG("    elem[%d]: depListSize=%u entries=%zu",
+                              ei, depListSize, entries.size());
+                    for (size_t ei2 = 0; ei2 < entries.size() && ei2 < 8; ei2++) {
+                        TSDEV_DBG(" [%zu]type=0x%X ref=%d", ei2,
+                                  entries[ei2].type, entries[ei2].funcRef);
+                    }
+                    TSDEV_DBG("\n");
                     for (const auto& e : entries) {
                         if (e.type == 0xFA3 || e.type == 0xFA4) {
                             if (e.funcRef == rootProgId) {
@@ -2075,6 +2333,241 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
         GlobalFree(buf);
     }
 
+    return result;
+}
+
+// M.4b.1: Warehouse-level reverse-dependent (Callers) enumeration.
+//
+// Drives the orlib20 warehouse worker-thread command protocol (cmd 0x0D →
+// cmd 0x3B) — the SAME mechanism TSDev.exe uses (FUN_004cad90 /
+// FUN_004D91E0; see docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md §9).
+// Read-only: does NOT compile, verify, or modify any item.
+//
+// The cmd 0x0D path is the RAW cmd 0x0D via callCmdDispatcher
+// (FUN_101cf5b0), NOT the _GetMasterRecByType@16 side-effect. This most
+// closely matches TSDev's FUN_004d7040 (§9.1), which sets warehouse+0x12 =
+// type and warehouse+0x16 = ProgId, then dispatches cmd 0x0D. The raw path
+// leaves the root CELProgram record pointer at warehouse+0x5e, which cmd
+// 0x3B (IProgram::Callers) reads as the "current record" context.
+//
+// SafeArray entry format (§9.7): variable-length entries, parsing starts at
+// byte offset 4 of the accessed data, stride = 8 + nameLength + 0x16.
+// Entry layout:
+//   +0x00: 2 bytes — type/category
+//   +0x02: 4 bytes — ID (ProgId)
+//   +0x06: 2 bytes — string length (nameLength)
+//   +0x08: nameLength bytes — name string
+//   +0x08+nameLength: 0x16 (22) bytes — metadata block
+std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallers(
+    ComponentType type, const std::string& name) {
+
+    TSDEV_DBG("enumCallers: ENTER name=\"%s\" type=%d\n", name.c_str(), (int)type);
+
+    // Prerequisites: warehouse singleton + cmd dispatcher must be resolved.
+    if (!m_pGetWarehouse || !m_pCmdDispatcher) {
+        TSDEV_DBG("enumCallers: prerequisites missing (wh=%p cmd=%p)\n",
+                  m_pGetWarehouse, m_pCmdDispatcher);
+        return {};
+    }
+
+    // Step 1: Resolve the root item's ProgId via findExistPos (SEH-protected
+    // internally). Returns 0 if not found.
+    int progId = findExistPos(name, type);
+    TSDEV_DBG("enumCallers: findExistPos(\"%s\", %d) = %d\n",
+              name.c_str(), (int)type, progId);
+    if (progId <= 0) {
+        return {};  // root item not found
+    }
+
+    return enumerateCallersByProgId(type, progId);
+}
+
+std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallersByProgId(
+    ComponentType type, int progId) {
+
+    std::vector<CallerInfo> result;
+
+    TSDEV_DBG("enumCallersByProgId: ENTER progId=%d type=%d\n", progId, (int)type);
+
+    if (!m_pGetWarehouse || !m_pCmdDispatcher) {
+        TSDEV_DBG("enumCallersByProgId: prerequisites missing\n");
+        return result;
+    }
+    if (progId <= 0) {
+        return result;
+    }
+
+    int category = getCategory(type);
+
+    // Step 2: Get the warehouse singleton.
+    void* warehouse = nullptr;
+    if (!callGetWarehouse(
+            reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0,
+            &warehouse)) {
+        return result;  // SEH in GetWarehouse
+    }
+    if (!warehouse) {
+        return result;
+    }
+
+    char* wh = reinterpret_cast<char*>(warehouse);
+
+    // Refresh the warehouse cache before querying callers. The COM server
+    // (WHServer.exe) maintains its own dependency database; refreshCache()
+    // re-initializes the IWHouse interface (cmd 0x0F + cmd 0x4E) which may
+    // cause the COM server to re-read its data, including newly created
+    // items and their dependency relationships.
+    refreshCache();
+
+    // Step 3: Set warehouse+0x12 = category, warehouse+0x16 = ProgId.
+    // These are the inputs to cmd 0x0D (ProgramById). Per §9.1, FUN_004d7040
+    // writes these as 4-byte fields before dispatching cmd 0x0D.
+    *reinterpret_cast<int*>(wh + 0x12) = category;
+    *reinterpret_cast<int*>(wh + 0x16) = progId;
+    TSDEV_DBG("enumCallers: cat=%d progId=%d wh=%p\n", category, progId, warehouse);
+
+    // Step 4: Dispatch cmd 0x0D (ProgramById) via callCmdDispatcher
+    // (FUN_101cf5b0). This sets warehouse+0x04 = 0x0D, signals the worker
+    // thread, and waits for completion. The result CELProgram record pointer
+    // is stored at warehouse+0x5e by the worker handler (FUN_101d15c0).
+    //
+    // DYNAMIC FINDING (M.4b.1, 2026-08-28): cmd 0x0D via the generic
+    // dispatcher (FUN_101cf5b0) DOES set warehouse+0x5e to a non-NULL root
+    // record. This contradicts the earlier refreshCache comment that said
+    // "cmd 0x0D returns null and clears [warehouse+0x5E]" — that comment
+    // referred to cmd 0x0D via FUN_101cfce0 (the COM-interface-get path)
+    // with type=0xC, NOT cmd 0x0D via FUN_101cf5b0 with the correct
+    // type+ProgId. The generic dispatcher path works correctly.
+    if (!callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x0D)) {
+        TSDEV_DBG("enumCallers: cmd 0x0D SEH!\n");
+        return result;  // SEH in cmd 0x0D dispatch
+    }
+
+    // Verify the root record was set at warehouse+0x5e.
+    void* rootRecord = *reinterpret_cast<void**>(wh + 0x5e);
+    TSDEV_DBG("enumCallers: cmd 0x0D done, rootRecord=%p\n", rootRecord);
+    if (!rootRecord) {
+        TSDEV_DBG("enumCallers: rootRecord NULL, aborting\n");
+        return result;  // cmd 0x0D did not produce a record
+    }
+
+    // Clear warehouse+0x26 before cmd 0x3B so the new SafeArray is
+    // distinguishable from any stale SafeArray left by a previous operation
+    // (e.g. cmd 0x4E from refreshCache). DYNAMIC FINDING: without this
+    // clear, warehouse+0x26 retains the stale SafeArray from verifyModule's
+    // refreshCache call, and cmd 0x3B appears to not change it.
+    *reinterpret_cast<void**>(wh + 0x26) = nullptr;
+
+    // Step 5: Dispatch cmd 0x3B (IProgram::Callers) via callCmdDispatcher.
+    // This operates on the current record (rootRecord at warehouse+0x5e) and
+    // populates the reverse-dependent SafeArray at warehouse+0x26.
+    if (!callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x3B)) {
+        TSDEV_DBG("enumCallers: cmd 0x3B SEH!\n");
+        return result;  // SEH in cmd 0x3B dispatch
+    }
+
+    // Step 6: Guard — check warehouse+0x4e == 0 (status/error).
+    int status = 0;
+    if (!sehReadInt(wh + 0x4e, &status) || status != 0) {
+        TSDEV_DBG("enumCallers: status=%d (non-zero or SEH)\n", status);
+        return result;  // SEH or status error
+    }
+
+    // Step 7: Read the SafeArray from warehouse+0x26.
+    void* saPtr = nullptr;
+    if (!sehReadPtr(wh + 0x26, &saPtr) || !saPtr) {
+        TSDEV_DBG("enumCallers: saPtr=%p (NULL or SEH)\n", saPtr);
+        return result;  // no SafeArray or SEH
+    }
+    TSDEV_DBG("enumCallers: saPtr=%p\n", saPtr);
+
+    // Clear warehouse+0x26 immediately — ownership of the SafeArray
+    // transfers to callersCopySafeArray, which destroys it in all paths
+    // (success, failure, SEH, OOM). Leaving the stale pointer would
+    // create a dangling reference to freed memory.
+    *reinterpret_cast<void**>(wh + 0x26) = nullptr;
+
+    SAFEARRAY* psa = reinterpret_cast<SAFEARRAY*>(saPtr);
+
+    // SEH-protected SafeArray access. The __try block must be in a SEPARATE
+    // POD-only function (MSVC C2712: cannot use __try in functions that
+    // require object unwinding — enumerateCallers has std::vector<CallerInfo>
+    // result in scope). callersCopySafeArray is a POD-only helper that
+    // accesses the SafeArray, copies the raw bytes into a malloc'd buffer,
+    // unaccesses, and destroys the SafeArray. The caller parses the copy
+    // outside any SEH boundary.
+    unsigned char* rawBuf = nullptr;
+    size_t totalBytes = 0;
+    if (!callersCopySafeArray(psa, &rawBuf, &totalBytes)) {
+        TSDEV_DBG("enumCallers: callersCopySafeArray failed (SEH)\n");
+        return result;  // SEH or inaccessible SafeArray
+    }
+
+    TSDEV_DBG("enumCallers: rawBuf=%p totalBytes=%zu\n", rawBuf, totalBytes);
+    if (!rawBuf || totalBytes == 0) {
+        TSDEV_DBG("enumCallers: empty SafeArray (no callers)\n");
+        return result;  // empty SafeArray (no callers)
+    }
+
+    // Print first 16 bytes (or fewer) for debugging
+    TSDEV_DBG("enumCallers: first bytes:");
+    for (size_t i = 0; i < totalBytes && i < 16; i++) {
+        TSDEV_DBG(" %02x", rawBuf[i]);
+    }
+    TSDEV_DBG("\n");
+    if (totalBytes >= 4) {
+        int countField = *(const int*)(rawBuf);
+        TSDEV_DBG("enumCallers: countField(4 bytes)=%d\n", countField);
+    }
+
+    // Parse entries per §9.7. Parsing starts at byte offset 4 of the
+    // accessed data. Each entry has variable stride:
+    //   8 + nameLength + 0x16 (= 0x1e + nameLength).
+    //
+    // Entry layout:
+    //   +0x00: 2 bytes — type/category
+    //   +0x02: 4 bytes — ID (ProgId)
+    //   +0x06: 2 bytes — string length (nameLength)
+    //   +0x08: nameLength bytes — name string
+    //   +0x08+nameLength: 0x16 (22) bytes — metadata block
+    //
+    // This parsing runs on our local copy (no SEH risk from orlib20/COM).
+    const unsigned char* base = rawBuf;
+    size_t offset = 4;
+    while (offset + 8 <= totalBytes) {
+        // +0x00: 2 bytes type/category (unsigned short, widened to int).
+        int entryCategory =
+            (int)*(const unsigned short*)(base + offset + 0x00);
+        // +0x02: 4 bytes ID (ProgId).
+        int entryProgId = *(const int*)(base + offset + 0x02);
+        // +0x06: 2 bytes string length.
+        short nameLength = *(const short*)(base + offset + 0x06);
+
+        if (nameLength < 0) {
+            break;  // defensive: malformed entry
+        }
+
+        size_t entryStride = (size_t)8 + (size_t)nameLength + 0x16;
+        if (offset + entryStride > totalBytes) {
+            break;  // defensive: entry would exceed the buffer
+        }
+
+        // +0x08: nameLength bytes — name string (not null-terminated in the
+        // SafeArray; copy into a std::string).
+        std::string entryName(
+            reinterpret_cast<const char*>(base + offset + 0x08),
+            (size_t)nameLength);
+
+        CallerInfo ci;
+        ci.name = entryName;
+        ci.category = entryCategory;
+        ci.progId = entryProgId;
+        result.push_back(ci);
+
+        offset += entryStride;
+    }
+
+    std::free(rawBuf);
     return result;
 }
 
