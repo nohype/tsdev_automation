@@ -17,7 +17,7 @@
 //   4. Decomposition is a no-op for existing sub-type-0 types:
 //        Strategy   -> category 0, sub-type 0
 //        Indicator  -> category 2, sub-type 0
-//        Function   -> category 4, sub-type 0
+//        Function   -> category 1, sub-type 0
 //   5. CLI parseType accepts "tradingapp" -> ComponentType::TradingApp.
 //      (parseType is file-local in tsdev_cli.cpp, so it is not directly
 //      callable. Instead we verify the string->enum mapping contract by
@@ -122,7 +122,7 @@ DWORD WINAPI runTest(LPVOID param) {
         struct { const char* name; ComponentType t; int expCat; } cases[] = {
             { "Strategy",  ComponentType::Strategy,  0 },
             { "Indicator", ComponentType::Indicator, 2 },
-            { "Function",  ComponentType::Function,  4 },
+            { "Function",  ComponentType::Function,  1 },
         };
         for (const auto& c : cases) {
             int cat = getCategory(c.t);

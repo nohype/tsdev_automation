@@ -21,7 +21,7 @@
 //     verified, no expiration date), bits 3 and 4 are 0:
 //       Strategy  (category 0): flags = 0x60
 //       Indicator (category 2): flags = 0x62
-//       Function  (category 4): flags = 0x64
+//       Function  (category 1): flags = 0x61
 //       ShowMe    (category 2): flags = 0x62
 //       TradingApp (category 2): flags = 0x62
 //
@@ -45,7 +45,7 @@
 // password buffer pointer, buffer size, component type, and progId into
 // thread_local globals, then the test asserts:
 //   - capture.flags is non-NULL
-//   - *capture.flags == expected flags value (0x60 / 0x62 / 0x64)
+//   - *capture.flags == expected flags value (0x60 / 0x62 / 0x61)
 //   - capture.passwordBuf is non-NULL
 //   - capture.passwordBuf starts with "!p$Kn@aSus" (first 10 bytes)
 //   - capture.passwordBuf bytes 10-63 are all zero
@@ -62,7 +62,7 @@
 // findings #1, #2, #4):
 //   1. Strategy   (category 0) — expected insert flags 0x60
 //   2. Indicator  (category 2) — expected insert flags 0x62
-//   3. Function   (category 4) — expected insert flags 0x64
+//   3. Function   (category 1) — expected insert flags 0x61
 //   4. MODIFY Strategy — insert (0x60) -> verify -> modify save (0x70, bit 4
 //      is_verified set). Proves the modify path sets flags bit 4.
 //   5. ShowMe     (category 2) — expected insert flags 0x62
@@ -943,7 +943,7 @@ DWORD WINAPI runTest(LPVOID param) {
         ComponentType::Function,
         funcName,
         makeFunctionSource(funcName),
-        static_cast<unsigned int>((getCategory(ComponentType::Function) & 0x7) | 0x60)  // 0x64
+        static_cast<unsigned int>((getCategory(ComponentType::Function) & 0x7) | 0x60)  // 0x61
     };
     // Adversarial review finding #4: cover ShowMe + TradingApp (category 2).
     TestCase case5{

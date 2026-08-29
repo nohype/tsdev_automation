@@ -1287,7 +1287,10 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     // (orlib20 ordinal 57 = FUN_101526f0). Used by verifyModule() (success
     // path) and deleteEntry() (success path, category != 4) to post the
     // library-change notification, matching TSDev's Frida-confirmed
-    // ordering. See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 / §2.5.
+    // ordering. The category != 4 gate is specifically the read-only Function
+    // (category 4) exclusion; editable user-created Function (category 1)
+    // deletes DO send 0x40A. See docs/RE/RE_M3_0x40A_NOTIFICATION.md
+    // §1.2 / §2.5.
     m_pNotifyLibChanged   = m_resolver->resolveNotifyLibChanged();
     m_pInitGlobalLookup   = m_resolver->resolveInitGlobalLookup();
     m_pDeleteFromTree     = m_resolver->resolveDeleteFromTree();
@@ -2931,8 +2934,10 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     // ------------------------------------------------------------------
     // 6. M.3: Post-delete 0x40A library-change notification (TSDev parity).
     //    TSDev's FUN_10159ae0 sends 0x40A after a successful delete, GATED
-    //    on category != 4 (Function deletes do NOT send 0x40A — see
-    //    docs/RE/RE_M3_0x40A_NOTIFICATION.md §2.4). The hook fires
+    //    on category != 4 (read-only Function (category 4) deletes do NOT
+    //    send 0x40A; editable user-created Function (category 1) deletes DO
+    //    send 0x40A — see docs/RE/RE_M3_0x40A_NOTIFICATION.md §2.4). The hook
+    //    fires
     //    immediately BEFORE the actual 0x40A post, capturing the
     //    (msg, wParam, lParam) tuple plus the affected componentType and
     //    progId so a test can assert the TSDev-parity packing. If
@@ -2947,7 +2952,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     //    send is required here for TSDev parity. This is NOT a duplicate
     //    send — no orlib20 function called below emits 0x40A.
     // ------------------------------------------------------------------
-    if (category != 4) {  // Function deletes do NOT send 0x40A
+    if (category != 4) {  // Read-only Function (cat 4) deletes do NOT send 0x40A; editable Function (cat 1) does
         unsigned short categoryWord = static_cast<unsigned short>(category);
         unsigned short progIdWord = static_cast<unsigned short>(progId & 0xFFFF);
         LPARAM lParam = (static_cast<LPARAM>(categoryWord) << 16) | progIdWord;

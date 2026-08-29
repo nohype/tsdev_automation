@@ -474,7 +474,7 @@ EllFileInfo checkEllFile(const std::string& basePath,
     // The .ell file naming convention is elmodule_<type>_<progId>.ell, but
     // we don't know the progId-to-filename mapping for sure. We check both
     // the name-based and the elmodule_<type>_<progId>.ell patterns. Since
-    // we have the progId, we check elmodule_4_<progId>.ell (Function=type 4).
+    // we have the progId, we check elmodule_1_<progId>.ell (Function=type 1).
     // We also check a name-based file just in case.
     (void)basePath;
     (void)funcName;
@@ -711,9 +711,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 6: check the .ell file. ---
-    std::printf("\n[6] Checking .ell file (Function whType=4, "
+    std::printf("\n[6] Checking .ell file (Function whType=1, "
                 "progId=%d)...\n", funcProgId);
-    checkEllFileByProgId(binDir, /*whType=*/4, funcProgId);
+    checkEllFileByProgId(binDir, /*whType=*/1, funcProgId);
 
     // --- Step 7: try calling the linker directly (ordinal 85). ---
     //   First, get a partial record buffer via Ordinal_28 to pass as
@@ -723,9 +723,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     bool havePartial = false;
     if (ord28) {
         Ord28SehResult ord28Seh;
-        bool ord28Ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ord28Ok = callOrd28(ord28, /*category=*/1, funcProgId,
                                  /*flag=*/0, partialBuf, &ord28Seh);
-        std::printf("  Ordinal_28(4, %d, 0, buf): %s, ret=%u\n",
+        std::printf("  Ordinal_28(1, %d, 0, buf): %s, ret=%u\n",
                     funcProgId, ord28Ok ? "OK" : "SEH", ord28Seh.result);
         if (ord28Ok && ord28Seh.result == 1) {
             havePartial = true;
@@ -755,12 +755,12 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     if (ord85Raw) {
         // --- 7a. __stdcall, errorFlag=0, partialBuf=NULL ---
-        std::printf("\n  [7a] Linker __stdcall(4, %d, 0, NULL)...\n",
+        std::printf("\n  [7a] Linker __stdcall(1, %d, 0, NULL)...\n",
                     funcProgId);
         snapWh("before 7a");
         {
             PtrSehResult r;
-            bool ok = callLinkerStdcall(linkerStd, 4, funcProgId, 0,
+            bool ok = callLinkerStdcall(linkerStd, 1, funcProgId, 0,
                                         nullptr, &r);
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.ptr);
             snapWh("after 7a");
@@ -774,12 +774,12 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
 
         // --- 7b. __stdcall, errorFlag=0, partialBuf=partial ---
-        std::printf("\n  [7b] Linker __stdcall(4, %d, 0, partialBuf)...\n",
+        std::printf("\n  [7b] Linker __stdcall(1, %d, 0, partialBuf)...\n",
                     funcProgId);
         snapWh("before 7b");
         {
             PtrSehResult r;
-            bool ok = callLinkerStdcall(linkerStd, 4, funcProgId, 0,
+            bool ok = callLinkerStdcall(linkerStd, 1, funcProgId, 0,
                                         havePartial ? partialBuf : nullptr,
                                         &r);
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.ptr);
@@ -794,12 +794,12 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
 
         // --- 7c. __fastcall, errorFlag=0, partialBuf=NULL ---
-        std::printf("\n  [7c] Linker __fastcall(4, %d, 0, NULL)...\n",
+        std::printf("\n  [7c] Linker __fastcall(1, %d, 0, NULL)...\n",
                     funcProgId);
         snapWh("before 7c");
         {
             FastcallManualSehResult r;
-            bool ok = callLinkerFastcallSafe(ord85Raw, 4, funcProgId, 0,
+            bool ok = callLinkerFastcallSafe(ord85Raw, 1, funcProgId, 0,
                                              nullptr, &r);
             std::printf("    call: %s, rec=%p\n",
                         ok ? "OK (no SEH)" : "SEH raised", r.ptr);
@@ -814,12 +814,12 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
 
         // --- 7d. __fastcall, errorFlag=0, partialBuf=partial ---
-        std::printf("\n  [7d] Linker __fastcall(4, %d, 0, partialBuf)...\n",
+        std::printf("\n  [7d] Linker __fastcall(1, %d, 0, partialBuf)...\n",
                     funcProgId);
         snapWh("before 7d");
         {
             FastcallManualSehResult r;
-            bool ok = callLinkerFastcallSafe(ord85Raw, 4, funcProgId, 0,
+            bool ok = callLinkerFastcallSafe(ord85Raw, 1, funcProgId, 0,
                                              havePartial ? partialBuf : nullptr,
                                              &r);
             std::printf("    call: %s, rec=%p\n",
@@ -876,19 +876,19 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Step 9: check the .ell file AFTER the linker attempt. ---
     std::printf("\n[9] Checking .ell file AFTER linker attempt...\n");
-    checkEllFileByProgId(binDir, /*whType=*/4, funcProgId);
+    checkEllFileByProgId(binDir, /*whType=*/1, funcProgId);
 
     // --- Step 10: try with errorFlag=1 (emit error on failure). ---
     std::printf("\n[10] Trying linker with errorFlag=1 (emit error on "
                 "failure)...\n");
     if (ord85Raw) {
         // __stdcall with errorFlag=1.
-        std::printf("  [10a] Linker __stdcall(4, %d, 1, NULL)...\n",
+        std::printf("  [10a] Linker __stdcall(1, %d, 1, NULL)...\n",
                     funcProgId);
         snapWh("before 10a");
         {
             PtrSehResult r;
-            bool ok = callLinkerStdcall(linkerStd, 4, funcProgId, 1,
+            bool ok = callLinkerStdcall(linkerStd, 1, funcProgId, 1,
                                         nullptr, &r);
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.ptr);
             snapWh("after 10a");
@@ -899,12 +899,12 @@ DWORD WINAPI runDiag(LPVOID param) {
             }
         }
         // __fastcall with errorFlag=1.
-        std::printf("  [10b] Linker __fastcall(4, %d, 1, NULL)...\n",
+        std::printf("  [10b] Linker __fastcall(1, %d, 1, NULL)...\n",
                     funcProgId);
         snapWh("before 10b");
         {
             FastcallManualSehResult r;
-            bool ok = callLinkerFastcallSafe(ord85Raw, 4, funcProgId, 1,
+            bool ok = callLinkerFastcallSafe(ord85Raw, 1, funcProgId, 1,
                                              nullptr, &r);
             std::printf("    call: %s, rec=%p\n",
                         ok ? "OK (no SEH)" : "SEH raised", r.ptr);

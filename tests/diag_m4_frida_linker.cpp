@@ -21,8 +21,8 @@
 //      (refcount-dec).
 //   5. Insert + verify a Function "TS_AUTO_M4_FL_FUNC" with source
 //      `TS_AUTO_M4_FL_FUNC = 1;`.
-//   6. Get the partial record via Ordinal_28(4, funcProgId, 0, buf).
-//   7. Call the linker: linker(4, funcProgId, 0, buf) — manual inline-asm
+//   6. Get the partial record via Ordinal_28(1, funcProgId, 0, buf).
+//   7. Call the linker: linker(1, funcProgId, 0, buf) — manual inline-asm
 //      wrapper so the call is robust to either __stdcall (RET 0x10) or
 //      __fastcall (RET 0x8) cleanup, AND loads ECX=type, EDX=id.
 //   8. If non-NULL, read record fields (+0x00, +0x26, +0x29, +0x4f, +0x55)
@@ -322,14 +322,14 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Step 4: get the partial record via Ordinal_28. ---
     std::printf("\n[4] Getting partial record via "
-                "Ordinal_28(4, %d, 0, buf)...\n", funcProgId);
+                "Ordinal_28(1, %d, 0, buf)...\n", funcProgId);
     unsigned char partialBuf[0x10A] = {};
     bool havePartial = false;
     if (ord28) {
         Ord28SehResult r;
-        bool ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ok = callOrd28(ord28, /*category=*/1, funcProgId,
                             /*flag=*/0, partialBuf, &r);
-        std::printf("    Ordinal_28(4, %d, 0, buf): %s, ret=%u\n",
+        std::printf("    Ordinal_28(1, %d, 0, buf): %s, ret=%u\n",
                     funcProgId, ok ? "OK" : "SEH", r.result);
         if (ok && r.result == 1) {
             havePartial = true;
@@ -343,10 +343,10 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 5: call the linker (ordinal 85). ---
-    std::printf("\n[5] Calling linker(4, %d, 0, partialBuf=%p)...\n",
+    std::printf("\n[5] Calling linker(1, %d, 0, partialBuf=%p)...\n",
                 funcProgId, havePartial ? (void*)partialBuf : nullptr);
     LinkerSehResult r;
-    bool ok = callLinkerSafe(linkerRaw, /*type=*/4, funcProgId,
+    bool ok = callLinkerSafe(linkerRaw, /*type=*/1, funcProgId,
                              /*errorFlag=*/0,
                              havePartial ? partialBuf : nullptr, &r);
     std::printf("    linker call: %s, rec=%p%s\n",

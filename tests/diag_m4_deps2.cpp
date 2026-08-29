@@ -476,7 +476,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         struct { int whType; const char* label; } stratWhTypes[] = {
             { 0,     "Strategy category (cat=0, subType=0 -> whType=0)" },
             { 0x200, "Strategy power-type 0x200 (FUN_101d43a0 case 0)" },
-            { 4,     "Function category (whType=4, wrong type)" },
+            { 4,     "orlib20 Function whType=4 (wrong type; user-created cat=1)" },
         };
         for (const auto& w : stratWhTypes) {
             std::printf("\n  >>> STRATEGY whType=0x%X  (%s)\n",

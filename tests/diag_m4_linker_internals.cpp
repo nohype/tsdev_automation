@@ -721,9 +721,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     bool havePartial = false;
     if (ord28) {
         Ord28SehResult ord28Seh;
-        bool ord28Ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ord28Ok = callOrd28(ord28, /*category=*/1, funcProgId,
                                  /*flag=*/0, partialBuf, &ord28Seh);
-        std::printf("  Ordinal_28(4, %d, 0, buf): %s, ret=%u\n",
+        std::printf("  Ordinal_28(1, %d, 0, buf): %s, ret=%u\n",
                     funcProgId, ord28Ok ? "OK" : "SEH", ord28Seh.result);
         if (ord28Ok && ord28Seh.result == 1) {
             havePartial = true;
@@ -745,10 +745,10 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (ord85Raw) {
         snapWh("before linker call", whPtr);
         LinkerSehResult r;
-        bool ok = callLinkerSafe(ord85Raw, /*type=*/4, funcProgId,
+        bool ok = callLinkerSafe(ord85Raw, /*type=*/1, funcProgId,
                                  /*errorFlag=*/1,
                                  havePartial ? partialBuf : nullptr, &r);
-        std::printf("    linker(4, %d, 1, partialBuf=%p): %s, rec=%p\n",
+        std::printf("    linker(1, %d, 1, partialBuf=%p): %s, rec=%p\n",
                     funcProgId, havePartial ? (void*)partialBuf : nullptr,
                     ok ? "OK (no SEH)" : "SEH raised", r.ptr);
         snapWh("after linker call", whPtr);
@@ -782,9 +782,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     inspectWarehouseSafeArray("post-linker", whPtr);
 
     // --- Step 8: check the .ell file contents. ---
-    std::printf("\n[8] Checking .ell file contents (Function whType=4, "
+    std::printf("\n[8] Checking .ell file contents (Function whType=1, "
                 "progId=%d)...\n", funcProgId);
-    inspectEllFile(binDir, /*whType=*/4, funcProgId);
+    inspectEllFile(binDir, /*whType=*/1, funcProgId);
 
     // --- Step 9: try Ordinal_69 with param_3=0 (normal path). ---
     std::printf("\n[9] Calling Ordinal_69(4, %d, 0) — normal path...\n",

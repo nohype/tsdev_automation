@@ -816,7 +816,8 @@ DWORD WINAPI runDiag(LPVOID param) {
     // --- Step 6: call Ordinal_69 for the STRATEGY.
     //   category=0 (Strategy), progId=strategyProgId, flag=0.
     //   NOTE: Frida trace shows TSDev passing category=0x4 for a Function
-    //   lookup. For a Strategy lookup the category byte is 0x0 (per
+    //   lookup (orlib20 internal; user-created warehouse category is now 1).
+    //   For a Strategy lookup the category byte is 0x0 (per
     //   FUN_101d43a0's switch: case 0 -> Strategy power-type array).
     std::printf("\n[6] Calling Ordinal_69(category=0, progId=%d, flag=0) "
                 "for the STRATEGY...\n", stratProgId);
@@ -841,7 +842,8 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 6b: also call Ordinal_69 for the FUNCTION for comparison.
-    //   category=4 (Function), progId=funcProgId, flag=0.
+    //   orlib20 still passes category=4 to Ordinal_69 for a Function (the
+    //   user-created warehouse category is now 1).
     std::printf("\n[6b] Calling Ordinal_69(category=4, progId=%d, flag=0) "
                 "for the FUNCTION (comparison)...\n", funcProgId);
     Ord69SehResult ord69FuncSeh;

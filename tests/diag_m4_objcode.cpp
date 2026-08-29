@@ -45,7 +45,7 @@
 //      +0x1c1) or the CELWHouse (with +0x26 as mailbox)?
 //   6. Call the linker (ordinal 85, __stdcall/manual) to trigger state 0x38
 //      and populate the object code buffer. Get a partial record via
-//      Ordinal_28(4, progId, 0, buf). Call linker(4, progId, 0, buf).
+//      Ordinal_28(1, progId, 0, buf). Call linker(1, progId, 0, buf).
 //   7. Read the object code buffer AFTER the linker call. Using the correct
 //      indirection: read wrapper+0x1c0 (cached flag), wrapper+0x1c1 (buffer
 //      ptr), wrapper+0x1c5 (size?). Dump first 512 bytes. Check offset 0x26
@@ -56,7 +56,7 @@
 //      LBound, UBound, cbElements; AccessData and dump first 256 bytes;
 //      UnaccessData; DO NOT destroy.
 //   9. Compare the decompressed object code with the .ell file. Find the
-//      .ell file: elmodule_4_<progId>.ell. Read first 512 bytes. Compare
+//      .ell file: elmodule_1_<progId>.ell. Read first 512 bytes. Compare
 //      with the decompressed object code buffer. Are they similar? Is the
 //      .ell file just a wrapper around the compressed object code?
 //  10. Check if the linker returned a populated record. If non-NULL: read
@@ -876,9 +876,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     bool havePartial = false;
     if (ord28) {
         Ord28SehResult ord28Seh;
-        bool ord28Ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ord28Ok = callOrd28(ord28, /*category=*/1, funcProgId,
                                  /*flag=*/0, partialBuf, &ord28Seh);
-        std::printf("  Ordinal_28(4, %d, 0, buf): %s, ret=%u\n",
+        std::printf("  Ordinal_28(1, %d, 0, buf): %s, ret=%u\n",
                     funcProgId, ord28Ok ? "OK" : "SEH", ord28Seh.result);
         if (ord28Ok && ord28Seh.result == 1) {
             havePartial = true;
@@ -899,10 +899,10 @@ DWORD WINAPI runDiag(LPVOID param) {
     void* linkerRec = nullptr;
     if (ord85Raw) {
         LinkerSehResult r;
-        bool ok = callLinkerSafe(ord85Raw, /*type=*/4, funcProgId,
+        bool ok = callLinkerSafe(ord85Raw, /*type=*/1, funcProgId,
                                  /*errorFlag=*/0,
                                  havePartial ? partialBuf : nullptr, &r);
-        std::printf("    linker(4, %d, 0, partialBuf=%p): %s, rec=%p\n",
+        std::printf("    linker(1, %d, 0, partialBuf=%p): %s, rec=%p\n",
                     funcProgId, havePartial ? (void*)partialBuf : nullptr,
                     ok ? "OK (no SEH)" : "SEH raised", r.ptr);
         linkerRec = r.ptr;
@@ -1005,7 +1005,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     // --- Step 9: compare the decompressed object code with the .ell file. ---
     std::printf("\n[9] Comparing decompressed object code with the .ell "
                 "file...\n");
-    EllInspect ell = inspectEllFile(binDir, /*whType=*/4, funcProgId);
+    EllInspect ell = inspectEllFile(binDir, /*whType=*/1, funcProgId);
 
     if (objCodeBuf && ell.headLen > 0) {
         // Read the first ell.headLen bytes of the object code buffer.

@@ -597,12 +597,12 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Bonus: also dump the Function's master record for comparison. ---
     std::printf("\n[BONUS] Calling _GetMasterRecByType@16 for the FUNCTION "
-                "(category=4, subtype=0, index=%d) for comparison...\n",
+                "(category=1, subtype=0, index=%d) for comparison...\n",
                 funcProgId);
     unsigned char funcRec[0x10A] = {};
     GetMasterRecByTypeSehResult funcMrSeh;
     bool funcOk = callGetMasterRecByType(getMasterRecByType,
-                                         /*category=*/4, /*subType=*/0,
+                                         /*category=*/1, /*subType=*/0,
                                          funcProgId, funcRec,
                                          &funcMrSeh);
     std::printf("    call result: %s, return=%d\n",

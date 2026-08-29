@@ -18,7 +18,8 @@
 //   3. Enumerates EXISTING items (read-only, no modification):
 //        - First 5 existing Strategies (category 0) via
 //          _LoadMasterRecsEX@16(0, 1, &buf, NULL).
-//        - First 5 existing Functions (category 4) via
+//        - First 5 existing Functions (category 4, built-in; user-created
+//          Functions are now category 1) via
 //          _LoadMasterRecsEX@16(4, 1, &buf, NULL).
 //        - First 5 existing Indicators (category 2) via
 //          _LoadMasterRecsEX@16(2, 1, &buf, NULL).
@@ -578,8 +579,9 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [no existing Strategies enumerated]\n");
     }
 
-    // 3b. Existing Functions (category 4).
-    std::printf("\n  --- 3b. Existing Functions (category 4) ---\n");
+    // 3b. Existing built-in Functions (category 4); user-created Functions
+    //     are now category 1.
+    std::printf("\n  --- 3b. Existing Functions (category 4, built-in) ---\n");
     auto existingFuncs = enumerateExisting(loadMasterRecsEx, /*cat=*/4,
                                            /*maxCount=*/5, "Function");
     std::vector<ItemTestResult> funcResults;

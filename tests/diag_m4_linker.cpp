@@ -454,9 +454,9 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (ord28) {
         unsigned char ord28buf[0x10A] = {};
         Ord28SehResult ord28Seh;
-        bool ord28Ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ord28Ok = callOrd28(ord28, /*category=*/1, funcProgId,
                                  /*flag=*/0, ord28buf, &ord28Seh);
-        std::printf("  Ordinal_28(4, %d, 0, buf): %s, ret=%u\n",
+        std::printf("  Ordinal_28(1, %d, 0, buf): %s, ret=%u\n",
                     funcProgId,
                     ord28Ok ? "OK" : "SEH", ord28Seh.result);
         if (ord28Ok && ord28Seh.result == 1) {
@@ -482,7 +482,8 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // =====================================================================
-    // TESTS A/B/C for the FUNCTION (category 4).
+    // TESTS A/B/C for the FUNCTION (warehouse category 1; orlib20 still
+    // passes 0x4 to Ordinal_69 for a Function).
     // =====================================================================
     RecFields fA_func, fB_func, fC_func;
     bool haveA_func = false, haveB_func = false, haveC_func = false;
@@ -656,11 +657,11 @@ DWORD WINAPI runDiag(LPVOID param) {
     RecFields fE_func, fE_strat;
     bool haveE_func = false, haveE_strat = false;
     if (linker) {
-        // Function: type=4, id=funcProgId, errorFlag=0, partialBuf=NULL.
-        std::printf("  [E-func] Linker(4, %d, 0, NULL)...\n", funcProgId);
+        // Function: type=1, id=funcProgId, errorFlag=0, partialBuf=NULL.
+        std::printf("  [E-func] Linker(1, %d, 0, NULL)...\n", funcProgId);
         {
             LinkerSehResult r;
-            bool ok = callLinker(linker, 4, funcProgId, 0, nullptr, &r);
+            bool ok = callLinker(linker, 1, funcProgId, 0, nullptr, &r);
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.rec);
             if (ok && r.rec) {
                 fE_func = readFields(r.rec);
@@ -710,7 +711,8 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n=== TEST F: GetDependencies after the linker path "
                 "(Test B) ===\n");
     if (getDeps) {
-        // Function whType = 4.
+        // Function whType = 4 in orlib20's GetDependencies switch
+        // (user-created warehouse category is now 1).
         for (int elemIdx = 0; elemIdx <= 3; elemIdx++) {
             GetDependenciesSehResult r;
             bool ok = callGetDependencies(getDeps, /*whType=*/4, funcProgId,

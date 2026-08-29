@@ -50,7 +50,7 @@ class OrlibResolver;       // forward declaration (defined in orlib_resolver.h)
 enum class ComponentType : int {
     Strategy    = 0,
     Indicator   = 2,
-    Function    = 4,
+    Function    = 1,
     TradingApp  = 5122,  // 0x1402 = (subType 0x14 << 8) | category 2
     ShowMe      = 1282   // 0x0502 = (subType 0x05 << 8) | category 2
 };
@@ -656,7 +656,8 @@ private:
     // Optional callback populated from TsDevLibTestConfig::onNotifyReady
     // during construction via makeTsDevLibForTest (the private test-only
     // ctor). When non-null, verifyModule() (on the success path) and
-    // deleteEntry() (on the success path, gated category != 4) invoke it
+    // deleteEntry() (on the success path, gated category != 4 — read-only
+    // Function (cat 4) only; editable Function (cat 1) deletes DO send) invoke it
     // immediately BEFORE the 0x40A notification would be sent via orlib20
     // Ordinal_57, capturing the (msg, wParam, lParam) tuple plus the
     // affected componentType and progId so a test can assert the

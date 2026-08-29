@@ -105,7 +105,7 @@ $tmpDir = Join-Path $ProjectRoot "tmp\e2e_l5_stress_$runId"
 $TypeInfo = @{
     strategy   = @{ cli='strategy';   whType=0;    prefix='elmodule_0_'    }
     indicator  = @{ cli='indicator';  whType=2;    prefix='elmodule_2_'    }
-    function   = @{ cli='function';   whType=4;    prefix='elmodule_4_'    }
+    function   = @{ cli='function';   whType=1;    prefix='elmodule_1_'    }
     tradingapp = @{ cli='tradingapp'; whType=5122; prefix='elmodule_5122_' }
     showme     = @{ cli='showme';     whType=1282; prefix='elmodule_1282_' }
 }

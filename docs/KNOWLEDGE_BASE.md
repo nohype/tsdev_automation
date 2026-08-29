@@ -674,53 +674,65 @@ The next investigation should focus on the **higher-level** question of whether 
 
 5. **The actual cross-process synchronization is the shared warehouse memory + WHServer.exe COM Connection Points.** orlib20's warehouse data lives in the `SHARE_WO` section (`0x10243000-0x104889ff`, 2.38 MB, shared across all processes loading orlib20). orlib20's `_CreateEntryEX@24` (`FUN_10159610` @ `0x10159610`) makes a vtable call through `warehouse+0xAE` (the WHServer.exe COM server interface). WHServer.exe implements `IConnectionPointContainerImpl<CWHouse>` with `_IWHouseEvents` (RTTI strings at `0x0043ea4c`, `0x0043ea80` in WHServer.exe) and `IConnectionPointContainerImpl<CProgram>` with `_IProgramEvents`. TS Desktop subscribes to `_IWHouseEvents` via `IConnectionPoint::Advise`.
 
-6. **Empirical confirmation (2026-08-29, indicator cat=2 only):** A CLI-inserted indicator (`TsDeskProbe_20260829123929`, source `Plot1(Close,"Probe");`, ProgId=2996) was immediately visible, applicable, and plotted correctly in a running TS Desktop with no restart and no manual refresh. A CLI deletion of the same indicator (while applied to a chart) was auto-detected by TS Desktop: the applied indicator was removed from the chart and disappeared from the Insert Analysis Techniques list, matching TSDev behavior. This confirms the shared-warehouse + WHServer COM path is sufficient for indicator insert+delete TS Desktop interaction with NO code change. Type coverage (strategy/tradingapp/showme/function), dependent/encrypted/batch cases are UNVERIFIED. Log: `tmp/tsdesk_probe.log`.
+6. **Empirical confirmation (2026-08-29, indicator cat=2 only):** A CLI-inserted indicator (`TsDeskProbe_20260829123929`, source `Plot1(Close,"Probe");`, ProgId=2996) was immediately visible, applicable, and plotted correctly in a running TS Desktop with no restart and no manual refresh. A CLI deletion of the same indicator (while applied to a chart) was auto-detected by TS Desktop: the applied indicator was removed from the chart and disappeared from the Insert Analysis Techniques list, matching TSDev behavior. This confirms the shared-warehouse + WHServer COM path is sufficient for indicator insert+delete TS Desktop interaction with NO code change. Type coverage now extended to all 5 supported types (indicator/showme/strategy/tradingapp/function — see items 9 and prior probe logs); the shared-warehouse path is sufficient for all EXCEPT the function-modify-applied-dependent case (item 9 (c) gap). Dependent/encrypted/batch cases remain UNVERIFIED. Log: `tmp/tsdesk_probe.log`.
 
 7. **Notification registration exports:** `_OrlibRegisterNotificationHandle@4` (ordinal 595, `FUN_1011c130` @ `0x1011c130`) calls `EventsViaHandles::RegisterHandle(&PTR_DAT_10231050, hwnd)`. `_OrlibUnregisterNotificationHandle@4` (ordinal 596, `FUN_1011c140` @ `0x1011c140`) unregisters.
 
 8. **Delete-side additional messages:** orlib20's delete path (`FUN_10159ae0` @ `0x10159ae0`) sends `SendMessageToClients(0x40C, 1, ...)` (delete start), `0x40C, 2` (in progress), and `0x40C, 3` (delete end) around the delete orchestrator, plus `PosMessageToClients(0x40A, 0, ...)` (library changed) when `category != 4`. These `0x40C` messages are also per-process (same `EventsViaHandles`).
 
+9. **Function TS Desktop interaction probe (2026-08-29, category 4):** Two-item user-supervised probe — function `TsDeskFnProbe_20260829` (v1 returns 1 / v2 returns 2, prints on `LastBarOnChartEx`) + caller indicator `TsDeskFnProbeCaller_20260829` (plots the function return, prints `FN_CALLER_probe_tick`). `LastBarOnChartEx` is valid in a function context (pre-flight compile-verified). Results:
+   - (a) insert: both appeared in the library with no restart/refresh. Shared-warehouse + WHServer COM path sufficient (consistent with items 5–6).
+   - (b) apply: caller plotted 1 (v1); Print Log showed `FUNC_PROBE_V1_called` then `FN_CALLER_probe_tick`.
+   - (c) **GAP — CLI modify does NOT auto-recalc applied dependents.** CLI modify function v1→v2 did NOT auto-update the applied caller; a manual recalc (toggle indicator on/off) was required, after which plot=2 and `FUNC_PROBE_V2_called` appeared. The user confirmed that editing the same function in the TSDev.exe UI updates the applied caller's plot IMMEDIATELY (no recalc, even with TS Desktop unfocused). For the other four types the modified item IS the applied item, so the shared-warehouse path was sufficient; for a function the modified item is a DEPENDENCY of the applied item, and TSDev.exe sends an additional dependent-recalc signal the CLI does not. This is the remaining gap for full function-type (c) acceptance. The signal TSDev.exe uses is UNIDENTIFIED — candidates: an extra orlib20 call on the modify/save path beyond 0x40A, or a WHServer.exe COM event raised by TSDev.exe but not the CLI.
+   - (d) delete (0x40A skipped, category==4 per item 8): function gone from library immediately. Applied caller kept old plot until a forced chart refresh, then TS Desktop removed the indicator from the chart and logged a correct "function missing" warning in the event log. No crashes. Matches TSDev behavior (detects missing dependency on recalc).
+   - Post-TVS E2E gate (function `E2eGateFn_20260829182040`, ProgId 1598): PASSED. Log: `tmp/e2e_gate_post_tvs_function.log`. Probe artifacts: `tmp/probe_modify_function_v1.el`, `tmp/probe_modify_function_v2.el`, `tmp/probe_modify_function_caller.el`, `tmp/probe_modify_function_desk.ps1`.
+
 ---
 
-## 20. Read-only function classification
+## 20. Read-only function classification (CONFIRMED ROOT CAUSE)
 
-Evidence from orlib20 function/type mapping, property construction, and master-record diagnostics; no assumptions.
+Confirmed root cause: the warehouse category (low 8 bits of `whType`) controls whether TSDev.exe treats a function as editable or read-only. Category `1` is the editable user function; category `4` is the read-only built-in function. The CLI was inserting functions with category `4`, so TSDev.exe displayed them as read-only.
 
-### Type and name mapping for category 4 / Function
+### Type and name mapping (category 1 vs category 4 / Function)
 
-| Function | orlib20 address | Output when arg = `4` | Evidence |
-|----------|-----------------|----------------------|----------|
-| `GetFileTypeName1` | `0x10157dc0` | `"Function (Read Only)"` | orlib20 decompilation / disassembly |
-| `FUN_101583c0` | `0x101583c0` | `"FunctionReadOnly"` | orlib20 decompilation / disassembly |
+| Category | orlib20 function | Address | Output | Evidence |
+|----------|------------------|---------|--------|----------|
+| 1 | `GetFileTypeName1` | `0x10157dc0` | `"Function"` (editable) | orlib20 decompilation / disassembly |
+| 4 | `GetFileTypeName1` | `0x10157dc0` | `"Function (Read Only)"` | orlib20 decompilation / disassembly |
+| 1 | `FUN_101583c0` | `0x101583c0` | `"Function"` | orlib20 decompilation / disassembly |
+| 4 | `FUN_101583c0` | `0x101583c0` | `"FunctionReadOnly"` | orlib20 decompilation / disassembly |
 
 ### `READONLY` property construction
 
 | Function | orlib20 address | Role | Evidence |
 |----------|-----------------|------|----------|
-| `FUN_10168b20` | `0x10168b20` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
-| `FUN_10170a30` | `0x10170a30` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
-| `FUN_101a1bd0` | `0x101a1bd0` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
+| `FUN_10168b20` | `0x10168b20` | Builds property data containing `"READONLY" = "TRUE"` for category-4 functions | orlib20 decompilation / disassembly |
+| `FUN_10170a30` | `0x10170a30` | Builds property data containing `"READONLY" = "TRUE"` for category-4 functions | orlib20 decompilation / disassembly |
+| `FUN_101a1bd0` | `0x101a1bd0` | Builds property data containing `"READONLY" = "TRUE"` for category-4 functions | orlib20 decompilation / disassembly |
 
 ### `SaveModule_New` flag mapping
 
 | Fact | Evidence |
 |------|----------|
-| orlib20 `_SaveModule_New@20` is `FUN_10159770` at `0x10159770` | orlib20 decompilation / disassembly; `src/tsdev_lib.cpp:1572-1573` call site |
+| orlib20 `_SaveModule_New@20` is `FUN_10159770` at `0x10159770` | orlib20 decompilation / disassembly; `src/tsdev_lib.cpp:1575-1576` call site |
 | Maps the `saveFlags` word to master-record flag bits | Ghidra decompilation of `FUN_10159770` |
-| Bits 5/6 (IsProtected / IsProtectedPlus) are forced for all items saved by the production path | `src/tsdev_lib.cpp:1553-1560` TSDev-parity construction |
-| Internal default password is `!p$Kn@aSus` (10 bytes in a 64-byte zeroed buffer) | `src/tsdev_lib.cpp:1557-1565` |
+| Bits 5/6 (`IsProtected` / `IsProtectedPlus`) are forced for all items saved by the production path | `src/tsdev_lib.cpp:1556-1561` TSDev-parity construction |
+| Low 3 bits of `saveFlags` are the warehouse category: saveFlags = (category & 0x7) \| 0x60 | `src/tsdev_lib.cpp:1561` |
+| Function category 1 → saveFlags = (1 & 0x7) \| 0x60 = 0x61; function category 4 → saveFlags = (4 & 0x7) \| 0x60 = 0x64 | `src/tsdev_lib.cpp:1561` |
+| Bit 4 (`0x10`) is set on re-save when `isVerified` is true | `src/tsdev_lib.cpp:1562-1564` |
+| Internal default password is `!p$Kn@aSus` (10 bytes in a 64-byte zeroed buffer) | `src/tsdev_lib.cpp:1560,1565-1568` |
 
-Included to show the production `saveSource` path sets only bits 5/6 (protection) and `0x10` (verified) — it does not set any read-only bit, so a read-only classification does not arise from the current production insert/modify path.
+The read-only classification does **not** come from a separate read-only bit in `saveFlags`. The production path sets only the warehouse category in the low bits plus protection bits; orlib20 derives `READONLY="TRUE"` from the category value itself (`4` = read-only).
 
 ### Master-record offsets (fresh function)
 
 Source: `diag_m4_raw_rec` inserted `TS_AUTO_M4_DIAG_RFUNC` (ProgId 1593) and dumped its 0x10A-byte master record.
 
-These are the **baseline** bytes for a fresh, production-path (non-read-only) function; they are NOT read-only markers. The read-only flag's exact byte location in the deleted functions is unknown (see Evidence limitation).
+These are the **baseline** bytes for a fresh, production-path (category-1) function; the read-only state is the warehouse category, not a separate flag. The previous `0x0404` value was the category-4 master record.
 
 | Offset | Size | Value | Interpretation |
 |--------|------|-------|----------------|
-| `+0x7B` | USHORT | `0x0404` | Low byte = warehouse category 4; bit 10 (`0x400`) set = internal-encryption flag (`src/tsdev_lib.cpp:1585-1589`) |
+| `+0x7B` | USHORT | `0x0401` | Low byte = warehouse category 1; bit 10 (`0x400`) set = internal-encryption flag (`src/tsdev_lib.cpp:1588-1591`) |
 | `+0x109` | byte | `0x18` | Baseline byte for a fresh, production-path function; no proven read-only interpretation. |
 
 ### TSDev File Open `R` attribute
@@ -728,6 +740,445 @@ These are the **baseline** bytes for a fresh, production-path (non-read-only) fu
 - TradeStation documentation for the File Open dialog states attribute code `R` applies only to EasyLanguage functions and means the function code is read-only.
 - Source: `https://help.tradestation.com/10_00/eng/tsdevhelp/el_editor/file_open_eldoc.htm`.
 
-### Evidence limitation
+### Confirmed root cause
 
-- The exact pre-delete master-record/XML byte(s) for `TS_AUTO_M4_FRIDA_FUNC` (ProgId 1439) and `TS_AUTO_M4_TRAV_FUNC` (ProgId 1441) were not captured before deletion. The precise byte-level flag that produced the read-only display is therefore inferred from the orlib20 string/type-mapping and property-string evidence above, not directly observed.
+| Observation | Address / Source | Evidence |
+|-------------|------------------|----------|
+| orlib20 maps category `1` to the editable name `"Function"` and category `4` to `"Function (Read Only)"` | `GetFileTypeName1` @ `0x10157dc0`, `FUN_101583c0` @ `0x101583c0` | orlib20 decompilation / disassembly |
+| orlib20 builds `"READONLY" = "TRUE"` property data for category-4 functions | `FUN_10168b20` @ `0x10168b20`, `FUN_10170a30` @ `0x10170a30`, `FUN_101a1bd0` @ `0x101a1bd0` | orlib20 decompilation / disassembly |
+| orlib20 places categories `1` and `4` in separate warehouse search trees | `FUN_101d43a0` @ `0x101d43a0` | orlib20 decompilation / disassembly |
+| TSDev.exe creates user functions with category `1` | `CELFunctionDoc` ctor @ `0x00457eb0` | TSDev.exe Ghidra decompilation |
+| TSDev.exe creates built-in functions with category `4` | `CELBIFunctionDoc` ctor @ `0x004140c0` | TSDev.exe Ghidra decompilation |
+| TSDev.exe's save path passes `param_1[0x7a]` (document category) to `_SaveModule_New@20` | `FUN_00452290` @ `0x00452290` | TSDev.exe Ghidra decompilation |
+| TSDev.exe UI inserts functions with `whType = 0x1`, not `0x4` | KB §18 Frida traces | Runtime trace (function ProgId 80 and 82) |
+| The CLI inserted all functions with category `4` because `ComponentType::Function = 4` | `src/tsdev_lib.h:53` (pre-fix) | Source line |
+
+The CLI used warehouse category `4` for all functions. orlib20 and TSDev.exe treat category-4 functions as built-in / read-only, so every CLI-inserted function appeared as `Function (Read Only)` in the TSDev.exe editor. The exact field is the low 8 bits of `whType` (the warehouse category).
+
+### Fix
+
+| Fact | Evidence |
+|------|----------|
+| `ComponentType::Function` changed from `4` to `1` in `src/tsdev_lib.h` | `src/tsdev_lib.h:53` |
+| Comments updated in `src/tsdev_lib.cpp`, `src/tsdev_lib.h`, `src/tsdev_lib_test_hooks.h`, `tests/test_save_module.cpp`, `tests/test_unknown_link_regression.ps1`, `tests/test_unknown_link_stress.ps1` | Source comments |
+| The `category != 4` delete gate was intentionally left unchanged | `src/tsdev_lib.cpp:2955`; orlib20 `FUN_10159ae0` @ `0x10159ae0`; KB §19 item 8 |
+| After the fix, category-1 function deletes send the `0x40A` library-changed notification because `1 != 4` | orlib20 `FUN_10159ae0` @ `0x10159ae0`; `src/tsdev_lib.cpp:2955` |
+| E2E gate passed for insert / modify / delete / get-source with no crashes | Post-TVS E2E gate log; function `E2eGateFn_20260829182040` (ProgId 1598) |
+| Function .ell files now use `elmodule_1_<progId>.ell` instead of `elmodule_4_<progId>.ell` | File-system observation |
+| User confirmed the function is editable in the TSDev.exe editor | User observation |
+
+---
+
+## 21. Function-modify dependent-recalc signal (static analysis)
+
+Static-analysis-only investigation of the TSDev.exe function-edit-save path to identify the additional `orlib20`/COM calls that cause `orchart.exe` to immediately recalculate applied dependents/caller indicators — calls absent from the CLI `modify Function` path. All evidence is from Ghidra decompilation of `TSDev.exe` and `orlib20.dll` in the `TSDevAnalysis` project. No runtime tracing was performed.
+
+### 21.1. TSDev UI save path vs CLI modify path — call-graph comparison
+
+#### TSDev UI save path (`FUN_00451800` @ `0x00451800`)
+
+| Step | Call | orlib20 address / ordinal | CLI equivalent |
+|------|------|--------------------------|----------------|
+| 5 | **Ordinal_25** `(category, progId, name)` | `FUN_10151b10` @ `0x10151b10` | **MISSING** |
+| 8 | **Ordinal_56** `()` | `FUN_10158b70` @ `0x10158b70` | **MISSING** |
+| 10 | `FUN_00452290` → `_SaveModule_New@20` | `FUN_10159770` @ `0x10159770` | `saveSource()` ✓ |
+| 12 | **Ordinal_66** `(compiler alloc)` | `FUN_10165f70` @ `0x10165f70` | ✓ |
+| 14 | `FUN_004D9480` → `StartCompilingProcess` / `FUN_004D91E0` / `EndCompilingProcess` | internal TSDev | `verifyModule()` partial ✓ |
+| 14a | **Ordinal_10** `(0)` — inside `FUN_004D91E0` category-gated block | `FUN_101a9650` @ `0x101a9650` | **MISSING** |
+| 14b | `FUN_004D7140` → **Ordinal_71** + `FUN_004e79d0` / `FUN_004d75b0` (worker cmd 0x0D) | `FUN_101a9460` @ `0x101a9460` / internal TSDev | **MISSING** |
+| 14c | `FUN_004c9670` → **Ordinal_68** (dependent list + count) | `FUN_101a87d0` @ `0x101a87d0` | **MISSING** (CLI uses its own enumeration) |
+| 14d | Recursive `FUN_004D91E0` per dependent | internal TSDev | CLI uses `traverseReverseDependents` (different mechanism) |
+| 17 | **Ordinal_17** `(category, progId)` | `FUN_10151be0` @ `0x10151be0` | **MISSING** |
+| 19 | `FUN_004531A0` (property/cache persistence) | internal TSDev | **MISSING** |
+| — | **Ordinal_57** `(category, progId)` via `FUN_00453f70` | `FUN_101526f0` @ `0x101526f0` | ✓ (but per-process only, KB §19) |
+
+#### CLI `modifyEntry` path (`src/tsdev_lib.cpp:2976-3026`)
+
+1. `findExistPos(name, type)` → ProgId
+2. `saveSource(type, progId, newSource, true)` → `_SaveModule_New@20`
+3. `verifyModule(type, progId)`:
+   - Ordinal 66 (alloc compiler)
+   - Set compiler fields (+0x08 category, +0x0C subtype, +0x10 ProgId, +0x18 HWND)
+   - `StartCompilingProcess`
+   - `_VerifyModule_New@20`
+   - `traverseReverseDependents` (CLI's own enumeration + local re-verify, NOT the TSDev worker-thread path)
+   - `EndCompilingProcess(0)`
+   - On success: **Ordinal_57** (NotifyLibChanged — per-process only, KB §19)
+   - Ordinal 67 (free compiler)
+
+**The CLI does NOT resolve or call ordinals 10, 17, 25, 56, 68, or 71.** Confirmed by grep of `src/tsdev_lib.cpp` and `src/orlib_resolver.cpp`: ordinals 28, 57, 66, 67, 69, 70, and 85 are resolved; none of 10, 17, 25, 56, 68, or 71 are among them.
+
+### 21.2. Candidate 1 — Category-gated post-verify block (HIGHEST confidence)
+
+#### Evidence: `FUN_004D91E0` @ `0x004D91E0` (TSDev.exe)
+
+Decompiled category gate (verbatim from Ghidra):
+
+```c
+uVar6 = _VerifyModule_New_20(param_1[6], uVar2, param_4, param_2, param_1);
+if (param_2 == (undefined4 *)0x1) {
+    *param_1 = uVar6;
+}
+param_1[1] = param_1[1] & uVar6;
+if ((uVar6 == 1) && (((uVar2 == 1 || (uVar2 == 4)) || (uVar2 == 0)))) {
+    iVar5 = Ordinal_10(0);
+    uVar2 = param_4;
+    if (iVar5 != 0) {
+        param_2 = (undefined4 *)0x0;
+        iVar5 = FUN_004d7140(param_3, param_4, &param_2);
+        if (iVar5 == 1) {
+            FUN_004d80d0();           // CELPrograms ctor
+            iVar5 = FUN_004c9670(local_40);  // get dependent list
+            if (iVar5 == 1) {
+                local_20 = Ordinal_68(local_40);  // dependent count
+                if (0 < local_20) {
+                    FUN_004d8fb0(param_3, uVar2);  // sig lookup for root
+                    cVar3 = FUN_004d9040(&local_18);  // compare old vs new
+                    // ... per-dependent loop with recursive FUN_004d91e0 ...
+                }
+            }
+        }
+        FUN_004d945f(uVar8, uVar9, puVar10);
+        return;
+    }
+}
+```
+
+The gate condition is: `uVar6 == 1` (verify succeeded) AND `uVar2 ∈ {0, 1, 4}` (Strategy, Function subtype, Function). This block is **never entered** by the CLI because the CLI's `verifyModule` does not contain this logic.
+
+#### `FUN_004D7140` @ `0x004D7140` — the gate to the worker thread
+
+```c
+bool FUN_004d7140(int param_1, undefined4 param_2, undefined4 param_3, int *param_4) {
+    if (*(int *)(param_1 + 0xc2) == 1) {
+        Ordinal_71(param_2, param_3);           // create/get singleton
+        iVar1 = FUN_004e79d0(param_2, param_3); // tree lookup + worker cmd
+        *param_4 = iVar1;
+        return *param_4 != 0;
+    }
+    FUN_004d75b0(param_2, param_3, param_4);    // direct worker cmd
+    return *param_4 != 0;
+}
+```
+
+#### `FUN_004d75b0` @ `0x004d75b0` — worker thread command 0x0D
+
+```c
+undefined4 FUN_004d75b0(int param_1, undefined4 param_2, undefined4 param_3, int *param_4) {
+    if (*(int *)(param_1 + 0xae) != 0) {
+        *param_4 = 0;
+        *(undefined4 *)(param_1 + 0x12) = param_2;  // category
+        *(undefined4 *)(param_1 + 0x16) = param_3;  // progId
+        WaitForSingleObject(*(HANDLE *)(param_1 + 0x72), INFINITE);  // mutex
+        *(undefined4 *)(param_1 + 4) = 0xd;          // command = 0x0D
+        SetEvent(*(HANDLE *)(param_1 + 0x6e));       // signal worker
+        WaitForSingleObject(*(HANDLE *)(param_1 + 0x6a), INFINITE);  // wait
+        ReleaseMutex(*(HANDLE *)(param_1 + 0x72));
+        if (*(int *)(param_1 + 0x5e) != 0) {
+            pvVar4 = operator_new(0x241);            // CELProgram alloc
+            iVar5 = FUN_004c71f0();                  // CELProgram ctor
+            *param_4 = iVar5;
+            FUN_004ca610(param_1, ...);              // set result fields
+            // increment refcount at +0x210
+            return 1;
+        }
+    }
+    return 0;
+}
+```
+
+This sends **worker thread command 0x0D** with `(category, progId)` to an orlib20 worker thread (the same worker thread documented in KB §4). The worker thread processes the command synchronously (SetEvent + WaitForSingleObject). The result is a `CELProgram` object (0x241 bytes, vtable at `CELProgram::vftable`), constructed by `FUN_004c71f0` @ `0x004c71f0`.
+
+The worker thread lives in the orlib20 instance loaded into TSDev.exe's process. The worker thread's command 0x0D handler was not fully decompiled in this analysis, but KB §4 documents the worker thread dispatch mechanism. The handler likely accesses the shared warehouse (`SHARE_WO` section, `0x10243000-0x104889ff`) and may fire COM events through the WHServer.exe interface (KB §19 item 5).
+
+#### `FUN_004e79d0` @ `0x004e79d0` — tree-cached variant
+
+```c
+int FUN_004e79d0(int param_1, undefined4 param_2, int param_3) {
+    EnterCriticalSection(lpCriticalSection);
+    FUN_004e7400(&local_1c, &param_2);  // tree lookup
+    // binary tree search by (category, progId) ...
+    if (not found) {
+        Ordinal_10(0, param_2, iVar5, piVar8);   // get session
+        FUN_004d75b0(uVar6, iVar5, piVar8);       // send cmd 0x0D
+        FUN_004c9a40();                            // get warehouse object
+        FUN_004cede0(uVar6);                       // process
+        FUN_004e77c0(local_34, local_14, local_18); // store in tree
+    } else {
+        // increment refcount at +0x210
+    }
+    LeaveCriticalSection(lpCriticalSection);
+}
+```
+
+This is a tree-cached wrapper around `FUN_004d75b0`. If the `(category, progId)` pair was already processed, it returns the cached `CELProgram` and increments its refcount instead of re-sending command 0x0D.
+
+#### Ordinal_10 — `FUN_101a9650` @ `0x101a9650` (orlib20.dll)
+
+Creates/gets a per-thread session object stored in a `CPtrArray` at `DAT_1023faec` (`DAT_1023faf0` = array pointer, `DAT_1023faf4` = count). The session is 0xea bytes, identified by thread ID (`GetCurrentThreadId()`). Protected by critical section at `DAT_1023ced8`. The session object likely holds the warehouse/COM connection needed by the worker thread.
+
+#### Ordinal_71 — `FUN_101a9460` @ `0x101a9460` (orlib20.dll)
+
+Lazy singleton initializer for `DAT_1023ced4` (in orlib20's private `.data`, per-process). Allocates 0x2c bytes, constructs via `FUN_101e3230` (initializes critical section + calls `FUN_101e4400` which creates a 0x24-byte self-referencing object with type `0x101`). The singleton's exact role is unclear from static analysis alone, but it is only created inside the category-gated block.
+
+#### Ordinal_68 — `FUN_101a87d0` @ `0x101a87d0` (orlib20.dll)
+
+Thin wrapper: calls `FUN_101e5970` which returns `*(param_1 + 0xc)` — the count field from the `CELPrograms` collection object. This is the dependent-list count getter.
+
+#### `FUN_004c9670` @ `0x004c9670` — dependent list builder
+
+Calls `FUN_004cad90()` and `FUN_004d8790` (which deserializes a dependent list from a `CMemFile`), then iterates the list calling `FUN_004d8340` (which calls `FUN_004d7f40` — a tree insert). This populates the `CELPrograms` collection from the warehouse's stored dependent relationships. The CLI's `enumerateReverseDependents` uses a completely different approach (scanning all master records and dep-lists manually).
+
+#### Why this could trigger cross-process recalc
+
+1. The worker thread command 0x0D processes the `(category, progId)` through the warehouse.
+2. The warehouse data lives in the `SHARE_WO` shared memory section, visible to all processes.
+3. Per KB §19 item 5, warehouse operations go through WHServer.exe COM Connection Points (`_IWHouseEvents`, `_IProgramEvents`).
+4. orchart.exe subscribes to `_IWHouseEvents` via `IConnectionPoint::Advise`.
+5. A warehouse-level dependent recalc could fire a COM event that reaches orchart.exe, causing it to recalculate the applied indicator.
+
+#### Why the CLI's `traverseReverseDependents` does NOT close the gap
+
+The CLI's `traverseReverseDependents` (`src/tsdev_lib.cpp:2596-2693`):
+- Enumerates dependents by scanning all categories' master records (its own `enumerateReverseDependents`).
+- Re-verifies each dependent locally via `_VerifyModule_New@20`.
+- Does NOT send worker thread command 0x0D.
+- Does NOT call Ordinal_10, Ordinal_71, FUN_004D7140, FUN_004e79d0, or FUN_004d75b0.
+- Does NOT access the warehouse's dependent list via `FUN_004c9670` / Ordinal_68.
+- Local re-verification only checks compilation correctness; it does NOT trigger warehouse/COM events.
+
+### 21.3. Candidate 2 — Ordinal_25 / Ordinal_17 pending-save queue (MEDIUM confidence)
+
+#### Ordinal_25 — `FUN_10151b10` @ `0x10151b10` (orlib20.dll)
+
+```c
+undefined4 FUN_10151b10(int param_1, int param_2, char *param_3) {
+    // Search array at DAT_10243550 for (param_1, param_2) = (category, progId)
+    // If found: update name at DAT_10243558 + index * 0x45
+    // If not found and count < 499:
+    //   DAT_10488828++  (increment count)
+    //   Store (category, progId, name) at next slot
+    //   Each record is 0x45 bytes: [category:4][progId:4][name:0x3D]
+    // Returns 1 on success, 0 if queue full (49 entries max, shows error)
+}
+```
+
+#### Ordinal_17 — `FUN_10151be0` @ `0x10151be0` (orlib20.dll)
+
+```c
+undefined4 FUN_10151be0(int param_1, int param_2) {
+    // Search array at DAT_10243550 for (param_1, param_2) = (category, progId)
+    // If found: remove entry (shift array down), DAT_10488828-- (decrement count)
+    // Returns 1 always
+}
+```
+
+#### Shared-memory confirmation
+
+- `DAT_10243550` (array base) is at address `0x10243550`, inside the `SHARE_WO` section (`0x10243000-0x104889ff`, KB §19). This is **shared across all processes** that load orlib20.
+- `DAT_10488828` (count) is at address `0x10488828`, also inside `SHARE_WO`.
+- Each record is 0x45 bytes: `[category:int32][progId:int32][name:char[0x3D]]`.
+- Maximum 499 entries (error message shown at 500).
+
+#### Ordinal_22 / Ordinal_23 — read the queue
+
+- Ordinal_22 (`FUN_10151c60` @ `0x10151c60`): reads the name for a given `(category, progId)` from the shared array.
+- Ordinal_23 (`FUN_10151cd0` @ `0x10151cd0`): returns a pointer to the name string in the shared array.
+- Ordinal_22 is called internally by orlib20's `FUN_10168ee0` @ `0x10168ee0` (the compile/verify path), which reads the name from the queue during compilation.
+
+#### TSDev call sites
+
+- **Ordinal_25** is called at step 5 of `FUN_00451800` (before `_SaveModule_New`), adding the item being saved to the pending-save queue.
+- **Ordinal_17** is called at step 17 of `FUN_00451800` (after verify and post-verify processing), removing the item from the queue.
+
+#### Why this could matter
+
+The pending-save queue in shared memory could serve as a cross-process "being modified" signal. If orchart.exe (or its orlib20) polls or checks this queue, it could detect that a function is being modified and trigger recalculation of applied dependents after the save completes. The queue entry exists from before the save starts until after the verify-dependent-recalc finishes, providing a window for cross-process awareness.
+
+#### Why confidence is MEDIUM
+
+- orchart.exe does NOT directly reference `DAT_10243550` or `DAT_10488828` (confirmed by xref query — zero references from orchart.exe).
+- No orlib20 function that orchart.exe calls was found to poll this queue.
+- The queue may be purely for orlib20's own compile-time name resolution (Ordinal_22 is called from the compile path to get the name being saved).
+- The cross-process mechanism may be entirely through the worker thread command 0x0D (Candidate 1) and COM events, not through this queue.
+
+### 21.4. Candidate 3 — Ordinal_56 flag reset (LOW confidence)
+
+#### Ordinal_56 — `FUN_10158b70` @ `0x10158b70` (orlib20.dll)
+
+```c
+undefined4 FUN_10158b70(void) {
+    DAT_1023aac8 = 0;
+    return 1;
+}
+```
+
+`DAT_1023aac8` is at `0x1023aac8`, in orlib20's private `.data` section (per-process). Called at step 8 of `FUN_00451800`, before the verify step. The flag is checked at the end of `FUN_10168ee0` (`bVar7 = DAT_1023aac8 == 0`). This may control a compile-time behavior switch. Since it is per-process, it cannot directly cause cross-process recalc, but it may affect how the compile/verify path interacts with the warehouse. Low confidence.
+
+### 21.5. Candidate 4 — `FUN_004531A0` property/cache persistence (LOW confidence)
+
+Called at step 19 of `FUN_00451800` (after Ordinal_17). This function persists properties/cache state. If it writes to the shared warehouse or triggers a COM event, it could contribute to cross-process notification. Static analysis did not confirm a COM or warehouse write path. Low confidence.
+
+### 21.6. Candidate 5 — Document vtable +0x1F8 call (LOW confidence)
+
+At step 15 of `FUN_00451800`, on verify success, TSDev calls `(**(code **)(*param_1 + 0x1F8))()` — a document virtual function. This could be `FUN_00453f70` (which calls `ShowRecalculationWarning` + Ordinal_57), but Ordinal_57 is per-process (KB §19). The CLI has no document object. Low confidence for cross-process impact.
+
+### 21.7. Category-4-specific behavior
+
+The category gate in `FUN_004D91E0` is:
+
+```c
+if ((uVar6 == 1) && (((uVar2 == 1 || (uVar2 == 4)) || (uVar2 == 0))))
+```
+
+- `uVar2 == 0`: Strategy (category 0)
+- `uVar2 == 1`: Function subtype (category 1)
+- `uVar2 == 4`: Function (category 4)
+
+This means the entire post-verify dependent-recalc block (Ordinal_10, FUN_004D7140, worker cmd 0x0D, FUN_004c9670, recursive traversal) executes **only** for these three categories. For the other supported types (Indicator cat=2, ShowMe cat=3, TradingApp cat=6), the block is skipped.
+
+This is consistent with the observed gap: for non-function types, the modified item IS the applied item, so the shared-warehouse path (KB §19 item 6) is sufficient. For functions (and strategies), the modified item is a DEPENDENCY of the applied item, so the additional dependent-recalc block is needed.
+
+The CLI's `traverseReverseDependents` also gates recursion on categories 0/1/4 (`src/tsdev_lib.cpp:2683`), but this is a local re-verification, not the worker-thread/warehouse/COM path.
+
+### 21.8. Ranked candidates
+
+| Rank | Candidate | Ordinal(s) | TSDev address | Confidence | Rationale |
+|------|-----------|-----------|---------------|------------|-----------|
+| 1 | Category-gated post-verify block: Ordinal_10 + FUN_004D7140 → Ordinal_71 + FUN_004e79d0/FUN_004d75b0 (worker cmd 0x0D) + FUN_004c9670/Ordinal_68 (dependent list) | 10, 71, 68 | `0x004D91E0`, `0x004D7140`, `0x004e79d0`, `0x004d75b0` | HIGHEST | Sends worker thread cmd 0x0D with (cat, progId); worker accesses warehouse/COM; only for cat 0/1/4; completely absent from CLI |
+| 2 | Ordinal_25 / Ordinal_17 pending-save queue in SHARE_WO | 25, 17 | `0x10151b10`, `0x10151be0` | MEDIUM | Shared-memory queue visible to all processes; but no evidence of orchart polling it |
+| 3 | Ordinal_56 flag reset | 56 | `0x10158b70` | LOW | Per-process flag; may affect compile/warehouse interaction |
+| 4 | `FUN_004531A0` property/cache persistence | — | `0x004531A0` | LOW | May write to warehouse; no COM evidence |
+| 5 | Document vtable +0x1F8 | — | `0x00451800` step 15 | LOW | Likely Ordinal_57 (per-process, KB §19) |
+
+### 21.9. Static-analysis limitations
+
+Static analysis CANNOT prove:
+
+1. **Which call actually causes `orchart.exe` to recalculate.** The worker thread command 0x0D handler was not fully decompiled. The COM event path from warehouse to orchart.exe is inferred from KB §19 item 5 (WHServer.exe `_IWHouseEvents`), not directly traced from the cmd 0x0D handler.
+2. **Whether a call reaches another process at runtime.** Shared-memory writes (Ordinal_25/17) are visible to other processes, but no evidence shows orchart.exe reading the pending-save queue.
+3. **Whether calls are made indirectly through COM vtables or function pointers.** `FUN_004d75b0` calls `FUN_004ca610` which makes vtable calls (`(**(code **)(*param_1 + 4))()` and `(**(code **)(*param_1 + 0xc))()`). These could reach COM interfaces.
+4. **Whether multiple calls are jointly required.** The pending-save queue (Candidate 2) and the worker cmd 0x0D (Candidate 1) may be jointly necessary — the queue may mark the item as "being modified" while the worker cmd triggers the actual recalc.
+5. **Exact runtime ordering and arguments.** The decompiler output has imperfect variable recovery; some arguments (e.g., to `Ordinal_10`) may be incorrect.
+6. **Whether any single candidate is sufficient for the CLI.** The CLI lacks the document/MFC infrastructure of TSDev; some calls (e.g., document vtable +0x1F8) may not be replicable without a document object.
+7. **Whether the CLI's `traverseReverseDependents` can substitute.** The CLI's local re-verification does not send worker cmd 0x0D or access the warehouse's dependent list via the same path. Even if it re-verifies dependents correctly, it does not trigger the cross-process COM event.
+
+### 21.10. Recommended runtime confirmation (Frida TVS)
+
+After this static analysis is reviewed, the recommended next step is a runtime Frida trace of a TSDev UI function edit/save while a caller indicator is applied to a chart:
+
+1. **Trace orlib20 ordinal calls** in TSDev.exe: hook Ordinal_10, 17, 25, 56, 57, 66, 67, 68, 71 and log `(ordinal, args, returnValue, timestamp)`.
+2. **Trace worker thread command 0x0D**: hook `FUN_004d75b0` in TSDev.exe and log `(category, progId, result)`.
+3. **Trace COM events**: hook `IConnectionPoint::Invoke` in WHServer.exe (or `_IWHouseEvents` dispinterface) and log events fired during the save.
+4. **Trace orchart.exe recalc**: hook the orchart.exe message handler for `0x40A` and any `_IWHouseEvents` callback to confirm which event triggers the recalc.
+5. **Compare**: run the same trace with a CLI `modify Function` and diff the ordinal call lists to confirm the exact missing set.
+6. **Minimal fix validation**: add the missing calls to the CLI `verifyModule` post-success path (Ordinal_10 + FUN_004D7140 equivalent) and verify that the applied caller recalculates without manual intervention.
+
+This runtime trace is explicitly OUTSIDE the scope of this static-analysis task and should only be performed after this KB section is reviewed.
+
+## 22. Function-modify recalc signal (RUNTIME CONFIRMATION)
+
+Runtime Frida trace diff of a function modify: Run A = TSDev.exe UI edit+verify (immediate orchart recalc), Run B = `tsdev_cli.exe modify` (delayed orchart recalc). Trace files: `tmp/frida_recalc_trace_ui2.*` (Run A), `tmp/frida_recalc_trace_cli.*` (Run B).
+
+### 22.1 Methodology
+
+- **Run A:** Frida attached to `TSDev.exe` (PID 2108), `WHServer.exe`, and all 16 `orchart.exe` processes. The user edited `TsDeskFnProbe_20260829` (ProgId=84, category 1) from v1 to v2 in the `TSDev.exe` UI and clicked **Verify**. The applied caller indicator `TsDeskFnProbeCaller_20260829` (ProgId=3008) updated from 1 to 2 immediately.
+- **Run B:** Frida attached to `WHServer.exe` and all `orchart.exe` processes. `tsdev_cli.exe modify function TsDeskFnProbe_20260829 v2.el` was run (exit 0, success). The applied caller indicator did **not** auto-recalc; it updated only after a ~13 s delay (manual/periodic refresh).
+- **Frida agent:** `tmp/frida_recalc_trace.js`. It is process-aware and hooks orlib20 ordinals 10/17/25/56/57/66/67/68/71, worker command 0x0D at `FUN_004d75b0`, `PostMessageW`/`SendMessageW`/`DispatchMessageW`, `oleaut32!DispInvoke`, and the `rpcrt4!Ndr*Call*` family.
+
+### 22.2 TSDev UI ordinal call sequence (Run A)
+
+Ordered list of ordinal calls during save/verify (timestamps from trace):
+
+1. **ORD10** (session get) — seq=16, 18:25:30.916
+2. **ORD71** (singleton, cat=1, progId=56112) — seq=18, 18:25:30.916
+3. **ORD10/ORD71** (various progIds including 84) — seq=20-27
+4. **ORD25** (pending-save queue add, cat=1, progId=84, name="!p$Kn@aSus") — seq=62, 18:25:33.911
+5. **ORD56** (flag reset, `DAT_1023aac8=0`) — seq=64, 18:25:33.911
+6. **ORD71 (approximately 87 calls total, ~55 with cat=1 progId=84)** — singleton, post-verify block `FUN_004D7140`, seq=68-141, 18:25:33.922-34.044. Exact count should be verified from the trace.
+7. **ORD66** (compiler alloc) — seq=142, 18:25:34.074
+8. **ORD10/ORD71** (verify + dependent traversal) — seq=144-311
+9. **ORD68** (dependent count getter, collection=9434004, returns 1) — seq=312, 18:25:34.214
+10. **ORD57** (`NotifyLibChanged`, cat=1, progId=84) — seq=328, 18:25:34.218
+11. **19 × `PostMessageW(hwnd, 0x40A, wParam=0, lParam=0x10054)`** posted **inside ORD57** — seq=329-347, 18:25:34.218-220. `lParam=0x10054 = (category=1 << 16 | progId=84)`. These were posted to 19 TradeStation HWNDs (see §22.3a for owner breakdown).
+12. **ORD57 RET** (retval=1) — seq=348, 18:25:34.220
+13. **ORD67** (free compiler) — seq=351, 18:25:34.265
+14. **ORD17** (pending-save queue remove, cat=1, progId=84) — seq=353, 18:25:34.265
+
+### 22.3 The critical diff: 0x40A cross-process notification
+
+- **TSDev.exe posts 19 `PostMessageW(0x40A)` messages to TradeStation HWNDs inside Ordinal_57.** This triggers immediate recalculation in all 16 `orchart.exe` processes (a COM burst within ~10 ms of the `0x40A` posting; see §22.3a for the full HWND owner breakdown).
+- **The CLI calls Ordinal_57 but posts `0x40A` to ZERO TradeStation HWNDs.** The CLI process has no registered TradeStation HWND subscribers (the subscriber list is per-process in orlib20's private `.data` section).
+- **KB §19 correction:** KB §19 stated Ordinal_57 is "per-process only." Runtime evidence shows Ordinal_57 **does** post cross-process window messages (to other TradeStation processes). The "per-process" aspect is the **subscriber HWND list**: `TSDev.exe` has 19 registered TradeStation HWNDs; the CLI has none. The `0x40A` `PostMessageW` calls go to HWNDs owned by other TradeStation processes (cross-process), not to HWNDs in the calling process.
+
+- **KB §19 nuance (per-process subscriber list, cross-process HWND ownership):** KB §19 stated the subscriber HWND list is per-process (in orlib20's private `.data` section). The runtime evidence confirms the list **is** per-process — `TSDev.exe`'s orlib20 has 19 HWNDs registered, while the CLI's orlib20 has zero. However, the 19 HWNDs in TSDev's list belong to **other processes** (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`), not to TSDev itself. The mechanism by which `orchart.exe`/`TSELAppHost`/`TSScanner` HWNDs get registered in TSDev's orlib20 subscriber list is not yet understood — it may involve shared memory, a registration broadcast, or the COM connection point advise sink. This is an open question for the implementation TVS.
+
+### 22.3a HWND ownership verification
+
+To verify who owns the 19 HWNDs targeted by the `0x40A` messages, `GetWindowThreadProcessId` and `GetClassName` were called on each HWND from the Run A trace. Results:
+
+| HWND | PID | Process | Window Class | Owner |
+|------|-----|---------|-------------|-------|
+| 0x263402 | 41748 | TSScanner | TSMSGWNDCLASSu | TSScanner |
+| 0x5b2b00 | 41092 | orchart | Afx:00400000:8:00010003:00000000:00DE0AD5 | orchart |
+| 0x213110c | 45000 | orchart | Afx:00400000:8:00010003:00000000:004943AD | orchart |
+| 0x451008 | 5332 | orchart | Afx:00400000:8:00010003:00000000:00454967 | orchart |
+| 0x260c8e | 25632 | orchart | Afx:00400000:8:00010003:00000000:00D121AF | orchart |
+| 0xb31d6 | 29444 | orchart | Afx:00400000:8:00010003:00000000:122C0C39 | orchart |
+| 0x363502 | 28080 | TSELAppHost | TSMSGWNDCLASSu | TSELAppHost |
+| 0x6841260 | 34568 | orchart | Afx:00400000:8:00010003:00000000:0018253B | orchart |
+| 0x8308c | 22992 | orchart | Afx:00400000:8:00010003:00000000:18EE3383 | orchart |
+| 0xc3128 | 42176 | orchart | Afx:00400000:8:00010003:00000000:029C34FB | orchart |
+| 0x1d106e | 10036 | orchart | Afx:00400000:8:00010003:00000000:001B2C0F | orchart |
+| 0x1214cc | 25884 | orchart | Afx:00400000:8:00010003:00000000:0DE6097D | orchart |
+| 0x2a1004 | 8608 | orchart | Afx:00400000:8:00010003:00000000:00AA43EF | orchart |
+| 0x933c2 | 25648 | orchart | Afx:00400000:8:00010003:00000000:002E0DF3 | orchart |
+| 0xb31fe | 33144 | orchart | Afx:00400000:8:00010003:00000000:0032379B | orchart |
+| 0x1914ca | 31156 | orchart | Afx:00400000:8:00010003:00000000:014C33DF | orchart |
+| 0x191284 | 4964 | TSELAppHost | TSMSGWNDCLASSu | TSELAppHost |
+| 0x320930 | 24504 | orchart | Afx:00400000:8:00010003:00000000:000D320D | orchart |
+| 0xc3390 | 46008 | orchart | Afx:00400000:8:00010003:00000000:0012360F | orchart |
+
+Summary: 16 `orchart.exe` HWNDs (one per orchart process), 2 `TSELAppHost` HWNDs, 1 `TSScanner` HWND. **ZERO `TSDev.exe` HWNDs.** This **CONFIRMS** the `0x40A` messages go cross-process to other TradeStation processes, **NOT** to TSDev's own views.
+
+### 22.4 KB §21 candidate confirmation
+
+| Candidate | KB §21 confidence | Runtime status | Evidence |
+|-----------|-------------------|----------------|----------|
+| Candidate 1: Category-gated post-verify block (ORD10 + `FUN_004D7140` → ORD71 + worker cmd 0x0D + ORD68) | HIGHEST | **OBSERVED (correlation, not causation)** | ORD71 approximately 87 calls total, ~55 with cat=1 progId=84 (seq=68-141, post-verify block); ORD68 called (seq=312); post-verify block entered for cat=1. Worker cmd 0x0D not directly logged (Frida `RangeError` bug) but block entry inferred from ORD71/ORD68. Exact count should be verified from the trace. |
+| Candidate 2: Ordinal_25/17 pending-save queue | MEDIUM | **OBSERVED (correlation, not causation)** | ORD25 at seq=62 (cat=1, progId=84, name="!p$Kn@aSus"); ORD17 at seq=353 (cat=1, progId=84). Queue add before save, remove after post-verify. |
+| Candidate 3: Ordinal_56 flag reset | LOW | **OBSERVED (correlation, not causation)** | ORD56 at seq=64. Per-process flag reset before verify. |
+| Ordinal_57 → 0x40A posting | Not a KB §21 candidate (KB §19 said "per-process only") | **CONFIRMED — 0x40A posted inside ORD57 to other TradeStation process HWNDs** | seq=328 ORD57 CALL → seq=329-347 19× `PostMessageW` 0x40A → seq=348 ORD57 RET. Cross-process to TradeStation HWNDs (16 orchart, 2 TSELAppHost, 1 TSScanner; see §22.3a). |
+
+### 22.5 Cross-process event comparison
+
+| Event | Run A (TSDev UI) | Run B (CLI) |
+|-------|------------------|-------------|
+| `WHServer.exe` COM events (`NdrStubCall2` + `NdrClientCall2` burst) | ~468 events | ~141 events (Run A has ~327 more, primarily from the post-verify block ORD71/ORD68/worker cmd 0x0D) |
+| `orchart.exe` warehouse COM events during modify | ~11 events per process | ~10-11 events per process (similar) |
+| `0x40A` `PostMessageW` to TradeStation HWNDs | 19 messages (16 orchart, 2 TSELAppHost, 1 TSScanner), immediate | 0 messages (CLI has no subscribers) |
+| `orchart.exe` recalc COM burst | Immediate (within 10 ms of 0x40A) | Delayed ~13 s (manual/periodic) |
+
+The `orchart.exe` warehouse COM event patterns are similar in both runs — the shared-warehouse + `WHServer.exe` COM path works for both. `WHServer.exe` COM event counts differ substantially (~468 vs ~141, ~327 more in Run A), and the `0x40A` notification to TradeStation HWNDs is present only in Run A. The timing evidence supports `0x40A` as the immediate-recalc trigger, but the extra `WHServer.exe` events could also contribute (see §22.6).
+
+### 22.6 Recommended minimal fix
+
+**Alternative hypothesis:** The extra ~327 `WHServer.exe` COM events from the post-verify block (ORD71/ORD68/worker cmd 0x0D) are an **alternative or additional** trigger for the immediate recalc. The timing evidence supports `0x40A` as the trigger (`0x40A` at 18:25:34.218 → `orchart.exe` COM burst at 18:25:34.228, ~10 ms gap), but the extra `WHServer.exe` events precede the `0x40A` (18:25:33.922–34.099) and could independently trigger recalc via the `_IWHouseEvents` COM connection point. Both mechanisms may be jointly necessary. A discriminating test (block `0x40A` but keep the post-verify block, or vice versa) is needed to determine which is the actual trigger.
+
+**Approach A (preferred): Enumerate the registered TradeStation process HWNDs and `PostMessageW` 0x40A directly.**
+
+The CLI must:
+1. Discover TradeStation process HWNDs that subscribe to library-change notifications (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner` in the observed trace). How `TSDev.exe` populates its subscriber list needs investigation — likely via `EnumWindows` + window class matching, a shared-memory HWND registry, or the COM connection-point `_IWHouseEvents` advise sink.
+2. Post `PostMessageW(hwnd, 0x40A, wParam=0, lParam=(category << 16 | progId))` to each.
+
+**Approach B (fallback): Replicate the full post-verify block** (ORD10 + `FUN_004D7140` → ORD71 + worker cmd 0x0D + ORD68). More complex, requires worker-thread infrastructure.
+
+**Also recommended (may be jointly required):** ORD25 (queue add) before save, ORD56 (flag reset) before verify, ORD17 (queue remove) after post-verify.
+
+### 22.7 Caveats
+
+1. **Worker cmd 0x0D not directly confirmed.** The Frida script had a `RangeError` bug in the `onEnter` handler at `/script1.js:29`, preventing CMD0D log lines. Block entry is inferred from ORD71/ORD68 calls.
+2. **CLI ordinal calls not observed at runtime.** The CLI trace captured zero ordinal calls because the Frida agent was not injected into the CLI process (Frida's `Interceptor` modifies code bytes, breaking the CLI's signature-based resolver). CLI ordinal call behavior is inferred from `cli_out` debug logging and source code, not from runtime observation.
+3. **`orchart.exe` WMSG logging broken.** The same `RangeError` bug prevented window-message logging in `orchart.exe`. The `0x40A` → recalc correlation is established by timing: `0x40A` at 18:25:34.218-220 → `orchart.exe` COM burst at 18:25:34.228 (~10 ms gap).
+4. **HWND ownership now mapped.** The 19 `0x40A` target HWNDs are mapped to owner processes in §22.3a (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`, zero `TSDev.exe`). The mechanism by which they are registered in TSDev's subscriber list remains unknown.
+5. **WHServer event count discrepancy.** The Run A / Run B comparison initially reported ~155 `WHServer.exe` COM events each. The actual counts are approximately 468 for Run A and 141 for Run B (Run A has ~327 more events, primarily from the post-verify block). This affects any claim that the two traces are identical or that the `0x40A` notification is the only difference.

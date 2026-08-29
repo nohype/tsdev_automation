@@ -162,7 +162,8 @@ struct TsDevLibTestConfig {
     //
     // Confirmed operation set (R-M.3.2):
     //   - verify-success (insert/modify/upsert) sends 0x40A
-    //   - delete-success sends 0x40A (gated category != 4)
+    //   - delete-success sends 0x40A (gated category != 4 — read-only Function
+    //     (cat 4) only; editable user-created Function (cat 1) deletes DO send)
     //   - failed compile/verify does NOT send 0x40A
     //
     // Signature:

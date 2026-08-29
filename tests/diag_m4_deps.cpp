@@ -344,7 +344,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     struct { int whType; const char* label; } stratWhTypes[] = {
         { 0,     "Strategy category (cat=0, subType=0 -> expanded whType=0)" },
         { 0x200, "Strategy power-type 0x200 (FUN_101d43a0 case 0 power[1])" },
-        { 4,     "Function category (whType=4, wrong type for a Strategy)" },
+        { 4,     "orlib20 Function whType=4 (wrong type for a Strategy; user-created cat=1)" },
     };
     for (const auto& w : stratWhTypes) {
         std::printf("\n  >>> STRATEGY whType=0x%X  (%s)\n", w.whType, w.label);
@@ -363,7 +363,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n[7] Probing GetDependencies on the FUNCTION (callee) "
                 "with multiple whType values (expected: no deps)...\n");
     struct { int whType; const char* label; } funcWhTypes[] = {
-        { 4, "Function category (whType=4, correct for a Function)" },
+        { 4, "orlib20 Function whType=4 (correct for a Function; user-created cat=1)" },
         { 0, "Strategy category (whType=0, wrong type for a Function)" },
     };
     for (const auto& w : funcWhTypes) {

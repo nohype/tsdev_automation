@@ -21,7 +21,7 @@
 //      stack worker thread.
 //   2. Resolves Ordinal_28, Ordinal_69, Ordinal_70, _LoadMasterRecsEX@16.
 //   3. Inserts + verifies a Function "TS_AUTO_M4_SUB_FUNC" with source
-//      `TS_AUTO_M4_SUB_FUNC = 1;`. Reads +0xe9 via Ordinal_28(4, progId, 0,
+//      `TS_AUTO_M4_SUB_FUNC = 1;`. Reads +0xe9 via Ordinal_28(1, progId, 0,
 //      buf). Prints "CLI Function TS_AUTO_M4_SUB_FUNC ProgId=X +0xe9=Y".
 //   4. Inserts + verifies a Strategy "TS_AUTO_M4_SUB_STRAT" with source
 //      `Buy next bar at Market;`. Reads +0xe9 via Ordinal_28(0, progId, 0,
@@ -31,7 +31,8 @@
 //          _LoadMasterRecsEX@16(0, &buf, NULL, 1). For each, reads +0xe9
 //          via Ordinal_28(0, progId, 0, buf). Prints
 //          "Existing Strategy ProgId=X +0xe9=Y".
-//        - First 10 existing Functions (category 4) via
+//        - First 10 existing Functions (category 4, built-in; user-created
+//          Functions are now category 1) via
 //          _LoadMasterRecsEX@16(4, &buf, NULL, 1). Same pattern.
 //        - First 10 existing Indicators (category 2) via
 //          _LoadMasterRecsEX@16(2, &buf, NULL, 1). Same pattern.
@@ -498,7 +499,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     } else {
         st->funcProgId = funcProgId;
         unsigned char ord28buf[0x10A] = {};
-        int sv = readSubtypeByteViaOrd28(ord28, /*category=*/4,
+        int sv = readSubtypeByteViaOrd28(ord28, /*category=*/1,
                                          funcProgId, ord28buf);
         st->funcSubType = sv;
         std::printf("    CLI Function TS_AUTO_M4_SUB_FUNC ProgId=%d "
@@ -568,8 +569,9 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [no existing Strategies enumerated]\n");
     }
 
-    // 5b. Existing Functions (category 4).
-    std::printf("\n  --- 5b. Existing Functions (category 4) ---\n");
+    // 5b. Existing built-in Functions (category 4); user-created Functions
+    //     are now category 1.
+    std::printf("\n  --- 5b. Existing Functions (category 4, built-in) ---\n");
     auto existingFuncs = enumerateExisting(loadMasterRecsEx, /*cat=*/4,
                                             /*maxCount=*/10, "Function");
     for (const auto& er : existingFuncs) {

@@ -48,8 +48,9 @@
 //                   [type=0xT len=L ref=R]..."
 //             - Release via Ordinal_70(rec, 0).
 //   6. Also test 10 existing Indicators (category 2) with the same approach.
-//   7. Also test 5 existing Functions (category 4) — although empty dep-lists
-//      were the historical expectation, verify and print for completeness.
+//   7. Also test 5 existing Functions (category 4, built-in; user-created
+//      Functions are now category 1) — although empty dep-lists were the
+//      historical expectation, verify and print for completeness.
 //   8. Check for TSCrashReport.exe after all operations.
 //
 // All orlib20 calls are SEH-protected (__try/__except). READ-ONLY — does NOT
@@ -731,10 +732,10 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [no existing Indicators enumerated]\n");
     }
 
-    // 3c. Existing Functions (category 4) — first 5 (expected empty
-    // dep-lists).
-    std::printf("\n  --- 3c. Existing Functions (category 4, first 5 — "
-                "expected empty dep-lists) ---\n");
+    // 3c. Existing built-in Functions (category 4) — first 5 (expected empty
+    // dep-lists). User-created Functions are now category 1.
+    std::printf("\n  --- 3c. Existing Functions (category 4, built-in, "
+                "first 5 — expected empty dep-lists) ---\n");
     auto existingFuncs = enumerateExisting(loadMasterRecsEx, /*cat=*/4,
                                            /*maxCount=*/5, "Function");
     std::vector<ItemTestResult> funcResults;

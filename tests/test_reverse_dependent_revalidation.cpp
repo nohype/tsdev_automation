@@ -383,7 +383,7 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
     // --- 3. Modify the Function's source (contract change) and re-verify ---
     // The modify path: saveSource (replace source) + verifyModule (recompile).
     // The M.4 linker-based traversal runs inside verifyModule after the root
-    // verify succeeds, for category 4 (Function is in the 0/1/4 gate).
+    // verify succeeds, for category 1 (Function is in the 0/1/4 gate).
     std::printf("  [3] Modify Function source (contract change) + "
                 "re-verify (triggers reverse-dependent traversal)...\n");
     resetCapture();
@@ -429,9 +429,9 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
         CHECK(g_capture.rootProgId == funcProgId, buf);
 
         std::snprintf(buf, sizeof(buf),
-                      "Case %d: sentinel rootCategory==%d (expected 4)",
+                      "Case %d: sentinel rootCategory==%d (expected 1)",
                       caseNum, g_capture.rootCategory);
-        CHECK(g_capture.rootCategory == 4, buf);
+        CHECK(g_capture.rootCategory == 1, buf);
     }
 
     // --- 6. Assert at least one per-dependent event fired for the Strategy
@@ -484,7 +484,7 @@ int runStrategyCallerCase(TsDevLib& lib, int caseNum,
 // Case 2: Indicator caller of a Function.
 //
 // Same structure as Case 1 but the caller is an Indicator. The Function is
-// category 4 (in the 0/1/4 gate), so the traversal should run and find the
+// category 1 (in the 0/1/4 gate), so the traversal should run and find the
 // Indicator as a reverse dependent.
 //
 // The dependency assertions are currently blocked when CLI-created object code
@@ -547,9 +547,9 @@ int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
     if (g_capture.sentinelFired) {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
-                      "Case %d: sentinel rootCategory==4 (expected 4)",
+                      "Case %d: sentinel rootCategory==%d (expected 1)",
                       caseNum, g_capture.rootCategory);
-        CHECK(g_capture.rootCategory == 4, buf);
+        CHECK(g_capture.rootCategory == 1, buf);
     }
 
     bool foundIndDep = false;
@@ -599,7 +599,7 @@ int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
 //
 // Insert a leaf Function (no callers), modify + re-verify it. Assert:
 //   - the traversal-started sentinel fired (the traversal was entered —
-//     category 4 is in the gate), AND
+//     category 1 is in the gate), AND
 //   - ZERO per-dependent events fired (no reverse dependents exist).
 //
 // With the current linker-based implementation, the sentinel is expected to
@@ -646,7 +646,7 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "Case %d: traversal-started sentinel fired for "
-                      "leaf Function (category 4 in gate)", caseNum);
+                      "leaf Function (category 1 in gate)", caseNum);
         CHECK(g_capture.sentinelFired, buf);
     }
 
@@ -771,7 +771,7 @@ int runCycleSafetyContractPinCase(TsDevLib& /*lib*/, int caseNum) {
     onReverseDependentRevalidationReady(
         /*rootComponentType*/ static_cast<int>(ComponentType::Function),
         /*rootProgId*/ 100,
-        /*rootCategory*/ 4,
+        /*rootCategory*/ 1,
         /*dependentComponentType*/ 0,
         /*dependentProgId*/ 0,
         /*dependentCategory*/ 0,
@@ -797,7 +797,7 @@ int runCycleSafetyContractPinCase(TsDevLib& /*lib*/, int caseNum) {
     onReverseDependentRevalidationReady(
         /*rootComponentType*/ static_cast<int>(ComponentType::Function),
         /*rootProgId*/ 100,
-        /*rootCategory*/ 4,
+        /*rootCategory*/ 1,
         /*dependentComponentType*/ static_cast<int>(ComponentType::Strategy),
         /*dependentProgId*/ 200,
         /*dependentCategory*/ 0,
@@ -842,7 +842,7 @@ int runCycleSafetyContractPinCase(TsDevLib& /*lib*/, int caseNum) {
     onReverseDependentRevalidationReady(
         /*rootComponentType*/ static_cast<int>(ComponentType::Function),
         /*rootProgId*/ 100,
-        /*rootCategory*/ 4,
+        /*rootCategory*/ 1,
         /*dependentComponentType*/ static_cast<int>(ComponentType::Strategy),
         /*dependentProgId*/ 300,
         /*dependentCategory*/ 0,

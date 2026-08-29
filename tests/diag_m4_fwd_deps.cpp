@@ -28,7 +28,8 @@
 //      fallbacks if verification fails).
 //   5. Records both ProgIds.
 //   6. Calls GetDependencies on the Strategy (whType=0) — SEH-protected.
-//   7. Calls GetDependencies on the Function (whType=4) — expected empty.
+//   7. Calls GetDependencies on the Function (orlib20 whType=4) — expected
+//      empty. User-created warehouse category is now 1.
 //   8. Calls _GetStaticDependencyList@12 on the Strategy.
 //   9. Calls _GetStaticDependencyList@12 on the Function.
 //  10. Reads the 0x10A partial copy for the Strategy via Ordinal_28 — dumps
@@ -795,9 +796,10 @@ DWORD WINAPI runDiag(LPVOID param) {
                      /*whType=*/4, stratProgId, funcProgId);
     st->getDepsStratFoundFunc = stratMatched;
 
-    // --- Step 7: GetDependencies on the Function (whType=4). Expected
-    // empty (the leaf Function has no deps). ---
-    std::printf("\n[7] GetDependencies on the FUNCTION (whType=4, "
+    // --- Step 7: GetDependencies on the Function (orlib20 whType=4; user-
+    // created warehouse category is now 1). Expected empty (the leaf Function
+    // has no deps). ---
+    std::printf("\n[7] GetDependencies on the FUNCTION (orlib20 whType=4, "
                 "expected empty)...\n");
     bool funcFoundAnything = false;
     for (int elemIdx = 0; elemIdx <= 3; elemIdx++) {
@@ -810,7 +812,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
         char buf[64];
         std::snprintf(buf, sizeof(buf), "    elemIdx=%d:", elemIdx);
-        std::printf("[Function whType=4] ");
+        std::printf("[Function orlib20 whType=4] ");
         if (printGetDepsResult(r, /*target=*/-1, buf)) funcFoundAnything = true;
         if (r.handle != NULL || r.depCount != 0) funcFoundAnything = true;
     }
@@ -907,11 +909,11 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Step 11: Ordinal_28 partial copy for the Function. ---
     std::printf("\n[11] Ordinal_28 partial copy for the FUNCTION "
-                "(category=4, progId=%d)...\n", funcProgId);
+                "(category=1, progId=%d)...\n", funcProgId);
     if (ord28) {
         unsigned char buf28[0x10A] = {};
         Ord28SehResult r;
-        bool ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ok = callOrd28(ord28, /*category=*/1, funcProgId,
                             /*flag=*/0, buf28, &r);
         std::printf("    Ordinal_28: %s, return=%u\n",
                     ok ? "OK (no SEH)" : "SEH raised", r.result);
@@ -943,7 +945,9 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [SKIPPED — Ordinal_69 not resolved]\n");
     }
 
-    // --- Step 13: Ordinal_69 live record for the Function. ---
+    // --- Step 13: Ordinal_69 live record for the Function.
+    //     orlib20 still passes category=4 to Ordinal_69 for a Function
+    //     (user-created warehouse category is now 1). ---
     std::printf("\n[13] Ordinal_69 live record for the FUNCTION "
                 "(category=4, progId=%d, flag=0)...\n", funcProgId);
     if (ord69) {

@@ -21,7 +21,8 @@
 //
 //   R-M.3.2 — Confirmed operation set:
 //     verify-success (insert/modify/upsert) sends 0x40A
-//     delete-success sends 0x40A (gated category != 4)
+//     delete-success sends 0x40A (gated category != 4; editable
+//     user-created Functions are now category 1, so they DO send)
 //     failed compile/verify does NOT send 0x40A
 //
 //   R-M.3.3 — Error semantics:
@@ -51,7 +52,7 @@
 // 16 test cases:
 //   1. Verify-success sends 0x40A (Strategy, category 0)
 //   2. Verify-success sends 0x40A (Indicator, category 2)
-//   3. Verify-success sends 0x40A (Function, category 4)
+//   3. Verify-success sends 0x40A (Function, category 1)
 //   4. Failed verify does NOT send 0x40A (Strategy, negative test)
 //   5. Delete-success sends 0x40A (Strategy, category 0)
 //   6. BATCH REUSE — 3 consecutive create+save+verify+delete cycles on the
@@ -67,7 +68,7 @@
 //  11. Delete-success sends 0x40A (Indicator, category 2)
 //  12. Delete-success sends 0x40A (TradingApp, category 2)
 //  13. Delete-success sends 0x40A (ShowMe, category 2)
-//  14. Function delete does NOT send 0x40A (category 4, negative test)
+//  14. Delete-success sends 0x40A (Function, category 1)
 //  15. CLI stdin batch mode — spawns real tsdev_cli.exe, receiver captures
 //      0x40A via cross-process shared EventsViaHandles array.
 //  16. CLI serve mode — spawns real tsdev_cli.exe serve, receiver captures
@@ -937,31 +938,33 @@ int runDeleteSuccessCase_Indicator(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runDeleteNegativeCase_Function — Finding 5: Function (category 4) delete
-// is OUTSIDE the confirmed operation set (the 0x40A send is gated
-// category != 4), so delete-success must NOT send 0x40A for a Function.
+// runDeleteSuccessCase_Function — Finding 5 (updated): Function (category 1)
+// delete is INSIDE the confirmed operation set (the 0x40A send is gated
+// category != 4, and user-created Functions are now category 1), so
+// delete-success MUST send 0x40A for an editable Function. Built-in
+// read-only Functions remain category 4 and are still gated out.
 //
 // Pattern: create a Function item, save valid source, verify (which DOES
 // fire 0x40A — verify-success is in the confirmed set for all categories),
 // then reset the capture, delete the item, and assert:
-//   - deleteEntry returned true (the delete itself succeeded), and
-//   - callCount == 0 / fired == false (NO 0x40A fired for the delete step).
+//   - deleteEntry returned true, and
+//   - the onNotifyReady hook fired with correct 0x40A packing
+//     (msg=0x40A, wParam=0, lParam=(category<<16)|progId).
 //
 // The reset between verify and delete is essential: the verify step fires
-// 0x40A (Function verify-success IS in the confirmed set), so without the
-// reset the negative assertion would observe the verify-fire and fail
-// spuriously.
+// 0x40A, and we must isolate the delete step's capture so the positive
+// assertion observes ONLY the delete fire.
 // ---------------------------------------------------------------------------
-int runDeleteNegativeCase_Function(TsDevLib& lib, int caseNum,
-                                   ComponentType type,
-                                   const std::string& name,
-                                   const std::string& source) {
+int runDeleteSuccessCase_Function(TsDevLib& lib, int caseNum,
+                                  ComponentType type,
+                                  const std::string& name,
+                                  const std::string& source) {
     const char* typeLabel =
         (type == ComponentType::Function) ? "Function" : "Unknown";
     int category = getCategory(type);
 
-    std::printf("\n=== Case %d: Function delete does NOT send 0x40A "
-                "(%s, category=%d, negative test) ===\n",
+    std::printf("\n=== Case %d: delete-success sends 0x40A (%s, "
+                "category=%d) ===\n",
                 caseNum, typeLabel, category);
 
     // --- 1. Pre-cleanup (re-run safety) ---
@@ -974,8 +977,7 @@ int runDeleteNegativeCase_Function(TsDevLib& lib, int caseNum,
     int progId = lib.createEntry(type, name, errCode);
     std::printf("      createEntry = %d, errCode = 0x%X\n", progId, errCode);
     if (progId <= 0) {
-        return fail("Function delete negative case: createEntry returned "
-                    "ProgId <= 0",
+        return fail("Function delete case: createEntry returned ProgId <= 0",
                     100 + caseNum * 10 + 2);
     }
 
@@ -993,10 +995,10 @@ int runDeleteNegativeCase_Function(TsDevLib& lib, int caseNum,
 
     // --- 4. verifyModule (so the item is compiled + persisted before delete).
     // This step DOES fire 0x40A (verify-success is in the confirmed set for
-    // all categories, including Function). We assert verify succeeded but
-    // do NOT assert the hook fired here — the point of this case is the
-    // DELETE step's negative assertion below. The resetCapture() before the
-    // delete step clears any verify-fire so the delete-step capture is clean.
+    // all categories). We assert verify succeeded but do NOT assert the hook
+    // fired here — the point of this case is the DELETE step's positive
+    // assertion below. The resetCapture() before the delete step clears any
+    // verify-fire so the delete-step capture is clean.
     std::printf("  [4] verifyModule(%s, %d)...\n", typeLabel, progId);
     std::string errors = lib.verifyModule(type, progId);
     if (!errors.empty()) {
@@ -1014,11 +1016,12 @@ int runDeleteNegativeCase_Function(TsDevLib& lib, int caseNum,
         CHECK(errors.empty(), buf);
     }
 
-    // --- 5. Reset capture (FULL reset, including callCount), then deleteEntry
-    //     (the operation under test). The reset is essential: the verify
-    //     step above fired 0x40A, and we must isolate the delete step's
-    //     capture so the negative assertion observes ONLY the delete step. ---
-    g_capture = NotifyCapture{};
+    // --- 5. Reset capture, then deleteEntry (the operation under test).
+    //     The reset is essential: the verify step above fired 0x40A, and we
+    //     must isolate the delete step's capture so the positive assertion
+    //     observes ONLY the delete fire. ---
+    int preDeleteProgId = progId;
+    resetCapture();
     std::printf("  [5] deleteEntry(%s, \"%s\")...\n",
                 typeLabel, name.c_str());
     bool deleted = lib.deleteEntry(type, name, /*flush=*/true);
@@ -1030,30 +1033,68 @@ int runDeleteNegativeCase_Function(TsDevLib& lib, int caseNum,
         CHECK(deleted, buf);
     }
 
-    // --- 6. Assert the hook did NOT fire for the delete step (negative
-    //     assertion — Function category 4 is gated out of the 0x40A delete
-    //     send). callCount==0 proves no 0x40A fired between the reset and
-    //     now (i.e. the delete step fired zero notifications). ---
+    // --- 6. Assert the hook fired for the delete step (positive assertion).
+    //     Editable Function (category 1) satisfies the category != 4 gate,
+    //     so delete-success MUST send 0x40A. ---
     {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
-                      "onNotifyReady hook did NOT fire after Function delete "
+                      "onNotifyReady hook fired after Function delete "
                       "[case %d]", caseNum);
-        CHECK(!g_capture.fired, buf);
+        CHECK(g_capture.fired, buf);
+    }
+
+    // --- 7. Assert the captured packing ---
+    LPARAM expLParam = expectedLParam(type, preDeleteProgId);
+    {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "delete: capture.msg==0x%03X (expected 0x%03X) "
+                      "[case %d]",
+                      g_capture.msg, kNotifyMsg, caseNum);
+        CHECK(g_capture.fired && g_capture.msg == kNotifyMsg, buf);
     }
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
-                      "Function delete: callCount==0 (got %d) [case %d]",
-                      g_capture.callCount, caseNum);
-        CHECK(g_capture.callCount == 0, buf);
+                      "delete: capture.wParam==0 (expected 0) [case %d, "
+                      "got 0x%llX]",
+                      caseNum,
+                      static_cast<unsigned long long>(g_capture.wParam));
+        CHECK(g_capture.fired && g_capture.wParam == kNotifyWParam, buf);
+    }
+    {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf),
+                      "delete: capture.lParam==0x%08lX (expected 0x%08lX, "
+                      "category=%d progId=%d) [case %d]",
+                      static_cast<unsigned long>(g_capture.lParam),
+                      static_cast<unsigned long>(expLParam),
+                      category, preDeleteProgId, caseNum);
+        CHECK(g_capture.fired && g_capture.lParam == expLParam, buf);
+    }
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf),
+                      "delete: capture.componentType==%d (expected %d) "
+                      "[case %d]",
+                      g_capture.componentType,
+                      static_cast<int>(type), caseNum);
+        CHECK(g_capture.fired &&
+              g_capture.componentType == static_cast<int>(type), buf);
+    }
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf),
+                      "delete: capture.progId==%d (expected %d) [case %d]",
+                      g_capture.progId, preDeleteProgId, caseNum);
+        CHECK(g_capture.fired && g_capture.progId == preDeleteProgId, buf);
     }
 
-    // --- 7. Assert the item is actually gone (delete succeeded at the
+    // --- 8. Assert the item is actually gone (delete succeeded at the
     //     warehouse level, not just at the API return). This guards the
-    //     negative case: if deleteEntry returned true but the item still
-    //     exists, the "no 0x40A" observation would be misleading (it could
-    //     mean the delete was a no-op rather than a category-4 gate).
+    //     positive case: if deleteEntry returned true but the item still
+    //     exists, the 0x40A packing could be from a stale verify.
     //     findExistPos returns >0 if found; 0 (SEH) or -1 (not found) if
     //     absent — so the "gone" assertion is postProgId <= 0, matching
     //     the convention used by preCleanup() above. ---
@@ -3056,7 +3097,7 @@ DWORD WINAPI runTest(LPVOID param) {
     char delIndName[64];
     char delTradingAppName[64];
     char delShowMeName[64];
-    char delFuncNegName[64];
+    char delFuncName[64];
     char cliBatchName[80];
     char cliServeName[80];
     std::snprintf(stratName, sizeof(stratName),
@@ -3098,8 +3139,8 @@ DWORD WINAPI runTest(LPVOID param) {
     std::snprintf(delShowMeName, sizeof(delShowMeName),
                   "TS_AUTO_M3_RED_DEL_SHOWME_%04d%02d%02d",
                   lt.wYear, lt.wMonth, lt.wDay);
-    std::snprintf(delFuncNegName, sizeof(delFuncNegName),
-                  "TS_AUTO_M3_RED_DEL_FUNC_NEG_%04d%02d%02d",
+    std::snprintf(delFuncName, sizeof(delFuncName),
+                  "TS_AUTO_M3_DEL_FUNC_%04d%02d%02d",
                   lt.wYear, lt.wMonth, lt.wDay);
     // CLI-level E2E cases (15, 16) use date-stamped disposable names per
     // the task spec convention (TS_AUTO_M3_CLI_BATCH_<YYYYMMDD>_NN).
@@ -3126,7 +3167,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 3: verify-success sends 0x40A (Function, category 4) ---
+    // --- Case 3: verify-success sends 0x40A (Function, category 1) ---
     {
         int rc = runVerifySuccessCase(*lib, 3, ComponentType::Function,
                                       funcName,
@@ -3233,18 +3274,18 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 14: Function delete does NOT send 0x40A (negative test) ---
-    // Finding 5: Function (category 4) delete is OUTSIDE the confirmed
-    // operation set (the 0x40A send is gated category != 4). The verify
-    // step DOES fire 0x40A (verify-success is in the confirmed set for all
-    // categories), but the delete step must NOT. The capture is reset
-    // between verify and delete so the negative assertion isolates the
-    // delete step.
+    // --- Case 14: delete-success sends 0x40A (Function, category 1) ---
+    // Finding 5 (updated): Function is now category 1, so delete-success
+    // is INSIDE the confirmed operation set (the 0x40A send is gated
+    // category != 4). The verify step DOES fire 0x40A (verify-success is in
+    // the confirmed set for all categories). The capture is reset between
+    // verify and delete so the positive assertion observes only the delete
+    // fire and the packing can be verified.
     {
-        int rc = runDeleteNegativeCase_Function(*lib, 14,
-                                                ComponentType::Function,
-                                                delFuncNegName,
-                                                makeFunctionSource(delFuncNegName));
+        int rc = runDeleteSuccessCase_Function(*lib, 14,
+                                               ComponentType::Function,
+                                               delFuncName,
+                                               makeFunctionSource(delFuncName));
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
@@ -3298,7 +3339,7 @@ int main() {
                 "(negative) + delete-success + batch-reuse (3 cycles) + "
                 "TradingApp + ShowMe + receiver-aware single + "
                 "receiver-aware batch (3 cycles) + delete-success "
-                "Indicator/TradingApp/ShowMe + Function delete negative + "
+                "Indicator/TradingApp/ShowMe/Function + "
                 "CLI stdin batch (3 ops via tsdev_cli.exe) + CLI serve "
                 "(3 ops via tsdev_cli.exe serve) (16 cases total).\n");
 

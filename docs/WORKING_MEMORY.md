@@ -34,93 +34,85 @@ The `dependents` workstream (M) is paused; it is beyond this acceptance target.
   (SHARE_WO) + WHServer.exe COM `_IWHouseEvents`, already exercised by orlib20's
   COM vtable calls during CLI operations.
 
-## Read-only function cleanup
+## TVS just completed (2026-08-29): Fix Function category 4→1 (read-only → editable)
 
-- Two functions from an earlier test workstream were read-only in TSDev and
-  could not be deleted through the TSDev UI:
-  - `TS_AUTO_M4_FRIDA_FUNC` (warehouse category 4 / Function, ProgId 1439)
-  - `TS_AUTO_M4_TRAV_FUNC` (warehouse category 4 / Function, ProgId 1441)
-- The read-only appearance is consistent with an application/warehouse metadata
-  classification (type/property). Whether the files also carried an NTFS
-  `FILE_ATTRIBUTE_READONLY` bit is not known — no pre-delete `GetFileAttributes`
-  dump exists, so the on-disk attribute is not asserted either way.
-- Deleted cleanly via the production `TsDevLib::deleteEntry` path
-  (`FUN_101a8360` delete orchestrator → `DeleteFromTree` → warehouse close →
-  `.ell`+`.xml` file removal):
-  - `deleteEntry` returned true, which per `src/tsdev_lib.cpp` includes removal of
-    `elmodule_4_1439.ell` / `elmodule_4_1439.xml`
-  - `deleteEntry` returned true, which per `src/tsdev_lib.cpp` includes removal of
-    `elmodule_4_1441.ell` / `elmodule_4_1441.xml`
-- Post-delete `tsdev_cli exists` for both returned `exists=false`, `progId=0`.
-- Production E2E passed:
-  `tsdev_cli --json insert/modify/delete function TS_AUTO_PM_E2E_FUNC` →
-  ProgId 1594, modify success, delete success, post-delete `exists=false`,
-  no `TSCrashReport.exe`.
-- `diag_m4_raw_rec` inserted a fresh function `TS_AUTO_M4_DIAG_RFUNC`
-  (ProgId 1593) and dumped its 0x10A-byte master record; key bytes were
-  `+0x7B` USHORT = `0x0404` and `+0x109` byte = `0x18`.
-- Strongest defensible conclusion: the two deleted functions carried a read-only
-  type/property classification in their warehouse record; the precise byte-level
-  flag is inferred from orlib20 string/type-mapping evidence (see KB §20), not
-  directly observed.
-- Evidence limitation: the exact pre-delete master-record/XML byte(s) for the
-  two deleted functions were not captured, so the precise byte-level flag that
-  produced the read-only display is inferred from orlib20 string/type-mapping
-  and property-string evidence, not directly observed.
-- No production code change was required.
+`ComponentType::Function` was `4` (the "Function (Read Only)" warehouse category
+for built-in/system functions). TSDev.exe uses category 1 for user-created
+editable functions (`CELFunctionDoc` @ `0x00457eb0` sets cat=1; `CELBIFunctionDoc`
+@ `0x004140c0` sets cat=4). orlib20 `GetFileTypeName1` @ `0x10157dc0`: cat 1 →
+"Function", cat 4 → "Function (Read Only)". Categories 1 and 4 are separate
+warehouse search trees (`FUN_101d43a0` @ `0x101d43a0`).
 
-## TVS just completed (2026-08-29): modify TS Desktop interaction probe (objective c)
+**Fix:** `ComponentType::Function` changed from 4 to 1 in `src/tsdev_lib.h`.
+Comments/tests updated. `category != 4` delete gate left as-is (correct: after
+fix, cat-1 function deletes DO send 0x40A, matching orlib20's `FUN_10159ae0`).
+E2E gate passed. Unit tests pass (17/17 non-TS, test_save_module 81/81,
+test_0x40a_notification 183/183). Adversarially reviewed and APPROVED. KB §20
+updated with confirmed root cause. User confirmed function is now editable in
+TSDev.exe.
 
-User-supervised probe (user applied the indicator to a chart and observed; no
-restart, no manual refresh). Indicator `TsDeskModProbe_20260829`.
+**Probe items currently live (category 1):**
+- Function `TsDeskFnProbe_20260829` — ProgId 84, `elmodule_1_84.ell`
+- Indicator `TsDeskFnProbeCaller_20260829` — ProgId 3008, `elmodule_2_3008.ell`
+- Caller indicator is applied to a chart in TS Desktop (user-confirmed).
 
-**Result:** For an indicator, CLI modify ALREADY satisfies TS Desktop
-interaction (objective c) with NO code change — the shared warehouse memory +
-WHServer COM path (KB §19) is sufficient. Two modifies while the indicator was
-applied to a live chart, both picked up immediately with NO manual reload:
-1. `Plot1(Close,"ProbeV1")` -> `Plot1(200,"ProbeV2")`: Close line became a flat
-   line at y=200, label ProbeV2.
-2. `Plot1(200,"ProbeV2")` -> `Plot1(100,"ProbeV3")`: flat line moved to y=100,
-   label ProbeV3.
-CLI delete afterward was auto-detected; TS Desktop auto-removed the indicator
-from the chart (objective d re-confirmed). No crashes at any step.
+## TVS just completed (2026-08-29): Runtime Frida confirmation of recalc signal
 
-All four TS Desktop interaction sub-objectives (a/b/c/d) are now verified for
-the indicator type with NO code change.
+Run A (TSDev UI edit+save) and Run B (CLI modify) traced with Frida attached to
+TSDev.exe / WHServer.exe / all orchart.exe. Results in KB §22 (SSOT). Summary:
 
-Post-TVS E2E gate (insert→modify→get-source→delete, elevated direct CLI,
-indicator `E2eGateDeskMod_*`): PASSED, all EXIT=0, get-source after modify
-returned the modified source, no crashes. Log: `tmp/e2e_gate_post_tvs_modify.log`.
-Supervised probe log: `tmp/tsdesk_modify_probe.log`. Probe pattern (phased
-script + v1/v2 sources) in `tmp/probe_modify_desk.ps1`, `tmp/probe_modify_v1.el`,
-`tmp/probe_modify_v2.el`.
+- TSDev.exe posts 19 `PostMessageW(0x40A, wParam=0, lParam=(cat<<16|progId))`
+  inside Ordinal_57. HWND ownership verified via `GetWindowThreadProcessId`:
+  16 orchart HWNDs, 2 TSELAppHost, 1 TSScanner, ZERO TSDev.exe. The 0x40A is
+  cross-process to other TradeStation processes, not to TSDev's own views.
+- CLI calls Ordinal_57 but its orlib20 subscriber list is empty (per-process
+  `.data` section) → 0 0x40A posts → no immediate recalc.
+- TSDev also runs the post-verify block (ORD71 ~87 calls, ORD68, worker cmd
+  0x0D) + ORD25/ORD56/ORD17, generating ~327 extra WHServer COM events absent
+  from the CLI run. These may be an additional/alternative trigger.
+- KB §19 "per-process only" refined: the subscriber LIST is per-process, but
+  the 0x40A messages go cross-process. How orchart/TSELAppHost/TSScanner HWNDs
+  get registered in TSDev's orlib20 subscriber list is an OPEN question.
+- Adversarial review of the analysis DISAPPROVED on first pass (factual errors
+  in event counts, unverified HWND ownership, ignored alternative hypothesis).
+  All findings corrected in KB §22; re-review APPROVED.
 
-**Still unverified (future TVSs):** type coverage (strategy/tradingapp/showme/
-function) for TS Desktop interaction; items with dependents; encrypted items;
-batch operations; the tradingapp-opened variant of modify (a running tradingapp
-reflects a CLI modify). Note: delete-side 0x40A is skipped for functions
-(category == 4) — function-delete TS Desktop interaction is unverified.
+## Next step (one TVS ahead)
 
-## Next step (one TVS ahead, for the next team)
+**Implementation: cross-process 0x40A notification for CLI function-modify.**
+Two candidate approaches (KB §22.6):
+- **Approach A (preferred):** discover TradeStation process HWNDs that subscribe
+  to library-change notifications and `PostMessageW(0x40A, 0, (cat<<16|progId))`
+  directly. Open question: how does TSDev populate its subscriber list? Needs
+  a focused RE TVS (likely `_OrlibRegisterNotificationHandle@4` or a shared-
+  memory HWND registry).
+- **Approach B (fallback):** replicate the full post-verify block (ORD10 +
+  FUN_004D7140 → ORD71 + worker cmd 0x0D + ORD68). More complex; requires
+  worker-thread infrastructure that may not exist in the CLI process.
 
-**ShowMe TS Desktop interaction probe (second type — generalization check).**
-Reuse the established probe pattern (insert -> apply to chart -> modify ->
-observe chart update without manual reload -> delete) for a ShowMe (plottable,
-like indicator). Expected: NO code change needed — confirms the shared
-warehouse + WHServer COM mechanism (KB §19) generalizes beyond indicator to
-another plottable type. User-supervised TS Desktop required. Reuse
-`tmp/probe_modify_desk.ps1` (phased) with ShowMe-typed CLI args and fresh
-source files.
+A discriminating test (block 0x40A but keep the post-verify block, or vice
+versa) is still needed to determine whether 0x40A alone, the extra WHServer COM
+events alone, or both jointly, are the actual trigger.
+
+**Before implementation:** re-run adversarial review on the corrected KB §22.
+Then run a focused RE TVS on `_OrlibRegisterNotificationHandle@4` to understand
+the subscriber-list registration mechanism (needed for Approach A).
 
 ## Key references
 
-- CLI insert/modify/delete impl: `src/tsdev_cli.cpp` (`doInsert`, `doModify`,
-  `doDelete`).
-- NotifyLibChanged call sites: `src/tsdev_lib.cpp` (`verifyModule` success,
-  `deleteEntry` success — category != 4 guard).
-- NotifyLibChanged resolver: `src/orlib_resolver.h` / `src/orlib_resolver.cpp`
-  (ordinal 57).
-- Warehouse offsets + dispatch fns: `docs/KNOWLEDGE_BASE.md` §3, §5, §6, §7,
-  §10, §17, §18, §19.
-- Probe log: `tmp/tsdesk_probe.log`. Post-TVS E2E gate:
-  `tmp/e2e_gate_post_tvs_desk.log`.
+- Function-modify recalc signal (static findings, SSOT): `docs/KNOWLEDGE_BASE.md`
+  §21 — candidate calls, TSDev.exe `FUN_004D91E0` category-gated post-verify
+  block, worker cmd 0x0D, ordinals 10/68/71, recommended Frida trace (§21.10).
+- Read-only function root cause (CONFIRMED): KB §20.
+- CLI modify path: `src/tsdev_lib.cpp` `verifyModule` (post-success
+  NotifyLibChanged block) and `modifyEntry`; `traverseReverseDependents` (local
+  re-verify, NOT equivalent to TSDev's worker-cmd-0x0D path).
+- orlib20 ordinal resolvers: `src/orlib_resolver.cpp` (CLI resolves
+  28/57/66/67/69/70/85; does NOT resolve 10/17/25/56/68/71).
+- Cross-process notification mechanism (SSOT): KB §19. Dependents/callers: §18.
+- Frida trace scripts: `tmp/frida_recalc_trace.js`,
+  `tmp/frida_recalc_trace_runner.ps1`, `tmp/frida_recalc_trace_driver.py`,
+  `tmp/frida_recalc_trace_README.md`.
+- Probe sources: `tmp/probe_modify_function_v1.el` (=`1`),
+  `tmp/probe_modify_function_v2.el` (=`2`),
+  `tmp/probe_modify_function_caller.el`.

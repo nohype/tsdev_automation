@@ -1037,7 +1037,9 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Step 9: For comparison, call Ordinal_69 to get the Function's
     //     live record and inspect its +0x26 SafeArray. This is the
-    //     "known-good" path that returns a record.
+    //     "known-good" path that returns a record. Note: orlib20 still
+    //     passes category=4 to Ordinal_69 for a Function; the user-created
+    //     warehouse category is now 1.
     std::printf("\n[9] Calling Ordinal_69(category=4, progId=%d, flag=0) "
                 "for comparison (known-good record path)...\n",
                 funcProgId);
@@ -1076,7 +1078,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                     "Function...\n");
         unsigned char ord28buf[0x10A] = {};
         Ord28SehResult ord28Seh;
-        bool ord28Ok = callOrd28(ord28, /*category=*/4, funcProgId,
+        bool ord28Ok = callOrd28(ord28, /*category=*/1, funcProgId,
                                  /*flag=*/0, ord28buf, &ord28Seh);
         std::printf("    Ordinal_28: %s, return=%u\n",
                     ord28Ok ? "OK (no SEH)" : "SEH raised",
