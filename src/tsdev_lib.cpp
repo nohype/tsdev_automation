@@ -2419,36 +2419,58 @@ std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallersByProgId(
     // items and their dependency relationships.
     refreshCache();
 
-    // Step 3: Set warehouse+0x12 = category, warehouse+0x16 = ProgId.
-    // These are the inputs to cmd 0x0D (ProgramById). Per §9.1, FUN_004d7040
-    // writes these as 4-byte fields before dispatching cmd 0x0D.
-    *reinterpret_cast<int*>(wh + 0x12) = category;
-    *reinterpret_cast<int*>(wh + 0x16) = progId;
+    // Step 3: Dispatch cmd 0x0F (LoadProgram) via callCmd0FDispatcher
+    // (FUN_101d0950) to load the program binary and establish a fully-loaded
+    // IProgram at warehouse+0x5E.
+    //
+    // ROOT CAUSE (M.4b.1, confirmed via Ghidra + dynamic test 2026-08-28):
+    // cmd 0x0D (FindProgram) returns a record-reference IProgram whose
+    // caller/dependency tables are empty — IProgram::Callers (cmd 0x3B,
+    // vtable +0x38) returns an empty SafeArray. cmd 0x0F (LoadProgram)
+    // returns a fully-loaded IProgram whose Callers returns a populated
+    // SafeArray. The UI path (FUN_101a84e0) dispatches cmd 0x0F before
+    // cmd 0x3B; the CLI was dispatching cmd 0x0D instead.
+    //
+    // cmd 0x0F must be dispatched via the specialized FUN_101d0950 (not the
+    // generic FUN_101cf5b0), because FUN_101d0950 creates the SafeArray
+    // payload via FUN_101d1010(ProgId) and sets warehouse+0x1E=0x2000 before
+    // signaling the worker. The generic dispatcher skips this setup and
+    // returns E_INVALIDARG (confirmed by dynamic test: status=0x80070057).
+    //
+    // +0x5E survival: FUN_101d0950 does NOT clear warehouse+0x5E — it only
+    // reads it (to copy into the prog_writer via FUN_101c4ab0). The cleanup
+    // that clears +0x5E (FUN_101c0fd0 → FUN_101c0ca0 → FUN_101c69b0) is the
+    // caller's responsibility. We do NOT call that cleanup here, so +0x5E
+    // remains valid for the subsequent cmd 0x3B dispatch.
+    // See docs/RE/RE_F5_warehouse_com_interface.md §7.A/§8.
     TSDEV_DBG("enumCallers: cat=%d progId=%d wh=%p\n", category, progId, warehouse);
 
-    // Step 4: Dispatch cmd 0x0D (ProgramById) via callCmdDispatcher
-    // (FUN_101cf5b0). This sets warehouse+0x04 = 0x0D, signals the worker
-    // thread, and waits for completion. The result CELProgram record pointer
-    // is stored at warehouse+0x5e by the worker handler (FUN_101d15c0).
-    //
-    // DYNAMIC FINDING (M.4b.1, 2026-08-28): cmd 0x0D via the generic
-    // dispatcher (FUN_101cf5b0) DOES set warehouse+0x5e to a non-NULL root
-    // record. This contradicts the earlier refreshCache comment that said
-    // "cmd 0x0D returns null and clears [warehouse+0x5E]" — that comment
-    // referred to cmd 0x0D via FUN_101cfce0 (the COM-interface-get path)
-    // with type=0xC, NOT cmd 0x0D via FUN_101cf5b0 with the correct
-    // type+ProgId. The generic dispatcher path works correctly.
-    if (!callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x0D)) {
-        TSDEV_DBG("enumCallers: cmd 0x0D SEH!\n");
-        return result;  // SEH in cmd 0x0D dispatch
+    if (!m_pCmd0FDispatcher || !m_pBuildTypeArray || !m_pCelProgWriterCtor) {
+        TSDEV_DBG("enumCallers: cmd 0x0F prerequisites missing\n");
+        return result;
     }
 
-    // Verify the root record was set at warehouse+0x5e.
+    int typeArray[16] = {};
+    if (!callBuildTypeArray(m_pBuildTypeArray, category, typeArray)) {
+        TSDEV_DBG("enumCallers: callBuildTypeArray failed\n");
+        return result;
+    }
+
+    unsigned char writerBuf[0x280] = {};
+    callCelProgramWriterCtor(m_pCelProgWriterCtor, writerBuf);
+
+    if (!callCmd0FDispatcher(m_pCmd0FDispatcher, warehouse,
+                             typeArray, progId, writerBuf)) {
+        TSDEV_DBG("enumCallers: cmd 0x0F SEH!\n");
+        return result;  // SEH in cmd 0x0F dispatch
+    }
+
+    // Verify the loaded IProgram was set at warehouse+0x5e.
     void* rootRecord = *reinterpret_cast<void**>(wh + 0x5e);
-    TSDEV_DBG("enumCallers: cmd 0x0D done, rootRecord=%p\n", rootRecord);
+    TSDEV_DBG("enumCallers: cmd 0x0F done, rootRecord=%p\n", rootRecord);
     if (!rootRecord) {
-        TSDEV_DBG("enumCallers: rootRecord NULL, aborting\n");
-        return result;  // cmd 0x0D did not produce a record
+        TSDEV_DBG("enumCallers: rootRecord NULL after cmd 0x0F, aborting\n");
+        return result;  // cmd 0x0F failed (worker set +0x5E to 0 on failure)
     }
 
     // Clear warehouse+0x26 before cmd 0x3B so the new SafeArray is

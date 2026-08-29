@@ -1835,9 +1835,12 @@ CliResult doDependents(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    // Enumerate callers via the warehouse-level cmd 0x0D → cmd 0x3B path.
+    // Enumerate callers via the warehouse-level cmd 0x0F → cmd 0x3B path.
+    // Use enumerateCallersByProgId directly with the ProgId from
+    // enumerateRecords, bypassing findExistPos (which fails for some
+    // existing items due to a BST search issue — see M4B1_HANDOFF §9 gap #2).
     std::vector<TsDevLib::CallerInfo> callers =
-        lib.enumerateCallers(type, name);
+        lib.enumerateCallersByProgId(type, er.progId);
 
     r.success = true;
     r.exitCode = 0;
