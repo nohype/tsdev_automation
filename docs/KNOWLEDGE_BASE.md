@@ -250,6 +250,8 @@ RVA `0x1a84e0`, abs `0x101a84e0`. `__fastcall`: ECX/EDX = first two params, firs
 - Dispatches: `0x35 → 0x32 → 0x3B → 0x57 → 0x47 → 0x58 → 0x4F` (from UI trace, line 84)
 - Also clears `+0x5E` via the same `FUN_101c0fd0 → FUN_101c0ca0 → FUN_101c69b0` chain before returning
 
+**Note (§17)**: A re-trace did not reproduce this — `FUN_101a84e0` was not called. The 0x3B dispatch path in the §17 trace was via `FUN_101c51b0` (RVA `0x1c51b0`) instead. The §9/§10 trace may reflect a different UI action or session condition.
+
 ---
 
 ## 10. UI trace facts
@@ -274,6 +276,8 @@ Source: `tmp/frida_ui_verify_trace.log` (94 lines, Frida trace of TSDev.exe UI v
 - cmd `0x3B` appears exactly once (line 84), inside `FUN_101a84e0` (lines 81-89)
 - cmd `0x3B` does NOT appear inside `FUN_004D91E0` (lines 23-75) or `FUN_004D9480` (lines 22-76)
 - `FUN_004D91E0` dispatches 6 commands before `_VerifyModule_New`: `0x32, 0x34, 0x33, 0x4F, 0x35, 0x38`
+
+**Note (§17)**: A re-trace did not reproduce the `FUN_101a84e0` path — `FUN_101a84e0` was not called. The 0x3B dispatch path in the §17 trace was via `FUN_101c51b0` (RVA `0x1c51b0`) instead. The §10 trace may reflect a different UI action or session condition.
 
 ---
 
@@ -401,12 +405,329 @@ Current flow:
 
 These are proven facts about what is **not** known:
 
-1. **Why cmd 0x3B returns zero callers after cmd 0x0F**: The cmd 0x0F → cmd 0x3B path loads a fully-loaded IProgram and dispatches Callers successfully, but the SafeArray contains zero entries. The cause is not determined. The UI trace shows `FUN_101a84e0` dispatches `0x35 → 0x32` before `0x3B`; whether these commands are required to populate the caller tables is not proven.
+1. **Why the CLI's 0x0F → 0x3B path returns zero callers while the UI's path may differ**: ~~The CLI dispatches 0x3B directly via `FUN_101cf5b0(0x3B)` after a standalone `0x0F` load (KB §14, §15); the UI dispatches 0x3B through `FUN_101c51b0`, which uses a cached IProgram and writes it to `warehouse+0x5E` (KB §17). Whether the difference in dispatch path, IProgram provenance, or additional `FUN_101c51b0` setup (re-entrance guard at `+0x1C9`, `CSingleLock` at `+0x218`, and cache management at `+0x10`; see KB §7) affects caller-table population is not proven.~~ **RESOLVED (KB §18):** The UI's `FUN_101c51b0` path also returns an empty SafeArray (count=0) on the function's IProgram. The dispatch-path difference is NOT the cause. Both the CLI and UI paths produce the same empty result.
 
-2. **What cmds 0x35 and 0x32 do**: Their worker handlers were not decompiled in this session. The UI trace shows them dispatched before 0x3B in `FUN_101a84e0`, and before `_VerifyModule_New` in `FUN_004D91E0`. Their effect on the IProgram's caller tables is not determined.
+2. **What cmds 0x35 and 0x32 do at the worker level**: Their worker handlers were not decompiled in this session. They are part of the standard compile/verify command pattern (e.g., before `_VerifyModule_New` in `FUN_004D91E0`, KB §10) and appear throughout the §17 trace, but they are **not** the immediate predecessors to 0x3B (KB §17). Whether they affect the IProgram's caller tables is not determined; this is no longer treated as relevant to why the CLI 0x3B path returns zero callers.
 
 3. **Whether `FUN_004D91E0`'s pre-verify commands populate the dependency DB**: The UI trace shows `FUN_004D91E0` dispatches `0x32, 0x34, 0x33, 0x4F, 0x35, 0x38` before `_VerifyModule_New`. Whether these populate the DB that cmd 0x3B reads is not proven.
 
 4. **`FUN_101e1560` (SafeArray parser) implementation**: Not decompiled in this session. The CLI's parsing format (offset 4, stride `8 + nameLength + 0x16`) is from prior documentation, not verified against `FUN_101e1560` in this session.
 
 5. **Whether the empty SafeArray is a parsing issue**: The SafeArray has `elemCount=4, cbElements=1` (4 bytes). The CLI interprets the first 4 bytes as a count prefix. Whether orlib20's `FUN_101c51b0` interprets it the same way (via `FUN_101c1ed0` element count + `FUN_101e1560` parser) is not verified in this session.
+
+6. **Why a UI-inserted function does not persist while a UI-inserted indicator does**: In the 2026-08-29 re-trace, UI-inserting function `E2eFnU_202608291059` (ProgId=82) reported `ok=True` (verify succeeded, no errors), but `tsdev_cli exists Function E2eFnU_202608291059 --case-insensitive` immediately after returned `exists=0`. The indicator `E2eIndU_202608291059` UI-inserted in the same session DID persist (`exists=1, progId=2994`). The same phenomenon was observed in the prior trace (E2eFnCaller "already gone" at cleanup). The reason the UI-inserted function is not persisted is NOT known. This is an open fact, not an explanation. (Note: CLI-inserted functions persist reliably.)
+
+---
+
+## 17. UI callers-trace evidence (TVS)
+
+Source: `tmp/frida_ui_callers_trace.log` (1416 lines, Frida trace of TSDev.exe UI insertion + verify). Trace log captured with hooks on `FUN_101cf5b0` (generic dispatcher), `FUN_101d0950` (0x0F specialized dispatcher), `FUN_101a84e0` (post-verify phase), and `FUN_101c51b0` (orlib20's own 0x3B dispatcher).
+
+### Setup
+
+- Two items inserted via the TSDev UI (`TSDevUI.insert_item`): a function `TvsTraceFnUi` (`TvsTraceFnUi = 1;`) and an indicator `TvsTraceIndUi` (`Plot1(TvsTraceFnUi, "Trace");`) that calls the function.
+- A third item `TvsTraceFn` (function, CLI-inserted) was also re-verified via the UI (open + dirty + F3) to test whether re-verify triggers 0x3B.
+- Frida JS: `tmp/frida_ui_callers_trace.js`; Python driver: `tmp/frida_ui_callers_trace.py`.
+
+### Key finding: 0x3B dispatch path
+
+**cmd 0x3B was dispatched via `FUN_101c51b0` (RVA `0x1c51b0`), NOT via `FUN_101a84e0`.**
+
+- `FUN_101a84e0` (RVA `0x1a84e0`) was hooked but **never called** during UI insertion or re-verify. The KB §10 claim that 0x3B appears "inside FUN_101a84e0" is not reproduced in this trace. `FUN_101a84e0` may only run under conditions not met here (e.g. a different UI action or a first-ever verify of a UI-created item in a prior TSDev version/session).
+- `FUN_101c51b0` fired exactly once (trace event `[c51b0 #604]`), during the indicator UI-insert compile phase, and dispatched 0x3B via `FUN_101cf5b0(0x3B)`.
+
+### Exact cmd sequence around 0x3B (indicator UI-insert)
+
+Verbatim from `tmp/frida_ui_callers_trace.log` lines 1221-1224 (the 0x3B dispatch):
+
+```
+[c51b0 #604] ENTER ctx=0x8fc838 wh=0xbc3d018 cachedIProg=0x13e463c4
+[generic #605] ENTER cmd=0x3b wh=0xbc3d018 wh+04(cmd)=0x32 wh+12(wht)=0x4f wh+16(pid)=0xbac wh+1E(load)=00200000000000006093cf1300000000 wh+26(sa)=0x13cf9360 wh+4E(hr)=0x0 wh+5E(iprog)=0x13e463c4
+[generic #605] EXIT cmd=0x3b ret=0x1 wh+4E(hr)=0x0 wh+26(sa)=0x13cf9420 wh+5E(iprog)=0x13e463c4
+[c51b0 #604] EXIT ret=0x1
+```
+
+Immediate cmd sequence before 0x3B (events #597-#605):
+
+| Event | Cmd | wh+5E (IProgram) | wh+26 (SafeArray) | wh+4E (HRESULT) |
+|-------|-----|-------------------|---------------------|-------------------|
+| #597 | 0x0F-spec (LoadProgram, progId=0xbac) | 0x13e4601c | 0x1a0f5608 | 0x0 |
+| #598 | 0x0F-spec (LoadProgram, progId=0x4f, outParam=0x8fc838) | 0x13e463c4 | 0x1a742d00 | 0x0 |
+| #599 | 0x34 | 0x13e463c4 | 0x1a742d00 | 0x0 |
+| #600 | 0x32 | 0x13e463c4 | 0x1a742d00 | 0x0 |
+| #601 | 0x3a | 0x13e4601c | 0x13cf9360 | 0x0 |
+| #602 | 0x34 | 0x13e4601c | 0x13cf9360 | 0x0 |
+| #603 | 0x32 | 0x13e4601c | 0x13cf9360 | 0x0 |
+| #604 | **c51b0 ENTER** (ctx=0x8fc838, cachedIProg=0x13e463c4) | — | — | — |
+| #605 | **0x3B** | 0x13e463c4 | 0x13cf9360→0x13cf9420 | 0x0 |
+
+Cmds after 0x3B: `0x4c, 0x4f, 0x4b, 0x58, 0x4f, 0x32, 0x34, 0x33, 0x4f, 0x4f, 0x35, 0x38`
+
+### Where 0x35 and 0x32 appear
+
+0x35 and 0x32 appear throughout the compile sequence in repeating groups of `(0x32, 0x34, 0x33, 0x4F, 0x35)` — the standard compile/verify cmd pattern also seen in KB §10. They are **not** the immediate predecessors to 0x3B. The immediate predecessors are `0x34, 0x32, 0x3a, 0x34, 0x32`, followed by `FUN_101c51b0` which dispatches 0x3B.
+
+Both 0x35 and 0x32 are dispatched via the generic dispatcher `FUN_101cf5b0` with **only a cmdId** (DWORD at `[esp+4]`), no extra parameters.
+
+### FUN_101c51b0 mechanism (confirmed by trace)
+
+1. The compile code loads an IProgram via `FUN_101d0950` (0x0F-spec, event #598) into a prog_writer buffer at `outParam=0x8fc838`. The IProgram (0x13e463c4) is stored at `prog_writer+0x10`.
+2. `FUN_101c51b0` is called with `ctx=0x8fc838` (the prog_writer). It reads `cachedIProg = [ctx+0x10] = 0x13e463c4` (cache is pre-populated; no FindProgram/cmd 0x0D needed).
+3. `FUN_101c51b0` writes the cached IProgram to `warehouse+0x5E` (visible at #605: `wh+5E=0x13e463c4`).
+4. `FUN_101c51b0` dispatches 0x3B via `FUN_101cf5b0(0x3B)` (event #605).
+5. 0x3B result: `wh+4E=0x0` (success), `wh+26` changed from `0x13cf9360` to `0x13cf9420` (SafeArray modified — non-zero pointer).
+
+### What did NOT trigger 0x3B
+
+- **Re-verifying a CLI-inserted item** (v3 trace, `TvsTraceInd` indicator): full compile fired (0x32, 0x34, 0x33, 0x4F, 0x35, 0x0F-spec, 0x3A, 0x4E, ...) but **no 0x3B, no c51b0, no a84e0**.
+- **Re-verifying a UI-inserted function** (`TvsTraceFnUi`): full compile fired but **no 0x3B, no c51b0, no a84e0**.
+- **UI-inserting a function** (`TvsTraceFnUi`): full compile fired but **no 0x3B, no c51b0**.
+
+0x3B fired **only** during the **indicator UI-insert** — i.e. when the compiled item (indicator) references another item (function) as a dependency.
+
+### Conclusion
+
+1. **0x35 and 0x32 are NOT the missing cmds before 0x3B.** They are part of the standard compile cmd sequence and appear throughout, but they are not immediate predecessors to 0x3B. They take only a cmdId (no extra params) via `FUN_101cf5b0`.
+
+2. **The UI and CLI use different 0x3B dispatch paths.** In the UI trace, `FUN_101c51b0`:
+   - Receives a context object (prog_writer) containing a cached IProgram loaded via `FUN_101d0950` (0x0F-spec, event #598)
+   - Writes the cached IProgram to `warehouse+0x5E`
+   - Dispatches 0x3B via `FUN_101cf5b0(0x3B)`
+   - Parses the SafeArray result (per KB §7)
+
+   The CLI dispatches 0x3B directly via `FUN_101cf5b0(0x3B)` after loading the IProgram via `0x0F` (KB §15). Whether the difference in dispatch path, IProgram provenance, or additional `FUN_101c51b0` setup affects the caller-table population is not proven.
+
+3. **`FUN_101a84e0` is NOT the 0x3B dispatch path** in this scenario. The KB §10 trace's claim that 0x3B appears inside `FUN_101a84e0` is not reproduced. The actual 0x3B dispatch is via `FUN_101c51b0`.
+
+4. **In this trace, 0x3B fired only during the indicator UI-insert.** It did not fire during: (a) function UI-insert, (b) function UI re-verify, or (c) CLI-inserted indicator re-verify. Whether 0x3B fires only for items with dependencies is not proven; the observed correlation is consistent with that hypothesis.
+
+5. **The 0x3B SafeArray pointer was non-zero** (0x13cf9420, changed from 0x13cf9360), confirming 0x3B produced a SafeArray. Whether it contained non-zero caller entries could not be determined from the trace alone (the SafeArray content was not dumped). The 0x3B was dispatched on IProgram `0x13e463c4` (loaded by event #598, a `0x0F-spec` dispatch with `progId=0x4f`); the identity of that IProgram is unknown from this trace. It is not the indicator's IProgram (`0x13e4601c`, loaded by event #597 with `progId=0xbac`), which `FUN_101c51b0` did not use.
+
+### Next step
+
+**SUPERSEDED by §18.** §18 captured 0x3B on the function's IProgram via `FUN_101c51b0` and the result was EMPTY. TSDev.exe has no "Find Dependents" feature for regular functions/indicators (see §18 investigation). The next step is now in §18 / WORKING_MEMORY.md: investigate whether the WHServer.exe dependency DB is populated at all.
+
+---
+
+## 18. UI callers-trace: provably non-empty result NOT obtained — 0x3B on function's IProgram returns EMPTY
+
+Source: `tmp/frida_ui_callers_nonempty.log` (113 lines, Frida trace of TSDev.exe UI insertion + verify). Trace log captured with hooks on `FUN_101cf5b0` (generic dispatcher), `FUN_101d0950` (0x0F specialized dispatcher), and `FUN_101c51b0` (orlib20's own 0x3B dispatcher). SafeArray contents were dumped for the first time.
+
+### Setup
+
+- Two items inserted via the TSDev UI (`ui_insert_item`):
+  - Function `E2eFnCaller` (`E2eFnCaller = 1;`), ProgId=80 (0x50), IProgram=0x179e160c
+  - Indicator `E2eIndCallerFn` (`Plot1(E2eFnCaller, "E2e");`), ProgId=2990 (0xbae), IProgram=0x179e1d14
+- The indicator calls the function, so the function's caller = the indicator.
+- Frida JS: `tmp/frida_ui_callers_nonempty.js`; Python driver: `tmp/frida_ui_callers_nonempty.py`.
+- TSDev.exe was started normally (not Frida-spawned) and Frida attached after UI init.
+
+### Key finding: 0x3B on the FUNCTION's IProgram returns EMPTY SafeArray
+
+**cmd 0x3B was dispatched via `FUN_101c51b0` on the function's IProgram (0x179e160c, ProgId=80), and the SafeArray result is EMPTY (count=0, 4 bytes all zeros).**
+
+This is the same result as the CLI's 0x0F → 0x3B path (KB §14, §15). The FUN_101c51b0 dispatch path does NOT populate callers.
+
+### Exact cmd sequence around 0x3B (indicator UI-insert)
+
+Verbatim from `tmp/frida_ui_callers_nonempty.log` lines 57-66:
+
+```
+[0x0F-spec #106] ENTER wh=0xa86c1c0 typeArray=0x8fcd2c progId=80 (0x50) outParam=0x8fc838 ...
+[0x0F-spec #106] EXIT ret=0x1 progId=80 wh+4E(hr)=0x0 wh+26(sa)=0x125bc9e0 wh+5E(iprog)=0x179e160c outParam=0x8fc838 [outParam+0x10]=0x179e160c
+[c51b0 #112] ENTER ctx=0x8fc838 wh=0xa86c1c0 cachedIProg=0x179e160c whType=0x1 name="" (progId map: {"80":"0x179e160c","2990":"0x179e1d14"})
+[generic #113] ENTER cmd=0x3b wh=0xa86c1c0 wh+04(cmd)=0x32 wh+12(wht)=0x50 wh+16(pid)=0xbae ... wh+5E(iprog)=0x179e160c
+[generic #113] EXIT cmd=0x3b ret=0x1 wh+4E(hr)=0x0 wh+26(sa)=0xabce608 wh+5E(iprog)=0x179e160c
+[safearray cmd0x3B #113] cDims=1 fFeatures=0x80 cbElements=1 cLocks=0 pvData=0x189bed80 cElements=4 lLbound=0 totalBytes=4
+[safearray cmd0x3B #113] first 4 bytes: 00 00 00 00
+[safearray cmd0x3B #113] countPrefix=0
+[safearray cmd0x3B #113] parsed 0 entries
+[c51b0 #112] EXIT ret=0x1 wh+4E(hr)=0x570079 wh+26(sa)=0xd19c1761
+```
+
+### IProgram identity confirmed
+
+- Event #106: `0x0F-spec` loads ProgId=80 (the function E2eFnCaller) into outParam=0x8fc838. The IProgram (0x179e160c) is stored at `outParam+0x10`.
+- Event #112: `FUN_101c51b0` is called with `ctx=0x8fc838` (the prog_writer from event #106). It reads `cachedIProg = [ctx+0x10] = 0x179e160c` — this IS the function's IProgram.
+- Event #113: cmd 0x3B is dispatched with `wh+5E=0x179e160c` (the function's IProgram).
+- The progId map confirms: `{"80":"0x179e160c","2990":"0x179e1d14"}` — ProgId 80 = function, ProgId 2990 = indicator.
+
+### SafeArray dump (first time captured)
+
+The SafeArray at `warehouse+0x26` after 0x3B:
+- `cDims=1, fFeatures=0x80 (FADF_HAVEVARTYPE), cbElements=1, cLocks=0`
+- `pvData=0x189bed80, cElements=4, lLbound=0, totalBytes=4`
+- First 4 bytes: `00 00 00 00`
+- Count prefix (little-endian int32): **0**
+- Entries parsed: **0**
+
+This is identical to the CLI's result (KB §14 Test 2): `elemCount=4, cbElements=1`, 4 bytes all zeros, count prefix=0.
+
+### c51b0 context fields
+
+The `FUN_101c51b0` context (ctx=0x8fc838) shows:
+- `whType=0x1` (not 0x4 as expected for Function; this may be a prog_writer field, not the warehouse whType)
+- `name=""` (empty string at ctx+0x18; the name pointer may not be set in this code path, or the name is stored differently)
+
+### What did NOT trigger 0x3B
+
+- **Function UI-insert**: no 0x3B, no c51b0 (same as §17)
+- **Function re-verify (open+F3)**: no 0x3B, no c51b0 (same as §17)
+- **Find Dependents**: TSDev.exe has NO "Find Dependents" feature for regular functions/indicators. See "Find Dependents investigation" below.
+- **Find Dependents via Tools/Edit menu**: no such menu item exists.
+
+0x3B fired **only** during the **indicator UI-insert** — same as §17.
+
+### Find Dependents investigation (adversarial-review fix)
+
+A genuine effort was made to locate TSDev.exe's "Find Dependents" feature. It does NOT exist for regular EasyLanguage functions/indicators:
+
+1. **Menu enumeration**: `win32gui.GetMenu` on the main window returns `hmenu=0x0` (TSDev uses a BCGPSoft owner-drawn menu bar, `BCGPToolBar` class "Menu Bar", not a standard Win32 HMENU). pywinauto `menu()` returns None. The UIA backend found only the "System" MenuBar (the system menu), not the app menu. Keyboard Alt+<key> walks produced no `#32768` popup windows (BCGP menus are custom-drawn). Artifacts: `tmp/enumerate_menus.log`, `tmp/enumerate_menus_v2.log`, `tmp/enumerate_menus_v3.log`.
+
+2. **Binary string search**: `strings` on TSDev.exe (narrow + wide) found NO "Find Dependents", "Find References", "Where Used", or "Used By" menu text. The strings "Dependencies" and "Callers" exist but appear in a sequence of tree-view node names: `TradingApp, UserFunction, SystemFunction, Icon, Form, Dependencies, Strings, Callers, Image` — these are **TradingApp project resource tree nodes**, not a function/indicator feature. Artifacts: `tmp/tsdev_strings.txt`, `tmp/tsdev_strings_wide.txt`.
+
+3. **Outline pane inspection**: Opening a function (built-in `Average` and user `E2eFn_202608291052`) in the editor and dumping the Outline pane `SysTreeView32` showed only a `Document` node (with `using`, `inputs`, `Price`, `Length` children). No `Callers` or `Dependencies` node. Artifact: `tmp/inspect_outline_user.log`.
+
+4. **Resource View pane**: Shows `Resource View > <name> > Resources > Forms/Strings/Images` for user functions — no `Callers`/`Dependencies` node.
+
+5. **orlib20.dll strings**: Contains `GetDependencies`, `_GetStaticDependencyList@12`, `_GetDynamicDependencyList@12`, `_DeleteDependencyList@4` — dependency APIs, but no UI text.
+
+**Conclusion**: TSDev.exe does not expose a "Find Dependents" UI action for regular functions/indicators. The 0x3B evidence is from the **compile path only** (indicator UI-insert compile dispatches 0x3B via `FUN_101c51b0`).
+
+### Re-trace with DEFECT-5-fixed JS (2026-08-29)
+
+A second Frida trace (`tmp/frida_find_dependents_trace2.log`) re-captured 0x3B with the fixed JS (c51b0 onLeave no longer reads garbage wh fields). Setup: UI-inserted function `E2eFnU_202608291059` (ProgId=82) + indicator `E2eIndU_202608291059` (ProgId=2994) referencing it, unique names verified free via `tsdev_cli exists` before insert.
+
+Verbatim evidence (0x3B on the function's IProgram, ProgId=82, IProgram=0x12b52a64):
+```
+[c51b0 #133] ENTER ctx=0x8fc838 wh=0xa7634f0 cachedIProg=0x12b52a64 whType=0x1 name="" (progId map: {"82":"0x12b52a64","2994":"0x1292ea8c"})
+[generic #134] ENTER cmd=0x3b wh=0xa7634f0 wh+04(cmd)=0x32 wh+12(wht)=0x52 wh+16(pid)=0xbb2 ... wh+5E(iprog)=0x12b52a64
+[generic #134] EXIT cmd=0x3b ret=0x1 wh+4E(hr)=0x0 wh+26(sa)=0xaabadb8 wh+5E(iprog)=0x12b52a64
+[safearray cmd0x3B #134] cDims=1 fFeatures=0x80 cbElements=1 cLocks=0 pvData=0x13f1d320 cElements=4 lLbound=0 totalBytes=4
+[safearray cmd0x3B #134] first 4 bytes: 00 00 00 00
+[safearray cmd0x3B #134] countPrefix=0
+[safearray cmd0x3B #134] parsed 0 entries
+[c51b0 #133] EXIT ret=0x1 (wh/SafeArray result captured by generic-dispatcher hook)
+```
+
+The c51b0 onLeave now logs `(wh/SafeArray result captured by generic-dispatcher hook)` instead of the garbage `wh+4E(hr)=0x570079 wh+26(sa)=0xd19c1761` seen in the prior trace. The 0x3B SafeArray is EMPTY (count=0, 4 bytes all zeros) — confirms the prior finding with the fixed JS.
+
+### Persistence verification (adversarial-review fix)
+
+`tsdev_cli exists --case-insensitive` was run before and after each insert:
+
+- **E2eFnU_202608291059** (function, UI-insert): pre-insert `exists=0`; post-insert `exists=0` (NOT persisted — see open fact KB §16 item 6); at cleanup `exists=0`.
+- **E2eIndU_202608291059** (indicator, UI-insert): pre-insert `exists=0`; post-insert `exists=1, stored_name=E2eIndU_202608291059, progId=2994` (persisted); deleted → post-delete `exists=0` (confirmed removed).
+- **E2eFn_202608291052** (function, CLI-insert): pre-insert `exists=0`; post-insert `exists=1, progId=1588` (persisted); deleted → post-delete `exists=0` (confirmed removed).
+- **E2eIndCaller_202608291052** (indicator, CLI-insert): pre-insert `exists=0`; post-insert `exists=1, progId=2992` (persisted); deleted → post-delete `exists=0` (confirmed removed).
+
+CLI-inserted items persist reliably. The UI-inserted function did NOT persist (open fact, not speculation).
+
+### Popup/crash observations
+
+- **No crash dialogs** (TSCrashReport.exe / WerFault.exe) were observed at any point during the trace.
+- **No error/warning popups** were observed during UI insertion, re-verify, or Find Dependents attempts.
+- All crash checks returned OK after every action.
+- Cleanup via elevated CLI: E2eIndCallerFn was deleted (confirmed `exists=0` after). E2eFnCaller was NOT found by `tsdev_cli exists` at cleanup time (`exists=0`). The reason it was absent is NOT known — recorded as an open fact (KB §16 item 6), not explained by speculation.
+
+### Verdict
+
+**The FUN_101c51b0 path does NOT populate callers.** The 0x3B result on the function's IProgram (ProgId=80, IProgram=0x179e160c) is EMPTY (count=0, 4 bytes all zeros), even though the indicator E2eIndCallerFn (ProgId=2990) calls the function E2eFnCaller. This is the same empty result as the CLI's 0x0F → 0x3B path.
+
+The dispatch-path difference (FUN_101c51b0 vs direct FUN_101cf5b0) is NOT the cause of the empty caller list. Both paths produce the same empty SafeArray.
+
+**Caveat (RESOLVED 2026-08-29, TVS below):** All 0x3B traces in §18 were on UI-inserted functions that did NOT persist (`exists=0` after UI insert — see KB §16 item 6), so the empty result could have been a non-persistence artifact. This is now RULED OUT — see "Persistence-ruled-out TVS" below.
+
+### Persistence-ruled-out TVS (2026-08-29)
+
+Tested `dependents` on items persisted via the CLI (which persist reliably — KB §16 item 6). Function `E2eFnDep_113051` (ProgId=1591, source `E2eFnDep_113051 = 1;`) and indicator `E2eIndDep_113051` (ProgId=2995, source `Variables: v(0); v = E2eFnDep_113051; Plot1(v, "Val");`) were both CLI-inserted with EXIT=0 and confirmed `exists=1`. The indicator compiled successfully while referencing the function, so a real caller relationship existed at compile time. `tsdev_cli dependents function E2eFnDep_113051` (and `--json`) still returned `dependents_count=0` / `"dependents":[]`; the internal trace shows cmd 0x3B returned a 4-byte all-zero SafeArray (`countField=0`), identical to all prior traces. The CLI's `doDependents` faithfully dispatches 0x0F→0x3B via `enumerateCallersByProgId` with no short-circuit (confirmed by adversarial source review). No crashes/popups. Both items cleaned up (exists=0, .ell/.xml removed). Full log: `tmp/tvs_dependents_persisted.log`.
+
+**Conclusion:** The empty-caller result is NOT caused by non-persistence of the queried item. Even for persisted items with a genuine, compiler-resolved caller relationship, cmd 0x3B returns an empty SafeArray. The cause is downstream of persistence — i.e. the dependency/caller table that 0x3B reads is not populated by the CLI insert/compile path for these items.
+
+### Implication
+
+The empty caller list is NOT caused by:
+1. The dispatch path (FUN_101c51b0 vs direct FUN_101cf5b0) — both produce empty results
+2. The IProgram provenance (0x0F LoadProgram vs 0x0D FindProgram) — the UI uses 0x0F and still gets empty
+3. Missing predecessor commands (0x35, 0x32) — these appear in the compile sequence but are not immediate predecessors to 0x3B
+4. A missing "Find Dependents" UI trigger — TSDev.exe has no such feature for functions/indicators (see "Find Dependents investigation" above)
+5. Non-persistence of the queried item — RULED OUT by the persistence-ruled-out TVS above (both items persisted with exists=1 and a compiler-resolved caller relationship; 0x3B still returned empty)
+
+The empty caller list is likely caused by:
+- The dependency database (in WHServer.exe / COM server) not being populated with the caller relationship at the time 0x3B is dispatched — the CLI insert/compile path does not appear to write the caller relationship into the table that 0x3B reads
+- Or the IProgram::Callers vtable method (vtable+0x38) itself returning an empty SafeArray for the given IProgram, regardless of dispatch path
+- Or the IProgram loaded via 0x0F not having its caller table populated despite being "fully-loaded"
+
+The next investigation should focus on the **higher-level** question of whether the WHServer.exe COM server's dependency database is populated at all for these items (a state question), e.g. query `GetStaticDependencyList`/`GetDynamicDependencyList` via orlib20 (KB §18 strings) or inspect the warehouse dependency tables directly. Do NOT jump to vtable+0x38 introspection — AGENTS.md's "don't dig deeper" rule applies unless higher-level causes are ruled out first.
+
+---
+
+## 19. TS Desktop cross-process notification mechanism
+
+1. **NotifyLibChanged (orlib20 ordinal 57) is per-process, NOT cross-process.** orlib20 `FUN_101526f0` (ordinal 57, `_NotifyLibChanged@8`) packs `lParam = (category << 16) | progId` and calls `tslib::EventsViaHandles::PosMessageToClients(&PTR_DAT_10231050, 0x40A, 0, lParam)`, which iterates the HWND array at `PTR_DAT_10231050` and calls `PostMessageW(hwnd, 0x40A, 0, lParam)` per registered HWND. `PTR_DAT_10231050` is at `0x10231050`, inside orlib20's PRIVATE `.data` section (`0x1022e000-0x10240987`), NOT in the shared `SHARE_WO` (`0x10243000-0x104889ff`) or `SHARE_MM` (`0x10489000-0x104891ff`) sections. Therefore each process loading orlib20 has its own `EventsViaHandles` HWND array; a `0x40A` posted from one process only reaches HWNDs registered in THAT process's orlib20.
+
+2. **The CLI's 0x40A reaches no windows.** The CLI never calls `_OrlibRegisterNotificationHandle@4` (ordinal 595, `FUN_1011c130`), so no HWNDs are registered in the CLI's orlib20 `EventsViaHandles`. The CLI does call `NotifyLibChanged` after insert/modify (`verifyModule` success, `src/tsdev_lib.cpp:2031-2033`) and after delete (`deleteEntry` success, `category != 4`, `src/tsdev_lib.cpp:2961-2963`), but the posted `0x40A` goes to an empty HWND list.
+
+3. **TSDev.exe's 0x40A also does NOT cross to TS Desktop.** TSDev.exe's verify-success path (`FUN_00453f70` @ `0x00453f70`) calls `ShowRecalculationWarning()` then `Ordinal_57(category, progId)`, posting `0x40A` to TSDev.exe's own orlib20's registered HWNDs (TSDev's own views). It is an in-process UI refresh signal for TSDev's own MFC views, not a cross-process notification to TS Desktop.
+
+4. **TS Desktop (orchart.exe) registers for 0x40A in its own process.** orchart.exe imports `_OrlibRegisterNotificationHandle@4` (string at `0x00781414` in orchart.exe). It registers its own window HWND with its own orlib20's `EventsViaHandles`. This registration is invisible to other processes.
+
+5. **The actual cross-process synchronization is the shared warehouse memory + WHServer.exe COM Connection Points.** orlib20's warehouse data lives in the `SHARE_WO` section (`0x10243000-0x104889ff`, 2.38 MB, shared across all processes loading orlib20). orlib20's `_CreateEntryEX@24` (`FUN_10159610` @ `0x10159610`) makes a vtable call through `warehouse+0xAE` (the WHServer.exe COM server interface). WHServer.exe implements `IConnectionPointContainerImpl<CWHouse>` with `_IWHouseEvents` (RTTI strings at `0x0043ea4c`, `0x0043ea80` in WHServer.exe) and `IConnectionPointContainerImpl<CProgram>` with `_IProgramEvents`. TS Desktop subscribes to `_IWHouseEvents` via `IConnectionPoint::Advise`.
+
+6. **Empirical confirmation (2026-08-29, indicator cat=2 only):** A CLI-inserted indicator (`TsDeskProbe_20260829123929`, source `Plot1(Close,"Probe");`, ProgId=2996) was immediately visible, applicable, and plotted correctly in a running TS Desktop with no restart and no manual refresh. A CLI deletion of the same indicator (while applied to a chart) was auto-detected by TS Desktop: the applied indicator was removed from the chart and disappeared from the Insert Analysis Techniques list, matching TSDev behavior. This confirms the shared-warehouse + WHServer COM path is sufficient for indicator insert+delete TS Desktop interaction with NO code change. Type coverage (strategy/tradingapp/showme/function), dependent/encrypted/batch cases are UNVERIFIED. Log: `tmp/tsdesk_probe.log`.
+
+7. **Notification registration exports:** `_OrlibRegisterNotificationHandle@4` (ordinal 595, `FUN_1011c130` @ `0x1011c130`) calls `EventsViaHandles::RegisterHandle(&PTR_DAT_10231050, hwnd)`. `_OrlibUnregisterNotificationHandle@4` (ordinal 596, `FUN_1011c140` @ `0x1011c140`) unregisters.
+
+8. **Delete-side additional messages:** orlib20's delete path (`FUN_10159ae0` @ `0x10159ae0`) sends `SendMessageToClients(0x40C, 1, ...)` (delete start), `0x40C, 2` (in progress), and `0x40C, 3` (delete end) around the delete orchestrator, plus `PosMessageToClients(0x40A, 0, ...)` (library changed) when `category != 4`. These `0x40C` messages are also per-process (same `EventsViaHandles`).
+
+---
+
+## 20. Read-only function classification
+
+Evidence from orlib20 function/type mapping, property construction, and master-record diagnostics; no assumptions.
+
+### Type and name mapping for category 4 / Function
+
+| Function | orlib20 address | Output when arg = `4` | Evidence |
+|----------|-----------------|----------------------|----------|
+| `GetFileTypeName1` | `0x10157dc0` | `"Function (Read Only)"` | orlib20 decompilation / disassembly |
+| `FUN_101583c0` | `0x101583c0` | `"FunctionReadOnly"` | orlib20 decompilation / disassembly |
+
+### `READONLY` property construction
+
+| Function | orlib20 address | Role | Evidence |
+|----------|-----------------|------|----------|
+| `FUN_10168b20` | `0x10168b20` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
+| `FUN_10170a30` | `0x10170a30` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
+| `FUN_101a1bd0` | `0x101a1bd0` | Builds property data containing `"READONLY" = "TRUE"` | orlib20 decompilation / disassembly |
+
+### `SaveModule_New` flag mapping
+
+| Fact | Evidence |
+|------|----------|
+| orlib20 `_SaveModule_New@20` is `FUN_10159770` at `0x10159770` | orlib20 decompilation / disassembly; `src/tsdev_lib.cpp:1572-1573` call site |
+| Maps the `saveFlags` word to master-record flag bits | Ghidra decompilation of `FUN_10159770` |
+| Bits 5/6 (IsProtected / IsProtectedPlus) are forced for all items saved by the production path | `src/tsdev_lib.cpp:1553-1560` TSDev-parity construction |
+| Internal default password is `!p$Kn@aSus` (10 bytes in a 64-byte zeroed buffer) | `src/tsdev_lib.cpp:1557-1565` |
+
+Included to show the production `saveSource` path sets only bits 5/6 (protection) and `0x10` (verified) — it does not set any read-only bit, so a read-only classification does not arise from the current production insert/modify path.
+
+### Master-record offsets (fresh function)
+
+Source: `diag_m4_raw_rec` inserted `TS_AUTO_M4_DIAG_RFUNC` (ProgId 1593) and dumped its 0x10A-byte master record.
+
+These are the **baseline** bytes for a fresh, production-path (non-read-only) function; they are NOT read-only markers. The read-only flag's exact byte location in the deleted functions is unknown (see Evidence limitation).
+
+| Offset | Size | Value | Interpretation |
+|--------|------|-------|----------------|
+| `+0x7B` | USHORT | `0x0404` | Low byte = warehouse category 4; bit 10 (`0x400`) set = internal-encryption flag (`src/tsdev_lib.cpp:1585-1589`) |
+| `+0x109` | byte | `0x18` | Baseline byte for a fresh, production-path function; no proven read-only interpretation. |
+
+### TSDev File Open `R` attribute
+
+- TradeStation documentation for the File Open dialog states attribute code `R` applies only to EasyLanguage functions and means the function code is read-only.
+- Source: `https://help.tradestation.com/10_00/eng/tsdevhelp/el_editor/file_open_eldoc.htm`.
+
+### Evidence limitation
+
+- The exact pre-delete master-record/XML byte(s) for `TS_AUTO_M4_FRIDA_FUNC` (ProgId 1439) and `TS_AUTO_M4_TRAV_FUNC` (ProgId 1441) were not captured before deletion. The precise byte-level flag that produced the read-only display is therefore inferred from the orlib20 string/type-mapping and property-string evidence above, not directly observed.
