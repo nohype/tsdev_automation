@@ -2921,6 +2921,9 @@ class TestE2E:
         _UNIQUE + "_MDirB",
         _UNIQUE + "_TxtA",
         "TS_AUTO_PY_SHOWME_L14A",
+        _UNIQUE + "_MixA",
+        _UNIQUE + "_MixB",
+        _UNIQUE + "_MixC",
     ]
 
     @pytest.fixture(autouse=True)
@@ -3209,6 +3212,50 @@ class TestE2E:
         # Verify exists after upsert.
         ex_after = self.c.exists("strategy", name_x)
         assert ex_after.exists and ex_after.prog_id == prog_id_x
+
+    def test_e2e_batch_mixed_outcome_continue_on_failure(self) -> None:
+        """E2E: mixed-outcome batch_insert continues on failure (exit 2).
+
+        Mirrors C++ reference ``test_batch_e2e.ps1`` Step 13 through the
+        Python wrapper in DIRECT mode: one already-exists, one success, and
+        one compile-error.  Verifies ``batch_insert`` returns a full per-item
+        result list instead of raising, and that the duplicate and compile-
+        error outcomes are reported correctly without corrupting persisted
+        state.
+        """
+        name_a = _UNIQUE + "_MixA"
+        name_b = _UNIQUE + "_MixB"
+        name_c = _UNIQUE + "_MixC"
+
+        r = self.c.insert("function", name_a, _src("function", "insert", name_a))
+        assert r.success, r
+        prog_id_a = r.prog_id
+
+        results = self.c.batch_insert(
+            [
+                BatchItem("function", name_a, _src("function", "insert", name_a)),
+                BatchItem("function", name_b, _src("function", "insert", name_b)),
+                BatchItem("function", name_c, "this is not valid easylanguage !!!\n"),
+            ]
+        )
+
+        assert len(results) == 3
+        assert results[0].success is False
+        assert results[0].exit_code == 5
+        assert results[0].error is not None and results[0].error.code == "already_exists"
+        assert results[0].error.existing_prog_id == prog_id_a
+        assert results[1].success is True
+        assert results[1].prog_id is not None and results[1].prog_id > 0
+        assert results[2].success is False
+        assert results[2].exit_code == 8
+        assert results[2].error is not None and results[2].error.code == "compile_error"
+
+        ex_b = self.c.exists("function", name_b)
+        assert ex_b.exists and ex_b.prog_id == results[1].prog_id
+        ex_a = self.c.exists("function", name_a)
+        assert ex_a.exists and ex_a.prog_id == prog_id_a
+        ex_c = self.c.exists("function", name_c)
+        assert not ex_c.exists
 
     def test_e2e_batch_insert_dir_then_delete_dir(self, tmp_path: Path) -> None:
         """E2E: batch_insert_dir then batch_delete_dir on a temp dir of .el files."""

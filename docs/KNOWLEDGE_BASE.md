@@ -1069,7 +1069,7 @@ if ((uVar6 == 1) && (((uVar2 == 1 || (uVar2 == 4)) || (uVar2 == 0))))
 - `uVar2 == 1`: Function subtype (category 1)
 - `uVar2 == 4`: Function (category 4)
 
-This means the entire post-verify dependent-recalc block (Ordinal_10, FUN_004D7140, worker cmd 0x0D, FUN_004c9670, recursive traversal) executes **only** for these three categories. For the other supported types (Indicator cat=2, ShowMe cat=3, TradingApp cat=6), the block is skipped.
+This means the entire post-verify dependent-recalc block (Ordinal_10, FUN_004D7140, worker cmd 0x0D, FUN_004c9670, recursive traversal) executes **only** for these three categories. For the other supported types (Indicator cat=2, ShowMe cat=2 subType 0x05, TradingApp cat=2 subType 0x14), the block is skipped.
 
 This is consistent with the observed gap: for non-function types, the modified item IS the applied item, so the shared-warehouse path (KB §19 item 6) is sufficient. For functions (and strategies), the modified item is a DEPENDENCY of the applied item, so the additional dependent-recalc block is needed.
 
@@ -1308,3 +1308,164 @@ per-dependent `FUN_004D91E0` traversal. These were NOT needed for the
 single-caller probe (one dependent). For multi-dependent scenarios, the
 recursive traversal with per-dependent cmd 0x0D may be needed — this is a
 potential future TVS if multi-dependent recalc is found insufficient.
+
+### 22.9 ShowMe (cat 2, subType 0x05) recalc — RUNTIME CONFIRMED (2026-08-30)
+
+Two tests run in immediate succession per the user's standing requirement:
+
+**Test 1 — Direct-applied ShowMe modify (modify the ShowMe's own code):**
+- Inserted ShowMe `TsDeskShowMeProbe_20260830` (ProgId 3026) with v1 source
+  (`if Close > Open then Plot1(High, "ProbeV1")`). Applied to a chart.
+- CLI modify to v2 (`Plot1(Low, "ProbeV2")`) → exit 0, compilation succeeded.
+- Debug log: NO cmd 0x0D dispatched (correct for cat 2 — gate is {0,1,4}).
+- User-confirmed: markers moved from High to Low immediately, no manual refresh.
+
+**Test 2 — Function-dependency modify (modify a function the ShowMe calls):**
+- Inserted ShowMe `TsDeskShowMeFnProbe_20260830` (ProgId 3029) that calls
+  function `TsDeskFnProbe_20260829` (ProgId 84, returns 1). ShowMe plots at
+  High when function returns 1, at Low when returns 2. Applied to a chart.
+- CLI modify function v1→v2 (returns 1→2) → exit 0.
+- Debug log: cmd 0x0D dispatched (correct for cat 1/function).
+  `enumerateReverseDependents` reached the ShowMe (cat=2 pid=3029).
+- User-confirmed: markers moved from High to Low immediately, no manual refresh.
+
+**Conclusions:**
+1. ShowMe (cat 2, subType 0x05) direct-applied modify triggers immediate recalc via
+   shared-warehouse writes + 0x40A (no cmd 0x0D, matching TSDev.exe).
+2. Function → ShowMe dependency modify triggers immediate recalc via
+   cmd 0x0D + 0x40A (matching the Function → Indicator mechanism from §22.8).
+3. The CLI has full parity with TSDev.exe for ShowMe recalc in both scenarios.
+   No code changes needed.
+
+Recalc matrix status: see §22.12.
+
+### 22.10 Strategy (cat 0) recalc — RUNTIME CONFIRMED (2026-08-30)
+
+Two tests run in immediate succession per the user's standing requirement.
+
+**Test 1 — Direct-applied Strategy modify (modify the Strategy's own code):**
+- Inserted Strategy `TsDeskStrategyProbe_20260829` (ProgId 9042) v1, applied
+  to an intraday 46-min chart.
+- CLI modify v1→v2, exit 0.
+- Debug log: cmd 0x0D dispatched for cat=0 progId=9042:
+  `post-verify cmd 0x0D OK, 0x5E=00C254A4`.
+- User-confirmed: signal labels V1→V2 immediately, no manual refresh.
+
+**Test 2 — Function-dependency modify (modify a function the Strategy calls):**
+- Function `TsDeskFnProbe_20260829` at v1 (ProgId 84, returns 1). Strategy
+  `TsDeskStrategyFnProbe_20260829` (ProgId 9043) inserted from
+  `tmp/probe_modify_strategy_fn.el`, compiled, applied to a chart.
+- User confirmed `STFN_V1`/`STFN_V1_X` signals visible.
+- CLI modify function v1→v2 (returns 2), exit 0, ProgId 84 preserved.
+- Debug log: cmd 0x0D dispatched for cat=1 progId=84:
+  `verifyModule: post-verify cmd 0x0D OK, 0x5E=008D3154 (cat=1 progId=84)`.
+- User-confirmed: the applied Strategy recalculated immediately — signal labels
+  `STFN_V1`→`STFN_V2`, no manual refresh.
+
+**Conclusions:**
+1. Direct-applied Strategy (cat 0) modify triggers immediate recalc via worker
+   cmd 0x0D + 0x40A.
+2. Function → Strategy caller modify triggers immediate recalc via worker cmd
+   0x0D (cat=1/function) + 0x40A.
+3. The CLI has full parity with TSDev.exe for Strategy recalc in both
+   scenarios. No further code changes needed.
+
+### 22.11 TradingApp (cat 2, subType 0x14) recalc — TEST 1 RUNTIME CONFIRMED (2026-08-30)
+
+Per TVS-minimality, the TradingApp recalc verification was split into two
+phases. This section records TEST 1 (direct-applied TradingApp modify), run
+this session. TEST 2 (function → TradingApp caller modify) is the next TVS.
+
+**Test 1 — Direct-applied TradingApp modify (modify the TradingApp's own code):**
+- Inserted TradingApp `TsDeskTradingAppProbe_20260830` (ProgId 3030,
+  `elmodule_5122_3030.ell`) from `tmp/probe_modify_tradingapp_v1.el`
+  (WinForms form titled "ProbeApp V1" with label `TRADINGAPP_PROBE_V1`).
+  Insert exit 0, no popups/crashes.
+- User launched/applied the TradingApp in TS Desktop; confirmed the V1 form
+  opened showing `TRADINGAPP_PROBE_V1`, no errors.
+- CLI modify v1→v2 (`tmp/probe_modify_tradingapp_v2.el`, form "ProbeApp V2"
+  with label `TRADINGAPP_PROBE_V2`) → exit 0, ProgId 3030 preserved.
+- Debug log: NO cmd 0x0D dispatched (correct for cat 2 — the {0,1,4} gate at
+  `src/tsdev_lib.cpp` `verifyModule` excludes cat 2). Only the shared-warehouse
+  `VerifyModule_New` + `linkModule` path ran, identical to Indicator/ShowMe
+  direct modify (§22.9 TEST 1).
+- User-confirmed: the already-open TradingApp form was detected as changed,
+  reinitialized, and immediately showed the updated V2 strings — "as if made
+  in the TSDev UI." No manual relaunch/refresh required. No popups/crashes.
+- Cleanup: delete exit 0, `exists=0`, `elmodule_5122_3030.ell`/`.xml` removed,
+  no crashes.
+- Post-TVS E2E gate: separate elevated direct CLI insert/modify/delete on
+  indicator `E2EGateInd_20260830` (ProgId 3031) — all exit 0, `exists=0` after
+  delete, no crashes.
+
+**Conclusions:**
+1. Direct-applied TradingApp (cat 2, subType 0x14) modify triggers immediate
+   recalc via shared-warehouse writes + 0x40A (no cmd 0x0D, matching
+   TSDev.exe and matching the Indicator/ShowMe cat 2 mechanism from §22.9).
+2. The TradingApp observable differs from chart-applied types: instead of
+   plot markers moving, the open WinForms form is reinitialized and re-renders
+   with the new source's strings. This is the TSDev.exe-equivalent behavior
+   and the CLI reproduces it.
+3. The CLI has parity with TSDev.exe for TradingApp direct modify. No code
+   changes were needed or made.
+
+**TEST 2 (Function → TradingApp caller modify) — see §22.11b.**
+
+### 22.11b TradingApp (cat 2, subType 0x14) recalc — TEST 2 RUNTIME CONFIRMED (2026-08-30)
+
+Per the standing two-test requirement and TVS-minimality, TEST 2 was run as the
+immediate next TVS after TEST 1. No code changed. Post-TVS E2E gate passed.
+
+**Test 2 — Function-dependency modify (modify a function the TradingApp calls):**
+- Inserted TradingApp `TsDeskTradingAppFnProbe_20260830` (ProgId 3032,
+  `elmodule_5122_3032.ell`) from `tmp/probe_modify_tradingapp_fn.el` — a
+  WinForms TradingApp that calls function `TsDeskFnProbe_20260829` (ProgId 84,
+  cat 1, returns 1 at v1). Form titled "ProbeApp FN V1" with label `TAFN_V1`
+  when fn=1; "ProbeApp FN V2" with `TAFN_V2` when fn=2. Insert exit 0, no
+  popups/crashes.
+- User launched/applied the TradingApp in TS Desktop; confirmed the V1 form
+  opened showing `TAFN_V1`, no errors. Form left open.
+- CLI modify function v1→v2 (`tmp/probe_modify_function_v2.el`, returns 2) →
+  exit 0, ProgId 84 preserved. Debug log confirmed:
+  - `verifyModule: dispatching post-verify cmd 0x0D cat=1 progId=84 wh=... 0xAE=...`
+  - `verifyModule: post-verify cmd 0x0D OK, 0x5E=0E8B924C (cat=1 progId=84)`
+    (valid IProgram pointer — FindProgram succeeded)
+  - `enumerateReverseDependents: cat=2 pid=3032 linker returned NULL`
+    (the cat 2 TradingApp was reached by the reverse-dependent traversal;
+     linker NULL is expected for cat 2 — no per-dependent local re-verify,
+     matching the Indicator/ShowMe caller path)
+- User-confirmed: the already-open TradingApp form reinitialized immediately
+  to V2 ("ProbeApp FN V2" / `TAFN_V2`) with NO manual relaunch/refresh, no
+  errors/crashes. "yes, without error. success."
+- Cleanup: delete TradingApp exit 0, `exists=0`, `elmodule_5122_3032.ell`/`.xml`
+  removed; function restored to v1 (ProgId 84 preserved). No crashes.
+- Post-TVS E2E gate: separate elevated direct CLI insert/modify/delete on
+  indicator `E2EGateInd_20260830` (ProgId 3033) — all exit 0, `exists=0` after
+  delete, no crashes.
+
+**Conclusions:**
+1. Function → TradingApp (cat 2, subType 0x14) caller modify triggers
+   immediate recalc via worker cmd 0x0D (cat=1/function) + 0x40A, matching the
+   Function → Indicator/ShowMe/Strategy mechanism (§22.8, §22.9 TEST 2,
+   §22.10 TEST 2). The cat 2 TradingApp is reached by
+   `enumerateReverseDependents` and reinitializes its open form without manual
+   relaunch.
+2. The TradingApp observable for the function-caller case is the same as the
+   direct-modify case (TEST 1): the open WinForms form reinitializes and
+   re-renders with content derived from the function's new return value.
+3. The CLI has full parity with TSDev.exe for TradingApp recalc in both
+   scenarios (direct + function-caller). No code changes were needed or made.
+
+### 22.12 Recalc matrix status
+
+**Recalc matrix status (updated 2026-08-30): ALL 8 ENTRIES CONFIRMED — recalc matrix CLOSED.**
+| Scenario | Status |
+|---|---|
+| Direct-applied Indicator (cat 2) modify | CONFIRMED (prior TVS) |
+| Direct-applied ShowMe (cat 2, subType 0x05) modify | CONFIRMED (§22.9 TEST 1) |
+| Direct-applied Strategy (cat 0) modify | CONFIRMED (TEST 1, 2026-08-30, §22.10); evidence: `post-verify cmd 0x0D OK, 0x5E=00C254A4` (cat=0 progId=9042) |
+| Direct-applied TradingApp (cat 2, subType 0x14) modify | CONFIRMED (TEST 1, 2026-08-30, §22.11); evidence: no cmd 0x0D (cat 2 gate), shared-warehouse + 0x40A only; user-confirmed open form reinitialized V1→V2 |
+| Function → Indicator caller modify | CONFIRMED (§22.8) |
+| Function → ShowMe caller modify | CONFIRMED (§22.9 TEST 2) |
+| Function → Strategy caller modify | CONFIRMED (TEST 2, 2026-08-30, §22.10); evidence: `verifyModule: post-verify cmd 0x0D OK, 0x5E=008D3154` (cat=1 progId=84) |
+| Function → TradingApp caller modify | CONFIRMED (TEST 2, 2026-08-30, §22.11b); evidence: `post-verify cmd 0x0D OK, 0x5E=0E8B924C` (cat=1 progId=84) + `enumerateReverseDependents: cat=2 pid=3032`; user-confirmed open form reinitialized V1→V2 |
