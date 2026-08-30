@@ -664,9 +664,43 @@ The next investigation should focus on the **higher-level** question of whether 
 
 ## 19. TS Desktop cross-process notification mechanism
 
+**CORRECTED 2026-08-30:** This section's original "per-process `.data` / `0x40A`
+does not cross" conclusion is superseded. The `EventsViaHandles` HWND array
+buffer is in the shared `SHARE_WO` PE section (`IMAGE_SCN_MEM_SHARED`, char
+`0xD0000040`) at `0x10488838` (capacity 32), per
+`RE_OrlibRegisterNotificationHandle.md` §2.2. The 2026-08-30 runtime trace
+corroborated sharing: the CLI and orchart load the same
+`C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll`; the CLI's
+`Ordinal_57` call observed 19 pre-populated non-zero slots it did not register,
+and 16 orchart `DispatchMessageW` arrivals were confirmed. The prior "CLI list
+empty / 0 0x40A posts" finding was an artifact of broken Frida instrumentation
+(KB §22.7 caveats 2-3 and 4). This TVS did NOT perform the explicit
+cross-process sentinel write/read test that
+`RE_OrlibRegisterNotificationHandle.md` caveat #6 recommended. The numbered
+items below are preserved for reasoning history and are superseded where they
+conflict with this note. See item 2 for the refutation of the "different
+orlib20.dll" hypothesis.
+
 1. **NotifyLibChanged (orlib20 ordinal 57) is per-process, NOT cross-process.** orlib20 `FUN_101526f0` (ordinal 57, `_NotifyLibChanged@8`) packs `lParam = (category << 16) | progId` and calls `tslib::EventsViaHandles::PosMessageToClients(&PTR_DAT_10231050, 0x40A, 0, lParam)`, which iterates the HWND array at `PTR_DAT_10231050` and calls `PostMessageW(hwnd, 0x40A, 0, lParam)` per registered HWND. `PTR_DAT_10231050` is at `0x10231050`, inside orlib20's PRIVATE `.data` section (`0x1022e000-0x10240987`), NOT in the shared `SHARE_WO` (`0x10243000-0x104889ff`) or `SHARE_MM` (`0x10489000-0x104891ff`) sections. Therefore each process loading orlib20 has its own `EventsViaHandles` HWND array; a `0x40A` posted from one process only reaches HWNDs registered in THAT process's orlib20.
 
-2. **The CLI's 0x40A reaches no windows.** The CLI never calls `_OrlibRegisterNotificationHandle@4` (ordinal 595, `FUN_1011c130`), so no HWNDs are registered in the CLI's orlib20 `EventsViaHandles`. The CLI does call `NotifyLibChanged` after insert/modify (`verifyModule` success, `src/tsdev_lib.cpp:2031-2033`) and after delete (`deleteEntry` success, `category != 4`, `src/tsdev_lib.cpp:2961-2963`), but the posted `0x40A` goes to an empty HWND list.
+2. **REFUTED 2026-08-30:** The "CLI list empty / different `orlib20.dll`
+path" hypothesis below is refuted. The 2026-08-30 runtime trace
+(`tmp/frida_ord57_trace_output.txt`) confirmed the CLI and orchart load the
+same `C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll`; the shared
+`SHARE_WO` array at `0x10488838` had 19 non-zero slots (3 of them attributed
+to TSELAppHost (2) + TSScanner (1) by inheritance from the prior
+`GetWindowThreadProcessId` map in §22.3a, not directly established by this
+TVS); and 16 orchart `DispatchMessageW` arrivals were confirmed for
+`PostMessageW(0x40A, 0, 0x10054)` (cat=1, progId=84). The prior "0 0x40A
+posts" trace was an artifact of broken Frida instrumentation (KB §22.7 caveats
+2-3 and 4). The "shared `SHARE_WO`" framing is based on
+`RE_OrlibRegisterNotificationHandle.md` §2.2; this TVS corroborated it at
+runtime but did NOT perform the explicit cross-process sentinel write/read test
+that `RE_OrlibRegisterNotificationHandle.md` caveat #6 recommended.
+
+   Original (superseded) text preserved for reasoning history:
+
+   > **The CLI's 0x40A reaches no windows.** The CLI never calls `_OrlibRegisterNotificationHandle@4` (ordinal 595, `FUN_1011c130`), so no HWNDs are registered in the CLI's orlib20 `EventsViaHandles`. The CLI does call `NotifyLibChanged` after insert/modify (`verifyModule` success, `src/tsdev_lib.cpp:2031-2033`) and after delete (`deleteEntry` success, `category != 4`, `src/tsdev_lib.cpp:2961-2963`), but the posted `0x40A` goes to an empty HWND list.
 
 3. **TSDev.exe's 0x40A also does NOT cross to TS Desktop.** TSDev.exe's verify-success path (`FUN_00453f70` @ `0x00453f70`) calls `ShowRecalculationWarning()` then `Ordinal_57(category, progId)`, posting `0x40A` to TSDev.exe's own orlib20's registered HWNDs (TSDev's own views). It is an in-process UI refresh signal for TSDev's own MFC views, not a cross-process notification to TS Desktop.
 
@@ -790,7 +824,7 @@ Static-analysis-only investigation of the TSDev.exe function-edit-save path to i
 | 14d | Recursive `FUN_004D91E0` per dependent | internal TSDev | CLI uses `traverseReverseDependents` (different mechanism) |
 | 17 | **Ordinal_17** `(category, progId)` | `FUN_10151be0` @ `0x10151be0` | **MISSING** |
 | 19 | `FUN_004531A0` (property/cache persistence) | internal TSDev | **MISSING** |
-| — | **Ordinal_57** `(category, progId)` via `FUN_00453f70` | `FUN_101526f0` @ `0x101526f0` | ✓ (but per-process only, KB §19) |
+| — | **Ordinal_57** `(category, progId)` via `FUN_00453f70` | `FUN_101526f0` @ `0x101526f0` | ✓ (cross-process to TradeStation processes when the same `orlib20.dll` is loaded; CORRECTED 2026-08-30, see KB §22.3) |
 
 #### CLI `modifyEntry` path (`src/tsdev_lib.cpp:2976-3026`)
 
@@ -803,7 +837,7 @@ Static-analysis-only investigation of the TSDev.exe function-edit-save path to i
    - `_VerifyModule_New@20`
    - `traverseReverseDependents` (CLI's own enumeration + local re-verify, NOT the TSDev worker-thread path)
    - `EndCompilingProcess(0)`
-   - On success: **Ordinal_57** (NotifyLibChanged — per-process only, KB §19)
+   - On success: **Ordinal_57** (NotifyLibChanged — posts 0x40A cross-process to TradeStation processes when the same `orlib20.dll` is loaded; 0x40A delivery alone is not sufficient for dependent recalc, CORRECTED 2026-08-30, see KB §22.3)
    - Ordinal 67 (free compiler)
 
 **The CLI does NOT resolve or call ordinals 10, 17, 25, 56, 68, or 71.** Confirmed by grep of `src/tsdev_lib.cpp` and `src/orlib_resolver.cpp`: ordinals 28, 57, 66, 67, 69, 70, and 85 are resolved; none of 10, 17, 25, 56, 68, or 71 are among them.
@@ -1021,7 +1055,7 @@ Called at step 19 of `FUN_00451800` (after Ordinal_17). This function persists p
 
 ### 21.6. Candidate 5 — Document vtable +0x1F8 call (LOW confidence)
 
-At step 15 of `FUN_00451800`, on verify success, TSDev calls `(**(code **)(*param_1 + 0x1F8))()` — a document virtual function. This could be `FUN_00453f70` (which calls `ShowRecalculationWarning` + Ordinal_57), but Ordinal_57 is per-process (KB §19). The CLI has no document object. Low confidence for cross-process impact.
+At step 15 of `FUN_00451800`, on verify success, TSDev calls `(**(code **)(*param_1 + 0x1F8))()` — a document virtual function. This could be `FUN_00453f70` (which calls `ShowRecalculationWarning` + Ordinal_57), but Ordinal_57's 0x40A posts are cross-process to TradeStation processes when the same `orlib20.dll` is loaded and are not sufficient for dependent recalc by themselves (CORRECTED 2026-08-30, see KB §22.3). The CLI has no document object. Low confidence for cross-process impact.
 
 ### 21.7. Category-4-specific behavior
 
@@ -1049,7 +1083,7 @@ The CLI's `traverseReverseDependents` also gates recursion on categories 0/1/4 (
 | 2 | Ordinal_25 / Ordinal_17 pending-save queue in SHARE_WO | 25, 17 | `0x10151b10`, `0x10151be0` | MEDIUM | Shared-memory queue visible to all processes; but no evidence of orchart polling it |
 | 3 | Ordinal_56 flag reset | 56 | `0x10158b70` | LOW | Per-process flag; may affect compile/warehouse interaction |
 | 4 | `FUN_004531A0` property/cache persistence | — | `0x004531A0` | LOW | May write to warehouse; no COM evidence |
-| 5 | Document vtable +0x1F8 | — | `0x00451800` step 15 | LOW | Likely Ordinal_57 (per-process, KB §19) |
+| 5 | Document vtable +0x1F8 | — | `0x00451800` step 15 | LOW | Likely Ordinal_57 (0x40A cross-process to TradeStation processes when the same `orlib20.dll` is loaded, but not sufficient for dependent recalc; CORRECTED 2026-08-30, see KB §22.3) |
 
 ### 21.9. Static-analysis limitations
 
@@ -1107,11 +1141,41 @@ Ordered list of ordinal calls during save/verify (timestamps from trace):
 
 ### 22.3 The critical diff: 0x40A cross-process notification
 
-- **TSDev.exe posts 19 `PostMessageW(0x40A)` messages to TradeStation HWNDs inside Ordinal_57.** This triggers immediate recalculation in all 16 `orchart.exe` processes (a COM burst within ~10 ms of the `0x40A` posting; see §22.3a for the full HWND owner breakdown).
-- **The CLI calls Ordinal_57 but posts `0x40A` to ZERO TradeStation HWNDs.** The CLI process has no registered TradeStation HWND subscribers (the subscriber list is per-process in orlib20's private `.data` section).
-- **KB §19 correction:** KB §19 stated Ordinal_57 is "per-process only." Runtime evidence shows Ordinal_57 **does** post cross-process window messages (to other TradeStation processes). The "per-process" aspect is the **subscriber HWND list**: `TSDev.exe` has 19 registered TradeStation HWNDs; the CLI has none. The `0x40A` `PostMessageW` calls go to HWNDs owned by other TradeStation processes (cross-process), not to HWNDs in the calling process.
+**CORRECTED 2026-08-30:** The prior conclusion that the CLI's `Ordinal_57`
+call posts `0x40A` to zero TradeStation HWNDs because the subscriber list is
+per-process in orlib20's private `.data` section is refuted. The 2026-08-30
+runtime trace (`tmp/frida_ord57_trace_output.txt`) confirmed:
+- CLI and orchart load the same `orlib20.dll` path:
+  `C:\Program Files (x86)\TradeStation 9.5\Program\orlib20.dll`.
+- The 32-slot subscriber array at `0x10488838` is in the shared `SHARE_WO` PE
+  section (`IMAGE_SCN_MEM_SHARED`, char `0xD0000040`), per
+  `RE_OrlibRegisterNotificationHandle.md` §2.2. This TVS corroborated the
+  shared-section framing: the CLI observed 19 pre-populated non-zero slots it
+  did not register. It did NOT perform the explicit cross-process sentinel
+  write/read test that `RE_OrlibRegisterNotificationHandle.md` caveat #6
+  recommended.
+- `Ordinal_57` posted `PostMessageW(0x40A, 0, 0x10054)` (cat=1, progId=84)
+  to each of the 19 slots; 16 orchart processes confirmed receiving via
+  `DispatchMessageW`.
+- The 3 non-orchart slots are attributed to TSELAppHost (2) + TSScanner (1)
+  by inheritance from the prior `GetWindowThreadProcessId` map in §22.3a;
+  this TVS did not instrument TSELAppHost/TSScanner.
+- The prior "0 0x40A posts" trace was an artifact of broken Frida
+  instrumentation (KB §22.7 caveats 2-3: CLI agent not injected; orchart WMSG
+  logging broken by `RangeError`; caveat 4 notes the same `RangeError`
+  prevented window-message logging).
+- 0x40A delivery to orchart is confirmed, but the applied caller did NOT
+  auto-recalc. 0x40A delivery alone is insufficient for dependent recalc;
+  TSDev's post-verify block (ORD71/ORD68/worker cmd 0x0D) is the leading
+  candidate for the remaining gap.
 
-- **KB §19 nuance (per-process subscriber list, cross-process HWND ownership):** KB §19 stated the subscriber HWND list is per-process (in orlib20's private `.data` section). The runtime evidence confirms the list **is** per-process — `TSDev.exe`'s orlib20 has 19 HWNDs registered, while the CLI's orlib20 has zero. However, the 19 HWNDs in TSDev's list belong to **other processes** (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`), not to TSDev itself. The mechanism by which `orchart.exe`/`TSELAppHost`/`TSScanner` HWNDs get registered in TSDev's orlib20 subscriber list is not yet understood — it may involve shared memory, a registration broadcast, or the COM connection point advise sink. This is an open question for the implementation TVS.
+Original (superseded) text preserved for reasoning history:
+
+> - **TSDev.exe posts 19 `PostMessageW(0x40A)` messages to TradeStation HWNDs inside Ordinal_57.** This triggers immediate recalculation in all 16 `orchart.exe` processes (a COM burst within ~10 ms of the `0x40A` posting; see §22.3a for the full HWND owner breakdown).
+> - **The CLI calls Ordinal_57 but posts `0x40A` to ZERO TradeStation HWNDs.** The CLI process has no registered TradeStation HWND subscribers (the subscriber list is per-process in orlib20's private `.data` section).
+> - **KB §19 correction:** KB §19 stated Ordinal_57 is "per-process only." Runtime evidence shows Ordinal_57 **does** post cross-process window messages (to other TradeStation processes). The "per-process" aspect is the **subscriber HWND list**: `TSDev.exe` has 19 registered TradeStation HWNDs; the CLI has none. The `0x40A` `PostMessageW` calls go to HWNDs owned by other TradeStation processes (cross-process), not to HWNDs in the calling process.
+>
+> - **KB §19 nuance (per-process subscriber list, cross-process HWND ownership):** KB §19 stated the subscriber HWND list is per-process (in orlib20's private `.data` section). The runtime evidence confirms the list **is** per-process — `TSDev.exe`'s orlib20 has 19 HWNDs registered, while the CLI's orlib20 has zero. However, the 19 HWNDs in TSDev's list belong to **other processes** (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`), not to TSDev itself. The mechanism by which `orchart.exe`/`TSELAppHost`/`TSScanner` HWNDs get registered in TSDev's orlib20 subscriber list is not yet understood — it may involve shared memory, a registration broadcast, or the COM connection point advise sink. This is an open question for the implementation TVS.
 
 ### 22.3a HWND ownership verification
 
@@ -1156,12 +1220,18 @@ Summary: 16 `orchart.exe` HWNDs (one per orchart process), 2 `TSELAppHost` HWNDs
 |-------|------------------|-------------|
 | `WHServer.exe` COM events (`NdrStubCall2` + `NdrClientCall2` burst) | ~468 events | ~141 events (Run A has ~327 more, primarily from the post-verify block ORD71/ORD68/worker cmd 0x0D) |
 | `orchart.exe` warehouse COM events during modify | ~11 events per process | ~10-11 events per process (similar) |
-| `0x40A` `PostMessageW` to TradeStation HWNDs | 19 messages (16 orchart, 2 TSELAppHost, 1 TSScanner), immediate | 0 messages (CLI has no subscribers) |
+| `0x40A` `PostMessageW` to TradeStation HWNDs | 19 messages (16 orchart, 2 TSELAppHost, 1 TSScanner), immediate | 19 messages (CORRECTED 2026-08-30: the original "0 messages (CLI has no subscribers)" was a Frida artifact; see §22.3) |
 | `orchart.exe` recalc COM burst | Immediate (within 10 ms of 0x40A) | Delayed ~13 s (manual/periodic) |
 
-The `orchart.exe` warehouse COM event patterns are similar in both runs — the shared-warehouse + `WHServer.exe` COM path works for both. `WHServer.exe` COM event counts differ substantially (~468 vs ~141, ~327 more in Run A), and the `0x40A` notification to TradeStation HWNDs is present only in Run A. The timing evidence supports `0x40A` as the immediate-recalc trigger, but the extra `WHServer.exe` events could also contribute (see §22.6).
+The `orchart.exe` warehouse COM event patterns are similar in both runs — the shared-warehouse + `WHServer.exe` COM path works for both. `WHServer.exe` COM event counts differ substantially (~468 vs ~141, ~327 more in Run A), and the `0x40A` notification to TradeStation HWNDs is present only in Run A **(CORRECTED 2026-08-30: the Run B "0 messages" was a Frida artifact; both runs post 19 messages, see §22.3)**. The timing evidence in the 2026-08-29 trace supported `0x40A` as the immediate-recalc trigger, but the 2026-08-30 runtime verification shows 0x40A delivery alone does not trigger dependent recalc; the missing TSDev post-verify block (ORD71/ORD68/worker cmd 0x0D) is the leading candidate for the remaining gap (see WORKING_MEMORY next step).
 
 ### 22.6 Recommended minimal fix
+
+**CORRECTED 2026-08-30:** The 2026-08-30 runtime verification confirmed that the
+CLI already posts `0x40A` to 16 orchart processes, but the applied caller does
+NOT auto-recalc. Approach A (enumerate HWNDs and post manually) is therefore not
+needed; the missing TSDev post-verify block (ORD71/ORD68/worker cmd 0x0D,
+Approach B) is the leading candidate. See WORKING_MEMORY next step.
 
 **Alternative hypothesis:** The extra ~327 `WHServer.exe` COM events from the post-verify block (ORD71/ORD68/worker cmd 0x0D) are an **alternative or additional** trigger for the immediate recalc. The timing evidence supports `0x40A` as the trigger (`0x40A` at 18:25:34.218 → `orchart.exe` COM burst at 18:25:34.228, ~10 ms gap), but the extra `WHServer.exe` events precede the `0x40A` (18:25:33.922–34.099) and could independently trigger recalc via the `_IWHouseEvents` COM connection point. Both mechanisms may be jointly necessary. A discriminating test (block `0x40A` but keep the post-verify block, or vice versa) is needed to determine which is the actual trigger.
 
@@ -1180,5 +1250,61 @@ The CLI must:
 1. **Worker cmd 0x0D not directly confirmed.** The Frida script had a `RangeError` bug in the `onEnter` handler at `/script1.js:29`, preventing CMD0D log lines. Block entry is inferred from ORD71/ORD68 calls.
 2. **CLI ordinal calls not observed at runtime.** The CLI trace captured zero ordinal calls because the Frida agent was not injected into the CLI process (Frida's `Interceptor` modifies code bytes, breaking the CLI's signature-based resolver). CLI ordinal call behavior is inferred from `cli_out` debug logging and source code, not from runtime observation.
 3. **`orchart.exe` WMSG logging broken.** The same `RangeError` bug prevented window-message logging in `orchart.exe`. The `0x40A` → recalc correlation is established by timing: `0x40A` at 18:25:34.218-220 → `orchart.exe` COM burst at 18:25:34.228 (~10 ms gap).
-4. **HWND ownership now mapped.** The 19 `0x40A` target HWNDs are mapped to owner processes in §22.3a (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`, zero `TSDev.exe`). The mechanism by which they are registered in TSDev's subscriber list remains unknown.
+4. **HWND ownership now mapped.** The 19 `0x40A` target HWNDs are mapped to owner processes in §22.3a (16 `orchart.exe`, 2 `TSELAppHost`, 1 `TSScanner`, zero `TSDev.exe`). The mechanism by which they are registered in a per-process subscriber list remains unknown **(CORRECTED 2026-08-30: the subscriber array is in the shared `SHARE_WO` PE section; any process loading the same `orlib20.dll` file sees the same pre-populated array, see §22.3).**
 5. **WHServer event count discrepancy.** The Run A / Run B comparison initially reported ~155 `WHServer.exe` COM events each. The actual counts are approximately 468 for Run A and 141 for Run B (Run A has ~327 more events, primarily from the post-verify block). This affects any claim that the two traces are identical or that the `0x40A` notification is the only difference.
+
+### 22.8 Worker cmd 0x0D dispatch — IMPLEMENTATION CONFIRMED (2026-08-30)
+
+**Status: The function-modify recalc gap is CLOSED.** A worker cmd 0x0D
+(FindProgram) dispatch was added to the CLI's `verifyModule()` post-success
+path in `src/tsdev_lib.cpp`, replicating TSDev's `FUN_004d75b0`. This is the
+"Approach B" minimal fix from §22.6, using only the generic dispatcher
+(`FUN_101cf5b0` via `callCmdDispatcher`) — no Ordinal_10/71/68 or
+worker-thread infrastructure replication was needed.
+
+#### Implementation
+
+Added inside the existing category-gated (`rootCategory == 0 || 1 || 4`)
+post-success block in `verifyModule()`, after `linkModule` and before
+`traverseReverseDependents`:
+
+1. Get warehouse via `callGetWarehouse`.
+2. Check `warehouse+0xAE != 0` (COM server / programs-collection pointer).
+3. Set `warehouse+0x12 = rootCategory`, `warehouse+0x16 = progId`.
+4. Dispatch cmd 0x0D via `callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x0D)`.
+5. Read `warehouse+0x5E` (IProgram result) for debug logging.
+
+Non-fatal on all failure modes (NULL warehouse, NULL +0xAE, SEH). Purely
+additive — no existing code modified. Adversarial review: APPROVED.
+
+#### E2E verification
+
+- CLI `modify function TsDeskFnProbe_20260829` (ProgId 84, cat 1) v2→v1 from
+  elevated direct CLI, exit 0.
+- Debug log confirmed cmd 0x0D dispatch fired:
+  `verifyModule: dispatching post-verify cmd 0x0D cat=1 progId=84 wh=... 0xAE=...`
+  `verifyModule: post-verify cmd 0x0D OK, 0x5E=0x... (cat=1 progId=84)`
+  (`warehouse+0x5E` = valid IProgram pointer, confirming FindProgram succeeded).
+- No crashes (no TSCrashReport, 16 orchart processes stable).
+- **User-confirmed: applied caller indicator `TsDeskFnProbeCaller_20260829`
+  (ProgId 3008) auto-recalculated immediately (2→1) without manual refresh.**
+
+#### Conclusion
+
+The cross-process recalc mechanism for function-modify is:
+1. **Worker cmd 0x0D** (FindProgram) → COM call to WHServer.exe → fires
+   `_IWHouseEvents` COM events → orchart receives and recalculates.
+2. **Ordinal_57** (0x40A notification) → posts `PostMessageW(0x40A, ...)` to
+   orchart HWNDs → orchart processes the notification.
+
+Both are needed: 0x40A delivery alone was confirmed insufficient (§22.3,
+§22.5). Cmd 0x0D is the necessary additional trigger that fires the WHServer.exe
+COM events causing orchart to recalc. The CLI now performs both, matching
+TSDev.exe's post-verify sequence.
+
+The full TSDev post-verify block also includes Ordinal_10 (session get),
+Ordinal_71 (singleton), Ordinal_68 (dependent count), and a recursive
+per-dependent `FUN_004D91E0` traversal. These were NOT needed for the
+single-caller probe (one dependent). For multi-dependent scenarios, the
+recursive traversal with per-dependent cmd 0x0D may be needed — this is a
+potential future TVS if multi-dependent recalc is found insufficient.

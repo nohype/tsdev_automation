@@ -1975,6 +1975,51 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
 
         int rootCategory = getCategory(type);
         if (rootCategory == 0 || rootCategory == 1 || rootCategory == 4) {
+
+            // --- 7b.1: Worker cmd 0x0D (FindProgram) dispatch (TSDev FUN_004d75b0 parity).
+            //     TSDev's post-verify block (FUN_004D91E0 / FUN_004d75b0) sends
+            //     worker thread command 0x0D for categories 0/1/4 (Strategy/
+            //     Function-subtype/Function) immediately after _VerifyModule_New
+            //     succeeds and the module is linked. It sets warehouse+0x12 =
+            //     category and warehouse+0x16 = ProgId, then dispatches cmd 0x0D
+            //     through FUN_101cf5b0. The worker loads the program record and
+            //     fires WHServer.exe COM events that cause orchart.exe to
+            //     recalculate applied dependent indicators. Without this,
+            //     modifying a function does not immediately trigger chart
+            //     recalc (KB §21.2, §22.6).
+            //     Non-fatal: a NULL warehouse, warehouse+0xAE == 0, or dispatcher
+            //     SEH all skip the dispatch; the verify/modify still succeeds.
+            if (m_pGetWarehouse && m_pCmdDispatcher) {
+                void* wh = nullptr;
+                if (callGetWarehouse(reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0, &wh) && wh) {
+                    char* whp = reinterpret_cast<char*>(wh);
+                    void* programsIface = *reinterpret_cast<void**>(whp + 0xAE);
+                    if (!programsIface) {
+                        TSDEV_DBG("verifyModule: post-verify cmd 0x0D skipped, warehouse+0xAE is NULL (cat=%d progId=%d)\n",
+                                  rootCategory, progId);
+                    } else {
+                        *reinterpret_cast<int*>(whp + 0x12) = rootCategory;
+                        *reinterpret_cast<int*>(whp + 0x16) = progId;
+                        TSDEV_DBG("verifyModule: dispatching post-verify cmd 0x0D cat=%d progId=%d wh=%p 0xAE=%p\n",
+                                  rootCategory, progId, wh, programsIface);
+                        if (!callCmdDispatcher(m_pCmdDispatcher, wh, 0x0D)) {
+                            TSDEV_DBG("verifyModule: post-verify cmd 0x0D SEH (cat=%d progId=%d)\n",
+                                      rootCategory, progId);
+                        } else {
+                            void* iProgramResult = *reinterpret_cast<void**>(whp + 0x5E);
+                            TSDEV_DBG("verifyModule: post-verify cmd 0x0D OK, 0x5E=%p (cat=%d progId=%d)\n",
+                                      iProgramResult, rootCategory, progId);
+                        }
+                    }
+                } else {
+                    TSDEV_DBG("verifyModule: post-verify cmd 0x0D skipped, warehouse unavailable (cat=%d progId=%d)\n",
+                              rootCategory, progId);
+                }
+            } else {
+                TSDEV_DBG("verifyModule: post-verify cmd 0x0D skipped, dispatcher/GetWarehouse unresolved (cat=%d progId=%d)\n",
+                          rootCategory, progId);
+            }
+
             // Contract-change check: compare old vs new master record.
             // Intended old-record capture before saveSource() is currently
             // missing and is an escalated M.4 blocker. Until it is populated,
