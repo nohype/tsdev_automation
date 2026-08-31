@@ -5,8 +5,8 @@ Do not restate what the code itself documents.
 
 ## Current objective
 
-**First release.** All five hard requirements are MET and user-verified
-(2026-08-31):
+**First release CUT — v0.1.0 published 2026-08-31.** All five hard
+requirements are MET and user-verified (2026-08-31):
 
 - Six operations (Insert/Delete/Modify/Exists/Get-source/Upsert) via C++ CLI
   and Python `TsDevClient` with batch (manifest + stdin) support.
@@ -15,12 +15,14 @@ Do not restate what the code itself documents.
   insertion, modification (both item-code and function-only), and deletion
   of all 5 types tested while items open/applied in TS Desktop.
 - Python wrapper parity with CLI.
-- **Bundle packaging green (2026-08-31):** `docs/BUNDLE_README.md` created
-  (user-facing quick-start, 89 lines, adversarially reviewed/approved) and
-  `tools/create_bundle_zip.ps1` fixed to auto-create `artifacts/` before
-  `Compress-Archive`. `cmake --build build --config Release` now exits 0 and
-  produces `dist/` (tsdev_cli.exe + tsdev_automation/ + README.md) and a
-  timestamped `artifacts/tsdev_automation_*.zip`. CI build is unblocked.
+- **CI + release verified end-to-end 2026-08-31 (run 33404368803):**
+  pushing tag `v0.1.0` triggered build (2m50s, all steps green) then the
+  release job (14s), which created a public GitHub Release with
+  `tsdev_automation_v0.1.0.zip` (207206 bytes) attached. Downloaded and
+  inspected: single archive, no nested archives, files at root —
+  `tsdev_cli.exe` (valid 32-bit x86 PE, Machine=0x014C, runs), `README.md`,
+  and `tsdev_automation/` (9 .py files). Adversarial review of
+  `.github/workflows/ci.yml` APPROVED with no concrete bugs.
 
 No release blockers remain. The `dependents` workstream (M) remains paused;
 it is beyond the release scope.
@@ -47,11 +49,10 @@ it is beyond the release scope.
 
 ## Next TVS
 
-None planned. The release blocker (bundle packaging) is resolved and the
-build is green. The next team should identify the next step toward 100%
-acceptance or release cut. Candidate areas (not committed): the paused
-`dependents` workstream (M), or final release-cut verification (CI run on
-push, bundle smoke test). Do NOT plan beyond one TVS.
+None planned. The first release (v0.1.0) is cut and CI/release verified
+end-to-end. The next team should identify the next step toward 100%
+acceptance. Candidate area (not committed): the paused `dependents`
+workstream (M). Do NOT plan beyond one TVS.
 
 ## Key references
 

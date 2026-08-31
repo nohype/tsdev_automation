@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded branch/PR runs; queue (do not cancel) tag-push runs so
+# release creation is never interrupted mid-flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     runs-on: windows-latest
@@ -68,3 +74,4 @@ jobs:
           files: tsdev_automation_${{ github.ref_name }}.zip
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
