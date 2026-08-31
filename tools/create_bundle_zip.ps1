@@ -13,4 +13,6 @@ param([Parameter(Mandatory)][string]$SourceDir)
 $ErrorActionPreference = 'Stop'
 $ts = Get-Date -Format 'yyMMddHHmm'
 $zipPath = Join-Path $SourceDir "artifacts\tsdev_automation_$ts.zip"
+$artifactsDir = Join-Path $SourceDir "artifacts"
+if (-not (Test-Path $artifactsDir)) { New-Item -ItemType Directory -Path $artifactsDir | Out-Null }
 Compress-Archive -Path "$SourceDir\dist\tsdev_cli.exe","$SourceDir\dist\tsdev_automation","$SourceDir\dist\README.md" -DestinationPath $zipPath -Force

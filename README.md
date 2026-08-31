@@ -1,336 +1,229 @@
 # TSDev Automation
 
-Automated management of the TradeStation Development Environment (TSDev) Library without using the TSDev UI (TSDev.exe). Insert, delete, modify, query, and retrieve EasyLanguage strategies, indicators, functions, and trading apps via a standalone CLI and a Python wrapper.
+Automates TradeStation **9.5** Development Environment (TSDev) Library management - insert, modify, upsert, delete, query existence, and retrieve source - for EasyLanguage items, without the TSDev UI.
 
-## Known Critical Issue — Historical Workstream L record
+Two front-ends: a native CLI executable `tsdev_cli` and a companion Python wrapper `TsDevClient`.
 
-> **Current status:** Workstream L is closed; current Workstream M status
-> (approved slices, blocked/pending items) is tracked authoritatively in
-> [`AGENTS.md`](AGENTS.md) §"Current state and TODO".
->
-> The L.1–L.17 claims, results, and fault records below are retained for provenance.
+## Supported types
 
-**Historical L evidence records that strategies inserted/modified/upserted by
-`tsdev_cli` / `TsDevClient` could appear VERIFIED in TSDev but fail at runtime
-in TradeStation Desktop with "Unknown link error occurred."** A full Desktop
-restart did not repair a broken CLI Strategy in that historical observation.
-Other supported component types used the common compile/finalization path and
-were included in the historical Workstream L validation, but an equivalent
-runtime failure was not claimed without type-specific evidence.
+`strategy`, `function`, `indicator`, `tradingapp`, `showme` (case-insensitive). ActivityBar, PaintBar, and ProbabilityMap are not supported.
 
-The historical workaround was to open the item in TSDev, make a harmless edit,
-and re-Verify — this re-ran the original finalization path. **This was a
-workaround only and was not an acceptable fix for an automated tool.**
+## Prerequisites
 
-The retained L record describes a confirmed root-cause defect in the CLI's
-orlib20 finalization path and the historical L remediation/verification work.
-It does not change the current status above or imply that its historical test
-counts are current acceptance evidence. For current Workstream M status
-(approved slices, blocked/pending items), see
-[`AGENTS.md`](AGENTS.md) §"Current state and TODO".
+- TradeStation 9.5 installed. Default root: `C:\Program Files (x86)\TradeStation 9.5`; override with `--ts-path <dir>` (CLI) or `ts_path=<dir>` (Python).
+   - Note: TS 10.0 is *not supported*.
+- `tsdev_cli` is 32-bit (loads `orlib20.dll`).
+- TS Desktop does not need to be running.
 
-- Workstream L plan: [`docs/workstream_unknown_link_fix_plan.md`](docs/workstream_unknown_link_fix_plan.md)
-- Durable root-cause record: [`docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md`](docs/RE/RE_UNKNOWN_LINK_ROOT_CAUSE.md)
+## Elevation
 
-## Supported component types
+- Direct `tsdev_cli` calls (including `serve`) must run elevated. Non-elevated direct CLI exits with code `11`.
+- Two options:
+  1. Run `tsdev_cli` from an elevated terminal (or run Python elevated).
+  2. `TsDevClient(use_serve=True)` (default): starts an elevated `tsdev_cli serve` broker with a single UAC prompt for the whole session.
+- `TsDevClient(use_serve=False)` from a non-elevated Python session raises `ElevationRequiredError` before launching.
 
-The CLI supports five confirmed EasyLanguage types (Strategy, Indicator, Function, TradingApp, ShowMe); three remain unconfirmed (ActivityBar, PaintBar, ProbabilityMap). See [`docs/TS_COMPONENT_TYPES.md`](docs/TS_COMPONENT_TYPES.md) for the authoritative type-mapping table and per-type status.
+## Native CLI (`tsdev_cli`)
 
-## CLI usage
+### Subcommands
 
-```
-tsdev_cli [--json] [--ts-path <dir>] insert       <type> <name> <source-file>
-tsdev_cli [--json] [--ts-path <dir>] modify       <type> <name> <source-file>
-tsdev_cli [--json] [--ts-path <dir>] delete       <type> <name>
-tsdev_cli [--json] [--ts-path <dir>] exists       <type> <name> [--case-insensitive]
-tsdev_cli [--json] [--ts-path <dir>] get-source   <type> <name> [--output <file>]
-tsdev_cli [--json] [--ts-path <dir>] upsert       <type> <name> <source-file>
-tsdev_cli [--ts-path <dir>] batch-insert  <manifest-file> | --batch-stdin
-tsdev_cli [--ts-path <dir>] batch-modify  <manifest-file> | --batch-stdin
-tsdev_cli [--ts-path <dir>] batch-delete  <manifest-file> | --batch-stdin
-tsdev_cli [--ts-path <dir>] batch-upsert  <manifest-file> | --batch-stdin
-tsdev_cli [--ts-path <dir>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
-tsdev_cli [--ts-path <dir>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
-tsdev_cli [--ts-path <dir>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
-tsdev_cli [--ts-path <dir>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
-```
+Positional arguments: `<type>`, `<name>`, `<source_file>`
 
-- `insert` — Compile and insert a new component. Fails loudly on compile errors (exit 8).
-- `modify` — Replace source code of an existing component and recompile. Preserves ProgId.
-- `delete` — Delete an existing component. Notifies if it doesn't exist (exit 5).
-- `exists` — Query whether a component exists by name. Returns `exists=true/false`, the verbatim stored name, and ProgId. Use `--case-insensitive` for case-insensitive name matching. Exit 0 for both found and not-found.
-- `get-source` — Retrieve EasyLanguage source. Prints to stdout by default; `--output <file>` writes to a file. Internally encrypted library storage is decrypted automatically, matching TSDev; library items do not expose user password protection.
-- `upsert` — Insert if the component doesn't exist, otherwise modify. Preserves ProgId on the modify path.
-- `batch-insert`/`batch-modify`/`batch-delete`/`batch-upsert` — Batch operations from a line-based manifest file or stdin (`--batch-stdin`). Always emit a JSON array (one result per item).
-- `batch-insert-dir`/`batch-modify-dir`/`batch-delete-dir`/`batch-upsert-dir` — Batch operations on all files in a directory. File stem = item name; file content = EL source. `-t <ext>` filters by extension (default `.el`+`.txt`; first `-t` overrides defaults; repeatable). Always emit a JSON array.
-- `--json` — Emit structured JSON output (single object for single-item ops; batch ops always emit a JSON array).
-- `--ts-path <dir>` — Override the TradeStation install directory (default: auto-discovered from registry).
+- `insert <type> <name> <source_file>`
+- `modify <type> <name> <source_file>`
+- `upsert <type> <name> <source_file>`
+- `delete <type> <name>`
+- `exists <type> <name> [--case-insensitive]`
+- `get-source <type> <name> [--output <file>]`
 
-> **`serve` is an internal broker-mode subcommand.** It is not intended for
-> direct invocation — it is spawned automatically by the Python wrapper's
-> serve broker (see [Serve mode](#serve-mode-one-uac-ux-from-a-non-elevated-python-session)
-> and [docs/BUILD.md](docs/BUILD.md#serve-mode---serve--use_serve)). Do not
-> run `tsdev_cli serve` manually; use the Python `TsDevClient` API instead.
+### Flags
 
-`<type>` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme` (case-insensitive).
+- Global:
+  - `--json` - emit a single JSON result object on stdout.
+  - `--ts-path <dir>` - override TradeStation install directory.
+- `exists`:
+  - `--case-insensitive` (default: case-sensitive exact match).
+- `get-source`:
+  - `--output <file>` - write source to file; internally encrypted items are decrypted automatically.
 
-## Build
+### Exit codes
 
-See [docs/BUILD.md](docs/BUILD.md) for build prerequisites, CMake commands, and test instructions.
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Invalid command-line usage or arguments |
+| `2` | Unknown component type |
+| `3` | Could not read the source file, or could not write the output file (`get-source`) |
+| `4` | Failed to initialize the TSDev Library (check TradeStation install / `--ts-path`) |
+| `5` | Item not found (modify/delete/get-source), or item already exists (insert) |
+| `6` | The item operation could not be completed |
+| `7` | Failed to save the source text to the library |
+| `8` | The EasyLanguage source failed to compile |
+| `9` | The item's compiled library file is missing |
+| `10` | Internal error: failed to start a required worker thread |
+| `11` | Not running as administrator (elevation required) |
 
-## Admin privileges
+### Batch operations
 
-Direct `tsdev_cli` subcommands, including `serve`, require an elevated
-administrator process. The default CLI build uses a `requireAdministrator`
-manifest, so a non-elevated direct launch follows normal Windows UAC/manifest
-handling and may fail at process creation before the CLI runs; an `asInvoker`
-development/testing variant reaches the CLI's runtime elevation guard instead.
-The separate `sigtool` file-analysis CLI does not access the live TSDev Library
-and does not have this requirement. TS-dependent test executables have their own
-administrator prerequisite.
+File batch subcommands take a `<manifest_file>` or `--batch-stdin`:
 
-Run your terminal as Administrator for direct CLI commands; direct CLI
-invocations thereafter are silent (subprocesses inherit the elevated token).
-Python users using the default `TsDevClient(use_serve=True)` do not need to run
-their Python process as Administrator — it starts the separate elevated serve
-broker through a single normal Windows UAC consent prompt. The
-`TsDevClient(use_serve=False)` path requires an already-elevated Python process
-and raises `ElevationRequiredError` before launch otherwise. To build an
-`asInvoker` development/testing variant (the direct CLI runtime guard still
-requires elevation):
+- `batch-insert <manifest_file>` / `batch-insert --batch-stdin`
+- `batch-modify <manifest_file>` / `batch-modify --batch-stdin`
+- `batch-upsert <manifest_file>` / `batch-upsert --batch-stdin`
+- `batch-delete <manifest_file>` / `batch-delete --batch-stdin`
 
-```cmd
-cmake -S . -B build -A Win32 -DTSDEV_REQUIRE_ADMIN=OFF
-```
+Directory batch subcommands operate on a directory of `.el`/`.txt` files:
 
-For the full elevation contract — including the exact CLI exit code, the
-`use_serve` flag mechanics, and the serve-broker internals — see
-[docs/BUILD.md](docs/BUILD.md#admin-privileges-tsdev_require_admin)
-(operational) and [AGENTS.md](AGENTS.md) (rule).
+- `batch-insert-dir <dir>`
+- `batch-modify-dir <dir>`
+- `batch-upsert-dir <dir>`
+- `batch-delete-dir <dir>`
 
-### Serve mode (one-UAC UX from a non-elevated Python session)
+Use `-t <ext>` (repeatable) to filter extensions. File stem (without the last extension) = item name.
 
-When using the Python wrapper from a **non-elevated** session, the default
-`TsDevClient(use_serve=True)` auto-starts an elevated broker process through a
-single UAC consent prompt and routes all single-item ops
-(`insert`/`modify`/`delete`/`exists`/`get_source`/`upsert`) through a Windows
-named pipe to that broker — no per-call prompts. When the Python session is
-**already elevated**, the direct `subprocess.run` path is used with zero
-overhead (no broker is started). See
-[docs/BUILD.md](docs/BUILD.md#serve-mode---serve--use_serve) for the full
-serve-mode documentation (broker protocol, `use_serve` flag, E2E test).
+Output is always a JSON array (one element per item). Exit codes:
 
-## Distribution / Bundle
+- `0` - all succeeded
+- `1` - usage error, manifest not found, or manifest empty (batch did not run)
+- `2` - batch ran, but one or more items failed (per-item details in the JSON)
 
-Running `cmake --build build --config Release` automatically produces a
-`dist/` directory at the repo root containing the assembled bundle:
+### Manifest format
 
-```
-dist/
-├── tsdev_cli.exe        # the C++ CLI (static, self-contained)
-├── tsdev_automation/    # the Python wrapper package (7 .py files)
-└── README.md            # bundle quick-start guide
+Line-based text (not JSON). `#` comments and blank lines are skipped. One item per line.
+
+- `insert`/`modify`/`upsert`: `<type> <name> <source_file>` (`source_file` is the rest of the line after the second token, so paths with spaces work).
+- `delete`: `<type> <name>`
+
+Example `manifest.txt`:
+
+```text
+# insert two functions
+function MyFuncA ./src/MyFuncA.el
+function MyFuncB ./src/MyFuncB.el
 ```
 
-Both `dist/` and `artifacts/` are gitignored (root `.gitignore`).
-
-### Using `dist/`
-
-- **CLI directly:** `dist\tsdev_cli.exe insert strategy MyStrat my_strategy.el`
-- **Python wrapper:** add `dist/` to `sys.path` or `PYTHONPATH`, then
-  `from tsdev_automation import TsDevClient`. The wrapper auto-discovers the
-  sibling `tsdev_cli.exe` — no `cli_path` needed.
-
-### Using `artifacts/`
-
-`artifacts/` contains an automatically generated timestamped zip ready to
-distribute — extract and use directly, no build step required:
-
-```
-artifacts/tsdev_automation_<yymmdd><HHMM>.zip
-```
-
-The zip contains exactly the three bundle components (`tsdev_cli.exe`,
-`tsdev_automation/`, `README.md`) — no wheels, sdist, or `__pycache__/`. Each
-build creates a new timestamped zip; the latest build wins within the same
-minute (`-Force` overwrite).
-
-### Manual zip (supplementary)
-
-For ad-hoc use, a selective zip can be created manually from the repo root:
+### Examples
 
 ```powershell
-Compress-Archive -Path dist\tsdev_cli.exe,dist\tsdev_automation,dist\README.md -DestinationPath tsdev_automation-bundle.zip
+# insert a function
+tsdev_cli insert function MyFn ./src/MyFn.el
+
+# case-insensitive exists check, JSON output
+tsdev_cli --json exists function MyFn --case-insensitive
+
+# retrieve source to a file
+tsdev_cli get-source function MyFn --output MyFn.el
+
+# batch from a file
+tsdev_cli batch-insert manifest.txt
 ```
 
-## Project rules
+## Python wrapper (`TsDevClient`)
 
-See [AGENTS.md](AGENTS.md) for project rules, acceptance criteria, and conventions.
+### Import
 
-## Architecture
+```python
+from tsdev_automation import TsDevClient, BatchItem
+```
 
-Signature data lives in `signatures/*.json` (authoritative source of truth) → `tools/sigcodegen.py` generates `signatures.gen.h` at build time → `src/orlib_resolver.cpp` consumes it. No runtime JSON dependency in the production CLI.
+### Constructor
 
-`src/sigtool.cpp` is a standalone developer tool for verifying orlib20.dll signatures against a DLL file on disk.
+```python
+client = TsDevClient(
+    cli_path=None,   # path to tsdev_cli.exe; auto-discovered if None
+    ts_path=None,    # forwarded as --ts-path
+    timeout=None,    # subprocess timeout in seconds; None = no timeout
+    use_serve=True,  # auto-elevate via serve broker (one UAC prompt)
+)
+```
 
-## Python integration
+### Single-item methods
 
-A stdlib-only Python wrapper (`TsDevClient`) drives the 32-bit `tsdev_cli.exe`
-as a subprocess using its `--json` structured output and batch subcommands.
-This lets you automate the TSDev Library from **64-bit Python** (the CLI loads
-`orlib20.dll`, which is 32-bit and cannot be loaded in-process).
+All return a `TsDevResult` dataclass. `insert`/`modify`/`upsert`/`delete`/`get_source` raise a `TsDevError` subclass on failure; `exists` does not raise on not-found (not-found is a successful query).
+
+`TsDevResult` fields:
+
+- `.success: bool`, `.exit_code: int`, `.op: str`, `.type: str | None`, `.name: str | None`
+- `.prog_id: int | None`, `.ell_path: str | None` — populated by insert/modify/upsert/delete
+- `.exists: bool`, `.stored_name: str`, `.prog_id: int` — populated by `exists` (`.prog_id == 0` and `.stored_name == ""` when not found)
+- `.source: str` — populated by `get_source` (empty string on failure)
+- `.error: TsDevErrorInfo | None` — set when `success` is False; carries `.code: str`, `.message: str`, plus `.compile_errors: str | None` (exit 8) and `.existing_prog_id: int | None` (insert, exit 5)
+
+Methods:
+- `insert(type, name, source)`
+- `modify(type, name, source)`
+- `upsert(type, name, source)`
+
+`source` may be a file path or an EasyLanguage source string (auto-written to a temp `.el` file).
+
+- `delete(type, name)`
+- `exists(type, name, *, case_insensitive=False)`
+- `get_source(type, name, output_file=None)` — if `output_file` is given, the source is also written to disk.
+
+### Batch methods
+
+- `batch_insert(items)` / `batch_modify(items)` / `batch_upsert(items)` / `batch_delete(items)`
+  - `items`: `Sequence[BatchItem]` -> `list[TsDevResult]`
+- `batch_insert_dir(type, dir_path, extensions=None)`
+- `batch_modify_dir(type, dir_path, extensions=None)`
+- `batch_delete_dir(type, dir_path, extensions=None)`
+- `batch_upsert_dir(type, dir_path, extensions=None)`
+
+Per-item failures are returned in the list. Manifest/directory-level failures raise `TsDevError`.
+
+### `BatchItem`
+
+```python
+from dataclasses import dataclass
+from os import PathLike
+
+@dataclass
+class BatchItem:
+    type: str
+    name: str
+    source: str | PathLike | None  # required for insert/modify/upsert; None for delete
+```
+
+`source` may be a file path or an EasyLanguage source string.
 
 ### Install
 
-```powershell
-# From a source checkout (creates a .venv and installs the package + deps):
-uv sync
-
-# Or install from source into an existing environment:
+```shell
 pip install .
 ```
 
-The package is `tsdev-automation` (import name `tsdev_automation`). It requires
-**64-bit Python 3.14+** and is **stdlib-only** (no third-party dependencies).
-The CLI binary (`tsdev_cli.exe`) is **not** bundled — build it first with CMake,
-or point the client at it via `cli_path` / `TSDEV_CLI_PATH`.
+Requires Python `>=3.14`. `TsDevClient` uses only the standard library.
 
-### `TsDevClient` API
+### Example
 
 ```python
 from tsdev_automation import TsDevClient, BatchItem
 
-client = TsDevClient(
-    cli_path=None,   # auto-discover build/Release/tsdev_cli.exe (or TSDEV_CLI_PATH)
-    ts_path=None,    # optional TradeStation install dir (--ts-path)
-    timeout=None,    # optional subprocess timeout in seconds
-)
-```
+client = TsDevClient()  # use_serve=True by default; one UAC prompt if not elevated
 
-| Method | Returns | Raises |
-|--------|---------|--------|
-| `insert(type, name, source)` | `TsDevResult` | `AlreadyExistsError`, `CompileError`, … |
-| `modify(type, name, source)` | `TsDevResult` | `NotFoundError`, `CompileError`, … |
-| `delete(type, name)` | `TsDevResult` | `NotFoundError`, … |
-| `exists(type, name, *, case_insensitive=False)` | `TsDevResult` | `UnknownTypeError`, … (not-found is NOT raised) |
-| `get_source(type, name, output_file=None)` | `TsDevResult` | `NotFoundError`, `OutputWriteError`, … |
-| `upsert(type, name, source)` | `TsDevResult` | `CompileError`, `SourceFileError`, … |
-| `batch_insert(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
-| `batch_modify(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
-| `batch_delete(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
-| `batch_upsert(items)` | `list[TsDevResult]` | `TsDevError` (manifest-level only) |
-| `batch_insert_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
-| `batch_modify_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
-| `batch_delete_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
-| `batch_upsert_dir(type, dir_path, extensions=None)` | `list[TsDevResult]` | `TsDevError` (directory-level only) |
+src = '{ name = MyFn }  { user function }  Value1 = 1;'
 
-`type` is one of `strategy`, `function`, `indicator`, `tradingapp`, `showme`. `source`
-may be a path to an existing `.el` file (used directly) or an inline
-EasyLanguage source string (written to a temp file and cleaned up
-automatically). Batch methods take a list of `BatchItem(type, name, source)`
-and return one `TsDevResult` per item in order — per-item failures are reported
-in the list, not raised (only a manifest-level failure raises). Directory batch
-methods (`batch_*_dir`) take a directory path instead of an items list; they
-enumerate files in the directory (file stem = item name, file content = EL
-source) and return one `TsDevResult` per file.
+ins = client.insert('function', 'MyFn', src)
+# ins: TsDevResult -> .success=True, .prog_id, .ell_path
+r = client.exists('function', 'MyFn', case_insensitive=True)
+# r: TsDevResult -> .exists, .stored_name, .prog_id
+print(r.exists, r.stored_name, r.prog_id)
+g = client.get_source('function', 'MyFn')
+# g: TsDevResult -> .source (str)
+print(g.source)
+client.delete('function', 'MyFn')
 
-### Exception hierarchy
-
-All CLI-reported failures raise a subclass of `TsDevError` (the base
-exception). Each carries the originating `TsDevResult` on `.result` for
-inspection. Two client-side/process failures have no `TsDevResult`:
-`TsDevCrashError` exposes the fatal NT process exit code, and
-`ElevationRequiredError` is raised before subprocess launch when
-`use_serve=False` is used from a non-elevated Python process.
-
-```
-TsDevError                      # base
-├── UsageError                  # exit 1  — CLI usage error
-├── UnknownTypeError            # exit 2  — unknown component type
-├── SourceFileError             # exit 3  — source file unreadable/empty
-├── OutputWriteError            # exit 3  — get-source output file write failure
-├── InitFailure                 # exit 4  — orlib20 init failure
-├── NotFoundError               # exit 5  — component not found (modify/delete)
-├── AlreadyExistsError          # exit 5  — component exists (insert)
-├── EntryOpError                # exit 6  — createEntry/deleteEntry failure
-├── SaveSourceError             # exit 7  — saveSource failure
-├── CompileError                # exit 8  — EasyLanguage compile failure
-├── ArtifactMissingError        # exit 9  — missing/inconsistent persistence artifact (.ell/.xml), including Fault A
-├── EllMissingError             # exit 9  — historical legacy .ell-not-produced payload
-├── ThreadFailure               # exit 10 — worker-thread creation failure
-├── ElevationRequiredError      # client exit 12 — use_serve=False without elevation
-└── TsDevCrashError             # crash  — CLI process crash (exit code = NT status)
-```
-
-### Code example
-
-```python
-from tsdev_automation import (
-    TsDevClient, BatchItem, CompileError, AlreadyExistsError,
-)
-
-client = TsDevClient()
-
-# Insert a strategy (inline source string).
-result = client.insert("strategy", "MyStrat",
-                       "Inputs: Length(10); "
-                       "If Close > Average(Close, Length) Then Buy next bar at Market;")
-print(f"ProgId={result.prog_id}  ell={result.ell_path}")
-
-# Handle a compile error.
-try:
-    client.insert("strategy", "BadStrat", "this is not valid easylanguage !!!")
-except CompileError as e:
-    print(f"compile failed: {e.result.error.compile_errors}")
-
-# Batch-insert 20 strategies (init is amortized across the batch).
-items = [BatchItem("strategy", f"Batch{i:02d}",
-                   "Inputs: Length(10); If Close > Average(Close, Length) "
-                   "Then Buy next bar at Market;")
-         for i in range(20)]
+# batch
+items = [
+    BatchItem('function', 'FnA', 'Value1 = 1;'),
+    BatchItem('indicator', 'IndA', 'Plot(Close, "C");'),
+]
 results = client.batch_insert(items)
-assert all(r.success for r in results)
-
-# Cleanup.
-client.batch_delete([BatchItem("strategy", f"Batch{i:02d}") for i in range(20)])
-client.delete("strategy", "MyStrat")
+# results: list[TsDevResult], one per item in order; per-item failures stay in the list
 ```
 
-### `tsdev-automation` CLI entry point
+## Notes
 
-The package also installs a convenience CLI (`tsdev-automation` console script
-and `python -m tsdev_automation`) that wraps the Python API:
+- TradeStation install path: use `--ts-path <dir>` or `ts_path=<dir>` when the default registry auto-discovery is wrong.
+- A TradeStation popup or crash dialog during an operation means the operation failed. Read the message, dismiss it, and make sure you have the right TS version and followed the usage guidelines. When in doubt, try again.
 
-```
-tsdev-automation [--cli-path PATH] [--ts-path DIR] [--timeout SEC]
-                 {insert,modify,delete,exists,get-source,upsert,batch-insert,batch-modify,batch-delete,batch-upsert,batch-insert-dir,batch-modify-dir,batch-delete-dir,batch-upsert-dir} ...
-```
-
-For `insert`/`modify`, the source argument is interpreted as a file path if it
-exists, otherwise as inline EasyLanguage source text (matching the Python API).
-Run `tsdev-automation --help` for full usage.
-
-### Notes
-
-- **64-bit Python required.** The wrapper is stdlib-only and runs under 64-bit
-  Python; it drives the 32-bit CLI as a subprocess (no daemon, no in-process
-  DLL loading).
-- The CLI binary must be built separately via CMake (`cmake --build build
-  --config Release`). Auto-discovery looks for `build/Release/tsdev_cli.exe`
-  relative to the repo root.
-
-## Regression suite
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-```
-
-Runs the registered regression sub-suites (a default set plus an opt-in stress
-suite via `-ExtendedStress`); see
-[`tests/run_regression.ps1`](tests/run_regression.ps1) for the authoritative
-sub-suite list. The C++ unit-test runner defines the executable inventory and
-its `-NoTs` path selects the non-TS executables, while the separate sigtool
-suite also runs without live TradeStation; see
-[`tests/run_unit_tests.ps1`](tests/run_unit_tests.ps1) for the current
-inventory. Historical aggregate result counts are not current acceptance
-evidence.

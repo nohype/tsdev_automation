@@ -5,21 +5,25 @@ Do not restate what the code itself documents.
 
 ## Current objective
 
-**TS Desktop interaction acceptance.** The six operations (Insert/Delete/Modify/
-Exists/Get-source/Upsert) are implemented in C++ CLI + Python `TsDevClient` with
-batch (manifest + stdin) support. Production acceptance REQUIRES proper
-interaction with a running TS Desktop, matching TSDev.exe:
+**First release.** All five hard requirements are MET and user-verified
+(2026-08-31):
 
-- (a) all operations work WHILE TS Desktop is open
-- (b) inserted items immediately available, usable, and FUNCTION when applied
-- (c) modifications immediately picked up and applied to items already on
-  charts, or already opened within TS Desktop as a tradingapp
-- (d) deletions handled like TSDev: TS Desktop detects applied items, removes
-  them, shows a "deleted" warning
+- Six operations (Insert/Delete/Modify/Exists/Get-source/Upsert) via C++ CLI
+  and Python `TsDevClient` with batch (manifest + stdin) support.
+- Five component types (Function/Indicator/ShowMe/Strategy/TradingApp).
+- TS Desktop interaction (objectives a-d): user-verified 2026-08-31 —
+  insertion, modification (both item-code and function-only), and deletion
+  of all 5 types tested while items open/applied in TS Desktop.
+- Python wrapper parity with CLI.
+- **Bundle packaging green (2026-08-31):** `docs/BUNDLE_README.md` created
+  (user-facing quick-start, 89 lines, adversarially reviewed/approved) and
+  `tools/create_bundle_zip.ps1` fixed to auto-create `artifacts/` before
+  `Compress-Archive`. `cmake --build build --config Release` now exits 0 and
+  produces `dist/` (tsdev_cli.exe + tsdev_automation/ + README.md) and a
+  timestamped `artifacts/tsdev_automation_*.zip`. CI build is unblocked.
 
-The `dependents` workstream (M) is paused; it is beyond this acceptance target.
-The Python `TsDevClient` parity axis (Phase 3) is COMPLETE. The next team
-determines the next axis toward objectives a–d.
+No release blockers remain. The `dependents` workstream (M) remains paused;
+it is beyond the release scope.
 
 ## Current state (not derivable from code)
 
@@ -27,9 +31,8 @@ determines the next axis toward objectives a–d.
   TSDev.exe` and `orlib20.dll` (v9.50.01.3344). TS Desktop process is
   `orchart.exe` (imports `_OrlibRegisterNotificationHandle@4`).
 - `tsdev_cli.exe` built (32-bit Win32 Release) at `build\Release\tsdev_cli.exe`
-  and `dist\tsdev_cli.exe`. NOTE: `cmake --build` exit code is non-zero due to a
-  POST_BUILD packaging step missing `docs/BUNDLE_README.md`; the exe itself
-  builds and runs fine. Repo-content issue, not toolchain.
+  and `dist\tsdev_cli.exe`. `cmake --build build --config Release` exits 0 and
+  assembles `dist/` + a timestamped `artifacts/tsdev_automation_*.zip`.
 - CLI works against the warehouse WITHOUT TS Desktop running (confirmed
   2026-08-30: `exists`/`insert`/`modify`/`delete` succeed with only
   `TradeStationAgentForms.exe` present). TS Desktop (`orchart.exe`) is only
@@ -44,11 +47,11 @@ determines the next axis toward objectives a–d.
 
 ## Next TVS
 
-The Python `TsDevClient` parity axis (Phase 3) is COMPLETE. The next team
-determines the next axis toward full TS Desktop interaction acceptance
-(objectives a–d above).
-
-Do NOT plan beyond the next TVS; the next team will find their next step.
+None planned. The release blocker (bundle packaging) is resolved and the
+build is green. The next team should identify the next step toward 100%
+acceptance or release cut. Candidate areas (not committed): the paused
+`dependents` workstream (M), or final release-cut verification (CI run on
+push, bundle smoke test). Do NOT plan beyond one TVS.
 
 ## Key references
 
