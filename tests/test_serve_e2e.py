@@ -10,7 +10,9 @@ UAC consent).
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -520,6 +522,1202 @@ class TestServeE2E:
                     client.delete("strategy", n)
                 except Exception:
                     pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_batch_mixed_outcome_continue_on_failure(self):
+        """TVS-L.14c GREEN (test-only): mixed-outcome batch_insert over serve.
+
+        Serve-mode analog of the DIRECT-mode
+        ``test_e2e_batch_mixed_outcome_continue_on_failure`` in
+        ``tests/test_tsdev_client.py``. Verifies that ``_batch_serve`` collects
+        per-item failures into the result list instead of raising: one
+        already-exists (item A), one new valid insert (item B), and one
+        compile-error (item C) are submitted in a single ``batch_insert`` call,
+        and the call returns normally with three results.
+
+        Hard invariants:
+
+        1. **Serve must not be bypassed.** ``client._serve_active()`` is true
+           because the test runs non-elevated and ``use_serve`` defaults to
+           ``True``.
+
+        2. **Same broker / TsDevLib lifetime.** The broker handle captured
+           after the pre-insert is identical across the mixed-outcome batch,
+           the inter-batch ``exists`` queries, and the production-verified
+           ``batch_delete`` cleanup.
+
+        3. **Per-item outcomes match CLI JSON semantics.** Item A reports
+           ``exit_code==5`` with ``error.code == "already_exists"`` and the
+           correct ``existing_prog_id``; item B reports ``exit_code==0`` with a
+           new ``prog_id`` and a non-empty ``ell_path``; item C reports
+           ``exit_code==8`` with ``error.code == "compile_error"``.
+
+        4. **Persistence and create-path cleanup.** Item B exists with the
+           ProgId returned by the batch. Item A is unchanged. Item C was never
+           created because the compiler failed and the create-path cleanup
+           removed the partial warehouse entry.
+
+        5. **Divergence from the DIRECT test.** The type is ``"strategy"``
+           (not ``"function"``), and the compile-error source is the same
+           invalid strategy source already proven in this file's
+           ``test_serve_compile_failure_recovery``.
+
+        6. **Production-verified cleanup.** The body runs ``batch_delete`` on
+           the two created items (A and B) and asserts success before the
+           ``finally`` emergency sanitation.
+        """
+        # Skip if elevated — serve mode only activates when NOT elevated.
+        # run_serve_e2e.ps1 launches this test unelevated via Task Scheduler.
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+
+        # Unique disposable names for this test (TVS-L.14c).
+        name_a = "TS_AUTO_PY_SERVE_MIX_L14C_A"
+        name_b = "TS_AUTO_PY_SERVE_MIX_L14C_B"
+        name_c = "TS_AUTO_PY_SERVE_MIX_L14C_C"
+
+        # Valid EasyLanguage strategy source (compiles to exit 0). Uses the
+        # same AverageFC pattern as the L14b serve batch test.
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L14c insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        client = TsDevClient(cli_path=cli_path)
+
+        # Fail if serve is bypassed (non-elevated + use_serve=True).
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the mixed-outcome batch path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+        prog_id_a: int = 0
+
+        try:
+            # Pre-cleanup: best-effort delete of any leftover from a previous
+            # failed run. Done through the broker (the production path).
+            for n in (name_a, name_b, name_c):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            # Pre-insert item A so it is present for the batch's duplicate check.
+            r = client.insert("strategy", name_a, _ins_src(name_a))
+            assert r.success, f"pre-insert {name_a} failed: {r}"
+            prog_id_a = r.prog_id
+            assert prog_id_a is not None and prog_id_a > 0
+
+            # Capture the broker handle after the pre-insert. If serve were
+            # bypassed the handle would be None here.
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after pre-insert (serve bypassed)"
+            )
+
+            # Mixed-outcome batch: A already exists, B is new and valid,
+            # C is a compile error. The call must return normally (continue
+            # on failure) and the broker handle must remain stable.
+            results = client.batch_insert([
+                BatchItem("strategy", name_a, _ins_src(name_a)),
+                BatchItem("strategy", name_b, _ins_src(name_b)),
+                BatchItem("strategy", name_c, "{ broken strategy }\nInputs: ;\n{ syntax error }\n"),
+            ])
+
+            assert len(results) == 3
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across the mixed-outcome batch"
+            )
+
+            # Item A: duplicate insert.
+            assert results[0].success is False
+            assert results[0].op == "insert"
+            assert results[0].type == "strategy"
+            assert results[0].name == name_a
+            assert results[0].exit_code == 5
+            assert results[0].error is not None and results[0].error.code == "already_exists"
+            assert results[0].error.existing_prog_id == prog_id_a, (
+                f"existing_prog_id must be {prog_id_a}, "
+                f"got {results[0].error.existing_prog_id}"
+            )
+
+            # Item B: successful new insert.
+            assert results[1].success is True
+            assert results[1].op == "insert"
+            assert results[1].type == "strategy"
+            assert results[1].name == name_b
+            assert results[1].exit_code == 0
+            assert results[1].prog_id is not None and results[1].prog_id > 0
+            assert results[1].ell_path, (
+                f"insert ell_path must be non-empty, got {results[1].ell_path!r}"
+            )
+
+            # Item C: compile error.
+            assert results[2].success is False
+            assert results[2].op == "insert"
+            assert results[2].type == "strategy"
+            assert results[2].name == name_c
+            assert results[2].exit_code == 8
+            assert results[2].error is not None and results[2].error.code == "compile_error"
+
+            # Post-batch persistence (through the broker, same handle each time).
+            ex_b = client.exists("strategy", name_b)
+            assert ex_b.exists and ex_b.prog_id == results[1].prog_id
+            assert client.broker_process_handle() == broker_handle
+
+            ex_a = client.exists("strategy", name_a)
+            assert ex_a.exists and ex_a.prog_id == prog_id_a
+            assert client.broker_process_handle() == broker_handle
+
+            ex_c = client.exists("strategy", name_c)
+            assert not ex_c.exists
+            assert client.broker_process_handle() == broker_handle
+
+            # Production-verified cleanup in the body (C was never created).
+            del_results = client.batch_delete([
+                BatchItem("strategy", name_a),
+                BatchItem("strategy", name_b),
+            ])
+            assert len(del_results) == 2
+            for r in del_results:
+                assert r.success
+            assert client.broker_process_handle() == broker_handle
+
+            # Post-cleanup verification.
+            assert not client.exists("strategy", name_a).exists
+            assert not client.exists("strategy", name_b).exists
+
+        finally:
+            # Emergency sanitation ONLY. Best-effort individual deletes of every
+            # name that could have been created, then broker shutdown so no
+            # elevated broker process is leaked.
+            for n in (name_a, name_b, name_c):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    # -- TVS-L.14d: serve batch upsert insert-path + modify-path ----------
+
+    def test_serve_batch_upsert_both_branches(self):
+        """TVS-L.14d GREEN (test-only): serve batch_upsert exercises both
+        insert-path and modify-path in a single batch.
+
+        Closes the serve-mode upsert insert-path gap: the existing L14b test
+        only covered ``batch_upsert`` on pre-existing items (modify-path).
+        This test submits a mixed batch (two new items + one pre-existing item)
+        through ``_batch_serve`` and verifies that new items take the
+        insert-path and receive fresh ProgIds while pre-existing items take the
+        modify-path and preserve their ProgId. It also asserts same broker
+        handle stability across the whole batch and post-batch persistence
+        through the broker.
+
+        Mirrors the DIRECT-mode upsert-both-branches coverage but in serve mode.
+        """
+        # Skip if elevated — serve mode only activates when NOT elevated.
+        # run_serve_e2e.ps1 launches this test unelevated via Task Scheduler.
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+
+        # Unique disposable names for this test (TVS-L.14d).
+        name_new1 = "TS_AUTO_PY_SERVE_UPS_L14D_NEW1"
+        name_new2 = "TS_AUTO_PY_SERVE_UPS_L14D_NEW2"
+        name_exist = "TS_AUTO_PY_SERVE_UPS_L14D_EXIST"
+
+        # Valid EasyLanguage strategy source. The upsert batch uses the insert
+        # source, matching L14b's upsert call.
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L14d insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        client = TsDevClient(cli_path=cli_path)
+
+        # Fail if serve is bypassed (non-elevated + use_serve=True).
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the upsert batch path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+        prog_id_exist: int = 0
+
+        try:
+            # Pre-cleanup: best-effort delete of any leftover from a previous
+            # failed run. Done through the broker (the production path).
+            for n in (name_new1, name_new2, name_exist):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            # Pre-insert the existing item so the upsert takes the modify-path.
+            r = client.insert("strategy", name_exist, _ins_src(name_exist))
+            assert r.success, f"pre-insert {name_exist} failed: {r}"
+            prog_id_exist = r.prog_id
+            assert prog_id_exist is not None and prog_id_exist > 0
+
+            # Capture the broker handle after the pre-insert.
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after pre-insert (serve was bypassed)"
+            )
+
+            # Mixed-branch upsert batch: two new items (insert-path) and one
+            # pre-existing item (modify-path) in the same call.
+            results = client.batch_upsert([
+                BatchItem("strategy", name_new1, _ins_src(name_new1)),
+                BatchItem("strategy", name_exist, _ins_src(name_exist)),
+                BatchItem("strategy", name_new2, _ins_src(name_new2)),
+            ])
+
+            assert len(results) == 3
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across the mixed-branch upsert batch"
+            )
+
+            # Item name_new1: new -> insert-path.
+            assert results[0].success is True
+            assert results[0].op == "upsert"
+            assert results[0].type == "strategy"
+            assert results[0].name == name_new1
+            assert results[0].exit_code == 0
+            assert results[0].prog_id is not None and results[0].prog_id > 0
+            assert results[0].ell_path, (
+                f"upsert ell_path must be non-empty, got {results[0].ell_path!r}"
+            )
+
+            # Item name_exist: pre-existing -> modify-path, ProgId preserved.
+            assert results[1].success is True
+            assert results[1].op == "upsert"
+            assert results[1].type == "strategy"
+            assert results[1].name == name_exist
+            assert results[1].exit_code == 0
+            assert results[1].prog_id == prog_id_exist, (
+                f"upsert modify-path must preserve prog_id ({prog_id_exist}), got {results[1].prog_id}"
+            )
+            assert results[1].ell_path, (
+                f"upsert ell_path must be non-empty, got {results[1].ell_path!r}"
+            )
+
+            # Item name_new2: new -> insert-path.
+            assert results[2].success is True
+            assert results[2].op == "upsert"
+            assert results[2].type == "strategy"
+            assert results[2].name == name_new2
+            assert results[2].exit_code == 0
+            assert results[2].prog_id is not None and results[2].prog_id > 0
+            assert results[2].ell_path, (
+                f"upsert ell_path must be non-empty, got {results[2].ell_path!r}"
+            )
+
+            # The two new items must have ProgIds distinct from each other and
+            # from the pre-existing item.
+            assert results[0].prog_id != prog_id_exist
+            assert results[2].prog_id != prog_id_exist
+            assert results[0].prog_id != results[2].prog_id, (
+                "two new upsert items must get distinct prog_ids"
+            )
+
+            # Post-batch persistence (through the broker, same handle each time).
+            ex_new1 = client.exists("strategy", name_new1)
+            assert ex_new1.exists and ex_new1.prog_id == results[0].prog_id
+            assert client.broker_process_handle() == broker_handle
+
+            ex_exist = client.exists("strategy", name_exist)
+            assert ex_exist.exists and ex_exist.prog_id == prog_id_exist
+            assert client.broker_process_handle() == broker_handle
+
+            ex_new2 = client.exists("strategy", name_new2)
+            assert ex_new2.exists and ex_new2.prog_id == results[2].prog_id
+            assert client.broker_process_handle() == broker_handle
+
+            # Production-verified cleanup in the body.
+            del_results = client.batch_delete([
+                BatchItem("strategy", name_new1),
+                BatchItem("strategy", name_exist),
+                BatchItem("strategy", name_new2),
+            ])
+            assert len(del_results) == 3
+            for r in del_results:
+                assert r.success
+            assert client.broker_process_handle() == broker_handle
+
+            # Post-cleanup verification.
+            for n in (name_new1, name_exist, name_new2):
+                assert not client.exists("strategy", n).exists
+
+        finally:
+            # Emergency sanitation ONLY. Best-effort individual deletes of every
+            # name that could have been created, then broker shutdown so no
+            # elevated broker process is leaked.
+            for n in (name_new1, name_new2, name_exist):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    # -- TVS-L.16: serve directory-batch E2E -------------------------------
+
+    def test_serve_batch_insert_dir_then_delete_dir(self) -> None:
+        """TVS-L.16 GREEN (test-only): serve batch_insert_dir then
+        batch_delete_dir on a temp directory of .el files.
+
+        Serve-mode analog of the DIRECT-mode
+        ``test_e2e_batch_insert_dir_then_delete_dir`` in
+        ``tests/test_tsdev_client.py``. Verifies that ``_batch_dir_serve``
+        routes insert and delete directory batches through a single broker,
+        returns per-item results, and preserves the same broker handle across
+        both operations.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+        cli_path = _find_cli()
+
+        names = [
+            "TS_AUTO_PY_SERVE_DIR_L16_A",
+            "TS_AUTO_PY_SERVE_DIR_L16_B",
+            "TS_AUTO_PY_SERVE_DIR_L16_C",
+        ]
+
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L16 insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        d = Path(tempfile.mkdtemp(prefix="tsdev_serve_l16_"))
+        for n in names:
+            (d / f"{n}.el").write_text(_ins_src(n), encoding="utf-8")
+
+        client = TsDevClient(cli_path=cli_path)
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the batch-over-serve path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+
+        try:
+            for n in names:
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            results = client.batch_insert_dir("strategy", str(d))
+            assert len(results) == 3, (
+                f"batch_insert_dir must return one result per file: {results}"
+            )
+            assert all(r.success for r in results), results
+
+            for r in results:
+                assert r.prog_id is not None and r.prog_id > 0, (
+                    f"insert_dir prog_id must be >0, got {r.prog_id}"
+                )
+                assert r.ell_path, (
+                    f"insert_dir ell_path must be non-empty, got {r.ell_path!r}"
+                )
+
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after batch_insert_dir (serve bypassed)"
+            )
+
+            for r in results:
+                ex = client.exists("strategy", r.name)
+                assert ex.exists, f"{r.name} should exist after batch_insert_dir"
+                assert ex.prog_id == r.prog_id, (
+                    f"exists prog_id mismatch for {r.name}: "
+                    f"{ex.prog_id} vs {r.prog_id}"
+                )
+                assert client.broker_process_handle() == broker_handle, (
+                    "broker handle must not change across post-insert exists"
+                )
+
+            del_results = client.batch_delete_dir("strategy", str(d))
+            assert len(del_results) == 3, del_results
+            assert all(r.success for r in del_results), del_results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_delete_dir"
+            )
+
+            for n in names:
+                assert not client.exists("strategy", n).exists, (
+                    f"{n} should not exist after batch_delete_dir"
+                )
+                assert client.broker_process_handle() == broker_handle
+
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            for n in names:
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_batch_upsert_dir_mixed(self) -> None:
+        """TVS-L.16 GREEN (test-only): serve batch_upsert_dir with one
+        pre-existing (modify-path) and one new (insert-path) .el file.
+
+        Serve-mode analog of the DIRECT-mode
+        ``test_e2e_batch_upsert_dir_mixed`` in ``tests/test_tsdev_client.py``.
+        Verifies that the pre-existing item preserves its ProgId and the new
+        item receives a fresh ProgId, with the same broker handle across the
+        whole directory upsert.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+        cli_path = _find_cli()
+
+        name_a = "TS_AUTO_PY_SERVE_DIR_L16_UA"
+        name_b = "TS_AUTO_PY_SERVE_DIR_L16_UB"
+
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L16 insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        def _mod_src(n: str) -> str:
+            return (
+                f"{{ L16 modify {n} }}\n"
+                "Inputs: FastLen(20), SlowLen(40);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then SellShort next bar at Market;\n"
+                "if FastMA < SlowMA then Buy next bar at Market;\n"
+            )
+
+        d = Path(tempfile.mkdtemp(prefix="tsdev_serve_l16_"))
+        (d / f"{name_a}.el").write_text(_mod_src(name_a), encoding="utf-8")
+        (d / f"{name_b}.el").write_text(_ins_src(name_b), encoding="utf-8")
+
+        client = TsDevClient(cli_path=cli_path)
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the batch-over-serve path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+        prog_id_a: int = 0
+
+        try:
+            for n in (name_a, name_b):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            r = client.insert("strategy", name_a, _ins_src(name_a))
+            assert r.success, f"pre-insert {name_a} failed: {r}"
+            prog_id_a = r.prog_id
+            assert prog_id_a is not None and prog_id_a > 0
+
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after pre-insert (serve bypassed)"
+            )
+
+            results = client.batch_upsert_dir("strategy", str(d))
+            assert len(results) == 2, results
+            assert all(r.success for r in results), results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_upsert_dir"
+            )
+
+            a_result = [r for r in results if r.name == name_a][0]
+            b_result = [r for r in results if r.name == name_b][0]
+
+            assert a_result.prog_id == prog_id_a, (
+                f"upsert modify-path must preserve prog_id ({prog_id_a}), "
+                f"got {a_result.prog_id}"
+            )
+            assert a_result.ell_path, (
+                f"upsert modify-path ell_path must be non-empty, "
+                f"got {a_result.ell_path!r}"
+            )
+            assert b_result.prog_id is not None and b_result.prog_id > 0, (
+                f"upsert insert-path prog_id must be >0, got {b_result.prog_id}"
+            )
+            assert b_result.ell_path, (
+                f"upsert insert-path ell_path must be non-empty, "
+                f"got {b_result.ell_path!r}"
+            )
+            assert b_result.prog_id != prog_id_a
+
+            ex_a = client.exists("strategy", name_a)
+            assert ex_a.exists and ex_a.prog_id == prog_id_a
+            assert client.broker_process_handle() == broker_handle
+
+            ex_b = client.exists("strategy", name_b)
+            assert ex_b.exists and ex_b.prog_id == b_result.prog_id
+            assert client.broker_process_handle() == broker_handle
+
+            del_results = client.batch_delete_dir("strategy", str(d))
+            assert len(del_results) == 2, del_results
+            assert all(r.success for r in del_results), del_results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_delete_dir"
+            )
+
+            for n in (name_a, name_b):
+                assert not client.exists("strategy", n).exists
+                assert client.broker_process_handle() == broker_handle
+
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            for n in (name_a, name_b):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_batch_modify_dir(self) -> None:
+        """TVS-L.16 GREEN (test-only): serve batch_insert then
+        batch_modify_dir with modified source.
+
+        Both items are pre-inserted, then batch_modify_dir is called on a
+        directory containing modified source files. ProgIds must be preserved
+        across the modify. Serve-mode analog of the DIRECT-mode
+        ``test_e2e_batch_modify_dir`` in ``tests/test_tsdev_client.py``.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+        cli_path = _find_cli()
+
+        name_a = "TS_AUTO_PY_SERVE_DIR_L16_MA"
+        name_b = "TS_AUTO_PY_SERVE_DIR_L16_MB"
+
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L16 insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        def _mod_src(n: str) -> str:
+            return (
+                f"{{ L16 modify {n} }}\n"
+                "Inputs: FastLen(20), SlowLen(40);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then SellShort next bar at Market;\n"
+                "if FastMA < SlowMA then Buy next bar at Market;\n"
+            )
+
+        d = Path(tempfile.mkdtemp(prefix="tsdev_serve_l16_"))
+        (d / f"{name_a}.el").write_text(_mod_src(name_a), encoding="utf-8")
+        (d / f"{name_b}.el").write_text(_mod_src(name_b), encoding="utf-8")
+
+        client = TsDevClient(cli_path=cli_path)
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the batch-over-serve path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+        prog_id_a: int = 0
+        prog_id_b: int = 0
+
+        try:
+            for n in (name_a, name_b):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            ins = client.batch_insert([
+                BatchItem("strategy", name_a, _ins_src(name_a)),
+                BatchItem("strategy", name_b, _ins_src(name_b)),
+            ])
+            assert len(ins) == 2, ins
+            assert all(r.success for r in ins), ins
+            prog_id_a = ins[0].prog_id
+            prog_id_b = ins[1].prog_id
+            assert prog_id_a is not None and prog_id_a > 0
+            assert prog_id_b is not None and prog_id_b > 0
+
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after batch_insert (serve bypassed)"
+            )
+
+            results = client.batch_modify_dir("strategy", str(d))
+            assert len(results) == 2, results
+            assert all(r.success for r in results), results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_modify_dir"
+            )
+
+            a_result = [r for r in results if r.name == name_a][0]
+            b_result = [r for r in results if r.name == name_b][0]
+            assert a_result.prog_id == prog_id_a, (
+                f"modify {name_a} must preserve prog_id ({prog_id_a}), "
+                f"got {a_result.prog_id}"
+            )
+            assert b_result.prog_id == prog_id_b, (
+                f"modify {name_b} must preserve prog_id ({prog_id_b}), "
+                f"got {b_result.prog_id}"
+            )
+
+            ex_a = client.exists("strategy", name_a)
+            assert ex_a.exists and ex_a.prog_id == prog_id_a
+            assert client.broker_process_handle() == broker_handle
+
+            ex_b = client.exists("strategy", name_b)
+            assert ex_b.exists and ex_b.prog_id == prog_id_b
+            assert client.broker_process_handle() == broker_handle
+
+            del_results = client.batch_delete_dir("strategy", str(d))
+            assert len(del_results) == 2, del_results
+            assert all(r.success for r in del_results), del_results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_delete_dir"
+            )
+
+            for n in (name_a, name_b):
+                assert not client.exists("strategy", n).exists
+                assert client.broker_process_handle() == broker_handle
+
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            for n in (name_a, name_b):
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_batch_insert_dir_t_override(self) -> None:
+        """TVS-L.16 GREEN (test-only): serve batch_insert_dir with
+        extensions=['txt'] on a .txt-only directory.
+
+        Serve-mode analog of the DIRECT-mode
+        ``test_e2e_batch_dir_t_override`` in ``tests/test_tsdev_client.py``.
+        Verifies that passing ``extensions=['txt']`` overrides the default
+        ``.el`` + ``.txt`` filter so the .txt file is picked up and inserted
+        through the serve broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+        cli_path = _find_cli()
+
+        name = "TS_AUTO_PY_SERVE_DIR_L16_TXT"
+
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ L16 insert {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        d = Path(tempfile.mkdtemp(prefix="tsdev_serve_l16_"))
+        (d / f"{name}.txt").write_text(_ins_src(name), encoding="utf-8")
+
+        client = TsDevClient(cli_path=cli_path)
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the batch-over-serve path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+
+        try:
+            try:
+                client.delete("strategy", name)
+            except Exception:
+                pass
+
+            results = client.batch_insert_dir(
+                "strategy", str(d), extensions=["txt"]
+            )
+            assert len(results) == 1, results
+            assert all(r.success for r in results), results
+
+            r = results[0]
+            assert r.prog_id is not None and r.prog_id > 0, (
+                f"insert_dir prog_id must be >0, got {r.prog_id}"
+            )
+            assert r.ell_path, (
+                f"insert_dir ell_path must be non-empty, got {r.ell_path!r}"
+            )
+
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after batch_insert_dir (serve bypassed)"
+            )
+
+            ex = client.exists("strategy", name)
+            assert ex.exists and ex.prog_id == r.prog_id
+            assert client.broker_process_handle() == broker_handle
+
+            del_results = client.batch_delete_dir(
+                "strategy", str(d), extensions=["txt"]
+            )
+            assert len(del_results) == 1, del_results
+            assert all(r.success for r in del_results), del_results
+            assert client.broker_process_handle() == broker_handle, (
+                "broker handle must not change across batch_delete_dir"
+            )
+
+            ex2 = client.exists("strategy", name)
+            assert not ex2.exists
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+            try:
+                client.delete("strategy", name)
+            except Exception:
+                pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    # -- TVS-L.17: serve single-op upsert ----------------------------------
+
+    def test_serve_single_op_upsert(self):
+        """TVS-L.17 GREEN (test-only): serve single-op upsert covers both
+        the insert-path and modify-path through one elevated broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        test_name = "TS_AUTO_PY_SERVE_UPSERT_L17_001"
+
+        # Valid EasyLanguage strategy source (compiles successfully).
+        # Uses the same minimal one-line strategy as TestE2E.test_strategy_lifecycle.
+        test_source = (
+            "Inputs: Length(10); If Close > Average(Close, Length) Then Buy next bar at Market;\n"
+        )
+        test_source_modified = (
+            "Inputs: Length(20); If Close > Average(Close, Length) Then Sell next bar at Market;\n"
+        )
+
+        client = TsDevClient(cli_path=cli_path, use_serve=True)
+        assert client._serve_active(), (
+            "serve should be active (not elevated + use_serve=True)"
+        )
+
+        broker_handle: int | None = None
+        prog_id: int = 0
+
+        try:
+            # Pre-cleanup: delete any leftover from a previous failed run
+            try:
+                client.delete("strategy", test_name)
+            except Exception:
+                pass
+
+            # 1. Upsert on a new name -> insert-path
+            result = client.upsert("strategy", test_name, test_source)
+            assert result.success, f"upsert insert-path failed: {result}"
+            assert result.prog_id is not None and result.prog_id > 0, (
+                f"upsert insert-path returned prog_id={result.prog_id}"
+            )
+            assert result.ell_path, (
+                f"upsert insert-path ell_path must be non-empty, got {result.ell_path!r}"
+            )
+            prog_id = result.prog_id
+
+            # Broker is lazy-started on first op — capture handle now
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker should be started after first upsert"
+            )
+
+            # 2. Upsert on the same name with modified source -> modify-path
+            result = client.upsert("strategy", test_name, test_source_modified)
+            assert result.success, f"upsert modify-path failed: {result}"
+            assert result.prog_id == prog_id, (
+                f"upsert modify-path must preserve prog_id: {result.prog_id} vs {prog_id}"
+            )
+            assert result.ell_path, (
+                f"upsert modify-path ell_path must be non-empty, got {result.ell_path!r}"
+            )
+            assert client.broker_process_handle() == broker_handle, (
+                "broker should not restart between upsert calls"
+            )
+
+            # 3. Verify existence and ProgId match
+            ex = client.exists("strategy", test_name)
+            assert ex.success, f"exists failed: {ex}"
+            assert ex.exists, f"{test_name} should exist after upsert"
+            assert ex.prog_id == prog_id, (
+                f"exists prog_id mismatch: {ex.prog_id} vs {prog_id}"
+            )
+            assert client.broker_process_handle() == broker_handle
+
+            # 4. Production-verified cleanup
+            d = client.delete("strategy", test_name)
+            assert d.success, f"delete failed: {d}"
+            assert client.broker_process_handle() == broker_handle
+
+            ex2 = client.exists("strategy", test_name)
+            assert not ex2.exists, f"{test_name} should be deleted after cleanup"
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Emergency sanitation: best-effort delete and broker shutdown
+            try:
+                client.delete("strategy", test_name)
+            except Exception:
+                pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    # -- TVS-L.18: serve per-type single-op lifecycle ---------------------
+
+    def test_serve_strategy_lifecycle_l18(self):
+        """TVS-L.18 GREEN (test-only): serve single-op lifecycle for strategy
+        (insert -> modify -> delete) through one elevated broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        test_name = "TS_AUTO_PY_SERVE_LIFE_L18_001"
+
+        test_source = (
+            "Inputs: Length(10); If Close > Average(Close, Length) Then Buy next bar at Market;\n"
+        )
+        test_source_modified = (
+            "Inputs: Length(20); If Close > Average(Close, Length) Then Sell next bar at Market;\n"
+        )
+
+        client = TsDevClient(cli_path=cli_path, use_serve=True)
+        assert client._serve_active(), (
+            "serve should be active (not elevated + use_serve=True)"
+        )
+
+        broker_handle: int | None = None
+        prog_id: int = 0
+
+        try:
+            # Pre-cleanup: delete any leftover from a previous failed run
+            try:
+                client.delete("strategy", test_name)
+            except Exception:
+                pass
+
+            # 1. Insert
+            r = client.insert("strategy", test_name, test_source)
+            assert r.success, f"insert failed: {r}"
+            assert r.prog_id is not None and r.prog_id > 0, (
+                f"insert returned prog_id={r.prog_id}"
+            )
+            assert r.ell_path, (
+                f"insert ell_path must be non-empty, got {r.ell_path!r}"
+            )
+            prog_id = r.prog_id
+
+            # Broker is lazy-started on first op — capture handle now
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, "broker should be started after first op"
+
+            # 2. Modify
+            m = client.modify("strategy", test_name, test_source_modified)
+            assert m.success, f"modify failed: {m}"
+            assert m.prog_id == prog_id, (
+                f"modify should preserve prog_id: {m.prog_id} vs {prog_id}"
+            )
+            assert client.broker_process_handle() == broker_handle, (
+                "broker should not restart between ops"
+            )
+
+            # 3. Delete
+            d = client.delete("strategy", test_name)
+            assert d.success, f"delete failed: {d}"
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Emergency sanitation: best-effort delete and broker shutdown
+            try:
+                client.delete("strategy", test_name)
+            except Exception:
+                pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_function_lifecycle_l18(self):
+        """TVS-L.18 GREEN (test-only): serve single-op lifecycle for function
+        (insert -> modify -> delete) through one elevated broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        test_name = "TS_AUTO_PY_SERVE_LIFE_L18_002"
+
+        test_source = test_name + " = 1;\n"
+        test_source_modified = test_name + " = 42;\n"
+
+        client = TsDevClient(cli_path=cli_path, use_serve=True)
+        assert client._serve_active(), (
+            "serve should be active (not elevated + use_serve=True)"
+        )
+
+        broker_handle: int | None = None
+        prog_id: int = 0
+
+        try:
+            # Pre-cleanup: delete any leftover from a previous failed run
+            try:
+                client.delete("function", test_name)
+            except Exception:
+                pass
+
+            # 1. Insert
+            r = client.insert("function", test_name, test_source)
+            assert r.success, f"insert failed: {r}"
+            assert r.prog_id is not None and r.prog_id > 0, (
+                f"insert returned prog_id={r.prog_id}"
+            )
+            assert r.ell_path, (
+                f"insert ell_path must be non-empty, got {r.ell_path!r}"
+            )
+            prog_id = r.prog_id
+
+            # Broker is lazy-started on first op — capture handle now
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, "broker should be started after first op"
+
+            # 2. Modify
+            m = client.modify("function", test_name, test_source_modified)
+            assert m.success, f"modify failed: {m}"
+            assert m.prog_id == prog_id, (
+                f"modify should preserve prog_id: {m.prog_id} vs {prog_id}"
+            )
+            assert client.broker_process_handle() == broker_handle, (
+                "broker should not restart between ops"
+            )
+
+            # 3. Delete
+            d = client.delete("function", test_name)
+            assert d.success, f"delete failed: {d}"
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Emergency sanitation: best-effort delete and broker shutdown
+            try:
+                client.delete("function", test_name)
+            except Exception:
+                pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_indicator_lifecycle_l18(self):
+        """TVS-L.18 GREEN (test-only): serve single-op lifecycle for indicator
+        (insert -> modify -> delete) through one elevated broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        test_name = "TS_AUTO_PY_SERVE_LIFE_L18_003"
+
+        test_source = 'Plot1(Close, "Close");\n'
+        test_source_modified = 'Plot1(Close * 2, "Close2");\n'
+
+        client = TsDevClient(cli_path=cli_path, use_serve=True)
+        assert client._serve_active(), (
+            "serve should be active (not elevated + use_serve=True)"
+        )
+
+        broker_handle: int | None = None
+        prog_id: int = 0
+
+        try:
+            # Pre-cleanup: delete any leftover from a previous failed run
+            try:
+                client.delete("indicator", test_name)
+            except Exception:
+                pass
+
+            # 1. Insert
+            r = client.insert("indicator", test_name, test_source)
+            assert r.success, f"insert failed: {r}"
+            assert r.prog_id is not None and r.prog_id > 0, (
+                f"insert returned prog_id={r.prog_id}"
+            )
+            assert r.ell_path, (
+                f"insert ell_path must be non-empty, got {r.ell_path!r}"
+            )
+            prog_id = r.prog_id
+
+            # Broker is lazy-started on first op — capture handle now
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, "broker should be started after first op"
+
+            # 2. Modify
+            m = client.modify("indicator", test_name, test_source_modified)
+            assert m.success, f"modify failed: {m}"
+            assert m.prog_id == prog_id, (
+                f"modify should preserve prog_id: {m.prog_id} vs {prog_id}"
+            )
+            assert client.broker_process_handle() == broker_handle, (
+                "broker should not restart between ops"
+            )
+
+            # 3. Delete
+            d = client.delete("indicator", test_name)
+            assert d.success, f"delete failed: {d}"
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Emergency sanitation: best-effort delete and broker shutdown
+            try:
+                client.delete("indicator", test_name)
+            except Exception:
+                pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    def test_serve_tradingapp_lifecycle_l18(self):
+        """TVS-L.18 GREEN (test-only): serve single-op lifecycle for tradingapp
+        (insert -> modify -> delete) through one elevated broker.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        test_name = "TS_AUTO_PY_SERVE_LIFE_L18_004"
+
+        test_source = "using elsystem;\n"
+        test_source_modified = "using elsystem;\nusing elsystem.windows.forms;\n"
+
+        client = TsDevClient(cli_path=cli_path, use_serve=True)
+        assert client._serve_active(), (
+            "serve should be active (not elevated + use_serve=True)"
+        )
+
+        broker_handle: int | None = None
+        prog_id: int = 0
+
+        try:
+            # Pre-cleanup: delete any leftover from a previous failed run
+            try:
+                client.delete("tradingapp", test_name)
+            except Exception:
+                pass
+
+            # 1. Insert
+            r = client.insert("tradingapp", test_name, test_source)
+            assert r.success, f"insert failed: {r}"
+            assert r.prog_id is not None and r.prog_id > 0, (
+                f"insert returned prog_id={r.prog_id}"
+            )
+            assert r.ell_path, (
+                f"insert ell_path must be non-empty, got {r.ell_path!r}"
+            )
+            prog_id = r.prog_id
+
+            # Broker is lazy-started on first op — capture handle now
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, "broker should be started after first op"
+
+            # 2. Modify
+            m = client.modify("tradingapp", test_name, test_source_modified)
+            assert m.success, f"modify failed: {m}"
+            assert m.prog_id == prog_id, (
+                f"modify should preserve prog_id: {m.prog_id} vs {prog_id}"
+            )
+            assert client.broker_process_handle() == broker_handle, (
+                "broker should not restart between ops"
+            )
+
+            # 3. Delete
+            d = client.delete("tradingapp", test_name)
+            assert d.success, f"delete failed: {d}"
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Emergency sanitation: best-effort delete and broker shutdown
+            try:
+                client.delete("tradingapp", test_name)
+            except Exception:
+                pass
             if client._broker is not None:
                 try:
                     client._broker.shutdown()
