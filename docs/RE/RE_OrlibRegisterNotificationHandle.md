@@ -5,7 +5,7 @@
 **Scope:** RESEARCH ONLY — no repo files modified. Reverse-engineering TVS to determine how orchart/TSELAppHost/TSScanner HWNDs get registered into an orlib20 subscriber list, and how the 0x40A recalc message is delivered cross-process.
 **Tooling:** ghidra-mcp (decompilation / xrefs / memory / section headers).
 
-> **HEADLINE CORRECTION to KNOWLEDGE_BASE.md §22:** The subscriber list is **NOT** in a per-process `.data` section. The HWND array buffer lives in orlib20's **`SHARE_WO` PE section, which has `IMAGE_SCN_MEM_SHARED`** — i.e. it is a **cross-process shared section**. The KB's "per-process .data → CLI list empty" conclusion is incorrect; the real reason the CLI sees an empty list is almost certainly that the CLI loads a **different `orlib20.dll` file** (different path → different shared-section object), see §6.
+> **HEADLINE CORRECTION to KNOWLEDGE_BASE.md §10:** The subscriber list is **NOT** in a per-process `.data` section. The HWND array buffer lives in orlib20's **`SHARE_WO` PE section, which has `IMAGE_SCN_MEM_SHARED`** — i.e. it is a **cross-process shared section**. The KB's prior "per-process .data → CLI list empty" conclusion is incorrect; runtime verification confirmed the CLI and orchart load the same `orlib20.dll` and the CLI sees 19 pre-populated slots in the shared array.
 
 ---
 
@@ -259,7 +259,7 @@ The shared 32-slot array at `0x10488838` **is** that enumeration. There is no se
 
 ### 5d. Does the WHServer.exe COM `_IWHouseEvents` path deliver the recalc signal independent of 0x40A?
 
-Not analyzed in depth in this TVS. However, the Frida evidence (KB §22) already establishes that the **immediate** recalc signal observed on TSDev is the 19 `PostMessageW(0x40A, ...)` calls originating inside Ordinal_57 — a direct post from the modifying process to the shared list of HWNDs. The `WHServer` COM `_IWHouseEvents` path is a separate warehouse-data-distribution mechanism (exercised by orlib20 COM vtable calls during CLI ops) and is **not** the mechanism that produces the 0x40A posts. Whether it can *also* trigger a recalc independently is an open question, but it is not required to explain the observed behavior. The 0x40A direct-PostMessage path is the proven recalc trigger.
+Not analyzed in depth in this TVS. However, the Frida evidence (KB §13) establishes that **both** the 19 `PostMessageW(0x40A, ...)` calls inside Ordinal_57 **and** the worker cmd 0x0D dispatch (firing WHServer.exe COM `_IWHouseEvents`) are required for immediate dependent recalc — 0x40A delivery alone is insufficient. The `WHServer` COM `_IWHouseEvents` path is exercised by the cmd 0x0D COM vtable calls and is the mechanism that triggers the actual recalc; the 0x40A posts are the necessary companion notification.
 
 ---
 

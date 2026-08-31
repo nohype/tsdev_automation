@@ -1986,7 +1986,7 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
             //     fires WHServer.exe COM events that cause orchart.exe to
             //     recalculate applied dependent indicators. Without this,
             //     modifying a function does not immediately trigger chart
-            //     recalc (KB §21.2, §22.6).
+            //     recalc (KB §12, §13).
             //     Non-fatal: a NULL warehouse, warehouse+0xAE == 0, or dispatcher
             //     SEH all skip the dispatch; the verify/modify still succeeds.
             if (m_pGetWarehouse && m_pCmdDispatcher) {

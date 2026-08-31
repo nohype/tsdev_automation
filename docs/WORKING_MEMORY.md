@@ -55,6 +55,7 @@ Do NOT plan beyond the next TVS; the next team will find their next step.
 - Recalc / cross-process notification mechanism (SSOT, current):
   `docs/RE/RE_OrlibRegisterNotificationHandle.md` — shared `SHARE_WO` 32-slot
   HWND array, `_OrlibRegisterNotificationHandle@4`, `Ordinal_57` broadcast.
-- Read-only function root cause (CONFIRMED): KB §20.
-- Function-modify / Strategy recalc signal (static + runtime findings, SSOT):
-  KB §21, §22, §22.8, §22.10. Dependents/callers: KB §18.
+- Read-only function root cause (CONFIRMED): KB §11.
+- Function-modify recalc mechanism (confirmed) + recalc matrix: KB §13.
+- TSDev UI save path vs CLI ordinal diff: KB §12.
+- Dependents/callers (0x3B empty result, paused workstream): KB §9.
