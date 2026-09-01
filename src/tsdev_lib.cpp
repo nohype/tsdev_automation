@@ -33,20 +33,53 @@
 
 #include <stdexcept>
 #include <cstring>
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 #include <sstream>
 #include <oleauto.h>        // M.4b.1: SafeArray APIs for cmd 0x3B result parsing
 
-// Compile-time debug logging gate. Define TSDEV_DEBUG at build time to
-// enable stderr diagnostics in deleteEntry. Production builds are clean.
-#ifdef TSDEV_DEBUG
-#  define TSDEV_DBG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while(0)
-#else
-#  define TSDEV_DBG(...) do {} while(0)
-#endif
+// Runtime-gated debug logging (TVS: CLI log levels + repeatable -v/--verbose).
+// TSDEV_DBG emits at Debug level through the exported tsdev_log_message()
+// runtime gate, so all former compile-time-gated (TSDEV_DEBUG) diagnostics
+// are now runtime-gated: suppressed at the default (Warning) level, visible
+// at -vv (Debug). All call sites keep their exact message text (zero
+// call-site churn, no new prefixes). The process-global level defaults to
+// Warning; the CLI sets it once in main() from the -v/--verbose pre-scan
+// (see tsdev_lib.h for the level contract).
+#define TSDEV_DBG(...) \
+    do { ::tsdev::tsdev_log_message(::tsdev::TsDevLogLevel::Debug, __VA_ARGS__); } while(0)
 
 namespace tsdev {
+
+// --- Runtime log level (TVS: CLI log levels) ---------------------------------
+// Process-global level, defaulting to Warning so default output is
+// user-facing only (results + warnings + errors). Set once by the CLI in
+// main() right after the -v/--verbose pre-scan, before dispatch; batch
+// worker threads and the serve broker are spawned after it is set, so a
+// plain global is sufficient (set-once at startup, not per-request).
+namespace {
+TsDevLogLevel g_logLevel = TsDevLogLevel::Warning;
+} // namespace
+
+void tsdev_log_set_level(TsDevLogLevel level) {
+    g_logLevel = level;
+}
+
+TsDevLogLevel tsdev_log_get_level() {
+    return g_logLevel;
+}
+
+void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...) {
+    if (static_cast<int>(level) > static_cast<int>(g_logLevel)) {
+        return;  // gated: message is more verbose than the current level
+    }
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(stderr, fmt, args);
+    va_end(args);
+    std::fflush(stderr);
+}
 
 namespace {
 
@@ -1081,15 +1114,15 @@ bool validateTsInstall(const std::wstring& root) {
 }
 
 // Resolves the TS install root path. Priority: override → registry → default.
-// Prints to stderr which mechanism was used.
+// Reports which mechanism was used via an Info-level log message (visible at
+// -v and above; suppressed at the default Warning level).
 std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
     // (1) Explicit override
     if (overridePath != nullptr && overridePath[0] != L'\0') {
         std::wstring root = normalizeTrailingBackslash(std::wstring(overridePath));
-        std::fprintf(stderr,
+        tsdev_log_message(TsDevLogLevel::Info,
                      "tsdev: TS install path resolved via --ts-path override: %ls\n",
                      root.c_str());
-        fflush(stderr);
         return root;
     }
 
@@ -1100,10 +1133,9 @@ std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
         L"RootDirectory");
     if (!root.empty()) {
         root = normalizeTrailingBackslash(root);
-        std::fprintf(stderr,
+        tsdev_log_message(TsDevLogLevel::Info,
                      "tsdev: TS install path resolved via registry (Installing): %ls\n",
                      root.c_str());
-        fflush(stderr);
         return root;
     }
 
@@ -1114,19 +1146,17 @@ std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
         L"RootDirectory");
     if (!root.empty()) {
         root = normalizeTrailingBackslash(root);
-        std::fprintf(stderr,
+        tsdev_log_message(TsDevLogLevel::Info,
                      "tsdev: TS install path resolved via registry (Versions\\9.05.00): %ls\n",
                      root.c_str());
-        fflush(stderr);
         return root;
     }
 
     // (4) Conventional default (last resort) — constructed from %ProgramFiles(x86)%
     root = getConventionalDefaultRoot();
-    std::fprintf(stderr,
+    tsdev_log_message(TsDevLogLevel::Info,
                  "tsdev: TS install path resolved via conventional default: %ls\n",
                  root.c_str());
-    fflush(stderr);
     return root;
 }
 
@@ -1158,8 +1188,7 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride)
         ss << "tsdev: COM initialization failed: HRESULT 0x"
            << std::hex << std::uppercase
            << static_cast<unsigned long>(m_comGuard->initResult());
-        std::fprintf(stderr, "%s\n", ss.str().c_str());
-        fflush(stderr);
+        tsdev_log_message(TsDevLogLevel::Error, "%s\n", ss.str().c_str());
         throw std::runtime_error(ss.str());
     }
 
@@ -1191,17 +1220,17 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride)
 // it does NOT participate in the constructor-throw unwind path.
 void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     // 1. Resolve the TS install root (override → registry → conventional
-    //    default). This also prints to stderr which mechanism was used.
+    //    default). This also reports which mechanism was used via an
+    //    Info-level log message.
     m_tsRoot = resolveTsInstallRoot(tsPathOverride);
 
     // 2. Validate that <root>\Program\orlib20.dll exists. A bad --ts-path
     //    override or a missing install is caught here with a clear error.
     if (!validateTsInstall(m_tsRoot)) {
-        std::fprintf(stderr,
+        tsdev_log_message(TsDevLogLevel::Error,
                      "tsdev: ERROR — orlib20.dll not found at %ls\\Program\\orlib20.dll.\n"
                      "tsdev: TS install path may be incorrect. Use --ts-path to specify the correct path.\n",
                      m_tsRoot.c_str());
-        fflush(stderr);
         throw std::runtime_error(
             "tsdev: orlib20.dll not found at <root>\\Program\\orlib20.dll");
     }
@@ -1228,9 +1257,8 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     //    detectVersion() never throws; it is already cached in the resolver.
     const VersionDescriptor& vd = m_resolver->version();
     if (!vd.known || !vd.warningMessage.empty()) {
-        std::fprintf(stderr, "tsdev: WARNING — %s\n",
+        tsdev_log_message(TsDevLogLevel::Warning, "tsdev: WARNING — %s\n",
                      vd.warningMessage.c_str());
-        fflush(stderr);
     }
 
     // 7. Pre-load support DLLs (§13). Failures are non-fatal — log via
@@ -1239,7 +1267,7 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     for (const wchar_t* dll : kSupportDlls) {
         HMODULE h = LoadLibraryW(dll);
         if (!h) {
-            std::fprintf(stderr,
+            tsdev_log_message(TsDevLogLevel::Warning,
                          "tsdev: WARNING — pre-load of %ls failed (err=%lu)\n",
                          dll, GetLastError());
         }
@@ -1382,8 +1410,7 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
         ss << "tsdev: COM initialization failed: HRESULT 0x"
            << std::hex << std::uppercase
            << static_cast<unsigned long>(m_comGuard->initResult());
-        std::fprintf(stderr, "%s\n", ss.str().c_str());
-        fflush(stderr);
+        tsdev_log_message(TsDevLogLevel::Error, "%s\n", ss.str().c_str());
         throw std::runtime_error(ss.str());
     }
 
@@ -2742,7 +2769,7 @@ void TsDevLib::traverseReverseDependents(
 
 bool TsDevLib::closeWarehouse() {
     if (!callCloseWarehouseHelper(m_pCloseWarehouse, 0)) {
-        std::fprintf(stderr,
+        tsdev_log_message(TsDevLogLevel::Warning,
             "tsdev: WARNING — closeWarehouse raised SEH exception\n");
         return false;
     }
@@ -2942,7 +2969,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
             // "logged message" carries path + Windows error) and record it for
             // the caller's Result/CliResult message via diskCleanupErrorOut.
             cleanupFailed = true;
-            std::fprintf(stderr,
+            tsdev_log_message(TsDevLogLevel::Warning,
                 "tsdev: WARNING — failed to delete %s (error=%lu)\n",
                 ellPath, err);
             if (diskCleanupErrorOut != nullptr) {
@@ -2960,7 +2987,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
         if (tsdev::deleteDiskCleanupErrorFailsResult(
                 err, tsdev::DeleteDiskArtifactKind::Xml)) {
             cleanupFailed = true;
-            std::fprintf(stderr,
+            tsdev_log_message(TsDevLogLevel::Warning,
                 "tsdev: WARNING — failed to delete %s (error=%lu)\n",
                 xmlPath, err);
             if (diskCleanupErrorOut != nullptr) {

@@ -82,6 +82,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_elevation_guard';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_crash_handler';          RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_json_serialize';         RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_log_levels';             RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_serve_dispatch';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_serve_framing';          RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_com_apartment_guard';    RequiresTs = $false }

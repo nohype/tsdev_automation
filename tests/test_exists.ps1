@@ -99,11 +99,12 @@ function Write-SourceFile {
 # stdout and stderr SEPARATELY (stdout via the pipeline, stderr via 2>file).
 # Returns a hashtable with Stdout (string), Stderr (string), ExitCode (int).
 #
-# Keeping stdout and stderr separate is essential: the library emits a
-# diagnostic line to stderr ("tsdev: TS install path resolved ...") that is
-# NOT part of the JSON result on stdout. Merging the streams with 2>&1 would
-# break ConvertFrom-Json. This matches the pattern used by the existing E2E
-# tests (test_json_output.ps1 and test_batch_mode.ps1, Invoke-CliRaw).
+# Keeping stdout and stderr separate is essential: the library can emit
+# level-gated diagnostics to stderr (default: warnings + errors only; -v/-vv
+# add info/debug lines such as "tsdev: TS install path resolved ...") that
+# are NOT part of the JSON result on stdout. Merging the streams with 2>&1
+# would break ConvertFrom-Json. This matches the pattern used by the existing
+# E2E tests (test_json_output.ps1 and test_batch_mode.ps1, Invoke-CliRaw).
 # ---------------------------------------------------------------------------
 function Invoke-Cli {
     param(

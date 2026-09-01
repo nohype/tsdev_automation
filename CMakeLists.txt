@@ -94,7 +94,11 @@ add_library(tsdev_lib STATIC
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
 target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
-target_compile_definitions(tsdev_lib PRIVATE TSDEV_DEBUG)
+# TVS (CLI log levels): the former `target_compile_definitions(tsdev_lib
+# PRIVATE TSDEV_DEBUG)` is REMOVED — TSDEV_DBG diagnostics are now gated at
+# runtime by the process-global log level (tsdev_log_set_level, default
+# Warning) instead of at compile time. The CLI raises the level via the
+# repeatable -v/--verbose flag (see src/tsdev_lib.h).
 
 # --- INSERT integration test (historical TDD red-green) --------------------------------
 add_executable(test_insert tests/test_insert.cpp)
@@ -386,6 +390,24 @@ add_executable(test_json_serialize tests/test_json_serialize.cpp)
 target_include_directories(test_json_serialize PRIVATE third_party)
 target_link_libraries(test_json_serialize tsdev_lib)
 add_dependencies(test_json_serialize siggen)
+
+# --- Log-level unit test (TVS: CLI log levels, GREEN) ------------------------
+# Pure unit test for the runtime log-level gate: tsdev_log_set_level() /
+# tsdev_log_get_level() / tsdev_log_message() (exported by src/tsdev_lib.h,
+# implemented in src/tsdev_lib.cpp) and the CLI's file-local
+# LogLevelFromVerbosityCount() mapping helper (-v occurrence count -> level,
+# clamped at Debug). LogLevelFromVerbosityCount() lives inside an anonymous
+# namespace in src/tsdev_cli.cpp (internal linkage), so the test #includes the
+# .cpp directly (same TU) and #defines TSDEV_CLI_TEST to exclude its main().
+# The test needs the third_party include dir (nlohmann/json via the included
+# tsdev_cli.cpp) and links tsdev_lib for the log-level symbols. It captures
+# stderr via the CRT _dup/_dup2 redirection idiom to assert level gating. It
+# is a PURE UNIT TEST (no orlib20 access), so it is NOT in TSDEV_ADMIN_TARGETS
+# and runs under -NoTs.
+add_executable(test_log_levels tests/test_log_levels.cpp)
+target_include_directories(test_log_levels PRIVATE third_party)
+target_link_libraries(test_log_levels tsdev_lib)
+add_dependencies(test_log_levels siggen)
 
 # --- Serve request dispatch unit test (TVS-K.3, GREEN) ------------------------
 # Pure unit test for the implemented parseServeRequest() helper — the JSON
@@ -1060,6 +1082,7 @@ add_dependencies(test_regression
     test_elevation_guard
     test_crash_handler
     test_json_serialize
+    test_log_levels
     test_serve_dispatch
     test_serve_framing
     test_com_apartment_guard

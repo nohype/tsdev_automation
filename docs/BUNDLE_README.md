@@ -35,7 +35,7 @@ tsdev_cli exists   <type> <name> [--case-insensitive]
 tsdev_cli get-source <type> <name> [--output <file>]
 ```
 
-Global: `--json` emits a single JSON result; `--ts-path <dir>` overrides the TradeStation install. `exists` is case-sensitive by default; `--case-insensitive` relaxes matching. `get-source` decrypts encrypted items automatically.
+Global: `--json` emits a single JSON result; `--ts-path <dir>` overrides the TradeStation install. `-v`/`--verbose` (position-free, repeatable) raises the stderr log level: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals; additional occurrences clamp at debug. `exists` is case-sensitive by default; `--case-insensitive` relaxes matching. `get-source` decrypts encrypted items automatically.
 
 Batch via a manifest file or `--batch-stdin`:
 

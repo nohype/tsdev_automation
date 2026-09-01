@@ -41,6 +41,7 @@ Positional arguments: `<type>`, `<name>`, `<source_file>`
 - Global:
   - `--json` - emit a single JSON result object on stdout.
   - `--ts-path <dir>` - override TradeStation install directory.
+  - `-v` / `--verbose` - raise the stderr log level. Position-free and repeatable; each occurrence raises the level one step: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals. Additional occurrences clamp at debug. Accepted forms: `-v`, `-vv`, `-vvv` (bundled), `--verbose`, `--verbose=<value>` (value ignored, counts as one occurrence). Log output goes to stderr only; stdout (results and JSON) is unaffected.
 - `exists`:
   - `--case-insensitive` (default: case-sensitive exact match).
 - `get-source`:

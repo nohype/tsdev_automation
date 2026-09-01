@@ -35,6 +35,15 @@
 //                 to the pre-JSON behavior (backward compatible).
 //                 (batch-* subcommands ALWAYS emit a JSON array on stdout;
 //                 --json is accepted but ignored for batch.)
+//   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
+//                 raises the runtime log level (tsdev_lib) one step:
+//                 default = warnings + errors only; 1 occurrence (-v) = + info;
+//                 2+ occurrences (-vv) = + debug internals (library traces).
+//                 Additional occurrences clamp at debug. Accepted forms:
+//                 -v, -vv, -vvv (bundled), --verbose, --verbose=<value>
+//                 (value ignored, counts as ONE occurrence). "Space + value"
+//                 (--verbose 2) is NOT supported. All log output goes to
+//                 stderr only; stdout (results and JSON) is unaffected.
 //   --ts-path <directory>  Override the TradeStation install directory
 //                          (default: auto-discovered from registry)
 //
@@ -153,6 +162,18 @@ bool isElevated() {
     return ok && elev.TokenIsElevated != 0;
 }
 
+// TVS (CLI log levels): map the accumulated -v/--verbose occurrence count to
+// the runtime library log level. 0 occurrences -> Warning (default:
+// warnings + errors only), 1 -> Info, >=2 -> Debug (clamped; further
+// occurrences have no additional effect). Pure helper, file-local so the
+// same-TU unit test (tests/test_log_levels.cpp) can exercise the mapping
+// incl. clamping.
+TsDevLogLevel LogLevelFromVerbosityCount(int count) {
+    if (count <= 0) return TsDevLogLevel::Warning;
+    if (count == 1) return TsDevLogLevel::Info;
+    return TsDevLogLevel::Debug;
+}
+
 void printUsage() {
     std::fprintf(stderr,
         "Usage:\n"
@@ -191,6 +212,19 @@ void printUsage() {
         "human-readable stdout)\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
+        "  -v, --verbose  Raise the stderr log level. Position-free global "
+        "flag, repeatable:\n"
+        "                 default = warnings + errors only; one occurrence "
+        "(-v) = + info;\n"
+        "                 two or more (-vv) = + debug internals (library "
+        "traces). Additional\n"
+        "                 occurrences clamp at debug. Accepted forms: -v, "
+        "-vv, -vvv\n"
+        "                 (bundled), --verbose, --verbose=<value> (value "
+        "ignored, counts as\n"
+        "                 one occurrence). Log output goes to stderr only; "
+        "stdout (results\n"
+        "                 and JSON) is unaffected.\n"
         "  --output <file>  (get-source only) Write the retrieved EasyLanguage "
         "source to <file>\n"
         "                   instead of stdout. Internally encrypted items are "
@@ -366,10 +400,12 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
 //
 // JSON mode (jsonMode == true): emits exactly ONE JSON object on stdout
 // followed by a single newline, and suppresses the human-readable stdout
-// and stderr messages. The library's own stderr diagnostic
-// ("TS install path resolved...") is emitted by tsdev_lib.cpp and is left
-// untouched (it is a diagnostic, not a result). nlohmann/json performs all
-// escaping (backslashes in Windows paths, quotes, newlines) automatically.
+// and stderr messages. The library's own stderr diagnostics (e.g.
+// "TS install path resolved...") are emitted by tsdev_lib.cpp through the
+// runtime-gated log levels (default: warnings + errors only; -v/-vv raise
+// to info/debug) and are NOT part of the result output. nlohmann/json
+// performs all escaping (backslashes in Windows paths, quotes, newlines)
+// automatically.
 void emitOutput(const CliResult& r, bool jsonMode) {
     try {
     if (!jsonMode) {
@@ -3015,11 +3051,13 @@ HANDLE createServePipe(const std::string& pipeName) {
         // Fallback: SID retrieval failed — use the old OW-based SDDL.
         // The unelevated client may fail to connect (OW resolves to
         // Administrators when elevated, and unelevated tokens have
-        // Administrators as deny-only). Emit a diagnostic so this is
+        // Administrators as deny-only). Emit a Warning-level diagnostic
+        // (visible by default; log levels are runtime-gated) so this is
         // diagnosable if it ever occurs.
-        std::fprintf(stderr, "tsdev_cli: WARNING — failed to retrieve user SID "
-                             "for pipe security descriptor; falling back to OW-based "
-                             "SDDL (unelevated clients may be unable to connect)\n");
+        tsdev_log_message(TsDevLogLevel::Warning,
+                          "tsdev_cli: WARNING — failed to retrieve user SID "
+                          "for pipe security descriptor; falling back to OW-based "
+                          "SDDL (unelevated clients may be unable to connect)\n");
         sddl = L"D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)";
     } else {
         sddl = L"O:" + userSidStr +
@@ -3330,7 +3368,7 @@ int main(int argc, char** argv) {
     // but prevents the standard Windows crash dialog too).
     SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
 
-    // --- Global flag pre-scan: --ts-path and --json ---
+    // --- Global flag pre-scan: --ts-path, --json and -v/--verbose ---
     // Scan argv[1..argc-1] for the optional global flags and remove them
     // (and, for --ts-path, their value) from the argv array. The resulting
     // reduced argv contains only the subcommand and its positional args, so
@@ -3341,9 +3379,20 @@ int main(int argc, char** argv) {
     //            LAST occurrence wins.
     // --json:    boolean switch. Presence (bare "--json" or "--json=...")
     //            enables JSON output. Takes no value.
+    // -v/--verbose: position-free, repeatable boolean switch. Each occurrence
+    //            raises the runtime log level one step (0 -> Warning,
+    //            1 -> Info, >=2 -> Debug, clamped). Accepted forms: "-v",
+    //            "-vv", "-vvv" (bundled shorts: any arg matching -v+, the
+    //            count is the number of v chars), bare "--verbose", and
+    //            "--verbose=<value>" (any value after '=' is ignored and the
+    //            occurrence counts as ONE — mirrors the --json=... behavior).
+    //            "Space + value" (--verbose 2) is NOT supported: the value
+    //            token is not a flag and flows to reducedArgv like any other
+    //            positional. Repeated separate occurrences accumulate.
     const char* tsPathOverride = nullptr;
     std::string tsPathStr;  // holds the value for the equals form
     bool jsonMode = false;
+    int verboseCount = 0;   // accumulated -v/--verbose occurrences
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -3386,10 +3435,26 @@ int main(int argc, char** argv) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
             jsonMode = true;
+        } else if (arg == "--verbose" || arg.rfind("--verbose=", 0) == 0) {
+            // Boolean switch like --json: presence counts as ONE verbosity
+            // occurrence. Any value after '=' is ignored.
+            verboseCount++;
+        } else if (arg.size() >= 2 && arg[0] == '-' && arg[1] == 'v' &&
+                   arg.find_first_not_of('v', 1) == std::string::npos) {
+            // Bundled short form: -v, -vv, -vvv, ... The occurrence count is
+            // the number of v chars. (Anything after the v run, e.g.
+            // "-verbose" or "-vx", does not match and flows to reducedArgv.)
+            verboseCount += static_cast<int>(arg.size() - 1);
         } else {
             reducedArgv.push_back(argv[i]);
         }
     }
+
+    // TVS (CLI log levels): set the process-global library log level ONCE,
+    // right after the pre-scan and BEFORE subcommand dispatch, so all later
+    // diagnostics are gated consistently. Batch worker threads and the serve
+    // broker are spawned after this point and inherit the level.
+    tsdev_log_set_level(LogLevelFromVerbosityCount(verboseCount));
 
     int reducedArgc = static_cast<int>(reducedArgv.size());
     char** reducedArgvPtr = reducedArgv.data();

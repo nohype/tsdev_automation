@@ -42,6 +42,37 @@ namespace tsdev {
 
 class OrlibResolver;       // forward declaration (defined in orlib_resolver.h)
 
+// --- Runtime log levels (TVS: CLI log levels + repeatable -v/--verbose) -----
+//
+// The library's stderr diagnostics are gated at RUNTIME by a process-global
+// level (replacing the former compile-time TSDEV_DEBUG define). Levels are
+// strictly ordered: Error=0 < Warning=1 < Info=2 < Debug=3. A message is
+// emitted only when its level is <= the current level. The DEFAULT level is
+// Warning, so default output is user-facing only (results + warnings +
+// errors); development diagnostics stay available at higher verbosity via
+// the CLI's repeatable -v/--verbose flag (1 occurrence -> Info, >=2 ->
+// Debug, clamped).
+enum class TsDevLogLevel : int {
+    Error   = 0,
+    Warning = 1,
+    Info    = 2,
+    Debug   = 3
+};
+
+// Set/get the process-global log level. The CLI calls tsdev_log_set_level()
+// ONCE in main() right after the global flag pre-scan, BEFORE subcommand
+// dispatch (and therefore before any TsDevLib construction or worker-thread
+// spawn); batch worker threads and the serve broker are spawned after it is
+// set, so a plain global is sufficient. Set-once at startup; not per-request.
+void tsdev_log_set_level(TsDevLogLevel level);
+TsDevLogLevel tsdev_log_get_level();
+
+// Emit a log message to stderr if `level` is <= the current global level.
+// `fmt` uses printf formatting (forwarded to vfprintf); output is flushed.
+// ALL log output goes to stderr only — stdout stays byte-pure for results
+// and JSON. Message text is passed through verbatim (no prefixes added).
+void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...);
+
 // Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md §Mapping to
 // orlib20 warehouse types and §Encoding formula). The enum value is the
 // EXPANDED whType (= (subType << 8) | category). For types with sub-type 0
