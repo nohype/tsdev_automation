@@ -74,6 +74,9 @@
 // (insert), 6=entry op failure (insert/modify/delete), 7=saveSource failure,
 // 8=compile error, 9=.ell missing,
 // 10=CreateThread failure, 11=not elevated.
+// 12 is used by the Python client (ElevationRequiredError,
+// src/tsdev_automation/exceptions.py). 13 = diagnostic-build watchdog abort
+// (tsdev_cli_diag only; see src/diag_watchdog.cpp).
 // Every direct tsdev_cli subcommand, including serve, requires an elevated
 // administrator process; when the guard runs non-elevated it returns exit 11.
 //
@@ -119,6 +122,8 @@
 #include "tsdev_lib.h"
 #include "persistence_integrity.h"  // TVS-L.9: shared post-verify validator
 #include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
+#include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
 
@@ -1436,6 +1441,9 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
 
     // 1. Check if the component already exists — fail loudly, no overwrite.
     int existing = lib.findExistPos(name, type);
+    // §7.1 diag: "findExistPos" batch-phase marker.
+    TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s exists=%d",
+                   name.c_str(), existing);
     if (existing > 0) {
         r.exitCode = 5;
         r.existingProgId = existing;
@@ -1450,6 +1458,9 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     // 2. Create the entry.
     int errCode = 0;
     int progId = lib.createEntry(type, name, errCode);
+    // §7.1 diag: "createEntry" batch-phase marker.
+    TSDEV_DIAG_LOG("batch.phase.createEntry", "item=%s progId=%d errCode=%d",
+                   name.c_str(), progId, errCode);
     if (progId <= 0) {
         r.exitCode = 6;
         r.progId = progId;
@@ -1463,7 +1474,11 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     }
 
     // 3. Save the source.
-    if (!lib.saveSource(type, progId, source)) {
+    const bool savedSource = lib.saveSource(type, progId, source);
+    // §7.1 diag: "saveSource" batch-phase marker.
+    TSDEV_DIAG_LOG("batch.phase.saveSource", "item=%s progId=%d ok=%d",
+                   name.c_str(), progId, savedSource ? 1 : 0);
+    if (!savedSource) {
         r.exitCode = 7;
         r.progId = progId;
         r.errorMessage = std::string("saveSource failed for ProgId=")
@@ -1489,6 +1504,10 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    overwrites it on every non-empty return path.
     CreatePathFailureStage verifyStage = CreatePathFailureStage::VerifyModule_CompileErrors;
     std::string errors = lib.verifyModule(type, progId, &verifyStage);
+    // §7.1 diag: "verify" batch-phase marker (link/traverse sub-phases are
+    // logged inside verifyModule as phase.link / phase.traverse).
+    TSDEV_DIAG_LOG("batch.phase.verify", "item=%s progId=%d errors=%zu",
+                   name.c_str(), progId, errors.size());
     if (!errors.empty()) {
         r.exitCode = 8;
         r.progId = progId;
@@ -1648,6 +1667,9 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     // internally; this extra lookup is a cheap BST search and keeps the
     // snapshot point unambiguous (before any mutation).
     int preProgId = lib.findExistPos(name, type);
+    // §7.1 diag: "findExistPos" batch-phase marker (modify path).
+    TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s progId=%d",
+                   name.c_str(), preProgId);
 
     std::string preEllPath, preXmlPath;
     std::string preEllHash, preXmlHash;
@@ -1740,6 +1762,10 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     }
 
     Result res = lib.modifyEntry(type, name, source);
+    // §7.1 diag: modifyEntry = saveSource + verifyModule (which log their own
+    // dispatch/phase records) — mark the enclosing completion.
+    TSDEV_DIAG_LOG("batch.phase.modifyEntry", "item=%s success=%d progId=%d",
+                   name.c_str(), res.success ? 1 : 0, res.progId);
 
     if (!res.success) {
         if (res.message == "component not found") {
@@ -1950,6 +1976,9 @@ CliResult doUpsert(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
                    const std::string& source, bool flushPerItem = true) {
     int progId = lib.findExistPos(name, type);
+    // §7.1 diag: "findExistPos" batch-phase marker (upsert branch point).
+    TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s progId=%d",
+                   name.c_str(), progId);
     CliResult r;
     if (progId > 0) {
         r = doModify(lib, type, typeStr, name, source);
@@ -3246,6 +3275,10 @@ DWORD WINAPI runBatch(LPVOID param) {
         if (!detail.empty()) emitLine(detail);
     };
 
+    // §7.1 diag: batch start record (doubles as the run header).
+    TSDEV_DIAG_LOG("batch.start", "op=%s items=%zu", op.c_str(),
+                   p->items.size());
+
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
     try {
@@ -3334,6 +3367,13 @@ DWORD WINAPI runBatch(LPVOID param) {
                 op, index, total, item.typeStr, item.name,
                 p->jsonProgress));
         }
+        // §7.1 diag: per-item start marker (item name + op). Pre-validated
+        // failures never reach an op, so they are not marked as started.
+        if (item.preValid) {
+            TSDEV_DIAG_LOG("batch.item.enter", "op=%s item=%s type=%s",
+                           op.c_str(), item.name.c_str(), item.typeStr.c_str());
+        }
+
         CliResult r;
         if (!item.preValid) {
             // Pre-validated failure (malformed line / unreadable file) —
@@ -3352,6 +3392,16 @@ DWORD WINAPI runBatch(LPVOID param) {
         } else {  // delete
             r = doDelete(*lib, item.type, item.typeStr, item.name,
                          /*flushPerItem=*/false);
+        }
+
+        // §7.1 diag: per-item completion marker — doubles as the
+        // partial-batch record (§7.3d) when the process dies mid-run.
+        // Guarded like the start marker: only items that reached an op.
+        if (item.preValid) {
+            TSDEV_DIAG_LOG("batch.item.done",
+                           "op=%s item=%s type=%s success=%d exit=%d progId=%d",
+                           op.c_str(), item.name.c_str(), item.typeStr.c_str(),
+                           r.success ? 1 : 0, r.exitCode, r.progId);
         }
 
         if (!r.success) anyFailed = true;
@@ -3428,6 +3478,9 @@ DWORD WINAPI runBatch(LPVOID param) {
 
     p->exitCode = batchAggregateExitCode(/*batchStarted=*/true, anyFailed,
                                          cancelled);
+
+    // §7.1 diag: batch end record (final aggregate exit code).
+    TSDEV_DIAG_LOG("batch.end", "op=%s exit=%d", op.c_str(), p->exitCode);
 
     // Emit the final summary AFTER the close + retroactive rewrite so its
     // counters and exit code reflect the authoritative final results.
@@ -4227,7 +4280,16 @@ DWORD WINAPI runServe(LPVOID param) {
     // Outer loop: accept connections until the 'quit' op (or a fatal
     // ConnectNamedPipe failure).
     while (!p->quit.load()) {
+        // §7.1 diag (review F3b): mark the pipe wait as an idle-by-design
+        // phase. ConnectNamedPipe blocks here for as long as no client
+        // connects — healthy for the long-lived serve broker — so the
+        // watchdog emits a periodic idle-heartbeat progress record instead
+        // of counting this wait toward the fire threshold (the 2026-09-02
+        // smoke run was a healthy idle `serve` aborted by the watchdog).
+        // Observation-only markers; no-ops in the production build.
+        TSDEV_DIAG_IDLE_PHASE_BEGIN("serve.pipe-wait");
         BOOL connected = ConnectNamedPipe(pipe, nullptr);
+        TSDEV_DIAG_IDLE_PHASE_END();
         DWORD connectError = connected ? ERROR_SUCCESS : GetLastError();
         int connectExitCode = serveConnectExitCode(connected, connectError);
         if (connectExitCode != 0) {
@@ -4475,6 +4537,36 @@ LONG WINAPI vehCrashHandler(PEXCEPTION_POINTERS ep) {
 
 #ifndef TSDEV_CLI_TEST
 int main(int argc, char** argv) {
+    // §7.1 diagnostic build: file sink + watchdog (no-op in the production
+    // build). First statement so the log covers everything that follows.
+    TSDEV_DIAG_INIT();
+
+#ifdef TSDEV_DIAG
+    // §7.1 diag (review F5a/F8): every run must be identifiable from its log
+    // alone — the 2026-09-02 incident run could only be identified as
+    // `serve` by parsing the preserved minidump's PEB. Log the argv values
+    // as-is (this is a local diagnostic tool run by the user themselves),
+    // except that each argument is truncated to 200 chars and the whole list
+    // is capped, so a pathological argument cannot flood the one-line
+    // record. Compiled out of the production build.
+    {
+        std::string argvLogged;
+        for (int i = 0; i < argc; i++) {
+            std::string a = argv[i] ? argv[i] : "(null)";
+            if (a.size() > 200) a = a.substr(0, 200) + "...";
+            if (!argvLogged.empty() &&
+                argvLogged.size() + 1 + a.size() > 800) {
+                argvLogged += " ...(truncated)";
+                break;
+            }
+            if (!argvLogged.empty()) argvLogged += ' ';
+            argvLogged += a;
+        }
+        TSDEV_DIAG_LOG("run.start", "argc=%d argv=%s", argc,
+                       argvLogged.c_str());
+    }
+#endif
+
     // Install VEH crash handler — must be before any orlib20 calls.
     // Catches fatal exceptions and terminates cleanly instead of spawning
     // TSCrashReport.exe (which runs elevated and can't be killed by non-elevated clients).

@@ -18,11 +18,23 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
   (RPC_S_SERVER_UNAVAILABLE) → TSCrashReport dialog (reproduced ×3).
 - Natural user-machine trigger [OPEN]: candidates — WHServer wedge/lifetime
   dynamics (lazy lifetime proven, E6), dispatch-volume race (library size),
-  quiet worker death, AV interference. Next step: §7.1 diagnostic build —
-  extensive diagnostics TO FILES with immediate per-write flushing
-  (survive crashes), dispatch enter/leave + per-item progress + watchdog
-  (stacks/warehouse state/minidump then loud abort) + WHServer liveness.
+  quiet worker death, AV interference. §7.1 diagnostic build addresses this
+  (done, see below).
 - Rare init-line hang [INFERRED]: wedged leftover WHServer after kills.
+- **§7.1 diagnostic build: DONE 2026-09-02** (implemented, adversarially
+  approved round 2, field-validated, production E2E gate passed, committed).
+  Status + evidence pointers live in the report §7.1 "Status" block (SSOT).
+  Field-validation artifacts: `tmp\exp\diag_verify\`; review 1:
+  `tmp\exp\review1_diag_build.md`; pre-fix incident (ExitProcess detach
+  dialog): `tmp\exp\whouse_incident\`.
+- Next toward goal (a) closure: ship `tsdev_cli_diag.exe` to affected users
+  and collect their diag logs (the natural user-machine trigger is still
+  [OPEN]); then goal (b) targeted fix. §7.3 corruption experiments + §7.2+
+  containment remain open (see report §7).
+- **User-mandated process rule:** after EVERY action affecting any TS-related
+  process (incl. our executables/tests), check for error/crash popups
+  (list_windows + tasklist TSCrashReport), read text, dismiss, correct course.
+  Must be in every subagent brief.
 - **Overriding product requirement (user-mandated, report §7 preamble +
   §7.3):** detection/diagnosis is NOT sufficient — the tool must not crash
   the user's TS processes nor risk warehouse corruption. Corruption risk of

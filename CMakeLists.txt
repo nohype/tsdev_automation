@@ -100,6 +100,33 @@ target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
 # Warning) instead of at compile time. The CLI raises the level via the
 # repeatable -v/--verbose flag (see src/tsdev_lib.h).
 
+# --- §7.1 diagnostic build module (report 2026-09-02_v0.1.0 §7.1) ------------
+# tsdev_diag: the diagnostic-only module (file sink + watchdog). Compiled ONLY
+# with TSDEV_DIAG and linked ONLY into the diagnostic targets; the production
+# build neither compiles the call-site macros to code nor links this library.
+# dbghelp: StackWalk64 / SymGetModuleBase64 / MiniDumpWriteDump (watchdog).
+# user32: EnumWindows / IsHungAppWindow (WHServer liveness samples).
+add_library(tsdev_diag STATIC
+    src/diag_log.cpp
+    src/diag_watchdog.cpp)
+target_include_directories(tsdev_diag PUBLIC src)
+target_compile_definitions(tsdev_diag PRIVATE TSDEV_DIAG)
+target_link_libraries(tsdev_diag PUBLIC dbghelp user32)
+
+# tsdev_lib_diag: the SAME sources as tsdev_lib compiled with TSDEV_DIAG so
+# the §7.1 call-site instrumentation is active. Linked only by tsdev_cli_diag;
+# the production tsdev_lib (above) stays untouched and behavior-identical.
+add_library(tsdev_lib_diag STATIC
+    src/tsdev_lib.cpp
+    src/com_apartment_guard.cpp
+    src/persistence_integrity.cpp
+    src/create_path_cleanup.cpp
+    src/delete_disk_cleanup.cpp)
+target_include_directories(tsdev_lib_diag PUBLIC src)
+target_link_libraries(tsdev_lib_diag PUBLIC orlib_resolver tsdev_diag)
+target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32)
+target_compile_definitions(tsdev_lib_diag PRIVATE TSDEV_DIAG)
+
 # --- INSERT integration test (historical TDD red-green) --------------------------------
 add_executable(test_insert tests/test_insert.cpp)
 target_link_libraries(test_insert tsdev_lib)
@@ -374,6 +401,20 @@ target_link_libraries(test_delete_disk_cleanup PRIVATE tsdev_lib)
 add_executable(test_close_warehouse tests/test_close_warehouse.cpp)
 target_include_directories(test_close_warehouse PRIVATE src)
 target_link_libraries(test_close_warehouse PRIVATE tsdev_lib)
+
+# --- Diagnostic file-sink unit test (§7.1 diag build, TDD) --------------------
+# Pure unit test for the §7.1 diagnostic file sink (src/diag_log.h/.cpp):
+# per-write flush (record present in the file immediately after the log call,
+# before any close), atomic interleaving under concurrent writers from
+# multiple threads, and the TSDEV_DIAG_DIR directory override. The sink and
+# the test are compiled with TSDEV_DIAG (the sink is a no-op without it).
+# It is a PURE UNIT TEST (plain Win32 file I/O, no orlib20 access), so it is
+# NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_diag_log
+    tests/test_diag_log.cpp
+    src/diag_log.cpp)
+target_include_directories(test_diag_log PRIVATE src)
+target_compile_definitions(test_diag_log PRIVATE TSDEV_DIAG)
 
 # --- JSON serialize unit test (TVS-K.2, GREEN) -------------------------------
 # Pure unit test for the implemented cliResultToJson() helper extracted from
@@ -944,6 +985,18 @@ add_executable(tsdev_cli src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli PRIVATE third_party)
 target_link_libraries(tsdev_cli tsdev_lib)
 
+# --- §7.1 diagnostic CLI (tsdev_cli_diag) ------------------------------------
+# Field-diagnostic build of the CLI: same sources + TSDEV_DIAG. Every diag
+# call-site macro compiles out of the production tsdev_cli above, so the
+# production binary stays behavior-identical. The diag build adds the file
+# sink + watchdog (tsdev_diag) and links dbghelp/user32 transitively via
+# tsdev_lib_diag -> tsdev_diag. NOT copied into dist/ (the bundle tooling is
+# unchanged); it is a separate executable the PM ships to affected users.
+add_executable(tsdev_cli_diag src/tsdev_cli.cpp)
+target_include_directories(tsdev_cli_diag PRIVATE third_party)
+target_link_libraries(tsdev_cli_diag tsdev_lib_diag)
+target_compile_definitions(tsdev_cli_diag PRIVATE TSDEV_DIAG)
+
 # --- Admin-privilege manifest for TS-accessing executables -------------------
 # When ON, every executable that accesses the TradeStation TSDev Library (which
 # requires admin privileges, because TSDev.exe and TradeStation Desktop always
@@ -977,6 +1030,7 @@ option(TSDEV_REQUIRE_ADMIN
 # non-elevated runner).
 set(TSDEV_ADMIN_TARGETS
     tsdev_cli
+    tsdev_cli_diag
     test_insert
     test_delete
     test_delete_tradingapp
@@ -1130,6 +1184,7 @@ add_dependencies(test_regression
     test_preop_hash_classification
     test_delete_disk_cleanup
     test_close_warehouse
+    test_diag_log
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
@@ -1144,5 +1199,6 @@ add_dependencies(test_regression
     test_0x40a_notification
     test_orlib_resolver
     tsdev_cli
+    tsdev_cli_diag
     sigtool
 )

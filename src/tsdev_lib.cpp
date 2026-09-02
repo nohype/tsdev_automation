@@ -13,6 +13,8 @@
 #include "orlib_resolver.h"
 #include "com_apartment_guard.h"
 #include "delete_disk_cleanup.h"
+#include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 
 // TVS-L.13: the test-only construction seam (private ctor
 // TsDevLib::TsDevLib(const wchar_t*, const TsDevLibTestConfig&) and the
@@ -1266,16 +1268,26 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
 
     // 4. Point the loader at the TS Program directory so orlib20.dll and its
     //    dependencies resolve.
+    //    §7.1 diag: enter/leave records around the init steps (the
+    //    init-hang window; a hang here leaves the enter record as the last
+    //    log line).
+    TSDEV_DIAG_LOG("init.SetDllDirectory.enter", "dir=%ls",
+                   m_tsProgramDir.c_str());
     if (!SetDllDirectoryW(m_tsProgramDir.c_str())) {
+        TSDEV_DIAG_LOG("init.SetDllDirectory.leave", "ok=0 err=%lu",
+                       GetLastError());
         throw std::runtime_error(
             "tsdev: SetDllDirectoryW failed for TS Program dir");
     }
+    TSDEV_DIAG_LOG("init.SetDllDirectory.leave", "ok=1");
 
     // 5. Construct OrlibResolver — loads orlib20.dll via LoadLibraryW,
     //    parses PE headers, builds signature catalog, detects version.
     //    Throws OrlibResolverError on load/PE failure (propagates as
     //    std::runtime_error — AC6).
+    TSDEV_DIAG_LOG("init.LoadLibrary.orlib20.enter", "dll=orlib20.dll");
     m_resolver = std::make_unique<OrlibResolver>(L"orlib20.dll");
+    TSDEV_DIAG_LOG("init.LoadLibrary.orlib20.leave", "ok=1");
 
     // 6. Version check — warn but do NOT abort if unknown (AC4).
     //    detectVersion() never throws; it is already cached in the resolver.
@@ -1289,11 +1301,17 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     //    stderr and continue; OrlibInit will fail outright if a truly
     //    required dependency is missing.
     for (const wchar_t* dll : kSupportDlls) {
+        TSDEV_DIAG_LOG("init.LoadLibrary.support.enter", "dll=%ls", dll);
         HMODULE h = LoadLibraryW(dll);
         if (!h) {
+            TSDEV_DIAG_LOG("init.LoadLibrary.support.leave",
+                           "dll=%ls ok=0 err=%lu", dll, GetLastError());
             tsdev_log_message(TsDevLogLevel::Warning,
                          "tsdev: WARNING — pre-load of %ls failed (err=%lu)\n",
                          dll, GetLastError());
+        } else {
+            TSDEV_DIAG_LOG("init.LoadLibrary.support.leave", "dll=%ls ok=1",
+                           dll);
         }
     }
 
@@ -1368,11 +1386,37 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     applyThreadCheckPatches();
 
     // 12. Initialize orlib20 (SEH-protected — AC3).
+    TSDEV_DIAG_LOG("init.OrlibInit.enter", "args=(NULL,1)");
     if (!callOrlibInit(m_pOrlibInit, NULL, 1)) {
+        TSDEV_DIAG_LOG("init.OrlibInit.leave", "ok=0");
         throw std::runtime_error(
             "tsdev: OrlibInit(NULL, 1) raised SEH exception or returned FALSE");
     }
     m_orlibInitialized = true;
+    TSDEV_DIAG_LOG("init.OrlibInit.leave", "ok=1");
+
+#ifdef TSDEV_DIAG
+    // §7.1 diag: register the warehouse singleton pointer with the watchdog
+    // so it can read the protocol state ([wh+0x04]/[wh+0x6A]/[wh+0x6E]/
+    // [wh+0x72]/[wh+0x76], docs/KNOWLEDGE_BASE.md §2) at hang time. The
+    // pointer is obtained through the resolved GetWarehouse export (existing
+    // project knowledge) — not by hacking orlib20 internals. The watchdog
+    // itself only performs plain SEH-protected memory reads of that pointer.
+    //
+    // Review F2: the WHOLE block (including the callGetWarehouse call) is
+    // compiled out of the production build. TSDEV_DIAG_SET_WAREHOUSE expands
+    // to a no-op there, but the callGetWarehouse(...) orlib20 call would
+    // still execute — production must perform no new orlib20 call on the
+    // init path (behavior-identical invariant, diag_log.h header claim).
+    {
+        void* whDiag = nullptr;
+        if (callGetWarehouse(
+                reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse), 0,
+                &whDiag) && whDiag) {
+            TSDEV_DIAG_SET_WAREHOUSE(whDiag);
+        }
+    }
+#endif
 
     // 13. Create the hidden EDIT control used to hold source text.
     m_editorHwnd = createHiddenEditControl();
@@ -1563,12 +1607,24 @@ TsDevLib::~TsDevLib() {
 // ============================================================================
 
 int TsDevLib::findExistPos(const std::string& name, ComponentType type) {
+    // §7.1 diag (review F5b): bracket the _FindExistPos crossing — every
+    // op path (insert/modify/delete/exists/get-source/enumerate) starts
+    // here, and a hang here previously ended the log unnamed (only the
+    // CLI-level post-call batch phase existed).
+    TSDEV_DIAG_LOG("dispatch.FindExistPos.enter",
+                   "cat=%d name=%s", getCategory(type), name.c_str());
     FindExistPosSehResult seh;
     if (!callFindExistPos(m_pFindExistPos, name.c_str(),
                           getCategory(type), &seh)) {
         // SEH exception — treat as "not found"
+        TSDEV_DIAG_LOG("dispatch.FindExistPos.leave",
+                       "cat=%d name=%s ok=0 seh=1 result=0",
+                       getCategory(type), name.c_str());
         return 0;
     }
+    TSDEV_DIAG_LOG("dispatch.FindExistPos.leave",
+                   "cat=%d name=%s result=%d", getCategory(type),
+                   name.c_str(), seh.result);
     return seh.result;
 }
 
@@ -1576,14 +1632,23 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
                           int& errCode) {
     errCode = 0;
     int progId = 0;
+    // §7.1 diag: enter/leave around the _CreateEntryEX dispatch call site.
+    TSDEV_DIAG_LOG("dispatch.CreateEntryEX.enter", "cat=%d sub=%d name=%s",
+                   getCategory(type), getSubType(type), name.c_str());
     __try {
         progId = m_pCreateEntry(getCategory(type), getSubType(type),
                                 name.c_str(), 0, 0, &errCode);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         // CreateEntryEX can raise SEH on certain malformed states; treat as
         // a hard failure (ProgId 0).
+        TSDEV_DIAG_LOG("dispatch.CreateEntryEX.leave",
+                       "cat=%d name=%s ok=0 seh=1", getCategory(type),
+                       name.c_str());
         return 0;
     }
+    TSDEV_DIAG_LOG("dispatch.CreateEntryEX.leave",
+                   "cat=%d name=%s progId=%d errCode=%d", getCategory(type),
+                   name.c_str(), progId, errCode);
     // TVS-L.10: createEntry no longer records the created entry in a
     // process-global (g_lastCreated is removed). The SINGLE create-path
     // cleanup owner is doInsert in the CLI, which already has the (type,
@@ -1622,12 +1687,25 @@ bool TsDevLib::saveSource(ComponentType type, int progId,
                                static_cast<int>(type), progId);
     }
     int result = 0;
+    // §7.1 diag (review F5b): bracket the _SaveModule_New@20 crossing — the
+    // warehouse write window (RCA §3 batch path; previously only a post-call
+    // marker existed, so a hang inside the call ended the log unnamed).
+    TSDEV_DIAG_LOG("dispatch.SaveModule_New.enter",
+                   "cat=%d progId=%d flags=0x%X verified=%d srcBytes=%zu",
+                   getCategory(type), progId, saveFlags,
+                   isVerified ? 1 : 0, source.size());
     __try {
         result = m_pSaveModuleNew(getCategory(type), progId,
                                   &saveFlags, m_editorHwnd, savePasswordBuf);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        TSDEV_DIAG_LOG("dispatch.SaveModule_New.leave",
+                       "cat=%d progId=%d ok=0 seh=1", getCategory(type),
+                       progId);
         return false;
     }
+    TSDEV_DIAG_LOG("dispatch.SaveModule_New.leave",
+                   "cat=%d progId=%d result=%d ok=%d", getCategory(type),
+                   progId, result, (result == 1) ? 1 : 0);
     return (result == 1);
 }
 
@@ -1651,9 +1729,17 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
     //     path) as before.
     unsigned char masterRec[0x10A] = {};
     GetMasterRecByTypeSehResult mrSeh;
+    // §7.1 diag: _GetMasterRecByType@16 dispatches worker cmd 0x0D
+    // (FUN_101d15c0) internally — bracket the call (get-source path).
+    TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.enter",
+                   "cat=%d progId=%d when=get-source", getCategory(type),
+                   progId);
     if (callGetMasterRecByType(m_getMasterRecByType, getCategory(type),
                                getSubType(type), progId, masterRec,
                                &mrSeh)) {
+        TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.leave",
+                       "cat=%d progId=%d when=get-source ok=%d",
+                       getCategory(type), progId, mrSeh.result ? 1 : 0);
         if (mrSeh.result) {
             unsigned short flags = *(unsigned short*)(masterRec + 0x7B);
             if (flags & 0x400) {
@@ -1734,8 +1820,16 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
 
             HGLOBAL buf = NULL;
             LoadMasterRecsExSehResult seh;
+            // §7.1 diag: _LoadMasterRecsEX@16 triggers worker cmds
+            // 0x07/0x08/0x09 — bracket the dispatch call site.
+            TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.enter",
+                           "cat=%d pass=%d when=enumerateRecords", category,
+                           pass);
             if (callLoadMasterRecsEx(m_loadMasterRecsEx, category, &buf,
                                       (const char*)NULL, 1, &seh)) {
+                TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
+                               "cat=%d pass=%d when=enumerateRecords count=%d",
+                               category, pass, seh.result);
                 int count = seh.result;
 
                 if (count > 0 && buf != NULL) {
@@ -1938,7 +2032,12 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
     //     written. For newly created modules the .ell file may not exist
     //     yet, so the link may fail — that is non-fatal (the module can
     //     still be verified if it has no unresolved function calls). ---
+    //     §7.1 diag: "link" batch-phase marker (Ordinal_28/69 calls).
+    TSDEV_DIAG_LOG("phase.link.enter", "cat=%d progId=%d when=pre-verify",
+                   getCategory(type), progId);
     linkModule(type, progId);
+    TSDEV_DIAG_LOG("phase.link.leave", "cat=%d progId=%d when=pre-verify",
+                   getCategory(type), progId);
 
     // --- 6. VerifyModule_New, SEH-guarded. Error text is read directly from
     //     the global error array after this call (see readErrorsFromArray).
@@ -1965,9 +2064,16 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
     }
 
     VerifySehResult seh;
+    // §7.1 diag: enter/leave around the ROOT _VerifyModule_New dispatch call
+    // site (the compile/verify window).
+    TSDEV_DIAG_LOG("dispatch.VerifyModule_New.enter",
+                   "cat=%d progId=%d role=root", getCategory(type), progId);
     if (!callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
             m_editorHwnd, getCategory(type), progId, compilerMem, &seh)) {
+        TSDEV_DIAG_LOG("dispatch.VerifyModule_New.leave",
+                       "cat=%d progId=%d role=root ok=0 seh=1",
+                       getCategory(type), progId);
         callEndCompiling(reinterpret_cast<EndCompilingFn>(m_pEndCompiling), 0);
         // Destroy via ordinal 67 (dtor + free). NO std::free.
         callDestroy(reinterpret_cast<CELCompilerDestroyFn>(m_pCELCompilerDestroy),
@@ -1975,6 +2081,9 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         if (outStage) *outStage = CreatePathFailureStage::VerifyModule_SehVerify;
         return "tsdev: VerifyModule_New raised an exception";
     }
+    TSDEV_DIAG_LOG("dispatch.VerifyModule_New.leave",
+                   "cat=%d progId=%d role=root verifyResult=%d",
+                   getCategory(type), progId, seh.verifyResult);
 
     // M.4b.1 DEBUG: Trace warehouse state after _VerifyModule_New.
     // Also re-read warehouse+0xAE to see whether verify (which calls
@@ -2022,7 +2131,12 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
         // categories). Without this, enumerateReverseDependents finds no
         // 0xFA3 entries for newly created items. SEH-protected; failure is
         // non-fatal (the module is still verified, just not linked).
+        // §7.1 diag: "link" batch-phase marker (post-verify).
+        TSDEV_DIAG_LOG("phase.link.enter", "cat=%d progId=%d when=post-verify",
+                       getCategory(type), progId);
         linkModule(type, progId);
+        TSDEV_DIAG_LOG("phase.link.leave", "cat=%d progId=%d when=post-verify",
+                       getCategory(type), progId);
 
         int rootCategory = getCategory(type);
         if (rootCategory == 0 || rootCategory == 1 || rootCategory == 4) {
@@ -2053,11 +2167,22 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
                         *reinterpret_cast<int*>(whp + 0x16) = progId;
                         TSDEV_DBG("verifyModule: dispatching post-verify cmd 0x0D cat=%d progId=%d wh=%p 0xAE=%p\n",
                                   rootCategory, progId, wh, programsIface);
+                        // §7.1 diag: enter/leave around the post-verify
+                        // worker cmd 0x0D (FindProgram) dispatch call site.
+                        TSDEV_DIAG_LOG("dispatch.cmd0x0D.enter",
+                                       "cat=%d progId=%d when=post-verify",
+                                       rootCategory, progId);
                         if (!callCmdDispatcher(m_pCmdDispatcher, wh, 0x0D)) {
+                            TSDEV_DIAG_LOG("dispatch.cmd0x0D.leave",
+                                           "cat=%d progId=%d when=post-verify ok=0 seh=1",
+                                           rootCategory, progId);
                             TSDEV_DBG("verifyModule: post-verify cmd 0x0D SEH (cat=%d progId=%d)\n",
                                       rootCategory, progId);
                         } else {
                             void* iProgramResult = *reinterpret_cast<void**>(whp + 0x5E);
+                            TSDEV_DIAG_LOG("dispatch.cmd0x0D.leave",
+                                           "cat=%d progId=%d when=post-verify ok=1 iProgram=%p",
+                                           rootCategory, progId, iProgramResult);
                             TSDEV_DBG("verifyModule: post-verify cmd 0x0D OK, 0x5E=%p (cat=%d progId=%d)\n",
                                       iProgramResult, rootCategory, progId);
                         }
@@ -2080,9 +2205,17 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
                 // Read the new master record.
                 char newRec[0x10A] = {};
                 GetMasterRecByTypeSehResult gmSeh;
+                // §7.1 diag: _GetMasterRecByType@16 dispatches worker cmd
+                // 0x0D (FUN_101d15c0) internally — bracket the call.
+                TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.enter",
+                               "cat=%d progId=%d when=contract-check",
+                               rootCategory, progId);
                 if (callGetMasterRecByType(m_getMasterRecByType,
                         rootCategory, getSubType(type), progId, newRec, &gmSeh)
                     && gmSeh.result == 1) {
+                    TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.leave",
+                                   "cat=%d progId=%d when=contract-check ok=1",
+                                   rootCategory, progId);
                     int cmpResult = compareMasterRecsContractSeh(
                         (const char*)m_oldMasterRec, (const char*)newRec);
                     contractChanged = (cmpResult == 0);  // 0 = changed
@@ -2091,10 +2224,16 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
             }
 
             // Traverse reverse dependents with an explicit visited-set; cycle termination is not established when contractChanged=true (M.4 blocker).
+            // §7.1 diag: "traverse" batch-phase marker (the currently silent
+            // reverse-dependent revalidation region).
             std::set<int> visited;
             visited.insert(progId);  // root is already visited
+            TSDEV_DIAG_LOG("phase.traverse.enter",
+                           "rootCat=%d rootProgId=%d", rootCategory, progId);
             traverseReverseDependents(type, progId, compilerMem,
                                       contractChanged, visited, 0);
+            TSDEV_DIAG_LOG("phase.traverse.leave",
+                           "rootCat=%d rootProgId=%d", rootCategory, progId);
         }
     }
 
@@ -2127,9 +2266,18 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
             // SEH-protected (orlib20 boundary). Fire-and-forget: a
             // notification exception is ignored and must not fail the
             // insert/modify operation (R-M.3.3 error semantics).
-            callNotifyLibChanged(
+            // §7.1 diag (review F5b): bracket the 0x40A notification send
+            // (verify-success path). callNotifyLibChanged returns whether
+            // the call completed without SEH — log that as the leave status.
+            TSDEV_DIAG_LOG("dispatch.NotifyLibChanged.enter",
+                           "cat=%d progId=%d when=verify-success",
+                           category, progIdWord);
+            bool notified = callNotifyLibChanged(
                 reinterpret_cast<NotifyLibChangedFn>(m_pNotifyLibChanged),
                 category, progIdWord);
+            TSDEV_DIAG_LOG("dispatch.NotifyLibChanged.leave",
+                           "cat=%d progId=%d when=verify-success ok=%d",
+                           category, progIdWord, notified ? 1 : 0);
         }
     }
 
@@ -2198,8 +2346,16 @@ bool TsDevLib::linkModule(ComponentType type, int progId) {
 
     // Step 3: release the caller's reference. The cache at module+0x23d
     // holds its own reference, so the linked record stays alive.
+    // §7.1 diag (review F5b): bracket the Ordinal_70 release (part of the
+    // link phase the RCA lists on the batch path).
     Ord70SehResult r70;
+    TSDEV_DIAG_LOG("dispatch.Ord70.enter",
+                   "cat=%d progId=%d when=linkModule reason=release", cat,
+                   progId);
     callOrd70(m_ord70, linkedRec, 0, &r70);
+    TSDEV_DIAG_LOG("dispatch.Ord70.leave",
+                   "cat=%d progId=%d when=linkModule ok=%d result=%d", cat,
+                   progId, r70.result >= 0 ? 1 : 0, r70.result);
 
     return true;
 }
@@ -2248,10 +2404,15 @@ void TsDevLib::refreshCache() {
             // CELProgramWriter buffer (0x280 bytes, zero-initialized).
             unsigned char writerBuf[0x280] = {};
             callCelProgramWriterCtor(m_pCelProgWriterCtor, writerBuf);
+            // §7.1 diag: enter/leave around the cmd 0x0F dispatch call site
+            // (refreshCache re-initialization path).
+            TSDEV_DIAG_LOG("dispatch.cmd0x0F.enter", "when=refreshCache");
             callCmd0FDispatcher(m_pCmd0FDispatcher, warehouse,
                                 typeArray, 0, writerBuf);
             // Re-read [warehouse+0x5E] after cmd 0x0F.
             iface5E = *reinterpret_cast<void**>(wh + 0x5E);
+            TSDEV_DIAG_LOG("dispatch.cmd0x0F.leave",
+                           "when=refreshCache iface5E=%p", iface5E);
             void* ifaceAE_after0F = *reinterpret_cast<void**>(wh + 0xAE);
             TSDEV_DBG("refreshCache: AFTER cmd 0x0F 0x5E=%p 0xAE=%p\n",
                       iface5E, ifaceAE_after0F);
@@ -2280,7 +2441,14 @@ void TsDevLib::refreshCache() {
     // instead, which dispatches cmd 0x0D via a DIFFERENT path
     // (FUN_101d15c0) and returns a single warehouse record by ProgId.)
     *reinterpret_cast<int*>(wh + 0x12) = 0xC;
+    // §7.1 diag: enter/leave around the cmd 0x4E (cache refresh) dispatch
+    // call site. [wh+0x4E] is the worker HRESULT (docs/KNOWLEDGE_BASE.md §2)
+    // — read after the (completed) dispatch for the result record.
+    TSDEV_DIAG_LOG("dispatch.cmd0x4E.enter", "when=refreshCache");
     callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x4E);
+    TSDEV_DIAG_LOG("dispatch.cmd0x4E.leave",
+                   "when=refreshCache hresult=0x%08X",
+                   *reinterpret_cast<unsigned int*>(wh + 0x4E));
 }
 
 std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
@@ -2307,10 +2475,19 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
     for (int cat = 0; cat <= 7; cat++) {
         HGLOBAL buf = NULL;
         LoadMasterRecsExSehResult lmrSeh;
+        // §7.1 diag: _LoadMasterRecsEX@16 triggers worker cmds
+        // 0x07/0x08/0x09 — bracket the dispatch call site (per category).
+        TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.enter",
+                       "cat=%d when=reverse-enum", cat);
         if (!callLoadMasterRecsEx(m_loadMasterRecsEx, cat, &buf,
                                   (const char*)NULL, 1, &lmrSeh)) {
+            TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
+                           "cat=%d when=reverse-enum ok=0 seh=1", cat);
             continue;  // SEH — skip this category
         }
+        TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
+                       "cat=%d when=reverse-enum count=%d", cat,
+                       lmrSeh.result);
         int count = lmrSeh.result;
         if (count <= 0 || buf == NULL) {
             if (buf) GlobalFree(buf);
@@ -2345,11 +2522,24 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
             if (ord28r.result != 1) continue;
 
             // Step 2: call the linker (ordinal 85) to get the linked record.
+            // §7.1 diag (review F5b): this per-record linker call sits in
+            // the RCA's "silent region" between elem blocks — bracket it so
+            // a hang here names the blocked call and the record being
+            // processed.
             LinkerSehResult linkr;
+            TSDEV_DIAG_LOG("dispatch.Linker.enter",
+                           "cat=%d progId=%d when=reverse-enum", cat,
+                           (int)candidateProgId);
             if (!callLinkerSafe(m_linkerRaw, cat, (int)candidateProgId,
                                 /*errorFlag=*/0, partialBuf, &linkr)) {
+                TSDEV_DIAG_LOG("dispatch.Linker.leave",
+                               "cat=%d progId=%d when=reverse-enum ok=0 "
+                               "seh=1", cat, (int)candidateProgId);
                 continue;
             }
+            TSDEV_DIAG_LOG("dispatch.Linker.leave",
+                           "cat=%d progId=%d when=reverse-enum ok=1 ptr=%p",
+                           cat, (int)candidateProgId, linkr.ptr);
             void* linkedRec = linkr.ptr;
             if (!linkedRec) {
                 TSDEV_DBG("  enumerateReverseDependents: cat=%d pid=%d linker returned NULL\n",
@@ -2364,8 +2554,18 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
             if (!sehReadInt((const char*)linkedRec + 0x29, &elemCount) ||
                 !sehReadPtr((const char*)linkedRec + 0x4f, &elemArray)) {
                 // Release the record even if the read failed.
+                // §7.1 diag (review F5b): Ordinal_70 release in the
+                // previously-silent per-record region.
                 Ord70SehResult r70;
+                TSDEV_DIAG_LOG("dispatch.Ord70.enter",
+                               "cat=%d progId=%d when=reverse-enum "
+                               "reason=release-after-read-failure", cat,
+                               (int)candidateProgId);
                 callOrd70(m_ord70, linkedRec, 0, &r70);
+                TSDEV_DIAG_LOG("dispatch.Ord70.leave",
+                               "cat=%d progId=%d when=reverse-enum ok=%d "
+                               "result=%d", cat, (int)candidateProgId,
+                               r70.result >= 0 ? 1 : 0, r70.result);
                 continue;
             }
 
@@ -2419,8 +2619,17 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
             }
 
             // Step 4: release the linked record via Ordinal_70.
+            // §7.1 diag (review F5b): Ordinal_70 release in the
+            // previously-silent per-record region.
             Ord70SehResult r70;
+            TSDEV_DIAG_LOG("dispatch.Ord70.enter",
+                           "cat=%d progId=%d when=reverse-enum reason=release",
+                           cat, (int)candidateProgId);
             callOrd70(m_ord70, linkedRec, 0, &r70);
+            TSDEV_DIAG_LOG("dispatch.Ord70.leave",
+                           "cat=%d progId=%d when=reverse-enum ok=%d "
+                           "result=%d", cat, (int)candidateProgId,
+                           r70.result >= 0 ? 1 : 0, r70.result);
 
             if (isReverseDep) {
                 result.push_back({(int)candidateProgId, cat,
@@ -2558,11 +2767,22 @@ std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallersByProgId(
     unsigned char writerBuf[0x280] = {};
     callCelProgramWriterCtor(m_pCelProgWriterCtor, writerBuf);
 
+    // §7.1 diag (review F5b): bracket the cmd 0x0F (LoadProgram) dispatch on
+    // the enumerateCallers path (previously unbracketed here).
+    TSDEV_DIAG_LOG("dispatch.cmd0x0F.enter",
+                   "cat=%d progId=%d when=enumerateCallers", category,
+                   progId);
     if (!callCmd0FDispatcher(m_pCmd0FDispatcher, warehouse,
                              typeArray, progId, writerBuf)) {
+        TSDEV_DIAG_LOG("dispatch.cmd0x0F.leave",
+                       "cat=%d progId=%d when=enumerateCallers ok=0 seh=1",
+                       category, progId);
         TSDEV_DBG("enumCallers: cmd 0x0F SEH!\n");
         return result;  // SEH in cmd 0x0F dispatch
     }
+    TSDEV_DIAG_LOG("dispatch.cmd0x0F.leave",
+                   "cat=%d progId=%d when=enumerateCallers ok=1", category,
+                   progId);
 
     // Verify the loaded IProgram was set at warehouse+0x5e.
     void* rootRecord = *reinterpret_cast<void**>(wh + 0x5e);
@@ -2582,7 +2802,17 @@ std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallersByProgId(
     // Step 5: Dispatch cmd 0x3B (IProgram::Callers) via callCmdDispatcher.
     // This operates on the current record (rootRecord at warehouse+0x5e) and
     // populates the reverse-dependent SafeArray at warehouse+0x26.
+    //
+    // §7.1 diag (review F5b): bracket the cmd 0x3B dispatch (previously
+    // unbracketed). The leave record carries the worker status at
+    // [wh+0x4e] (the existing Step 6 guard reads it right after the call).
+    TSDEV_DIAG_LOG("dispatch.cmd0x3B.enter",
+                   "cat=%d progId=%d when=enumerateCallers", category,
+                   progId);
     if (!callCmdDispatcher(m_pCmdDispatcher, warehouse, 0x3B)) {
+        TSDEV_DIAG_LOG("dispatch.cmd0x3B.leave",
+                       "cat=%d progId=%d when=enumerateCallers ok=0 seh=1",
+                       category, progId);
         TSDEV_DBG("enumCallers: cmd 0x3B SEH!\n");
         return result;  // SEH in cmd 0x3B dispatch
     }
@@ -2590,9 +2820,15 @@ std::vector<TsDevLib::CallerInfo> TsDevLib::enumerateCallersByProgId(
     // Step 6: Guard — check warehouse+0x4e == 0 (status/error).
     int status = 0;
     if (!sehReadInt(wh + 0x4e, &status) || status != 0) {
+        TSDEV_DIAG_LOG("dispatch.cmd0x3B.leave",
+                       "cat=%d progId=%d when=enumerateCallers ok=0 status=%d",
+                       category, progId, status);
         TSDEV_DBG("enumCallers: status=%d (non-zero or SEH)\n", status);
         return result;  // SEH or status error
     }
+    TSDEV_DIAG_LOG("dispatch.cmd0x3B.leave",
+                   "cat=%d progId=%d when=enumerateCallers ok=1 status=0",
+                   category, progId);
 
     // Step 7: Read the SafeArray from warehouse+0x26.
     void* saPtr = nullptr;
@@ -2702,6 +2938,12 @@ void TsDevLib::traverseReverseDependents(
     int rootCategory = getCategory(rootType);
     int rootComponentType = static_cast<int>(rootType);
 
+    // §7.1 diag: the currently silent traverse region — enter record with
+    // recursion depth (the recursive call below re-enters here).
+    TSDEV_DIAG_LOG("traverse.enter",
+                   "rootCat=%d rootProgId=%d depth=%d", rootCategory,
+                   rootProgId, traversalDepth);
+
     // Fire traversal-started sentinel ONLY at depth 0.
     if (traversalDepth == 0 && m_onReverseDependentRevalidationReady) {
         m_onReverseDependentRevalidationReady(
@@ -2746,11 +2988,21 @@ void TsDevLib::traverseReverseDependents(
         // Intended contract: reverify via _VerifyModule_New@20 with flag=0 (non-primary); callVerify() currently hardcodes flag=1, an escalated M.4 blocker.
         // The compiler object's +0x08/+0x0C/+0x10 stay as the root's values.
         // The dependent's (category, progId) are passed as args.
+        // §7.1 diag: enter/leave around the PER-DEPENDENT _VerifyModule_New
+        // dispatch call site (previously completely unlogged).
+        TSDEV_DIAG_LOG("dispatch.VerifyModule_New.enter",
+                       "cat=%d progId=%d role=dependent depth=%d",
+                       dep.category, dep.progId, traversalDepth);
         VerifySehResult vSeh;
         bool ok = callVerify(
             reinterpret_cast<VerifyModuleFn>(m_pVerifyModule),
             m_editorHwnd, dep.category, dep.progId,
             compilerMem, &vSeh);
+        TSDEV_DIAG_LOG("dispatch.VerifyModule_New.leave",
+                       "cat=%d progId=%d role=dependent depth=%d ok=%d "
+                       "verifyResult=%d",
+                       dep.category, dep.progId, traversalDepth,
+                       ok ? 1 : 0, ok ? vSeh.verifyResult : -1);
 
         int revalidationTriggered = 1;
         int revalidationResult = -1;
@@ -2792,11 +3044,17 @@ void TsDevLib::traverseReverseDependents(
 }
 
 bool TsDevLib::closeWarehouse() {
+    // §7.1 diag (review F5b): bracket the CloseWarehouse crossing — the RCA
+    // (§7.3d) names closeWarehouse as a crash/hang window, and a hang here
+    // previously ended the log unnamed.
+    TSDEV_DIAG_LOG("dispatch.CloseWarehouse.enter", "args=(0)");
     if (!callCloseWarehouseHelper(m_pCloseWarehouse, 0)) {
+        TSDEV_DIAG_LOG("dispatch.CloseWarehouse.leave", "ok=0 seh=1");
         tsdev_log_message(TsDevLogLevel::Warning,
             "tsdev: WARNING — closeWarehouse raised SEH exception\n");
         return false;
     }
+    TSDEV_DIAG_LOG("dispatch.CloseWarehouse.leave", "ok=1");
     return true;
 }
 
@@ -2890,7 +3148,14 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
               " (deleteOrchestrator=%p, whType=%d, progId=%d)\n",
               deleteOrchestrator, category, progId);
 
+    // §7.1 diag (review F5b): bracket the delete-orchestrator crossing
+    // (FUN_101a8360 internally dispatches cmd 0x0F / 0x17 etc. — the RCA's
+    // delete path; previously unbracketed).
+    TSDEV_DIAG_LOG("dispatch.DeleteOrchestrator.enter",
+                   "cat=%d progId=%d", category, progId);
     bool ok = callDeleteOrchestrator(deleteOrchestrator, category, progId);
+    TSDEV_DIAG_LOG("dispatch.DeleteOrchestrator.leave",
+                   "cat=%d progId=%d ok=%d", category, progId, ok ? 1 : 0);
 
     TSDEV_DBG("tsdev: deleteEntry — FUN_101a8360 returned %s\n",
               ok ? "true" : "false (SEH exception)");
@@ -3059,9 +3324,18 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
             // SEH-protected (orlib20 boundary). Fire-and-forget: a
             // notification exception is ignored and must not fail the
             // delete operation (R-M.3.3 error semantics).
-            callNotifyLibChanged(
+            // §7.1 diag (review F5b): bracket the 0x40A notification send
+            // (delete path). callNotifyLibChanged returns whether the call
+            // completed without SEH — log that as the leave status.
+            TSDEV_DIAG_LOG("dispatch.NotifyLibChanged.enter",
+                           "cat=%d progId=%d when=delete", categoryWord,
+                           progIdWord);
+            bool notified = callNotifyLibChanged(
                 reinterpret_cast<NotifyLibChangedFn>(m_pNotifyLibChanged),
                 categoryWord, progIdWord);
+            TSDEV_DIAG_LOG("dispatch.NotifyLibChanged.leave",
+                           "cat=%d progId=%d when=delete ok=%d", categoryWord,
+                           progIdWord, notified ? 1 : 0);
         }
     }
 
