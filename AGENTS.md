@@ -81,7 +81,7 @@ TradeStation has eight EasyLanguage types: **ActivityBar, Function, Indicator, P
 - Default compiled/encrypted TSDev Library: `C:\Program Files (x86)\TradeStation 9.5\MyWork\Bin`
 - Authoritative signatures: `signatures/*.json` → `tools/sigcodegen.py` → generated `signatures.gen.h`
 - Regression entry point: `tests\run_regression.ps1`; unknown-link harness: `tests/test_unknown_link_regression.ps1`; auto-cleanup coverage: `tests/test_auto_cleanup.cpp`; baseline DLLs: `tests/fixtures/` (test runners can prompt for the baseline DLL); CLI install discovery also accepts `--ts-path`.
-- CI: `.github/workflows/ci.yml` runs the Win32 build, `-NoTs` regression, and mocked pytest on pushes/PRs, and attaches the bundle zip to `v*` releases. CMake POST_BUILD assembles `dist/` and a timestamped zip in `artifacts/`; `tools/create_bundle_zip.ps1` produces release bundles. Bundle lookup checks `<package_parent>/tsdev_cli.exe` before the source-tree walk-up. Runtime Python dependencies are stdlib-only.
+- CI: `.github/workflows/ci.yml` runs the Win32 build, `-NoTs` regression, and mocked pytest on pushes/PRs, and attaches the bundle zip to `v*` releases. CMake POST_BUILD assembles `dist/` and a timestamped zip in `artifacts/`; the diagnostic build assembles `dist_diag/` (parallel to `dist/`); `tools/create_bundle_zip.ps1` produces release bundles. Bundle lookup checks `<package_parent>/tsdev_cli.exe` before the source-tree walk-up. Runtime Python dependencies are stdlib-only.
 
 ## Documentation index
 

@@ -31,11 +31,14 @@ endif()
 # build tree. This is INTENTIONAL: the goal is a root-level gitignored dist/
 # containing the assembled bundle (exe + Python wrapper) that can be zipped and
 # distributed directly from the repo root. Do NOT "fix" this to write into the
-# build directory -- that would break the distribution workflow. Both dist/ and
-# artifacts/ are gitignored via the root .gitignore.
+# build directory -- that would break the distribution workflow. dist/,
+# dist_diag/, and artifacts/ are gitignored via the root .gitignore.
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/dist)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/dist/tsdev_automation)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/artifacts)
+# Diagnostic analog of dist/ (parallel directory, same source-tree location):
+# assembled by the tsdev_cli_diag POST_BUILD block below.
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/dist_diag)
 
 # --- Python interpreter for build-time codegen (sigcodegen.py) ---------------
 find_package(Python COMPONENTS Interpreter REQUIRED)
@@ -990,8 +993,9 @@ target_link_libraries(tsdev_cli tsdev_lib)
 # call-site macro compiles out of the production tsdev_cli above, so the
 # production binary stays behavior-identical. The diag build adds the file
 # sink + watchdog (tsdev_diag) and links dbghelp/user32 transitively via
-# tsdev_lib_diag -> tsdev_diag. NOT copied into dist/ (the bundle tooling is
-# unchanged); it is a separate executable the PM ships to affected users.
+# tsdev_lib_diag -> tsdev_diag. NOT copied into dist/ (that stays the
+# production bundle); its POST_BUILD block below assembles it into the
+# parallel dist_diag/ instead.
 add_executable(tsdev_cli_diag src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli_diag PRIVATE third_party)
 target_link_libraries(tsdev_cli_diag tsdev_lib_diag)
@@ -1118,6 +1122,21 @@ add_custom_command(TARGET tsdev_cli POST_BUILD
             ${CMAKE_SOURCE_DIR}/dist/README.md
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/tools/create_bundle_zip.ps1 -SourceDir ${CMAKE_SOURCE_DIR}
     COMMENT "Assembling dist/ bundle (tsdev_cli.exe + Python wrapper)"
+    VERBATIM
+)
+
+# --- Diagnostic dist assembly (dist_diag/, analog of the dist/ block above) --
+# Same mechanism and copy style as the production POST_BUILD above
+# (copy_if_different into a ${CMAKE_SOURCE_DIR} directory), reduced to the
+# diagnostic artifact set: the diag executable only. The production-only steps
+# (Python wrapper refresh, README, create_bundle_zip.ps1) are deliberately NOT
+# replicated. No PDB copy, matching dist/ (which ships no PDB). Kept as a
+# separate block rather than a shared helper because the production block is
+# not parameterized; extracting one would restructure it for no gain.
+add_custom_command(TARGET tsdev_cli_diag POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:tsdev_cli_diag> ${CMAKE_SOURCE_DIR}/dist_diag/tsdev_cli_diag.exe
+    COMMENT "Assembling dist_diag/ (tsdev_cli_diag.exe)"
     VERBATIM
 )
 
