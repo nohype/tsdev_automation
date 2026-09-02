@@ -3,6 +3,42 @@
 Live, real-time state for the PM. Keep minimal; drop stale/superseded facts.
 Do not restate what the code itself documents.
 
+## Current objective
+
+Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
+**DONE 2026-09-02:** report approved by adversarial review —
+`reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md` (read it first).
+
+## Outcome summary (details in the report — do not duplicate here)
+
+- Structural root cause [PROVEN]: no timeout/containment on the
+  tsdev_cli worker → orlib20 dispatch ([wh+0x6A] INFINITE) → WHServer.exe
+  COM chain; silent 0%-CPU hang reproduced (E2h, frida stacks
+  `orlib20+0x1cf5ec`); abrupt server death → orlib20 worker C++ exception
+  (RPC_S_SERVER_UNAVAILABLE) → TSCrashReport dialog (reproduced ×3).
+- Natural user-machine trigger [OPEN]: candidates — WHServer wedge/lifetime
+  dynamics (lazy lifetime proven, E6), dispatch-volume race (library size),
+  quiet worker death, AV interference. Next step: §7.1 diagnostic build —
+  extensive diagnostics TO FILES with immediate per-write flushing
+  (survive crashes), dispatch enter/leave + per-item progress + watchdog
+  (stacks/warehouse state/minidump then loud abort) + WHServer liveness.
+- Rare init-line hang [INFERRED]: wedged leftover WHServer after kills.
+- **Overriding product requirement (user-mandated, report §7 preamble +
+  §7.3):** detection/diagnosis is NOT sufficient — the tool must not crash
+  the user's TS processes nor risk warehouse corruption. Corruption risk of
+  mid-write termination is untested [OPEN]; next teams must run the §7.3
+  forced-crash-during-save experiments and implement pre-flight integrity
+  checks + partial-batch reporting.
+- No code was changed (user constraint); all experiments under `tmp\exp\`
+  (reports, frida stacks, dumps, crash artifacts, watcher log).
+
+## Process lessons (standing)
+
+- A tool call reported "Canceled due to user interrupt" AFTER the brief had
+  been delivered to the subagent — verify delivery before assuming not-received.
+- Destructive/long experiments must be polled to completion and reported;
+  continuous watcher (`tmp\exp\watcher.ps1` pattern) for TS-touching work.
+
 ## Current state (not derivable from code)
 
 - **Quiet-output TVS done — committed + released as v0.1.3.** New batch
@@ -39,6 +75,12 @@ Do not restate what the code itself documents.
   fixtures.
 - TradeStation 9.5 installed (`C:\Program Files (x86)\TradeStation 9.5`);
   CLI works against the warehouse WITHOUT TS Desktop running.
+- WHServer.exe spawns on demand per CLI run (COM activation); lifetime is
+  lazy (can serve multiple runs and linger — E6). TS Desktop process is
+  `orchart.exe` (would not stay running on this machine when launched
+  directly, 2026-09-02).
+- Probe items from the hang investigation were all deleted (45/45 verified
+  absent 2026-09-02); no TS processes left behind.
 - **Current shell IS elevated** — verified this session via
   `net session`; direct `tsdev_cli` runs work without
   `Start-Process -Verb RunAs`. From a non-elevated shell each elevated
@@ -70,6 +112,8 @@ response-schema field exposing broker/CLI log output.
 
 ## Key references
 
+- Root-cause report (SSOT for the hang investigation):
+  `reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md`.
 - Recalc / cross-process notification mechanism (SSOT):
   `docs/RE/RE_OrlibRegisterNotificationHandle.md`.
 - Read-only function root cause: KB §11. Function-modify recalc + matrix: KB §13.
