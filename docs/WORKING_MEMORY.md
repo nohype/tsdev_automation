@@ -5,15 +5,18 @@ Do not restate what the code itself documents.
 
 ## Current objective
 
-**TVS DONE (2026-09-01): CLI log levels + repeatable `-v/--verbose`.**
-4 levels (Error < Warning < Info < Debug), default Warning, `-v`→Info,
-`-vv`→Debug (clamped), position-free global flag, runtime-gated in tsdev_lib
-(`TSDEV_DEBUG` compile define removed). Results/JSON never gated; stdout
-byte-pure. Verified: build + `test_log_levels` + `-NoTs` regression ALL
-PASSED; adversarial review APPROVED (initial + delta); elevated E2E gate
-40/40 (insert prog_id 55 / modify preserved / delete / cleanup + all level
-semantics, no crash reports); Suite 15 live 7/7. Uncommitted in working
-tree at hand-off (commit may have followed).
+**TVS DONE (2026-09-01): Python wrapper verbose forwarding.**
+`TsDevClient(..., verbose: int = 0)` clamped [0,2]; direct mode forwards
+`["-v"]*n` via `_base_cmd` (single choke point); serve mode forwards to the
+BROKER LAUNCH line only (`_build_serve_parameters`/`_ServeBroker`/
+`_ensure_broker`); `_cli.py` gained `-v/--verbose` (count). 17 new tests;
+`uv run pytest -m "not e2e"` 165 passed; `-NoTs` regression 2/2 suites 0
+failed; adversarial review APPROVED; elevated E2E gate RUN-GATE: PASS
+(direct insert/modify/delete verbose=2: Info+Debug stderr markers, stdout
+JSON-pure, prog_id preserved, cleanup verified; serve smoke via `-v -v`
+broker; no crash reports). UNCOMMITTED in working tree (3 files + tests).
+Deferred by design (only if requested): serve-protocol per-request
+verbosity + response-schema log field (both need C++ serve schema changes).
 
 ## Current state (not derivable from code)
 
@@ -35,13 +38,15 @@ tree at hand-off (commit may have followed).
   (`refreshCache: ENTRY 0x5E=<addr>`) → never byte-compare stderr across
   runs; `exists` on a MISSING item triggers second-pass `refreshCache`.
 
-## Next TVS (candidate, not committed)
+- Reusable elevated E2E gate assets: `tmp\e2e_verbose_gate\` (gitignored;
+  `run_gate.ps1` = one batched launcher, ONE UAC prompt; `result.txt` is
+  UTF-16LE — read via `Get-Content`, never as UTF-8).
 
-Python wrapper `-v/--verbose` forwarding (`_base_cmd` +
-`_build_serve_parameters` in src/tsdev_automation/client.py) so TsDevClient
-can request verbosity; broker stderr is invisible (ShellExecuteExW, SW_HIDE)
-— broker verbosity only observable via manual launch or a future
-response-schema field.
+## Next TVS
+
+None committed. Deferred candidates (require C++ serve schema changes; do
+only if explicitly requested): per-request `verbose` in serve requests;
+response-schema field exposing broker/CLI log output.
 
 ## Key references
 
