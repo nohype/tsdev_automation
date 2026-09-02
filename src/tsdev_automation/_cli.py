@@ -56,6 +56,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cli-path", help="Path to tsdev_cli.exe (default: auto-discover).")
     p.add_argument("--ts-path", help="TradeStation install dir (default: auto-discover).")
     p.add_argument("--timeout", type=float, default=None, help="Subprocess timeout in seconds.")
+    p.add_argument(
+        "-v", "--verbose",
+        action="count",
+        default=0,
+        help="Increase tsdev_cli log verbosity (repeatable): default warnings+errors; -v info; -vv debug.",
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     for op in ("insert", "modify"):
@@ -104,7 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    client = TsDevClient(cli_path=args.cli_path, ts_path=args.ts_path, timeout=args.timeout)
+    client = TsDevClient(cli_path=args.cli_path, ts_path=args.ts_path, timeout=args.timeout, verbose=args.verbose)
 
     try:
         if args.command in ("insert", "modify"):

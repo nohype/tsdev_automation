@@ -62,6 +62,12 @@ Do not restate what the code itself documents.
   the supported `TSDEV_REQUIRE_ADMIN=OFF` asInvoker build (exit 11),
   not a runtime shim.
 
+## Next TVS
+
+None committed. Deferred candidates (require C++ serve schema changes; do
+only if explicitly requested): per-request `verbose` in serve requests;
+response-schema field exposing broker/CLI log output.
+
 ## Key references
 
 - Recalc / cross-process notification mechanism (SSOT):

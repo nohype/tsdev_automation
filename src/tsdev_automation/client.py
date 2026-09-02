@@ -303,12 +303,18 @@ _shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_SHELLEXECUTEINFOW)]
 _shell32.ShellExecuteExW.restype = wintypes.BOOL
 
 
-def _build_serve_parameters(ts_path: str | None, handshake_path: str) -> str:
-    """Build the broker command line using Windows-compatible argv quoting."""
+def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: int = 0) -> str:
+    """Build the broker command line using Windows-compatible argv quoting.
+
+    ``verbose`` (the client's already-clamped level) appends that many
+    ``-v`` flags; the CLI pre-scans them position-free before subcommand
+    parsing, so placement is arbitrary (they go last, matching _base_cmd).
+    """
     args: list[str] = []
     if ts_path:
         args.extend(("--ts-path", ts_path))
     args.extend(("serve", "--serve-pipe-file", handshake_path))
+    args.extend(["-v"] * verbose)
     # ShellExecuteExW receives a command-line string, not an argv list.
     # list2cmdline uses the quoting rules expected by the Windows C runtime.
     return subprocess.list2cmdline(args)
@@ -327,9 +333,10 @@ class _ServeBroker:
     :mod:`atexit` as a safety net).
     """
 
-    def __init__(self, cli_path: Path, ts_path: str | None = None) -> None:
+    def __init__(self, cli_path: Path, ts_path: str | None = None, verbose: int = 0) -> None:
         self._cli_path = cli_path
         self._ts_path = ts_path
+        self._verbose = verbose
         self._process_handle: int | None = None
         self._pipe_handle: int | None = None
         self._pid: int | None = None
@@ -377,7 +384,7 @@ class _ServeBroker:
             # 2. ShellExecuteExW with runas.  lpParameters is one command-line
             #    string, so quote path arguments using the Windows C-runtime
             #    rules rather than interpolating them into the string.
-            params = _build_serve_parameters(self._ts_path, tmp_path)
+            params = _build_serve_parameters(self._ts_path, tmp_path, self._verbose)
             sei = _SHELLEXECUTEINFOW()
             sei.cbSize = ctypes.sizeof(sei)
             sei.fMask = _SEE_MASK_NOCLOSEPROCESS
@@ -640,6 +647,14 @@ class TsDevClient:
         this as efficient as the C++ batch path (no per-op process spawn, no
         per-op warehouse flush).  Per-item failures are collected into the
         returned list (NOT raised), matching the non-serve batch semantics.
+    verbose:
+        Log verbosity forwarded to the CLI as repeatable ``-v`` flags:
+        0 = default (errors+warnings, no flags), 1 = info (``-v``),
+        2 = debug (``-vv``).  Values outside ``[0, 2]`` are clamped,
+        mirroring the CLI's repeatable ``-v``/``--verbose`` global flag.
+        In serve mode the level is applied to the broker process at launch;
+        broker stderr is not captured (the broker is launched hidden) and
+        the serve protocol has no per-request verbosity control.
     """
 
     def __init__(
@@ -648,6 +663,7 @@ class TsDevClient:
         ts_path: str | None = None,
         timeout: float | None = None,
         use_serve: bool = True,
+        verbose: int = 0,
     ) -> None:
         resolved = _resolve_cli_path(cli_path)
         # Fast-fail only for the auto-discovered default; explicit paths are
@@ -661,6 +677,7 @@ class TsDevClient:
         self.cli_path: Path = resolved
         self.ts_path: str | None = ts_path
         self.timeout: float | None = timeout
+        self.verbose = max(0, min(int(verbose), 2))
         # Serve-broker integration (TVS-K.5).  When ``use_serve`` is True and
         # the Python session is NOT elevated, single-item ops are routed
         # through an elevated serve broker (one UAC prompt) instead of
@@ -877,6 +894,7 @@ class TsDevClient:
         cmd = [str(self.cli_path)]
         if self.ts_path:
             cmd += ["--ts-path", self.ts_path]
+        cmd += ["-v"] * self.verbose
         return cmd
 
     # -- serve-broker routing ----------------------------------------------
@@ -907,7 +925,7 @@ class TsDevClient:
     def _ensure_broker(self) -> _ServeBroker:
         """Lazy-start the serve broker on first use."""
         if self._broker is None:
-            self._broker = _ServeBroker(self.cli_path, self.ts_path)
+            self._broker = _ServeBroker(self.cli_path, self.ts_path, verbose=self.verbose)
         return self._broker
 
     def _call_broker_single(self, op: str, type_: str, name: str, source: str | os.PathLike | None) -> TsDevResult:

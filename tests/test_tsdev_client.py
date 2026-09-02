@@ -1214,13 +1214,248 @@ class TestBatchDirectJson:
         assert results[0].stderr == stderr
 
 
+class TestVerboseForwarding:
+    """Tests for the ``verbose`` parameter (repeatable ``-v`` CLI flags).
+
+    Mirrors the C++ CLI's position-free, repeatable ``-v``/``--verbose``
+    global flag: 0 = warnings+errors (default, no flags emitted), 1 = info
+    (``-v``), >=2 = debug (``-vv``, clamped).  In serve mode the level is
+    applied to the broker process at launch; the serve JSON protocol has no
+    per-request verbosity field.
+    """
+
+    def test_direct_single_verbose_1(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "X", True, prog_id=7))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=1)
+        c._is_elevated = True
+        c.exists("strategy", "X")
+        assert seen["cmd"] == [str(c.cli_path), "-v", "--json", "exists", "strategy", "X"]
+
+    def test_direct_single_verbose_2(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "X", True, prog_id=7))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=2)
+        c._is_elevated = True
+        c.exists("strategy", "X")
+        assert seen["cmd"] == [str(c.cli_path), "-v", "-v", "--json", "exists", "strategy", "X"]
+
+    def test_verbose_clamped_to_two(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "X", True, prog_id=7))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=99)
+        c._is_elevated = True
+        assert c.verbose == 2
+        c.exists("strategy", "X")
+        assert seen["cmd"].count("-v") == 2
+
+    def test_verbose_clamped_to_zero(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "X", True, prog_id=7))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=-3)
+        c._is_elevated = True
+        assert c.verbose == 0
+        c.exists("strategy", "X")
+        assert seen["cmd"].count("-v") == 0
+
+    def test_default_client_emits_no_verbose_flags(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_exists_json("strategy", "X", True, prog_id=7))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert client.verbose == 0
+        client.exists("strategy", "X")
+        assert "-v" not in seen["cmd"]
+
+    def test_batch_stdin_verbose_2(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=2)
+        c._is_elevated = True
+        results = c.batch_insert([BatchItem("strategy", "A", "input(close, 1);")])
+        assert len(results) == 1 and results[0].success
+        assert seen["cmd"] == [str(c.cli_path), "-v", "-v", "--json", "batch-insert", "--batch-stdin"]
+
+    def test_batch_dir_verbose_2(self, fake_cli: Path, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, verbose=2)
+        c._is_elevated = True
+        results = c.batch_insert_dir("strategy", "C:/mydir")
+        assert len(results) == 1 and results[0].success
+        assert seen["cmd"] == [str(c.cli_path), "-v", "-v", "--json", "batch-insert-dir", "strategy", "C:/mydir"]
+
+    def test_build_serve_parameters_verbose(self) -> None:
+        assert _build_serve_parameters("C:/TS", "C:/hs.pipe", verbose=2) == subprocess.list2cmdline(
+            ["--ts-path", "C:/TS", "serve", "--serve-pipe-file", "C:/hs.pipe", "-v", "-v"]
+        )
+        assert _build_serve_parameters(None, "C:/hs.pipe", verbose=1) == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe", "-v"]
+        )
+
+    def test_build_serve_parameters_default_unchanged(self) -> None:
+        assert _build_serve_parameters("C:/TS", "C:/hs.pipe") == subprocess.list2cmdline(
+            ["--ts-path", "C:/TS", "serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+
+    def test_serve_broker_start_forwards_verbose(self, monkeypatch, tmp_path: Path) -> None:
+        """``_ServeBroker`` with verbose forwards ``-v`` flags in lpParameters."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe, verbose=2)
+        handshake_dir = tmp_path / "verbose handshake directory"
+        handshake_dir.mkdir()
+        handshake = handshake_dir / "verbose handshake.pipe"
+        pipe_name = r"\\.\pipe\tsdev_test_verbose"
+        fake_handle = 4245
+        captured: dict[str, str] = {}
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            captured["parameters"] = info.lpParameters
+            info.hProcess = fake_handle
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7779)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker.start()
+
+        assert captured["parameters"] == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", str(handshake), "-v", "-v"]
+        )
+
+        # Avoid a real CloseHandle/pipe cleanup when this mocked broker is
+        # finalized after the test.
+        broker._started = False
+        broker._pipe_handle = None
+        broker._process_handle = None
+
+    def test_serve_broker_start_default_no_verbose(self, monkeypatch, tmp_path: Path) -> None:
+        """A default ``_ServeBroker`` emits no ``-v`` flags in lpParameters."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe)
+        handshake = tmp_path / "default handshake.pipe"
+        pipe_name = r"\\.\pipe\tsdev_test_verbose_default"
+        fake_handle = 4246
+        captured: dict[str, str] = {}
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            captured["parameters"] = info.lpParameters
+            info.hProcess = fake_handle
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7780)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker.start()
+
+        assert captured["parameters"] == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", str(handshake)]
+        )
+
+        broker._started = False
+        broker._pipe_handle = None
+        broker._process_handle = None
+
+    def test_ensure_broker_passes_client_verbose(self, fake_cli: Path, monkeypatch) -> None:
+        """``_ensure_broker`` forwards the client's clamped verbose to the broker."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True, verbose=1)
+        c._is_elevated = False
+        constructed: dict = {}
+
+        class SpyBroker:
+            def __init__(self, cli_path, ts_path=None, verbose=0):
+                constructed["cli_path"] = cli_path
+                constructed["ts_path"] = ts_path
+                constructed["verbose"] = verbose
+
+            def call(self, request):
+                return json.loads(_exists_json("strategy", "X", True, prog_id=3))
+
+        monkeypatch.setattr("tsdev_automation.client._ServeBroker", SpyBroker)
+        c.exists("strategy", "X")
+        assert constructed["verbose"] == 1
+        assert isinstance(c._broker, SpyBroker)
+
+    def test_serve_request_dicts_stay_clean_of_verbose(self, fake_cli: Path) -> None:
+        """Serve request dicts must NOT gain a ``verbose`` key (no per-request
+        verbosity field exists in the serve protocol)."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True, verbose=2)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_success_json("insert", "strategy", "X"))
+        c._broker = fake_broker
+
+        c.insert("strategy", "X", "input(close,1);")
+        sent = fake_broker.call.call_args[0][0]
+        assert "verbose" not in sent
+        assert sent == {"op": "insert", "type": "strategy", "name": "X", "source": "input(close,1);"}
+
+
 class TestCliMain:
     def test_main_insert_dispatch(self, monkeypatch, fake_cli: Path, capsys) -> None:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def insert(self, type_, name, source):
                 calls["insert"] = (type_, name, source)
@@ -1253,8 +1488,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def exists(self, type_, name, case_insensitive=False):
                 calls["exists"] = (type_, name, case_insensitive)
@@ -1280,8 +1515,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def exists(self, type_, name, case_insensitive=False):
                 calls["exists"] = (type_, name, case_insensitive)
@@ -1305,8 +1540,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def exists(self, type_, name, case_insensitive=False):
                 calls["exists"] = (type_, name, case_insensitive)
@@ -1330,8 +1565,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def get_source(self, type_, name, output_file=None):
                 calls["get_source"] = (type_, name, output_file)
@@ -1354,8 +1589,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def get_source(self, type_, name, output_file=None):
                 calls["get_source"] = (type_, name, output_file)
@@ -1380,8 +1615,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def upsert(self, type_, name, source):
                 calls["upsert"] = (type_, name, source)
@@ -1404,8 +1639,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def batch_upsert(self, items):
                 calls["batch_upsert"] = items
@@ -1440,8 +1675,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def batch_insert_dir(self, type_, dir_path, extensions=None):
                 calls.setdefault("batch_insert_dir", []).append((type_, dir_path, extensions))
@@ -1465,8 +1700,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def batch_modify_dir(self, type_, dir_path, extensions=None):
                 calls.setdefault("batch_modify_dir", []).append((type_, dir_path, extensions))
@@ -1490,8 +1725,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def batch_delete_dir(self, type_, dir_path, extensions=None):
                 calls.setdefault("batch_delete_dir", []).append((type_, dir_path, extensions))
@@ -1513,8 +1748,8 @@ class TestCliNewSubcommands:
         calls: dict = {}
 
         class FakeClient:
-            def __init__(self, cli_path=None, ts_path=None, timeout=None):
-                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout}
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
 
             def batch_upsert_dir(self, type_, dir_path, extensions=None):
                 calls.setdefault("batch_upsert_dir", []).append((type_, dir_path, extensions))
@@ -1532,6 +1767,58 @@ class TestCliNewSubcommands:
         assert rc == 0
         rc = _main(["batch-upsert-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
         assert calls["batch_upsert_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
+        assert rc == 0
+
+
+class TestCliVerboseFlag:
+    """``-v``/``-vv``/``--verbose`` reach :class:`TsDevClient` as ``verbose=``."""
+
+    def _fake_client(self, calls: dict) -> type:
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
+
+            def exists(self, type_, name, case_insensitive=False):
+                return TsDevResult(
+                    op="exists", type=type_, name=name, success=True, exit_code=0, exists=True, prog_id=1
+                )
+
+        return FakeClient
+
+    def test_cli_vv_forwards_verbose_2(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", self._fake_client(calls))
+        from tsdev_automation._cli import _main
+
+        rc = _main(["-vv", "exists", "strategy", "MyStrat"])
+        assert calls["init"]["verbose"] == 2
+        assert rc == 0
+
+    def test_cli_v_forwards_verbose_1(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", self._fake_client(calls))
+        from tsdev_automation._cli import _main
+
+        rc = _main(["-v", "exists", "strategy", "MyStrat"])
+        assert calls["init"]["verbose"] == 1
+        assert rc == 0
+
+    def test_cli_long_verbose_forwards_1(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", self._fake_client(calls))
+        from tsdev_automation._cli import _main
+
+        rc = _main(["--verbose", "exists", "strategy", "MyStrat"])
+        assert calls["init"]["verbose"] == 1
+        assert rc == 0
+
+    def test_cli_default_verbose_0(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", self._fake_client(calls))
+        from tsdev_automation._cli import _main
+
+        rc = _main(["exists", "strategy", "MyStrat"])
+        assert calls["init"]["verbose"] == 0
         assert rc == 0
 
 
