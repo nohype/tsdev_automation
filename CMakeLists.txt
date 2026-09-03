@@ -1023,9 +1023,6 @@ add_custom_command(TARGET tsdev_cli POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
             ${CMAKE_SOURCE_DIR}/dist/tsdev_automation
     ${TSDEV_PY_COPY_COMMANDS}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/docs/BUNDLE_README.md
-            ${CMAKE_SOURCE_DIR}/dist/README.md
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/tools/create_bundle_zip.ps1 -SourceDir ${CMAKE_SOURCE_DIR}
     COMMENT "Assembling dist/ bundle (tsdev_cli.exe + Python wrapper)"
     VERBATIM
