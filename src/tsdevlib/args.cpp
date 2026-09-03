@@ -4,11 +4,11 @@
 #include <cstdlib>
 
 ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
-    if (argc < 2) return {false, false, L"missing command (expected: open|exists)"};
+    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc)"};
     if (std::wstring(argv[1]) == L"--help" || std::wstring(argv[1]) == L"-h") return {true, true, L""};
     const std::wstring verb = argv[1];
-    if (verb != L"open" && verb != L"exists")
-        return {false, false, L"unknown command (expected: open|exists)"};
+    if (verb != L"open" && verb != L"exists" && verb != L"getsrc")
+        return {false, false, L"unknown command (expected: open|exists|getsrc)"};
     out.verb = verb;
 
     for (int i = 2; i < argc; ++i) {
@@ -44,10 +44,17 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
         } else if (arg == L"--name") {
             if (i + 1 >= argc) return {false, false, L"missing value for --name"};
             out.name = argv[++i];
+        } else if (arg == L"--output") {
+            if (i + 1 >= argc) return {false, false, L"missing value for --output"};
+            out.output_path = argv[++i];
         } else {
             return {false, false, L"unknown option: " + arg};
         }
     }
+
+    // --output is getsrc-specific: reject it for open/exists.
+    if (!out.output_path.empty() && out.verb != L"getsrc")
+        return {false, false, L"--output is only valid with getsrc"};
 
     if (out.type.empty()) return {false, false, L"--type is required (Strategy|Function|Indicator|ShowMe|TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name is required"};
@@ -67,6 +74,7 @@ std::wstring usage_text() {
         L"Usage:\n"
         L"  tsdevctl open   --type <Type> --name <Name> [options]\n"
         L"  tsdevctl exists --type <Type> --name <Name> [options]\n"
+        L"  tsdevctl getsrc --type <Type> --name <Name> [--output <file>] [options]\n"
         L"\n"
         L"open: Opens the named item in TSDev (existing item) or starts a new empty\n"
         L"document titled with that name (TSDev's own open-or-create behavior).\n"
@@ -80,12 +88,25 @@ std::wstring usage_text() {
         L"The reported name is the REQUESTED name: TSDev's stored spelling and the\n"
         L"item's ProgId are not obtainable through this channel (no enumeration is\n"
         L"externally reachable) and are therefore not returned.\n"
+        L"getsrc: Emits the EasyLanguage source of the named item. Reuses the same\n"
+        L"open-read-close mechanism as exists: the item is opened through TSDev's\n"
+        L"control channel, the editor text (what TSDev renders, which IS the item's\n"
+        L"source for a real item) is read, and the document is closed again unless it\n"
+        L"was already open. Encrypted/protected items are decrypted automatically by\n"
+        L"TSDev when rendering them in the editor, so getsrc inherits that decryption.\n"
+        L"With --output <file_path> the source is written to that file (UTF-8, no\n"
+        L"BOM, line endings preserved as-is) instead of stdout; --output is only\n"
+        L"valid with getsrc. By default the raw source goes to stdout; with --json a\n"
+        L"JSON object (including a source field, and output_path when --output was\n"
+        L"used) is emitted instead.\n"
         L"TSDev.exe is attached to if running, otherwise launched hidden.\n"
         L"\n"
         L"Options:\n"
         L"  --type <name>      Component type: Strategy, Function, Indicator,\n"
         L"                     ShowMe or TradingApp\n"
         L"  --name <name>      Item name\n"
+        L"  --output <file>    (getsrc only) Write source to this file (UTF-8, no\n"
+        L"                     BOM) instead of stdout\n"
         L"  --json             Machine-readable JSON output on stdout\n"
         L"  --timeout <ms>     Operation timeout in milliseconds (default 30000;\n"
         L"                     value <= 0 disables timeouts entirely)\n"
@@ -96,8 +117,8 @@ std::wstring usage_text() {
         L"  -h, --help         Show this help\n"
         L"\n"
         L"Exit codes:\n"
-        L"  0 success (exists: item exists)\n"
-        L"  1 exists: item does not exist (successful answer, not an error)\n"
+        L"  0 success (exists/getsrc: item exists, source emitted for getsrc)\n"
+        L"  1 exists/getsrc: item does not exist (successful answer, not an error)\n"
         L"  2 usage error\n"
         L"  3 not running elevated (required)\n"
         L"  4 TSDev.exe not found or launch failed\n"

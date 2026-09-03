@@ -286,6 +286,120 @@ std::optional<Failure> close_late_open(const Options& opts, const Session& sessi
     }
 }
 
+// Outcome of the shared open-read-close sequence (exists + getsrc).
+struct ReadOutcome {
+    bool exists = false;
+    std::wstring editor_text;
+    std::optional<Failure> failure;
+};
+
+// Opens the item via pipe, waits for the doc, polls the editor text until
+// stable (real item — its source) or phantom error page (does not exist),
+// then closes the doc iff the caller opened it. On success returns nullopt
+// and fills `out`: out.exists is the existence answer, out.editor_text is the
+// rendered editor content (the source for a real item; the phantom error page
+// for a nonexistent name — callers must not emit the latter as source). On
+// failure returns the Failure; `out` is not meaningful.
+std::optional<Failure> open_read_and_close(const Options& opts, const Session& session,
+                                           const std::set<HWND>& dialogs_before,
+                                           const std::vector<DocWindow>& docs_before,
+                                           ReadOutcome& out) {
+    const std::wstring expected = opts.name + L" : " + opts.type_label;
+    const std::wstring needle = L" - " + expected;
+    const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
+    if (failure) {
+        // A late-executed open leaves a document behind; re-scan and close it.
+        // A dialog or crash raised by the late execution is the more severe
+        // signal and replaces the original wait failure.
+        const std::optional<Failure> late_failure =
+            close_late_open(opts, session, docs_before, dialogs_before, expected);
+        if (late_failure) return late_failure;
+        return failure;
+    }
+
+    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
+    const DocMatch match = find_doc_window(docs_before, docs_after, expected);
+    if (match.window == nullptr)
+        return Failure{Exit::Timeout, L"timeout", L"frame title changed but no matching document window appeared"};
+
+    // TSDev renders the editor content asynchronously after the document
+    // window appears, and a fresh phantom's editor transiently holds a single
+    // space before the error page replaces it (verified live). Neither empty
+    // nor non-empty is decidable on its own: poll until the phantom error
+    // page appears (item does not exist) or the text is unchanged across two
+    // consecutive 500 ms reads (item exists — its rendered source).
+    std::wstring previous_text;
+    int stable_reads = 0;
+    const auto read_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    for (;;) {
+        if (!IsWindow(static_cast<HWND>(match.window->window)))
+            return Failure{Exit::Crashed, L"tsdev_died", L"document window disappeared before its content rendered"};
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+        if (!dialog_text.empty()) return Failure{Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text};
+        if (crash_report_running()) return Failure{Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected"};
+        if (!process_alive(session.pid)) return Failure{Exit::Crashed, L"tsdev_died", L"TSDev exited during the operation"};
+        std::wstring text;
+        if (read_doc_text(match.window->window, text) && !text.empty()) {
+            if (is_phantom_error_text(text)) {
+                out.exists = false;
+                out.editor_text = text;
+                break;
+            }
+            if (text == previous_text) {
+                ++stable_reads;
+                if (stable_reads >= 2) {
+                    out.exists = true;
+                    out.editor_text = text;
+                    break;
+                }
+            } else {
+                stable_reads = 0;
+            }
+            previous_text = text;
+        } else {
+            stable_reads = 0;
+            previous_text.clear();
+        }
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= read_deadline)
+            return Failure{Exit::Timeout, L"timeout", L"editor content did not render within the timeout"};
+        Sleep(500);
+    }
+
+    if (match.opened_by_us) {
+        const std::optional<Failure> close_failure = close_doc_window(opts, session, dialogs_before, *match.window);
+        if (close_failure) return close_failure;
+    }
+
+    const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+    if (!dialog_text.empty()) return Failure{Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text};
+    if (crash_report_running()) return Failure{Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected"};
+
+    return std::nullopt;
+}
+
+// Writes `text` to `path` as UTF-8 with no BOM, line endings preserved as-is.
+// On failure removes any partially-written file and sets `error`.
+bool write_source_file(const std::wstring& path, const std::wstring& text, std::wstring& error) {
+    const std::string utf8 = to_utf8(text);
+    const HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        error = L"cannot open '" + path + L"' for writing (error " + std::to_wstring(GetLastError()) + L")";
+        return false;
+    }
+    DWORD written = 0;
+    const bool ok = WriteFile(h, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr) &&
+                    written == static_cast<DWORD>(utf8.size());
+    CloseHandle(h);
+    if (!ok) {
+        DeleteFileW(path.c_str());  // remove partial file (R10: no partial artifacts)
+        error = L"write failed for '" + path + L"'";
+        return false;
+    }
+    return true;
+}
+
 int run_exists(const Options& opts) {
     OpResult result;
     result.op = L"exists";
@@ -324,88 +438,110 @@ int run_exists(const Options& opts) {
     const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
     const std::vector<DocWindow> docs_before = list_doc_windows(session.pid);
 
-    const std::wstring expected = opts.name + L" : " + opts.type_label;
-    const std::wstring needle = L" - " + expected;
-    const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
-    if (failure) {
-        // A late-executed open leaves a document behind; re-scan and close it.
-        // A dialog or crash raised by the late execution is the more severe
-        // signal and replaces the original wait failure.
-        const std::optional<Failure> late_failure =
-            close_late_open(opts, session, docs_before, dialogs_before, expected);
-        if (late_failure) return fail(late_failure->code, late_failure->name, late_failure->message);
-        return fail(failure->code, failure->name, failure->message);
-    }
-
-    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
-    const DocMatch match = find_doc_window(docs_before, docs_after, expected);
-    if (match.window == nullptr)
-        return fail(Exit::Timeout, L"timeout", L"frame title changed but no matching document window appeared");
-
-    // TSDev renders the editor content asynchronously after the document
-    // window appears, and a fresh phantom's editor transiently holds a single
-    // space before the error page replaces it (verified live). Neither empty
-    // nor non-empty is decidable on its own: poll until the phantom error
-    // page appears (item does not exist) or the text is unchanged across two
-    // consecutive 500 ms reads (item exists — its rendered source).
-    std::wstring editor_text;
-    std::wstring previous_text;
-    int stable_reads = 0;
-    bool exists = false;
-    const auto read_deadline = opts.timeouts_disabled
-        ? std::chrono::steady_clock::time_point::max()
-        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
-    for (;;) {
-        if (!IsWindow(static_cast<HWND>(match.window->window)))
-            return fail(Exit::Crashed, L"tsdev_died", L"document window disappeared before its content rendered");
-        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
-        if (!dialog_text.empty()) return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
-        if (crash_report_running()) return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected");
-        if (!process_alive(session.pid)) return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited during the operation");
-        std::wstring text;
-        if (read_doc_text(match.window->window, text) && !text.empty()) {
-            if (is_phantom_error_text(text)) {
-                editor_text = text;
-                exists = false;
-                break;
-            }
-            if (text == previous_text) {
-                ++stable_reads;
-                if (stable_reads >= 2) {
-                    editor_text = text;
-                    exists = true;
-                    break;
-                }
-            } else {
-                stable_reads = 0;
-            }
-            previous_text = text;
-        } else {
-            stable_reads = 0;
-            previous_text.clear();
-        }
-        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= read_deadline)
-            return fail(Exit::Timeout, L"timeout", L"editor content did not render within the timeout");
-        Sleep(500);
-    }
-
-    if (match.opened_by_us) {
-        const std::optional<Failure> close_failure = close_doc_window(opts, session, dialogs_before, *match.window);
-        if (close_failure) return fail(close_failure->code, close_failure->name, close_failure->message);
-    }
-
-    const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
-    if (!dialog_text.empty()) return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
-    if (crash_report_running()) return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected");
+    ReadOutcome outcome;
+    const std::optional<Failure> failure = open_read_and_close(opts, session, dialogs_before, docs_before, outcome);
+    if (failure) return fail(failure->code, failure->name, failure->message);
 
     hide_if_launched(opts, session);
     result.ok = true;
     result.reports_exists = true;
-    result.exists_value = exists;
+    result.exists_value = outcome.exists;
     result.elapsed_ms = elapsed_ms();
     emit(opts, result);
     if (session.process) CloseHandle(session.process);
-    return static_cast<int>(exists ? Exit::Ok : Exit::NotFound);
+    return static_cast<int>(outcome.exists ? Exit::Ok : Exit::NotFound);
+}
+
+int run_getsrc(const Options& opts) {
+    OpResult result;
+    result.op = L"getsrc";
+    result.type = opts.type;
+    result.name = opts.name;
+    Session session;
+    const auto started = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&] {
+        return static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+                .count());
+    };
+    auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
+        hide_if_launched(opts, session);
+        if (session.process) {
+            CloseHandle(session.process);
+            session.process = nullptr;
+        }
+        result.ok = false;
+        result.error_code = static_cast<int>(code);
+        result.error_name = name;
+        result.error_message = message;
+        result.elapsed_ms = elapsed_ms();
+        emit(opts, result);
+        return static_cast<int>(code);
+    };
+
+    BusyGuard busy = BusyGuard::acquire();
+    if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
+
+    if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    const Exit ready = ensure_tsdev_ready(opts, result, session);
+    if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
+
+    const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_before = list_doc_windows(session.pid);
+
+    ReadOutcome outcome;
+    const std::optional<Failure> failure = open_read_and_close(opts, session, dialogs_before, docs_before, outcome);
+    if (failure) return fail(failure->code, failure->name, failure->message);
+
+    hide_if_launched(opts, session);
+    result.ok = true;
+    result.reports_exists = true;
+    result.exists_value = outcome.exists;
+    result.reports_source = true;
+    result.elapsed_ms = elapsed_ms();
+
+    if (!outcome.exists) {
+        // NotFound: no source, no file written.
+        if (opts.json) {
+            std::cout << to_utf8(make_result_json(result)) << "\n";
+            std::cout.flush();
+        } else {
+            std::cout << "getsrc: not found\n";
+            std::cout.flush();
+        }
+        if (session.process) CloseHandle(session.process);
+        return static_cast<int>(Exit::NotFound);
+    }
+
+    // Real item: the editor text IS the source.
+    result.source = outcome.editor_text;
+
+    // Write to --output file if requested (before emitting, so a write failure
+    // is reported as an error with no source on stdout).
+    if (!opts.output_path.empty()) {
+        std::wstring write_err;
+        if (!write_source_file(opts.output_path, outcome.editor_text, write_err))
+            return fail(Exit::Unexpected, L"output_write_failed", write_err);
+        result.output_path = opts.output_path;
+    }
+
+    if (opts.json) {
+        std::cout << to_utf8(make_result_json(result)) << "\n";
+        std::cout.flush();
+    } else if (opts.output_path.empty()) {
+        // Raw source to stdout (UTF-8, no trailing newline added).
+        std::cout << to_utf8(outcome.editor_text);
+        std::cout.flush();
+    } else {
+        // Human summary line: getsrc: ok (N bytes -> <file>).
+        const std::string utf8 = to_utf8(outcome.editor_text);
+        std::cout << "getsrc: ok (" << utf8.size() << " bytes -> " << to_utf8(opts.output_path) << ")\n";
+        std::cout.flush();
+    }
+
+    if (session.process) CloseHandle(session.process);
+    return static_cast<int>(Exit::Ok);
 }
 
 }  // namespace
@@ -421,5 +557,7 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "tsdevctl: " << to_utf8(parsed.error) << "\n";
         return static_cast<int>(Exit::Usage);
     }
-    return opts.verb == L"exists" ? run_exists(opts) : run_open(opts);
+    if (opts.verb == L"exists") return run_exists(opts);
+    if (opts.verb == L"getsrc") return run_getsrc(opts);
+    return run_open(opts);
 }

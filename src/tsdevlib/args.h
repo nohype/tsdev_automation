@@ -12,6 +12,7 @@ struct Options {
     std::wstring name;
     int type_number = -1;
     std::wstring type_label;
+    std::wstring output_path;  // getsrc-only: write source to this file (--output).
 };
 
 struct ParseOutcome {

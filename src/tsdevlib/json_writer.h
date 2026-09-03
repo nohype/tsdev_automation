@@ -12,9 +12,14 @@ struct OpResult {
     bool has_pid = false;
     unsigned long pid = 0;
     unsigned long long elapsed_ms = 0;
-    // Set by operations that answer an existence question (exists).
+    // Set by operations that answer an existence question (exists, getsrc).
     bool reports_exists = false;
     bool exists_value = false;
+    // Set by getsrc when it has a source answer (real item or not-found).
+    bool reports_source = false;
+    std::wstring source;
+    // Set by getsrc when --output was used and the file was written.
+    std::wstring output_path;
     int error_code = 0;
     std::wstring error_name;
     std::wstring error_message;

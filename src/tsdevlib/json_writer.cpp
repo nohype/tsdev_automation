@@ -50,6 +50,21 @@ std::wstring make_result_json(const OpResult& r) {
         json += L",\"exists\":";
         json += r.exists_value ? L"true" : L"false";
     }
+    if (r.reports_source) {
+        // source is null when the item was not found (exists=false); the
+        // editor text in that case is the phantom error page, not source.
+        if (r.exists_value) {
+            json += L",\"source\":\"" + json_escape(r.source) + L"\"";
+        } else {
+            json += L",\"source\":null";
+        }
+    }
+    // output_path is emitted only when a file was actually written (real item
+    // found + --output given); not emitted for not-found even if --output was
+    // requested (no file is written in that case).
+    if (!r.output_path.empty() && r.exists_value) {
+        json += L",\"output_path\":\"" + json_escape(r.output_path) + L"\"";
+    }
     json += L",\"error\":";
     if (r.error_code == 0) {
         json += L"null";

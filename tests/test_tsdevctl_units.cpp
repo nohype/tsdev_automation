@@ -236,14 +236,155 @@ void test_json() {
           "exists-false json shape");
 }
 
+void test_parse_args_getsrc() {
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"MyTestStrategyA")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(p.ok && opts.verb == L"getsrc" && opts.type == L"Strategy" && opts.type_number == 0 &&
+                  opts.name == L"MyTestStrategyA" && opts.output_path.empty(),
+              "getsrc with type+name parses, no output_path");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Fn1"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\out\\src.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(p.ok && opts.verb == L"getsrc" && opts.output_path == L"C:\\out\\src.eld",
+              "getsrc --output parses output_path");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"open"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\f.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--output with open is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"exists"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\f.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--output with exists is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "getsrc without --name is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"PaintBar"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(!p.ok, "getsrc with unmapped type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--output")};
+        const ParseOutcome p = parse_args(7, argv, opts);
+        check(!p.ok, "getsrc --output without a value is a usage error");
+    }
+}
+
+void test_json_getsrc() {
+    // getsrc success (no --output): source present, exists true.
+    OpResult src_ok;
+    src_ok.ok = true;
+    src_ok.op = L"getsrc";
+    src_ok.type = L"Strategy";
+    src_ok.name = L"MyTestStrategyA";
+    src_ok.has_pid = true;
+    src_ok.pid = 1234;
+    src_ok.elapsed_ms = 567;
+    src_ok.reports_exists = true;
+    src_ok.exists_value = true;
+    src_ok.reports_source = true;
+    src_ok.source = L"Buy next bar at market;\n";
+    const std::wstring ok_json = make_result_json(src_ok);
+    check(ok_json == L"{\"ok\":true,\"op\":\"getsrc\",\"type\":\"Strategy\",\"name\":\"MyTestStrategyA\","
+                     L"\"tsdev_pid\":1234,\"elapsed_ms\":567,\"exists\":true,\"source\":\"Buy next bar at market;\\n\","
+                     L"\"error\":null}",
+          "getsrc success json shape (source + exists)");
+
+    // getsrc NotFound: source null, exists false.
+    OpResult src_no;
+    src_no.ok = true;
+    src_no.op = L"getsrc";
+    src_no.type = L"Strategy";
+    src_no.name = L"NoSuchItem";
+    src_no.has_pid = true;
+    src_no.pid = 1234;
+    src_no.elapsed_ms = 567;
+    src_no.reports_exists = true;
+    src_no.exists_value = false;
+    src_no.reports_source = true;
+    src_no.source.clear();
+    const std::wstring no_json = make_result_json(src_no);
+    check(no_json == L"{\"ok\":true,\"op\":\"getsrc\",\"type\":\"Strategy\",\"name\":\"NoSuchItem\","
+                     L"\"tsdev_pid\":1234,\"elapsed_ms\":567,\"exists\":false,\"source\":null,\"error\":null}",
+          "getsrc NotFound json shape (source null + exists false)");
+
+    // getsrc success with --output: source + output_path.
+    OpResult src_out;
+    src_out.ok = true;
+    src_out.op = L"getsrc";
+    src_out.type = L"Strategy";
+    src_out.name = L"MyTestStrategyA";
+    src_out.has_pid = true;
+    src_out.pid = 1234;
+    src_out.elapsed_ms = 567;
+    src_out.reports_exists = true;
+    src_out.exists_value = true;
+    src_out.reports_source = true;
+    src_out.source = L"Buy next bar at market;\n";
+    src_out.output_path = L"C:\\path\\to\\file.eld";
+    const std::wstring out_json = make_result_json(src_out);
+    check(out_json == L"{\"ok\":true,\"op\":\"getsrc\",\"type\":\"Strategy\",\"name\":\"MyTestStrategyA\","
+                      L"\"tsdev_pid\":1234,\"elapsed_ms\":567,\"exists\":true,\"source\":\"Buy next bar at market;\\n\","
+                      L"\"output_path\":\"C:\\\\path\\\\to\\\\file.eld\",\"error\":null}",
+          "getsrc success json shape with output_path");
+
+    // getsrc NotFound with --output: no output_path emitted (no file written).
+    OpResult src_no_out;
+    src_no_out.ok = true;
+    src_no_out.op = L"getsrc";
+    src_no_out.type = L"Strategy";
+    src_no_out.name = L"NoSuchItem";
+    src_no_out.reports_exists = true;
+    src_no_out.exists_value = false;
+    src_no_out.reports_source = true;
+    src_no_out.source.clear();
+    src_no_out.output_path = L"C:\\should\\not\\appear.eld";
+    const std::wstring no_out_json = make_result_json(src_no_out);
+    check(no_out_json.find(L"output_path") == std::wstring::npos,
+          "getsrc NotFound json omits output_path (no file written)");
+}
+
 }  // namespace
 
 int wmain() {
     test_type_table();
     test_parse_args();
     test_parse_args_exists();
+    test_parse_args_getsrc();
     test_phantom_classifier();
     test_json();
+    test_json_getsrc();
     if (failures == 0) {
         std::wprintf(L"all unit tests passed\n");
         return 0;
