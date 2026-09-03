@@ -14,31 +14,26 @@ paths, and process rules live in AGENTS.md).
   behaviors).
 - **TVS #1 DONE (commit ad1f93a): `tsdevctl open`** — lifecycle + pipe channel,
   adversarially reviewed and approved.
-- **TVS #2 IMPLEMENTED (2026-09-03, this session), fix round after DISAPPROVAL:**
-  `tsdevctl exists --type <Strategy|Function|Indicator|ShowMe|TradingApp>
-  --name <n>`. Mechanism: pipe-open → poll the editor (`WM_GETTEXT`, sized via
-  `WM_GETTEXTLENGTH`) until the phantom error page appears (⇒ not-exists) or
-  the text is stable across two 500 ms reads (⇒ exists) — a single read is
-  NOT decidable (verified live: a fresh phantom's editor transiently holds a
-  single space; rendering lags under session-restore flood). Closes only docs
-  it opened; re-scans for late-executed opens on failed waits. Exit 0=exists,
-  1=NotFound (successful answer), 10=Unexpected, 2..9 unchanged. All five R13
-  types supported. Review round 1: DISAPPROVED (5 findings) — all fixed:
-  render-race poll (CRITICAL), timeout-path late-open re-scan (HIGH), E2E
-  settle fix committed (MEDIUM), E2E dead type-number data removed + session
-  hygiene documented (MEDIUM), verbatim-name/ProgId boundary (LOW).
-  Verified: unit tests green; E2E green ×5 consecutive runs after the fix
-  (previously reproduced failures: 2/6/8/8/6 false positives per run).
-  Review round 2 (607f5e7): findings 1-4 VERIFIED FIXED (E2E 5/5 by the
-  reviewer); DISAPPROVED solely on finding 5 — the boundary documentation
-  was claimed but absent. Round 3 (commit 7cec93b): boundary actually
-  documented (usage_text + KB "Exists output boundary" + WM correction +
-  E2E label), close_late_open hardened (dialog/crash checks + failure
-  surfaced, replacing the original wait failure), cross-process reads use
-  SendMessageTimeoutW(SMTO_ABORTIFHUNG 2s) so a wedged UI thread cannot
-  defeat --timeout, run_open's no-re-scan asymmetry commented as
-  intentional. Verified: unit green; E2E green ×3 after these changes
-  (round-2 reviewer independently ran 5/5 greens on 607f5e7).
+- **TVS #2 DONE (2026-09-03): `tsdevctl exists` — APPROVED after 3 review
+  rounds** (commits e3bbc48 → 607f5e7 → 7cec93b → b94e63f). Final shape:
+  `exists --type <Strategy|Function|Indicator|ShowMe|TradingApp> --name <n>`
+  [--json --timeout --nohide --ts-path]; pipe-open → decidable editor poll
+  (phantom error page ⇒ not-exists; text stable across two 500 ms reads ⇒
+  exists; single reads are NOT decidable — transient single-space state,
+  verified live); closes only docs it opened; late-open re-scan on failed
+  waits (dialog/crash surfaced, SendMessageTimeoutW(SMTO_ABORTIFHUNG) bounds
+  cross-process reads; 64 MB length cap). Exit 0=exists, 1=NotFound
+  (successful answer), 10=Unexpected, 2..9 unchanged. Requested-name/ProgId
+  boundary PM-accepted and documented (usage_text + KB). Verified: unit
+  green; E2E green ×5 consecutive (reviewer, round 3) + further greens
+  after the LOW-fix commits; zero dialogs; no residue; no stray processes.
+  Review carry-overs for the NEXT TVS brief: (i) comment wording in
+  doc_read.cpp slightly overstates the deadline bound (a wedged scan
+  overshoots by ≤ one bounded pass); (ii) if a late-executed command raises
+  a dialog AND opens a doc, the ErrorDialog return preempts the doc
+  close/report (unreachable today — no pipe-reachable error dialog is known);
+  (iii) collect_doc skips unreadable windows under a wedged UI thread
+  (acceptable degradation, docs_before captured while healthy).
   - PROCESS DEVIATION (documented): the `subagent_general` delegation channel
     broke mid-session (4 consecutive empty/failed completions: da60d4c9,
     43a23faa, 73874f38, ed75b36d; only the explore profile worked). The PM
