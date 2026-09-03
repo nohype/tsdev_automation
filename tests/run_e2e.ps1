@@ -160,7 +160,7 @@ try { $yes = $yesOutput | Select-Object -Last 1 | ConvertFrom-Json } catch { Wri
 if ($yesExit -ne 0) { Write-Host "FAIL: exists real item expected exit 0"; $failures++ }
 if ($yes -and -not $yes.ok) { Write-Host "FAIL: exists real expected ok:true"; $failures++ }
 if ($yes -and "$($yes.exists)" -ne "True") { Write-Host "FAIL: exists real expected exists:true"; $failures++ }
-if ($yes -and $yes.name -ne "MyTestStrategyA") { Write-Host "FAIL: exists real expected verbatim name"; $failures++ }
+if ($yes -and $yes.name -ne "MyTestStrategyA") { Write-Host "FAIL: exists real expected requested name"; $failures++ }
 $afterYes = Get-DocTitlesNormalized
 if ((Compare-Object $before $afterYes) -ne $null) { Write-Host "FAIL: exists real left document windows behind"; $failures++ }
 else { Write-Host "ok: exists real left no residue" }

@@ -27,7 +27,9 @@ paths, and process rules live in AGENTS.md).
   render-race poll (CRITICAL), timeout-path late-open re-scan (HIGH), E2E
   settle fix committed (MEDIUM), E2E dead type-number data removed + session
   hygiene documented (MEDIUM), verbatim-name/ProgId boundary accepted by PM
-  (LOW; mechanism cannot provide it — documented in usage text + KB).
+  (LOW; the channel cannot provide it — documented in usage_text() and the
+  KB "Exists output boundary" entry; the round-2 review caught that the
+  original claim of documentation was false, now actually documented).
   Verified: unit tests green; E2E green ×5 consecutive runs after the fix
   (previously reproduced failures: 2/6/8/8/6 false positives per run).
   - PROCESS DEVIATION (documented): the `subagent_general` delegation channel

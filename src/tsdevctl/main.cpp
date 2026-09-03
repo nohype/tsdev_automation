@@ -183,7 +183,12 @@ int run_open(const Options& opts) {
 
     const std::wstring needle = L" - " + opts.name + L" : " + opts.type_label;
     const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
-    if (failure) return fail(failure->code, failure->name, failure->message);
+    if (failure) {
+        // Unlike exists, open has no late-open re-scan: an opened document is
+        // open's requested outcome, so a late execution is not residue. The
+        // KB's "state unknown" guidance covers a timed-out open for callers.
+        return fail(failure->code, failure->name, failure->message);
+    }
 
     const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
     if (!dialog_text.empty()) return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
@@ -256,22 +261,27 @@ std::optional<Failure> close_doc_window(const Options& opts, const Session& sess
 // TSDev can execute a pipe command after the caller stopped waiting for it
 // (verified live: a command ran after the timeout expired, leaving an open
 // document behind). On a failed wait, re-scan for such a late open and close
-// it so the timeout leaves no open-document residue.
-void close_late_open(const Options& opts, const Session& session,
-                     const std::vector<DocWindow>& docs_before,
-                     const std::set<HWND>& dialogs_before, const std::wstring& expected) {
+// it so the timeout leaves no open-document residue. The scan also checks
+// dialogs and crash reports: a late-executed command can raise an error
+// dialog instead of (or while) opening the document, and that failure must
+// be surfaced rather than left lingering in TSDev.
+std::optional<Failure> close_late_open(const Options& opts, const Session& session,
+                                       const std::vector<DocWindow>& docs_before,
+                                       const std::set<HWND>& dialogs_before, const std::wstring& expected) {
     const auto deadline = opts.timeouts_disabled
         ? std::chrono::steady_clock::time_point::max()
         : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
     for (;;) {
-        if (!process_alive(session.pid)) return;
+        if (!process_alive(session.pid)) return std::nullopt;
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+        if (!dialog_text.empty()) return Failure{Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text};
+        if (crash_report_running()) return Failure{Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected"};
         const std::vector<DocWindow> docs_now = list_doc_windows(session.pid);
         const DocMatch match = find_doc_window(docs_before, docs_now, expected);
         if (match.window != nullptr && match.opened_by_us) {
-            close_doc_window(opts, session, dialogs_before, *match.window);
-            return;
+            return close_doc_window(opts, session, dialogs_before, *match.window);
         }
-        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= deadline) return;
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= deadline) return std::nullopt;
         Sleep(100);
     }
 }
@@ -318,7 +328,12 @@ int run_exists(const Options& opts) {
     const std::wstring needle = L" - " + expected;
     const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
     if (failure) {
-        close_late_open(opts, session, docs_before, dialogs_before, expected);
+        // A late-executed open leaves a document behind; re-scan and close it.
+        // A dialog or crash raised by the late execution is the more severe
+        // signal and replaces the original wait failure.
+        const std::optional<Failure> late_failure =
+            close_late_open(opts, session, docs_before, dialogs_before, expected);
+        if (late_failure) return fail(late_failure->code, late_failure->name, late_failure->message);
         return fail(failure->code, failure->name, failure->message);
     }
 

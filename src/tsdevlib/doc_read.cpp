@@ -6,6 +6,26 @@
 
 namespace {
 
+// Cross-process window reads block indefinitely when the target's UI thread
+// wedges (a state TSDev.exe is observed to enter; see docs/KNOWLEDGE_BASE.md).
+// SendMessageTimeoutW with SMTO_ABORTIFHUNG bounds each call so the caller's
+// operation deadline stays enforceable; a hung call reads as "not readable
+// now" and the caller's poll loop handles it.
+constexpr UINT kHungTimeoutMs = 2000;
+
+bool read_text_timeout(HWND hwnd, std::wstring& text) {
+    DWORD_PTR length = 0;
+    if (!SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, kHungTimeoutMs, &length))
+        return false;
+    std::wstring buffer(static_cast<size_t>(length) + 1, L'\0');
+    DWORD_PTR copied = 0;
+    if (!SendMessageTimeoutW(hwnd, WM_GETTEXT, static_cast<WPARAM>(length + 1),
+                             reinterpret_cast<LPARAM>(buffer.data()), SMTO_ABORTIFHUNG, kHungTimeoutMs, &copied))
+        return false;
+    text.assign(buffer, 0, static_cast<size_t>(copied));
+    return true;
+}
+
 bool class_starts_with(HWND hwnd, const wchar_t* prefix) {
     wchar_t cls[64]{};
     return GetClassNameW(hwnd, cls, 64) > 0 && std::wstring(cls).rfind(prefix, 0) == 0;
@@ -19,9 +39,9 @@ struct DocCollector {
 BOOL CALLBACK collect_doc(HWND hwnd, LPARAM param) {
     auto* collector = reinterpret_cast<DocCollector*>(param);
     if (GetParent(hwnd) == collector->client && class_starts_with(hwnd, L"Afx:")) {
-        wchar_t title[1024]{};
-        const int copied = GetWindowTextW(hwnd, title, 1024);
-        collector->out->push_back({hwnd, std::wstring(title, static_cast<size_t>(copied))});
+        std::wstring title;
+        if (!read_text_timeout(hwnd, title)) return TRUE;
+        collector->out->push_back({hwnd, title});
     }
     return TRUE;
 }
@@ -57,14 +77,7 @@ bool read_doc_text(void* doc, std::wstring& text) {
     EditFinder finder;
     EnumChildWindows(static_cast<HWND>(doc), find_edit, reinterpret_cast<LPARAM>(&finder));
     if (!finder.edit) return false;
-    const int length = static_cast<int>(SendMessageW(finder.edit, WM_GETTEXTLENGTH, 0, 0));
-    if (length < 0) return false;
-    std::wstring buffer(static_cast<size_t>(length) + 1, L'\0');
-    const int copied = static_cast<int>(SendMessageW(finder.edit, WM_GETTEXT, length + 1,
-                                                     reinterpret_cast<LPARAM>(buffer.data())));
-    if (copied < 0) return false;
-    text.assign(buffer, 0, static_cast<size_t>(copied));
-    return true;
+    return read_text_timeout(finder.edit, text);
 }
 
 bool is_phantom_error_text(const std::wstring& text) {
