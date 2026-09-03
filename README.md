@@ -7,5 +7,6 @@ Automates management of the TradeStation Development Environment (TSDev) Library
 - Requirements (SSOT): [AGENTS.md](AGENTS.md)
 - TSDev.exe knowledge base (SSOT): [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md)
 - PM working memory: [docs/WORKING_MEMORY.md](docs/WORKING_MEMORY.md)
+- `archive/` contains the discarded previous approach (direct library interfacing without TSDev.exe) — reference only, see `archive/README.md`.
 
 CLI and Python package documentation will be written here as the new implementation lands.

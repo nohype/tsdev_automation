@@ -8,16 +8,15 @@ paths, and process rules live in AGENTS.md).
 
 - Branch `exp/remote-control`. Branch direction is fixed: drive TSDev.exe
   itself (see AGENTS.md). The old approach (direct orlib/library interfacing
-  without TSDev.exe) is discarded; most of the existing codebase, tests, and
-  CI will be discarded/replaced by implementing teams — do not trust or build
-  on existing code.
+  without TSDev.exe) is discarded.
 - Requirements interview complete (2026-09-03). AGENTS.md is the
   requirements SSOT (R1–R15); do not duplicate it here.
-- Docs cleanup (2026-09-03): repo docs purged of old-approach and
-  other-binary content (three docs deleted; see git history). Surviving doc
-  set: AGENTS.md, README.md (minimal stub), docs/KNOWLEDGE_BASE.md
-  (rewritten: TSDev.exe-only facts), docs/WORKING_MEMORY.md. Uncommitted at
-  the time of writing.
+- Cleanup complete (2026-09-03): the old codebase is archived under
+  `archive/` (reference-only; see `archive/README.md`). orlib20-specific
+  content (signatures, sigcodegen, diag probes, DLL fixture) was dropped —
+  recoverable from git history (commits before the archive restructure).
+  Top level now holds only: AGENTS.md, README.md, .gitignore,
+  .python-version, docs/, archive/.
 - Next: implementing teams shape and execute TVSs against the AGENTS.md
   requirements.
 
@@ -27,6 +26,7 @@ paths, and process rules live in AGENTS.md).
   unelevated context costs ONE interactive UAC prompt. Elevation state must
   be checked per session (`whoami /groups` → High Mandatory Level =
   elevated); TS 9.5 processes require elevation (R8).
-- `tmp/`, `dist/`, `build/` are gitignored scratch. `tmp/` still holds
-  old-approach experiment artifacts on disk — not part of the repo, not
-  current truth.
+- Gitignored scratch on disk is old-approach residue, not repo content:
+  `build/`, `build_probe/`, `dist/`, `dist_diag/`, `artifacts/`, `tmp/`,
+  `.venv/`, `.pytest_cache/`. `ghidra_project/` (TSDev.exe RE workspace)
+  is current and in scope for this branch.
