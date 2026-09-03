@@ -20,6 +20,9 @@ The rules below are mandatory.
   - **b) Minimize reliance on binary internals** (brittle across TSDev/TradeStation versions).
   - **c) Minimize implementation complexity.**
   - **d) Be minimally invasive: interaction is constrained to the TSDev.exe process directly — no other binaries or processes shall be touched.** No injection into, instrumentation of, or manipulation of TS Desktop, orlib/other DLLs, or any process or binary other than TSDev.exe.
+- **Injection into TSDev.exe is permitted.** Constraint (d) bounds interaction to the TSDev.exe process; it does NOT prohibit injecting code into TSDev.exe itself. Standing rule for future development:
+  - **When to inject:** if any user requirement — including no visual flicker or focus stealing — is not reasonably achievable without injecting code, inject code. Whenever injection makes the project simpler, more maintainable, or more robust: inject code.
+  - **How to inject:** the injected code must be minimally invasive, operate at the highest level possible (right below the UI layer — trigger the same code paths the UI triggers), and minimize reliance on binary internals that are likely to change between versions (prefer surfaces unlikely to change radically across versions — e.g. exported/ordinal functions, window messages, MFC message maps and command IDs — over raw struct offsets and hardcoded addresses).
 
 ## Users
 
