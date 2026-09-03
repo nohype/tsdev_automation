@@ -13,10 +13,14 @@ namespace {
 // now" and the caller's poll loop handles it.
 constexpr UINT kHungTimeoutMs = 2000;
 
+// A pathological WM_GETTEXTLENGTH result must not drive the buffer allocation.
+constexpr DWORD_PTR kMaxTextLength = 64u * 1024u * 1024u;
+
 bool read_text_timeout(HWND hwnd, std::wstring& text) {
     DWORD_PTR length = 0;
     if (!SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, kHungTimeoutMs, &length))
         return false;
+    if (length > kMaxTextLength) return false;
     std::wstring buffer(static_cast<size_t>(length) + 1, L'\0');
     DWORD_PTR copied = 0;
     if (!SendMessageTimeoutW(hwnd, WM_GETTEXT, static_cast<WPARAM>(length + 1),

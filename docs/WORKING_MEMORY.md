@@ -26,12 +26,19 @@ paths, and process rules live in AGENTS.md).
   types supported. Review round 1: DISAPPROVED (5 findings) — all fixed:
   render-race poll (CRITICAL), timeout-path late-open re-scan (HIGH), E2E
   settle fix committed (MEDIUM), E2E dead type-number data removed + session
-  hygiene documented (MEDIUM), verbatim-name/ProgId boundary accepted by PM
-  (LOW; the channel cannot provide it — documented in usage_text() and the
-  KB "Exists output boundary" entry; the round-2 review caught that the
-  original claim of documentation was false, now actually documented).
+  hygiene documented (MEDIUM), verbatim-name/ProgId boundary (LOW).
   Verified: unit tests green; E2E green ×5 consecutive runs after the fix
   (previously reproduced failures: 2/6/8/8/6 false positives per run).
+  Review round 2 (607f5e7): findings 1-4 VERIFIED FIXED (E2E 5/5 by the
+  reviewer); DISAPPROVED solely on finding 5 — the boundary documentation
+  was claimed but absent. Round 3 (commit 7cec93b): boundary actually
+  documented (usage_text + KB "Exists output boundary" + WM correction +
+  E2E label), close_late_open hardened (dialog/crash checks + failure
+  surfaced, replacing the original wait failure), cross-process reads use
+  SendMessageTimeoutW(SMTO_ABORTIFHUNG 2s) so a wedged UI thread cannot
+  defeat --timeout, run_open's no-re-scan asymmetry commented as
+  intentional. Verified: unit green; E2E green ×3 after these changes
+  (round-2 reviewer independently ran 5/5 greens on 607f5e7).
   - PROCESS DEVIATION (documented): the `subagent_general` delegation channel
     broke mid-session (4 consecutive empty/failed completions: da60d4c9,
     43a23faa, 73874f38, ed75b36d; only the explore profile worked). The PM
