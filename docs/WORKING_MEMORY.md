@@ -16,20 +16,27 @@ paths, and process rules live in AGENTS.md).
   `tmp\TSDev.exe` byte-identical copy — launch.bat cannot parse the
   `(x86)` path). Registry/strings/web/archive research evidence in
   `tmp/research/` (gitignored scratch).
-- **TVS #1 (implemented, in review): `tsdevctl open` — TSDev lifecycle + pipe
+- **TVS #1 DONE (commit ad1f93a): `tsdevctl open` — TSDev lifecycle + pipe
   control channel.** C++20 CLI (src/tsdevctl + src/tsdevlib, CMake, /W4 /WX),
   verb `open --type <Strategy|Function> --name <n>`, `--json`, exit codes
   0/2/3/4/5/6/7/8/9, `--timeout` (≤0 disables), `--nohide`, `--ts-path`.
   Attach-or-launch-hidden (R5/R7), busy mutex `Local\TSDevAutomation.Busy`
   (R15), pipe write `"Name", <type>`, success = frame title contains
-  ` - <name> : <Type>`, dialog/crash checks on every path. Verified green:
-  unit tests (PS runner), E2E (launch hidden → open → stays hidden → WM_CLOSE
-  cleanup), attach path, busy path (exit 9), usage error (exit 2).
+  ` - <name> : <Type>`, dialog/crash checks on every path. Verified: unit
+  tests, E2E (launch hidden → open → stays hidden → WM_CLOSE cleanup),
+  attach path, busy path (exit 9), usage error (exit 2). Adversarial review:
+  5 findings fixed, APPROVED on re-review.
   Known TSDev behaviors handled: pipe appears asynchronously after the frame
   (retry on ERROR_FILE_NOT_FOUND); TSDev re-shows its frame during startup
   (hide re-enforced at every exit); nonexistent name opens an empty phantom
   doc (documented in KB — Exists needs a different mechanism).
-- Next after TVS #1: type-number mapping for Indicator/ShowMe/TradingApp;
+- Next TVS (recommended): **`exists`/`list` via TSDev's own enumeration** —
+  the pipe only opens/creates; nothing in it reads the library. Find the
+  highest-level TSDev-internal enumeration path (the Open-dialog population
+  code path) and an external trigger for it; alternatively derive
+  Exists/List from the doc-manager structures the pipe handler uses
+  (FUN_004944b0's type→doc-template map). Then: type-number mapping for
+  Indicator/ShowMe/TradingApp (probe candidates 5/0x14 per KB subtypes),
   then editor-text set + verify trigger (Modify/Insert path).
 
 ## Still-valid machine facts
