@@ -197,6 +197,85 @@ int run_open(const Options& opts) {
     return static_cast<int>(Exit::Ok);
 }
 
+// The trailing '*' on a document title is a state-dependent UI marker, never
+// part of the name (verified live; see docs/KNOWLEDGE_BASE.md).
+std::wstring normalized_title(std::wstring title) {
+    while (!title.empty() && title.back() == L'*') title.pop_back();
+    return title;
+}
+
+struct DocMatch {
+    const DocWindow* window = nullptr;
+    bool opened_by_us = false;
+};
+
+// Locates the document window for the requested item: exact title match
+// first (a fresh open titles the document with the requested spelling), then
+// a case-insensitive pass (an already-open document keeps the spelling it
+// was first opened with). Only windows absent before the pipe command are
+// flagged as closable (R6: leave everything else exactly as found).
+DocMatch find_doc_window(const std::vector<DocWindow>& docs_before,
+                         const std::vector<DocWindow>& docs_after,
+                         const std::wstring& expected) {
+    const std::wstring expected_ci = lower(expected);
+    DocMatch match;
+    for (int pass = 0; pass < 2 && match.window == nullptr; ++pass) {
+        for (const DocWindow& doc : docs_after) {
+            const bool matches = pass == 0 ? normalized_title(doc.title) == expected
+                                           : lower(doc.title).find(expected_ci) != std::wstring::npos;
+            if (!matches) continue;
+            match.window = &doc;
+            match.opened_by_us = std::none_of(docs_before.begin(), docs_before.end(),
+                [&](const DocWindow& before) { return before.window == doc.window; });
+            break;
+        }
+    }
+    return match;
+}
+
+// Closes a document window and waits (bounded, with dialog and crash checks)
+// for it to disappear.
+std::optional<Failure> close_doc_window(const Options& opts, const Session& session,
+                                        const std::set<HWND>& dialogs_before, const DocWindow& doc) {
+    PostMessageW(static_cast<HWND>(doc.window), WM_CLOSE, 0, 0);
+    const auto deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    for (;;) {
+        if (!IsWindow(static_cast<HWND>(doc.window))) return std::nullopt;
+        if (!process_alive(session.pid)) return std::nullopt;
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+        if (!dialog_text.empty()) return Failure{Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text};
+        if (crash_report_running()) return Failure{Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected"};
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= deadline)
+            return Failure{Exit::Timeout, L"timeout", L"opened document did not close within the timeout"};
+        Sleep(50);
+    }
+}
+
+// TSDev can execute a pipe command after the caller stopped waiting for it
+// (verified live: a command ran after the timeout expired, leaving an open
+// document behind). On a failed wait, re-scan for such a late open and close
+// it so the timeout leaves no open-document residue.
+void close_late_open(const Options& opts, const Session& session,
+                     const std::vector<DocWindow>& docs_before,
+                     const std::set<HWND>& dialogs_before, const std::wstring& expected) {
+    const auto deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    for (;;) {
+        if (!process_alive(session.pid)) return;
+        const std::vector<DocWindow> docs_now = list_doc_windows(session.pid);
+        const DocMatch match = find_doc_window(docs_before, docs_now, expected);
+        if (match.window != nullptr && match.opened_by_us) {
+            close_doc_window(opts, session, dialogs_before, *match.window);
+            return;
+        }
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= deadline) return;
+        Sleep(100);
+    }
+}
+
 int run_exists(const Options& opts) {
     OpResult result;
     result.op = L"exists";
@@ -235,65 +314,69 @@ int run_exists(const Options& opts) {
     const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
     const std::vector<DocWindow> docs_before = list_doc_windows(session.pid);
 
-    const std::wstring needle = L" - " + opts.name + L" : " + opts.type_label;
-    const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
-    if (failure) return fail(failure->code, failure->name, failure->message);
-
-    // Locate the document window the pipe command produced. The frame title
-    // echoes the requested name (verified live), so the exact match is the
-    // requested spelling; the case-insensitive pass covers a TSDev that
-    // normalizes to the stored spelling. Only windows this invocation created
-    // are closed again (R6: leave everything else exactly as found).
     const std::wstring expected = opts.name + L" : " + opts.type_label;
-    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
-    const DocWindow* target = nullptr;
-    bool opened_by_us = false;
-    for (const DocWindow& doc : docs_after) {
-        std::wstring title = doc.title;
-        while (!title.empty() && title.back() == L'*') title.pop_back();
-        if (title == expected) {
-            target = &doc;
-            opened_by_us = std::none_of(docs_before.begin(), docs_before.end(), [&](const DocWindow& before) {
-                return before.window == doc.window;
-            });
-            break;
-        }
+    const std::wstring needle = L" - " + expected;
+    const std::optional<Failure> failure = send_and_wait(opts, session, dialogs_before, needle);
+    if (failure) {
+        close_late_open(opts, session, docs_before, dialogs_before, expected);
+        return fail(failure->code, failure->name, failure->message);
     }
-    if (!target) {
-        for (const DocWindow& doc : docs_after) {
-            if (lower(doc.title).find(lower(expected)) != std::wstring::npos) {
-                target = &doc;
-                opened_by_us = std::none_of(docs_before.begin(), docs_before.end(), [&](const DocWindow& before) {
-                    return before.window == doc.window;
-                });
+
+    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
+    const DocMatch match = find_doc_window(docs_before, docs_after, expected);
+    if (match.window == nullptr)
+        return fail(Exit::Timeout, L"timeout", L"frame title changed but no matching document window appeared");
+
+    // TSDev renders the editor content asynchronously after the document
+    // window appears, and a fresh phantom's editor transiently holds a single
+    // space before the error page replaces it (verified live). Neither empty
+    // nor non-empty is decidable on its own: poll until the phantom error
+    // page appears (item does not exist) or the text is unchanged across two
+    // consecutive 500 ms reads (item exists — its rendered source).
+    std::wstring editor_text;
+    std::wstring previous_text;
+    int stable_reads = 0;
+    bool exists = false;
+    const auto read_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    for (;;) {
+        if (!IsWindow(static_cast<HWND>(match.window->window)))
+            return fail(Exit::Crashed, L"tsdev_died", L"document window disappeared before its content rendered");
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+        if (!dialog_text.empty()) return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
+        if (crash_report_running()) return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected");
+        if (!process_alive(session.pid)) return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited during the operation");
+        std::wstring text;
+        if (read_doc_text(match.window->window, text) && !text.empty()) {
+            if (is_phantom_error_text(text)) {
+                editor_text = text;
+                exists = false;
                 break;
             }
+            if (text == previous_text) {
+                ++stable_reads;
+                if (stable_reads >= 2) {
+                    editor_text = text;
+                    exists = true;
+                    break;
+                }
+            } else {
+                stable_reads = 0;
+            }
+            previous_text = text;
+        } else {
+            stable_reads = 0;
+            previous_text.clear();
         }
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= read_deadline)
+            return fail(Exit::Timeout, L"timeout", L"editor content did not render within the timeout");
+        Sleep(500);
     }
-    if (!target) return fail(Exit::Timeout, L"timeout", L"frame title changed but no matching document window appeared");
 
-    std::wstring editor_text;
-    if (!read_doc_text(target->window, editor_text))
-        return fail(Exit::Unexpected, L"editor_missing", L"no editor control found in the opened document window");
-    const bool exists = !is_phantom_error_text(editor_text);
-
-    if (opened_by_us) {
-        // Close what this invocation opened; a left-behind phantom document
-        // would be restored by TSDev's session handling on the next start.
-        PostMessageW(static_cast<HWND>(target->window), WM_CLOSE, 0, 0);
-        const auto close_deadline = opts.timeouts_disabled
-            ? std::chrono::steady_clock::time_point::max()
-            : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
-        for (;;) {
-            if (!IsWindow(static_cast<HWND>(target->window))) break;
-            const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
-            if (!dialog_text.empty()) return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
-            if (crash_report_running()) return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected");
-            if (!process_alive(session.pid)) return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited during the operation");
-            if (std::chrono::steady_clock::now() >= close_deadline)
-                return fail(Exit::Timeout, L"timeout", L"opened document did not close within the timeout");
-            Sleep(50);
-        }
+    if (match.opened_by_us) {
+        const std::optional<Failure> close_failure = close_doc_window(opts, session, dialogs_before, *match.window);
+        if (close_failure) return fail(close_failure->code, close_failure->name, close_failure->message);
     }
 
     const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);

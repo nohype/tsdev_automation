@@ -14,17 +14,22 @@ paths, and process rules live in AGENTS.md).
   behaviors).
 - **TVS #1 DONE (commit ad1f93a): `tsdevctl open`** — lifecycle + pipe channel,
   adversarially reviewed and approved.
-- **TVS #2 IMPLEMENTED (2026-09-03, this session), pending adversarial review:**
+- **TVS #2 IMPLEMENTED (2026-09-03, this session), fix round after DISAPPROVAL:**
   `tsdevctl exists --type <Strategy|Function|Indicator|ShowMe|TradingApp>
-  --name <n>`. Mechanism: pipe-open → read editor (`WM_GETTEXT`, sized via
-  `WM_GETTEXTLENGTH`) → TSDev's own phantom error page ⇒ not-exists; closes
-  only docs it opened (R6); case-insensitive title match (TSDev keeps the
-  original spelling for already-open docs). Exit 0=exists, 1=NotFound
-  (successful answer), 10=Unexpected, 2..9 unchanged. All five R13 types
-  supported (ShowMe/TradingApp numbers came from the completed doc-template
-  map, live-verified). Verified: unit tests green; E2E green (open real,
-  exists real/wrong-case/phantom ×5 types, residue checks, clean shutdown,
-  zero dialogs).
+  --name <n>`. Mechanism: pipe-open → poll the editor (`WM_GETTEXT`, sized via
+  `WM_GETTEXTLENGTH`) until the phantom error page appears (⇒ not-exists) or
+  the text is stable across two 500 ms reads (⇒ exists) — a single read is
+  NOT decidable (verified live: a fresh phantom's editor transiently holds a
+  single space; rendering lags under session-restore flood). Closes only docs
+  it opened; re-scans for late-executed opens on failed waits. Exit 0=exists,
+  1=NotFound (successful answer), 10=Unexpected, 2..9 unchanged. All five R13
+  types supported. Review round 1: DISAPPROVED (5 findings) — all fixed:
+  render-race poll (CRITICAL), timeout-path late-open re-scan (HIGH), E2E
+  settle fix committed (MEDIUM), E2E dead type-number data removed + session
+  hygiene documented (MEDIUM), verbatim-name/ProgId boundary accepted by PM
+  (LOW; mechanism cannot provide it — documented in usage text + KB).
+  Verified: unit tests green; E2E green ×5 consecutive runs after the fix
+  (previously reproduced failures: 2/6/8/8/6 false positives per run).
   - PROCESS DEVIATION (documented): the `subagent_general` delegation channel
     broke mid-session (4 consecutive empty/failed completions: da60d4c9,
     43a23faa, 73874f38, ed75b36d; only the explore profile worked). The PM

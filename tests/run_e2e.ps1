@@ -1,6 +1,10 @@
 ﻿# E2E for tsdevctl `open` and `exists` against a real TSDev instance.
 # REQUIRES: elevated process, TradeStation 9.5 installed. Skippable in CI.
 # Compatible with PowerShell 5.1 and pwsh 7.
+# Session-state hygiene: TSDev restores previous-session documents on launch
+# (phantoms included). Those documents belong to the user's session, so this
+# script tolerates them (normalized whole-window-set comparisons) and never
+# cleans them; it only asserts that each invocation leaves no NEW documents.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -135,15 +139,17 @@ else { Write-Host "FAIL: TSDev window must stay hidden"; $failures++ }
 
 # TSDev restores previous-session documents asynchronously after the frame
 # appears; wait until the document set is stable before taking baselines.
-$stable = $null
+$prev = $null
+$havePrev = $false
 $settleDeadline = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $settleDeadline) {
-    $current = Get-DocTitlesNormalized
-    if ($stable -ne $null -and (Compare-Object $stable $current) -eq $null) { break }
-    $stable = $current
+    $current = @(Get-DocTitlesNormalized)
+    if ($havePrev -and ((Compare-Object $prev $current) -eq $null)) { break }
+    $prev = $current
+    $havePrev = $true
     Start-Sleep -Milliseconds 500
 }
-if ($stable -eq $null) { Write-Error "document set never appeared"; exit 1 }
+if (-not $havePrev) { Write-Error "document set never appeared"; exit 1 }
 
 # --- exists: real item ------------------------------------------------------
 $before = Get-DocTitlesNormalized
@@ -171,17 +177,13 @@ $ciDiff = Compare-Object $before $afterCi
 if ($ciDiff) { Write-Host "FAIL: exists wrong-case left document windows behind: $($ciDiff | Out-String)"; $failures++ }
 else { Write-Host "ok: exists wrong-case left no residue" }
 
-# --- exists: phantom items for every supported type ------------------------
-$types = @(
-    @("Strategy", "0"),
-    @("Function", "1"),
-    @("Indicator", "2"),
-    @("ShowMe", "1282"),
-    @("TradingApp", "5122")
-)
+# --- exists: phantom items for every supported type -------------------------
+# The type list is the test subject: it must independently state the set of
+# types the CLI is required to accept (R13). The authoritative pipe numbers
+# live in docs/KNOWLEDGE_BASE.md; this file deliberately does not restate them.
+$types = @("Strategy", "Function", "Indicator", "ShowMe", "TradingApp")
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss")
-foreach ($entry in $types) {
-    $type = $entry[0]; $number = $entry[1]
+foreach ($type in $types) {
     $phantomName = "E2ePhantom_$type`_$stamp"
     $docsBefore = Get-DocTitlesNormalized
     $out = Invoke-Tsdevctl @("exists", "--type", $type, "--name", $phantomName, "--json")
