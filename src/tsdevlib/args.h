@@ -11,8 +11,10 @@ struct Options {
     std::wstring type;
     std::wstring name;
     int type_number = -1;
+    int type_new_cmd_id = 0;
     std::wstring type_label;
     std::wstring output_path;  // getsrc-only: write source to this file (--output).
+    std::wstring source_path;  // insert-only: read source from this file (--source).
 };
 
 struct ParseOutcome {

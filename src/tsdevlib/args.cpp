@@ -4,11 +4,11 @@
 #include <cstdlib>
 
 ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
-    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc)"};
+    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc|insert)"};
     if (std::wstring(argv[1]) == L"--help" || std::wstring(argv[1]) == L"-h") return {true, true, L""};
     const std::wstring verb = argv[1];
-    if (verb != L"open" && verb != L"exists" && verb != L"getsrc")
-        return {false, false, L"unknown command (expected: open|exists|getsrc)"};
+    if (verb != L"open" && verb != L"exists" && verb != L"getsrc" && verb != L"insert")
+        return {false, false, L"unknown command (expected: open|exists|getsrc|insert)"};
     out.verb = verb;
 
     for (int i = 2; i < argc; ++i) {
@@ -47,18 +47,29 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
         } else if (arg == L"--output") {
             if (i + 1 >= argc) return {false, false, L"missing value for --output"};
             out.output_path = argv[++i];
+        } else if (arg == L"--source") {
+            if (i + 1 >= argc) return {false, false, L"missing value for --source"};
+            out.source_path = argv[++i];
         } else {
             return {false, false, L"unknown option: " + arg};
         }
     }
 
-    // --output is getsrc-specific: reject it for open/exists.
+    // --output is getsrc-specific: reject it for open/exists/insert.
     if (!out.output_path.empty() && out.verb != L"getsrc")
         return {false, false, L"--output is only valid with getsrc"};
 
+    // --source is insert-specific: reject it for open/exists/getsrc.
+    if (!out.source_path.empty() && out.verb != L"insert")
+        return {false, false, L"--source is only valid with insert"};
+
+    // --source is required for insert.
+    if (out.verb == L"insert" && out.source_path.empty())
+        return {false, false, L"--source is required for insert"};
+
     if (out.type.empty()) return {false, false, L"--type is required (Strategy|Function|Indicator|ShowMe|TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name is required"};
-    if (!type_from_name(out.type, out.type_number, out.type_label))
+    if (!type_from_name(out.type, out.type_number, out.type_new_cmd_id, out.type_label))
         return {false, false, L"unsupported type '" + out.type +
                                   L"' (supported: Strategy, Function, Indicator, ShowMe, TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name must not be empty"};
@@ -75,6 +86,7 @@ std::wstring usage_text() {
         L"  tsdevctl open   --type <Type> --name <Name> [options]\n"
         L"  tsdevctl exists --type <Type> --name <Name> [options]\n"
         L"  tsdevctl getsrc --type <Type> --name <Name> [--output <file>] [options]\n"
+        L"  tsdevctl insert --type <Type> --name <Name> --source <file> [options]\n"
         L"\n"
         L"open: Opens the named item in TSDev (existing item) or starts a new empty\n"
         L"document titled with that name (TSDev's own open-or-create behavior).\n"
@@ -99,6 +111,17 @@ std::wstring usage_text() {
         L"valid with getsrc. By default the raw source goes to stdout; with --json a\n"
         L"JSON object (including a source field, and output_path when --output was\n"
         L"used) is emitted instead.\n"
+        L"insert: Creates a new item in the TSDev library from the EasyLanguage source\n"
+        L"file given by --source (UTF-8, optional BOM). Before inserting, the item is\n"
+        L"checked for existence (proactive collision avoidance); if it already exists\n"
+        L"the operation fails with exit code 11. The item is created through TSDev's\n"
+        L"own \"New <Type>\" command (triggered via its command routing), the name is\n"
+        L"filled into TSDev's own create dialog, and the source is placed into the\n"
+        L"editor via WM_SETTEXT (not the clipboard). The same verify (compile + save)\n"
+        L"code path the UI triggers is then invoked. Compile failure is reported with\n"
+        L"exit code 12 and the error dialog text; note the item may remain in the\n"
+        L"library with uncompiled source in that case. Success is confirmed by\n"
+        L"re-checking that the item now exists in the library.\n"
         L"TSDev.exe is attached to if running, otherwise launched hidden.\n"
         L"\n"
         L"Options:\n"
@@ -107,6 +130,8 @@ std::wstring usage_text() {
         L"  --name <name>      Item name\n"
         L"  --output <file>    (getsrc only) Write source to this file (UTF-8, no\n"
         L"                     BOM) instead of stdout\n"
+        L"  --source <file>    (insert only) Read EasyLanguage source from this\n"
+        L"                     file (UTF-8, optional BOM)\n"
         L"  --json             Machine-readable JSON output on stdout\n"
         L"  --timeout <ms>     Operation timeout in milliseconds (default 30000;\n"
         L"                     value <= 0 disables timeouts entirely)\n"
@@ -127,5 +152,7 @@ std::wstring usage_text() {
         L"  7 TSDev error dialog detected (message text in output)\n"
         L"  8 TSDev crashed\n"
         L"  9 busy (another automation invocation is running)\n"
-        L"  10 unexpected TSDev state (e.g. no editor control in the opened document)\n";
+        L"  10 unexpected TSDev state (e.g. no editor control in the opened document)\n"
+        L"  11 insert: item already exists in the TSDev library\n"
+        L"  12 insert: compile/verify failed (error dialog or item not saved)\n";
 }

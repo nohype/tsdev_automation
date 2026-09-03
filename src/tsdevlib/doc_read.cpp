@@ -88,6 +88,16 @@ bool read_doc_text(void* doc, std::wstring& text) {
     return read_text_timeout(finder.edit, text);
 }
 
+bool set_doc_text(void* doc, const std::wstring& text) {
+    if (!doc) return false;
+    EditFinder finder;
+    EnumChildWindows(static_cast<HWND>(doc), find_edit, reinterpret_cast<LPARAM>(&finder));
+    if (!finder.edit) return false;
+    DWORD_PTR result = 0;
+    return SendMessageTimeoutW(finder.edit, WM_SETTEXT, 0,
+                               reinterpret_cast<LPARAM>(text.c_str()), SMTO_ABORTIFHUNG, kHungTimeoutMs, &result) != 0;
+}
+
 bool is_phantom_error_text(const std::wstring& text) {
     return text.find(L"Error loading document") != std::wstring::npos &&
            text.find(L"no longer exists in your EasyLanguage workarea") != std::wstring::npos;

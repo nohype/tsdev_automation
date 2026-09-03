@@ -80,6 +80,87 @@ Entry point: `FUN_00451800` @ `0x00451800`. Ordered sequence (TSDev-internal add
 
 Evidence: TSDev.exe Ghidra decompilation @ `0x00451800` (static), plus runtime Frida traces of the UI save path.
 
+### External trigger for the verify/compile+save path (WM_COMMAND 0x296a)
+
+`FUN_00451800` is the handler for **WM_COMMAND with command ID `0x296a` (10666)** — the Verify command. The entry is in the **CELDocument** MFC message map (static, .data section at `0x005678d0`): `ON_COMMAND(0x296a, FUN_00451800)`, `ON_UPDATE_COMMAND_UI(0x296a, FUN_00451530)`. A second `ON_COMMAND(0x296a, FUN_0047b0e0)` entry exists in the **CELSignalDoc** message map (at `0x0056c4f8`); `FUN_0047b0e0` calls `FUN_00451800` unconditionally, then refreshes signal properties. The frame's own message map (`FUN_004857d0`) does NOT contain `0x296a`; the command routes through MFC's `CFrameWnd::OnCmdMsg` → active view → active document → CELDocument's message map.
+
+**CRITICAL: BCGSoft's OnCmdMsg suppresses disabled commands.** The frame (`CBCGPMDIFrameWnd`) and MDI child (`CBCGPMDIChildWnd`) both override `OnCmdMsg` (decorated symbols found at `0x5c95f6` and `0x5c0106`). Unlike standard MFC (which does NOT check `ON_UPDATE_COMMAND_UI` during `WM_COMMAND` dispatch), BCGSoft's `OnCmdMsg` consults the update-UI state and returns TRUE (handled) without dispatching `CN_COMMAND` when the command is disabled. This was confirmed by Frida tracing: `WM_COMMAND 0x296a` reaches the frame's `WndProc` (at `0x73c1d170` in the BCGSoft DLL), `SendMessageW` returns 1 (handled), but `FUN_00451800` is NEVER called.
+
+**The ON_UPDATE_COMMAND_UI handler disables Verify for phantom documents.** `FUN_00451530` calls `FUN_0044f720`, which checks:
+1. If the doc type (offset `0x1e8`) is `0xE9E9` or `0xEAEA` (phantom markers), it walks up the parent chain (`vtable+0x204`). A phantom with no parent returns 1 (enable) from `FUN_0044f720`, BUT `FUN_00451530` then checks additional conditions on the original `this`:
+2. `field_0x1a4 != 0` (a flag that is 0 for phantom docs)
+3. `field_0x31c == 0`
+4. `short_0x1e8 != 1000 (0x3e8)`
+A phantom document fails condition 2 (`field_0x1a4 == 0`), so the Verify command is **DISABLED** for phantom documents. BCGSoft's `OnCmdMsg` then suppresses the command.
+
+**FUN_00451800 also has its own phantom guard**: if the doc type is `0xE9E9`/`0xEAEA`, it calls `vtable+0x204(this)` to get the parent doc and recurses. A phantom with no parent would call `FUN_00451800(NULL)` (crash). So even if the command routing reached `FUN_00451800`, it would not verify a phantom doc directly.
+
+**Implication for insert**: The approach of "open a nonexistent name → phantom doc → set text → verify via WM_COMMAND 0x296a" does NOT work because TSDev explicitly disables verification for phantom documents. A different approach is needed to create a real (non-phantom) document, set its source, and verify it.
+
+### Working insert path (proven live, 2026-09-03): New-document dialog via MDI-child command routing
+
+**Command routing discovery (Frida-verified)**: WM_COMMAND sent to the main frame only dispatches commands handled by the frame's own message map (e.g. `0x8037` Windows dialog, `0x80ac` new DGC doc). Document-level commands (`0x296a` Verify, `0x296b`, `0xe104` Save As) DO route frame → active view → active document, but ONLY when the target document is the MDI-active child (`WM_MDIACTIVATE` to the MDIClient; verify with `WM_MDIGETACTIVE`). App-class commands (`0x2950` New Strategy, `0x2951` New Function, `0x2947` New Indicator, `0x2949` New ShowMe, `0x3D21` New TradingApp, `0xE100` ID_FILE_NEW) are NOT reachable via the frame — but ARE reachable via any **MDI child window** (`CMDIChildWnd` inherits `CFrameWnd::OnCmdMsg`: view → child frame → app). Proven live: `PostMessageW(mdi_child_hwnd, WM_COMMAND, 0x2950, 0)` opens the "New Strategy" dialog.
+
+**"New \<Type\>" dialog** (class `TS_IDD_COMMONCREATE`, title "New Strategy" etc.): children are Name Edit (control ID 10515), Notes Edit (control ID 10513), "Select Template" ComboBox (ID 10727, default "(None)"), OK/Cancel/Help buttons. Automation: `WM_SETTEXT` the target name into the Name edit, then `PostMessageW(dialog, WM_COMMAND, IDOK /*1*/, 0)`. On OK, TSDev creates a REAL (non-phantom) document titled `Name : Type`.
+
+**CRITICAL — the TSDev main frame must be VISIBLE when the New dialog's OK is dispatched.** With the frame hidden (`SW_HIDE`), the dialog still appears, accepts `WM_SETTEXT` (readback confirms the text is in the control), and the OK handler still reads both edits via `GetWindowTextW` (Frida-traced) — but the created document comes out with an EMPTY name (the name propagation is skipped). `SetForegroundWindow` on the dialog does NOT fix it; `ShowWindow(frame, SW_SHOW)` before dispatching the New command DOES (proven 3/3). Note TSDev IGNORES `STARTUPINFO.wShowWindow=SW_HIDE` at process creation — the frame becomes visible during TSDev's own startup regardless (proven 3/3: `visible=1` after a STARTUPINFO-hidden launch). Consequence: a LAUNCHED TSDev instance is visible during operations (TSDev re-shows its frame during startup) and the tool re-hides it at exit; an ATTACHED instance hidden by a previous command's exit-hide must be re-shown for insert. The dialog itself briefly flashes visible — TSDev's own behavior.
+
+**Proven end-to-end insert flow (hidden TSDev, 2026-09-03)**:
+1. Pipe-open the target name → phantom doc (provides the MDI child command target; closed in cleanup).
+2. `WM_MDIACTIVATE` the phantom's MDI child (via MDIClient). No `SetForegroundWindow` needed.
+3. `PostMessageW(phantom_mdi_child, WM_COMMAND, <NewCmdId>, 0)` → "New \<Type\>" dialog appears.
+4. `WM_SETTEXT` the name into the dialog's first Edit child; `PostMessageW(dialog, WM_COMMAND, IDOK, 0)`.
+5. A real document window titled `Name : Type` appears (the phantom remains open behind it).
+6. `WM_SETTEXT` the EasyLanguage source into the new doc's `BCGPEditCtrl`.
+7. `WM_MDIACTIVATE` the new doc; `PostMessageW(frame, WM_COMMAND, 0x296a, 0)` → verify/compile+save runs (title "*" removed on completion).
+8. Post-verify existence check confirms the item was saved; close the phantom (not dirty — no save prompt).
+
+**Save As path (also proven, alternative)**: `WM_COMMAND 0xe104` to the FRAME with a real doc MDI-active opens the Save As dialog (class `TS_IDD_SAVEDLG`, Name Edit pre-filled, OK/Cancel/"Save as template"). Renames + saves the current doc as a new library item. Suppressed for phantoms. Usable as a copy-based insert when a seed item of the target type exists.
+
+**Custom dialog classes**: TSDev's own dialogs use custom class names (`TS_IDD_COMMONCREATE`, `TS_IDD_SAVEDLG`, `TS_IDD_TSCRASHREPORT_DIALOG`), NOT the standard `#32770`. Dialog detection that only matches `#32770` misses them. (The compile-error MessageBox IS `#32770`.)
+
+**New-command IDs per type** (from the app-class message map, thunk handlers FUN_00494010/FUN_00493F30/FUN_00493F50/FUN_00493FF0/FUN_00493EF0 → common dispatcher FUN_00496770 → `CDocTemplate::OpenDocumentFile(NULL, TRUE)`):
+
+| Type | WM_COMMAND ID |
+|------|---------------|
+| Strategy | `0x2950` |
+| Function | `0x2951` |
+| Indicator | `0x2947` |
+| ShowMe | `0x2949` |
+| TradingApp | `0x3D21` |
+
+Evidence: TSDev.exe Ghidra decompilation (app-class message map at `0x005719b0`–`0x00571ad8`; FUN_00496770; FUN_0047B9A0 create-dialog propagation inlined post-DoModal; FUN_004942B0 silent-open path; FUN_004511d0/FUN_0044C950 Save As); live Frida + Win32 message tracing (routing suppression, MDI-child routing, dialog classes, full hidden-mode insert flow).
+
+**External invocation (for non-phantom docs only)**: `PostMessageW(frame_hwnd, WM_COMMAND, 0x296a, 0)` — provided the active document is NOT a phantom (type != `0xE9E9`/`0xEAEA`), `field_0x1a4 != 0`, `field_0x31c == 0`, and `short_0x1e8 != 1000`. `PostMessageW` (not `SendMessageW`) because the failure path shows a modal `MessageBox` that would block `SendMessageW`.
+
+**Preconditions inside `FUN_00451800`**: (1) if `CELDebugger::IsDebugging()` is true, a MessageBoxW asks "Do you want to stop debugging?" — if the user clicks No, verify is aborted; (2) the function calls `FUN_0044f0f0` to get the active view, `CBCGPEditView::GetEditCtrl()` to get the edit control, and `CWnd::SetFocus()` to focus it — an active view with an editor is required.
+
+**The pipe channel does NOT route to `FUN_00451800`**: `FUN_00487e30` (the frame's `0x8001` handler) calls `FUN_004944b0` (open-by-pair), not `FUN_00451800`. Confirmed by decompilation.
+
+Evidence: TSDev.exe Ghidra decompilation (CELDocument message map at `0x005678b8`–`0x00567ab0`; AFX_MSGMAP header at `0x00567ac8`; entry at `0x005678d0`; CELSignalDoc message map at `0x0056c4e0`–`0x0056c510`; AFX_MSGMAP header at `0x0056c528`; `FUN_00451530`/`FUN_0044f720` update-UI handler; `FUN_00451800` phantom guard; BCGSoft `OnCmdMsg` symbols at `0x5c95f6`/`0x5c0106`); Frida runtime tracing (WM_COMMAND 0x296a reaches WndProc but FUN_00451800 never called; SendMessageW returns 1).
+
+### Compile success/failure observable signals
+
+After the compile step (`FUN_004D9480`), the result is checked: `*piVar10 == 1` → success; else → failure.
+
+**Success path** (`*piVar10 == 1`): calls `vtable+0x1f8` = `FUN_00453f70` (`ShowRecalculationWarning()` [imported] + `Ordinal_57(category, subcategory)` for dependent recalc). No error dialog or error-list entries are produced. `ShowRecalculationWarning` is an imported function (import name at `0x005bbf22`) — it MAY show a dialog (unverified; the callee is outside TSDev.exe).
+
+**Failure path** (`*piVar10 != 1`): if the Output/Error List window is NOT visible (`IsWindowVisible(frame+0x60a8)` returns false), `FUN_00453d40` displays errors via `GlobalMessageBox` (a `MessageBoxW` wrapper at `0x004c5d34`) or `DisplayError` (imported, `0x005bbf12`) — a modal error dialog appears. If the Output/Error List window IS visible, the error list control bar (at `frame+0x6088`) is shown and populated with error entries via `FUN_0044c410` (no MessageBox). `FUN_0044f150` adds error markers to the editor and navigates to error locations. Live-verified 2026-09-03: with the frame HIDDEN, compile failures raise a modal #32770 MessageBox (e.g. title "Grammar error", body "Semicolon (;) expected here.", one OK button); with the frame VISIBLE, errors go to the Output error list silently (a SysListView32 whose summary row reads "N error(s), M warning(s)").
+
+**Both paths (common cleanup)**: `FUN_004502f0` (pending-save queue remove) → `FUN_004531A0` (property/cache persistence) → `CDocument::UpdateAllViews()` → `*(param_1 + 0x1a4) = 0` (clears a flag) → `FUN_00453a30(0)` (SetModifiedFlag: clears the modified flag at `param_1[0x12]`, updates the view and frame title). **Title "*" correction (live-verified 2026-09-03, supersedes the earlier claim): the "*" removal is visibility-dependent. With the frame VISIBLE during the verify, the "*" is removed quickly (<100 ms — before a 500 ms poll check) on BOTH the success and failure paths. With the frame HIDDEN, the "*" is NEVER removed (neither path updates the title) — the frame must be visible during the verify. The failed document is still dirty internally: closing it raises TSDev's "Save changes?" prompt.**
+
+**Most reliable external detection**: (1) The Output error list is the authoritative compile-result signal: after the verify it holds one summary row " N error(s), M warning(s) " (the row containing "error(s)") plus one row per error (columns: text, item name, "Error (#n)", line). N > 0 → failure; no summary row / N == 0 → success. With the frame visible, failures are routed there SILENTLY (no dialog). (2) With the frame HIDDEN, failures raise a modal #32770 MessageBox (e.g. title "Grammar error", body "Semicolon (;) expected here.", one OK button) instead — and the "*" is never removed. (3) A post-verify existence check (re-open the item and check if it loads as a real item vs phantom) definitively confirms whether the item was saved: saved → success; not saved → failure.
+
+| Signal | Success | Failure |
+|--------|---------|---------|
+| MessageBox dialog | No (unless ShowRecalculationWarning shows one) | Only with the frame HIDDEN (frame visible → silent, errors go to the list) |
+| Output/Error window | Unchanged | Error list populated: summary row "N error(s), M warning(s)" + one row per error |
+| Error markers in editor | No | Yes |
+| Document title "*" | Removed (frame visible) | Also removed, <100 ms (frame visible); never removed (frame hidden) |
+| Item exists in library after verify | Yes | Yes (the verify path SAVES before compiling — the item is saved uncompiled; verified live 2026-09-03) |
+
+Evidence: TSDev.exe Ghidra decompilation (`FUN_00451800` compile result branch; `FUN_00453f70` success path; `FUN_00453d40`/`FUN_0044f150`/`FUN_0044c410` failure path; `FUN_00453a30` title cleanup; `FUN_0044f500` output window visibility check; `GlobalMessageBox` at `0x004c5d34`).
+
 ### Category gate in `FUN_004D91E0`
 
 The post-verify dependent-recalc block (step 5) runs only for categories `0` (Strategy), `1` (Function), and `4` (built-in Function). Indicator/ShowMe/TradingApp (category `2`) skip it — the shared-warehouse path is sufficient because the modified item IS the applied item.

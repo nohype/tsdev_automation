@@ -12,4 +12,6 @@ enum class Exit : int {
     Crashed = 8,
     Busy = 9,
     Unexpected = 10,
+    AlreadyExists = 11,
+    CompileFailed = 12,
 };

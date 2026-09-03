@@ -18,16 +18,27 @@ void check(bool condition, const char* what) {
 
 void test_type_table() {
     int number = -1;
+    int cmd = 0;
     std::wstring label;
-    check(type_from_name(L"Strategy", number, label) && number == 0 && label == L"Strategy", "Strategy maps to 0");
-    check(type_from_name(L"Function", number, label) && number == 1 && label == L"Function", "Function maps to 1");
-    check(type_from_name(L"Indicator", number, label) && number == 2 && label == L"Indicator", "Indicator maps to 2");
-    check(type_from_name(L"ShowMe", number, label) && number == 1282 && label == L"ShowMe", "ShowMe maps to 1282");
-    check(type_from_name(L"TradingApp", number, label) && number == 5122 && label == L"Trading Application",
+    check(type_from_name(L"Strategy", number, cmd, label) && number == 0 && label == L"Strategy", "Strategy maps to 0");
+    check(type_from_name(L"Function", number, cmd, label) && number == 1 && label == L"Function", "Function maps to 1");
+    check(type_from_name(L"Indicator", number, cmd, label) && number == 2 && label == L"Indicator", "Indicator maps to 2");
+    check(type_from_name(L"ShowMe", number, cmd, label) && number == 1282 && label == L"ShowMe", "ShowMe maps to 1282");
+    check(type_from_name(L"TradingApp", number, cmd, label) && number == 5122 && label == L"Trading Application",
           "TradingApp maps to 5122");
-    check(!type_from_name(L"", number, label), "empty type rejected");
-    check(!type_from_name(L"strategy", number, label), "type match is case-sensitive");
-    check(!type_from_name(L"ActivityBar", number, label), "ActivityBar out of scope (verified 3, not offered)");
+    check(!type_from_name(L"", number, cmd, label), "empty type rejected");
+    check(!type_from_name(L"strategy", number, cmd, label), "type match is case-sensitive");
+    check(!type_from_name(L"ActivityBar", number, cmd, label), "ActivityBar out of scope (verified 3, not offered)");
+}
+
+void test_type_table_new_cmd() {
+    int num = 0, cmd = 0;
+    std::wstring label;
+    check(type_from_name(L"Strategy", num, cmd, label) && cmd == 0x2950, "Strategy new_cmd_id");
+    check(type_from_name(L"Function", num, cmd, label) && cmd == 0x2951, "Function new_cmd_id");
+    check(type_from_name(L"Indicator", num, cmd, label) && cmd == 0x2947, "Indicator new_cmd_id");
+    check(type_from_name(L"ShowMe", num, cmd, label) && cmd == 0x2949, "ShowMe new_cmd_id");
+    check(type_from_name(L"TradingApp", num, cmd, label) && cmd == 0x3D21, "TradingApp new_cmd_id");
 }
 
 void test_parse_args() {
@@ -375,16 +386,125 @@ void test_json_getsrc() {
           "getsrc NotFound json omits output_path (no file written)");
 }
 
+void test_parse_args_insert() {
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"MyNewFn"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\src\\fn.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(p.ok && opts.verb == L"insert" && opts.type == L"Function" && opts.type_number == 1 &&
+                  opts.name == L"MyNewFn" && opts.source_path == L"C:\\src\\fn.eld",
+              "insert with type+name+source parses");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(!p.ok, "insert without --source is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"open"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with open is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"exists"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with exists is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with getsrc is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"PaintBar"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "insert with unsupported type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Bad,Name"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "insert with name containing comma is rejected");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Bad\"Name"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "insert with name containing quote is rejected");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source")};
+        const ParseOutcome p = parse_args(7, argv, opts);
+        check(!p.ok, "insert --source without a value is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"insert"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"TradingApp"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"App1"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld"),
+                           const_cast<wchar_t*>(L"--json")};
+        const ParseOutcome p = parse_args(9, argv, opts);
+        check(p.ok && opts.verb == L"insert" && opts.type_number == 5122 && opts.json,
+              "insert with TradingApp and --json parses");
+    }
+}
+
+void test_from_utf8() {
+    check(from_utf8("") == L"", "from_utf8 empty passthrough");
+    check(from_utf8("hello") == L"hello", "from_utf8 ASCII");
+    check(from_utf8("\xC3\xA9") == L"\u00E9", "from_utf8 two-byte (e-acute)");
+    // Round-trip: to_utf8 then from_utf8 should be identity.
+    const std::wstring original = L"Buy next bar at market;\n// \u00E9\u00FC\u4e2d";
+    const std::string utf8 = to_utf8(original);
+    check(from_utf8(utf8) == original, "from_utf8 round-trips through to_utf8");
+}
+
 }  // namespace
 
 int wmain() {
     test_type_table();
+    test_type_table_new_cmd();
     test_parse_args();
     test_parse_args_exists();
     test_parse_args_getsrc();
+    test_parse_args_insert();
     test_phantom_classifier();
     test_json();
     test_json_getsrc();
+    test_from_utf8();
     if (failures == 0) {
         std::wprintf(L"all unit tests passed\n");
         return 0;

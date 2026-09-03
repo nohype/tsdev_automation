@@ -15,6 +15,7 @@ add_library(tsdevlib STATIC
     src/tsdevlib/dialog_check.cpp
     src/tsdevlib/doc_read.cpp
     src/tsdevlib/elevation.cpp
+    src/tsdevlib/error_list.cpp
     src/tsdevlib/json_writer.cpp
     src/tsdevlib/pipe_client.cpp
     src/tsdevlib/type_table.cpp

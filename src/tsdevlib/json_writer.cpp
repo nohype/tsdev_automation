@@ -12,6 +12,14 @@ std::string to_utf8(const std::wstring& value) {
     return out;
 }
 
+std::wstring from_utf8(const std::string& value) {
+    if (value.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    std::wstring out(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size);
+    return out;
+}
+
 std::wstring json_escape(const std::wstring& value) {
     std::wstring out;
     out.reserve(value.size() + 2);

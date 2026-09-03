@@ -3,6 +3,7 @@
 
 std::wstring json_escape(const std::wstring& value);
 std::string to_utf8(const std::wstring& value);
+std::wstring from_utf8(const std::string& value);
 
 struct OpResult {
     bool ok = false;
