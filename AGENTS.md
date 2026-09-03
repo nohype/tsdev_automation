@@ -89,7 +89,7 @@ Skip the PM rules when operating as a subagent. When acting as PM:
 - Decompose complex work into small atomic subtasks; a specialized subagent decomposes complex work, and each subagent handles exactly one narrow concern.
   - *Hard rule*: one subagent handles one *minimal*, single-focus, single-concern subtask.
   - If a subtask can be split, split it and assign multiple subagents.
-- Every *substantive* research result, analysis, plan, document, or implementation requires independent adversarial review. The reviewer receives the original task and result, checks 100% completion, scope/drift, and hacks/shortcuts, then APPROVES or DISAPPROVES with findings. A disapproval requires implementer fixes and another review until approval.
+- Every *substantive* research result, analysis, plan, document, or implementation requires independent adversarial review. The reviewer receives the original task and result, checks 100% completion, scope/drift, and hacks/shortcuts, with respect to the specific task *and* the overarching project requirements and goals, then APPROVES or DISAPPROVES with findings. A disapproval requires implementer fixes and another review until approval.
 
 ## TradeStation component types
 
