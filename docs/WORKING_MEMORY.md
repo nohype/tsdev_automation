@@ -42,7 +42,23 @@ paths, and process rules live in AGENTS.md).
   (Style_Phantom_*, Tvs4* phantoms) were closed via tmp/cleanup_docs.py before
   the final TSDev restart; the library items remain until Delete exists.
 - Ghidra: project `tsdev`, program `/TSDev.exe` open (18478 funcs), MCP bridge
-  connected. Frida 17.17.0 available for live tracing.
+  connected (Ghidra GUI pid 17384, bridge-mcp-ghidra pid 15592 — restart via the
+  headless analyzer if stale). Frida 17.17.0 available for live tracing.
+- **Open UX consideration (user, 2026-09-03, not yet a numbered requirement):**
+  "optimally, users can keep working while the tool runs — no popups; a single
+  startup flicker is acceptable, then quiet." Assessment: achievable with
+  ~100–150 lines. Design: replace SW_SHOW/SW_HIDE with off-screen positioning
+  (SetWindowPos −32000,−32000 + restore; keeps WS_VISIBLE so IsWindowVisible
+  stays true) + SW_SHOWNA to avoid focus stealing; optionally a WinEvent hook
+  (EVENT_OBJECT_SHOW, out-of-context — no injection needed) to move the create
+  dialog off-screen the instant it appears (flicker-free). TWO LIVE TESTS GATE
+  the design: (1) does the create-dialog name propagation survive an off-screen
+  frame (WS_VISIBLE set)? (2) does the dialog's OK still propagate if the
+  dialog itself is moved off-screen/hidden before IDOK? If either fails,
+  injection (now sanctioned by the AGENTS.md rule) can suppress the dialog from
+  inside TSDev. Residual artifact even then: a sub-second focus steal while
+  TSDev's modal dialog exists. The verify phase is already quiet (errors go to
+  the error list, no MessageBox, when the frame is visible).
 - **Recommended next TVS: `tsdevctl modify`** — it reuses insert's proven
   machinery (pipe-open a REAL item → WM_SETTEXT new source → verify → poll →
   error-list classification) without the New-dialog complexity. Delete after
