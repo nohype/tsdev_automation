@@ -290,7 +290,6 @@ std::optional<Failure> close_late_open(const Options& opts, const Session& sessi
 struct ReadOutcome {
     bool exists = false;
     std::wstring editor_text;
-    std::optional<Failure> failure;
 };
 
 // Opens the item via pipe, waits for the doc, polls the editor text until
@@ -535,6 +534,7 @@ int run_getsrc(const Options& opts) {
         std::cout.flush();
     } else {
         // Human summary line: getsrc: ok (N bytes -> <file>).
+        // ASCII "->" (not Unicode arrow) for console encoding safety on Windows.
         const std::string utf8 = to_utf8(outcome.editor_text);
         std::cout << "getsrc: ok (" << utf8.size() << " bytes -> " << to_utf8(opts.output_path) << ")\n";
         std::cout.flush();

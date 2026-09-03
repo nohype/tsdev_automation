@@ -27,6 +27,10 @@ bool read_text_timeout(HWND hwnd, std::wstring& text) {
                              reinterpret_cast<LPARAM>(buffer.data()), SMTO_ABORTIFHUNG, kHungTimeoutMs, &copied))
         return false;
     text.assign(buffer, 0, static_cast<size_t>(copied));
+    // WM_GETTEXT may include a trailing NUL in the copied count for some
+    // controls (observed on BCGPEditCtrl: the editor text ends with NUL).
+    // NUL is never part of real text content (EasyLanguage source or titles).
+    while (!text.empty() && text.back() == L'\0') text.pop_back();
     return true;
 }
 
