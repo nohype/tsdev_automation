@@ -1,0 +1,23 @@
+#pragma once
+#include <string>
+
+struct Options {
+    bool json = false;
+    bool nohide = false;
+    bool timeouts_disabled = false;
+    unsigned long timeout_ms = 30000;
+    std::wstring ts_path;
+    std::wstring type;
+    std::wstring name;
+    int type_number = -1;
+    std::wstring type_label;
+};
+
+struct ParseOutcome {
+    bool ok = false;
+    bool help = false;
+    std::wstring error;
+};
+
+ParseOutcome parse_args(int argc, wchar_t** argv, Options& out);
+std::wstring usage_text();
