@@ -46,6 +46,10 @@ std::wstring make_result_json(const OpResult& r) {
     json += L",\"tsdev_pid\":";
     json += r.has_pid ? std::to_wstring(r.pid) : L"null";
     json += L",\"elapsed_ms\":" + std::to_wstring(r.elapsed_ms);
+    if (r.reports_exists) {
+        json += L",\"exists\":";
+        json += r.exists_value ? L"true" : L"false";
+    }
     json += L",\"error\":";
     if (r.error_code == 0) {
         json += L"null";

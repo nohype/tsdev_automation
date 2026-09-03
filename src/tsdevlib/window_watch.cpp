@@ -2,7 +2,9 @@
 #include "tsdev_process.h"
 
 #include <windows.h>
+#include <algorithm>
 #include <chrono>
+#include <cwctype>
 
 namespace {
 constexpr wchar_t kFrameClass[] = L"TSDEV.EXE TRADESTATION";
@@ -36,14 +38,25 @@ bool wait_for_title(unsigned long pid, const std::wstring& needle, bool timeouts
     const auto deadline = timeouts_disabled
         ? std::chrono::steady_clock::time_point::max()
         : std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    // Case-insensitive: the frame title carries the spelling TSDev opened the
+    // document with, which for an already-open item is the original request,
+    // not necessarily the spelling of the current command (verified live).
+    const std::wstring needle_ci = [&] {
+        std::wstring copy = needle;
+        std::transform(copy.begin(), copy.end(), copy.begin(), towlower);
+        return copy;
+    }();
     for (;;) {
         if (!process_alive(pid)) return false;
         const auto frame = static_cast<HWND>(find_main_frame(pid));
         if (frame) {
             wchar_t title[1024]{};
-            if (GetWindowTextW(frame, title, 1024) > 0 &&
-                std::wstring(title).find(needle) != std::wstring::npos) {
-                return true;
+            if (GetWindowTextW(frame, title, 1024) > 0) {
+                std::wstring title_ci(title);
+                std::transform(title_ci.begin(), title_ci.end(), title_ci.begin(), towlower);
+                if (title_ci.find(needle_ci) != std::wstring::npos) {
+                    return true;
+                }
             }
         }
         if (std::chrono::steady_clock::now() >= deadline) return false;

@@ -4,9 +4,12 @@
 #include <cstdlib>
 
 ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
-    if (argc < 2) return {false, false, L"missing command (expected: open)"};
+    if (argc < 2) return {false, false, L"missing command (expected: open|exists)"};
     if (std::wstring(argv[1]) == L"--help" || std::wstring(argv[1]) == L"-h") return {true, true, L""};
-    if (std::wstring(argv[1]) != L"open") return {false, false, L"unknown command (expected: open)"};
+    const std::wstring verb = argv[1];
+    if (verb != L"open" && verb != L"exists")
+        return {false, false, L"unknown command (expected: open|exists)"};
+    out.verb = verb;
 
     for (int i = 2; i < argc; ++i) {
         const std::wstring arg = argv[i];
@@ -46,10 +49,11 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
         }
     }
 
-    if (out.type.empty()) return {false, false, L"--type is required (Strategy|Function)"};
+    if (out.type.empty()) return {false, false, L"--type is required (Strategy|Function|Indicator|ShowMe|TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name is required"};
     if (!type_from_name(out.type, out.type_number, out.type_label))
-        return {false, false, L"unsupported type '" + out.type + L"' (supported: Strategy, Function)"};
+        return {false, false, L"unsupported type '" + out.type +
+                                  L"' (supported: Strategy, Function, Indicator, ShowMe, TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name must not be empty"};
     if (out.name.find(L'"') != std::wstring::npos || out.name.find(L',') != std::wstring::npos)
         return {false, false, L"name must not contain '\"' or ',' (name encoding not supported yet)"};
@@ -61,14 +65,23 @@ std::wstring usage_text() {
         L"tsdevctl - drive TSDev.exe through its own control channel\n"
         L"\n"
         L"Usage:\n"
-        L"  tsdevctl open --type <Strategy|Function> --name <Name> [options]\n"
+        L"  tsdevctl open   --type <Type> --name <Name> [options]\n"
+        L"  tsdevctl exists --type <Type> --name <Name> [options]\n"
         L"\n"
-        L"Opens the named item in TSDev (existing item) or starts a new empty\n"
+        L"open: Opens the named item in TSDev (existing item) or starts a new empty\n"
         L"document titled with that name (TSDev's own open-or-create behavior).\n"
+        L"exists: Reports whether the named item exists in the TSDev library.\n"
+        L"The check opens the item through TSDev's own control channel and reads\n"
+        L"TSDev's own result: the item's source (exists) or TSDev's \"document no\n"
+        L"longer exists\" error page (does not exist). The document opened for the\n"
+        L"check is closed again unless it was already open. Matching follows\n"
+        L"TSDev's own lookup, which is case-insensitive; a case-sensitive answer\n"
+        L"requires TSDev's own item enumeration (not available externally yet).\n"
         L"TSDev.exe is attached to if running, otherwise launched hidden.\n"
         L"\n"
         L"Options:\n"
-        L"  --type <name>      Component type: Strategy or Function\n"
+        L"  --type <name>      Component type: Strategy, Function, Indicator,\n"
+        L"                     ShowMe or TradingApp\n"
         L"  --name <name>      Item name\n"
         L"  --json             Machine-readable JSON output on stdout\n"
         L"  --timeout <ms>     Operation timeout in milliseconds (default 30000;\n"
@@ -80,7 +93,8 @@ std::wstring usage_text() {
         L"  -h, --help         Show this help\n"
         L"\n"
         L"Exit codes:\n"
-        L"  0 success\n"
+        L"  0 success (exists: item exists)\n"
+        L"  1 exists: item does not exist (successful answer, not an error)\n"
         L"  2 usage error\n"
         L"  3 not running elevated (required)\n"
         L"  4 TSDev.exe not found or launch failed\n"
@@ -88,5 +102,6 @@ std::wstring usage_text() {
         L"  6 operation timed out (success criterion not met)\n"
         L"  7 TSDev error dialog detected (message text in output)\n"
         L"  8 TSDev crashed\n"
-        L"  9 busy (another automation invocation is running)\n";
+        L"  9 busy (another automation invocation is running)\n"
+        L"  10 unexpected TSDev state (e.g. no editor control in the opened document)\n";
 }

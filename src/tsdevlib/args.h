@@ -2,6 +2,7 @@
 #include <string>
 
 struct Options {
+    std::wstring verb;
     bool json = false;
     bool nohide = false;
     bool timeouts_disabled = false;

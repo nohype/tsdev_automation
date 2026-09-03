@@ -13,6 +13,7 @@ add_library(tsdevlib STATIC
     src/tsdevlib/args.cpp
     src/tsdevlib/busy_guard.cpp
     src/tsdevlib/dialog_check.cpp
+    src/tsdevlib/doc_read.cpp
     src/tsdevlib/elevation.cpp
     src/tsdevlib/json_writer.cpp
     src/tsdevlib/pipe_client.cpp

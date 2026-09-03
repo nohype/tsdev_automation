@@ -12,6 +12,9 @@ struct OpResult {
     bool has_pid = false;
     unsigned long pid = 0;
     unsigned long long elapsed_ms = 0;
+    // Set by operations that answer an existence question (exists).
+    bool reports_exists = false;
+    bool exists_value = false;
     int error_code = 0;
     std::wstring error_name;
     std::wstring error_message;

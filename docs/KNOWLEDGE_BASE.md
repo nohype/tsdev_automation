@@ -17,7 +17,35 @@ TSDev.exe runs a **named-pipe server** that accepts commands from external proce
 - **Dispatch**: per parsed record → `SendMessageW(mainFrame, 0x8001 /*WM_APP+1*/, (WPARAM)&CString(name), (LPARAM)number)`; on parse failure → `SendMessageW(mainFrame, 0x8002, (WPARAM)rawBuffer, 0)`. Frame message map (built in `FUN_004857d0`): `0x8001 → FUN_00487e30` → `FUN_004944b0` (open document by name+type via the doc-template map keyed by the number; special numbers `0xe8e8/0xe9e9/0xeaea` handled specially), `0x8002 → FUN_00487eb0` (forwards raw string to the app object vtable+0xac).
 - **After every pipe command** the thread raises the frame in z-order (`SetWindowPos` TOPMOST→NOTOPMOST with `SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE`) and calls `ShowWindow(SW_RESTORE)` only `if (IsIconic(hwnd))`. **Verified: a hidden window stays hidden** (no SWP_SHOWWINDOW; hidden ⇒ not iconic).
 - **Open-or-create semantics (verified live)**: sending `"Name", <type>` for an EXISTING item opens it; for a NONEXISTENT name it opens a NEW EMPTY document titled `Name : <Type>` (no error, no dialog). `open` therefore cannot detect non-existence by itself.
-- **Per-type numbers (verified live, PID-level observation)**: `0` = Strategy, `1` = Function. Indicator/ShowMe/TradingApp numbers: NOT yet established (doc-template map keys; ShowMe subType 0x05 / TradingApp subType 0x14 per the category facts below are candidates, unverified).
+- **Per-type numbers — complete doc-template map (static + live-verified)**: the open path resolves the type number through a `std::map<int, CDocTemplate*>` at `CTSDevApp+0x2a0`; all 16 insertions are in `FUN_00491960` (InitInstance), each `CMultiDocTemplate` → `SetServerInfo` → `AddDocTemplate` → map insert (sites `0x0049223c`…`0x00492a2f`). Keys are `(subType<<8)|category`, matching the category facts below. Complete table:
+
+  | Number | Type | Doc class | Verification |
+  |--------|------|-----------|--------------|
+  | `0` | Strategy | `CELSignalDoc` | live (phantom title) |
+  | `1` | Function (user) | `CELFunctionDoc` | live |
+  | `2` | Indicator | (Indicator doc) | live |
+  | `3` | ActivityBar | (ActivityBar doc) | live |
+  | `4` | Function (built-in, read-only) | `CELBIFunctionDoc` | live |
+  | `0x402` (1026) | PaintBar | (PaintBar doc) | live |
+  | `0x502` (1282) | ShowMe | (ShowMe doc) | live |
+  | `0xa02` (2562) | VolatilityModel | (VolatilityModel doc) | static only |
+  | `0xc02` (3074) | PricingModel | (PricingModel doc) | static only |
+  | `0xe02` (3586) | BidAskModel | (BidAskModel doc) | static only |
+  | `0x1002` (4098) | SearchStrategy | (SearchStrategy doc) | static only |
+  | `0x1202` (4610) | ProbabilityMap | (ProbabilityMap doc) | live |
+  | `0x1402` (5122) | TradingApp | `CELApplicationDoc` (INFERRED) | live (title `Trading Application`) |
+  | `0xe8e8` | PartialClass | `CELPartialClassDoc` | static only — see specials below |
+  | `0xe9e9` | WFDesigner | `CELWFDesignerDoc` | static only — see specials below |
+  | `0xeaea` | StringResources | `CELStringResourcesDoc` | static only — see specials below |
+
+  Cross-validated against a per-type file-extension table (`FUN_0047be40`: .esd/.efd/.eid/.ead/.efb/.ebd/.eed/.evd/.end/.ekd/.emd/.wfd/.str/.dgc). Numbers 5..32 are silent no-ops (no doc, no dialog; unknown map keys return 0 with no UI).
+- **Special numbers must never be emitted by automation**: `0xe8e8` attaches a partial-class doc to its parent (requires a 4th argument the pipe never supplies — a complete no-op via the pipe, but internally meaningful); `0xe9e9` (WFDesigner) and `0xeaea` (StringResources) OPEN or phantom-create internal TSDev documents. Evidence: decompilation of `FUN_004944b0` special-number paths.
+- **Raw-string pipe surface (`FUN_00494640`, the `0x8002` path) — complete**: (1) a string parseable as a `.eld/.els/.ela/.elp` file path (predicate `FUN_00492fd0`) triggers the MODAL `CTransferWizard` import inside the pipe thread — a hang risk; never emit such a payload; (2) `Name:A:B` opens-or-creates with type `(B<<8)|A` (vswscanf `L":%d:%d"`) — redundant with the pair form; (3) anything else (e.g. `Start`) is a no-op. **No List/Exists/Export/query command exists in this surface.** Evidence: decompilation + extension strings.
+- **Frame message map is fully enumerated (`FUN_004857d0`)**: exactly two custom messages (`0x8001` open-by-pair, `0x8002` raw string); the rest are WM_COMMAND entries and BCGSoft registered messages, none pipe-reachable.
+- **Open dialog is NOT externally reachable**: `CELFileOpenDialog` is imported from ORELUI20.dll (boundary); its IDOK handler calls the same `FUN_004944b0` the pipe uses, but the item enumeration happens inside ORELUI20.dll. The map TSDev passes to the dialog is a per-type open-document counter, not the item list. No external trigger exists for the enumeration.
+- **Exists discriminator (verified live, 2026-09-03)**: after a pipe open, the document's editor control (`BCGPEditCtrl`, a descendant of the MDI child) contains, read via `WM_GETTEXT` (buffer sized by `WM_GETTEXTLENGTH` first): a REAL item → its EasyLanguage source; a NONEXISTENT name → TSDev's own error page `'{!!!…\n\nError loading document\n\n…!!!\n\nThe technique <name> no longer exists in your EasyLanguage workarea. \n\n…!!!}'` (85/86/85 `!` runs; 383 chars with a 32-char name; requested name embedded verbatim). This is TSDev's own load-failure judgment — the basis of the `exists` verb. Documented limitation: any real item whose stored source contains both signature substrings classifies as phantom (substring rule); matching follows TSDev's own lookup, which is CASE-INSENSITIVE (verified: `myteststrategya` opens the real `MyTestStrategyA`).
+- **Frame-title behavior (verified live)**: the title carries the spelling TSDev opened the document with — for a fresh open that is the requested spelling; for an already-open item it is the ORIGINAL spelling, so title matching must be case-insensitive. The trailing `*` is a state-dependent UI marker (appears on fresh opens, clears on deactivation, real and phantom alike) — never an existence or dirty flag.
+- **Session restore is asynchronous**: after the frame appears, TSDev continues to re-open previous-session documents for a while (phantoms included — a crashed session's phantoms return on the next start). Automation must close what it opens; observers must wait for the document set to stabilize before snapshotting.
 - **Name encoding**: plain alphanumeric names work unencoded (verified). `CELDocHelper::DecodeName` implies an encoding for special characters — not yet characterized.
 - **Live verification (2026-09-03)**: Python ctypes client (CreateFileW + WriteFile, UTF-16LE + NUL) against a running TSDev.exe: `"E2eFn_202608291052", 1` → main frame title changed to `TradeStation Development Environment - E2eFn_202608291052 : Function`; `"MyTestStrategyA", 0` → `… - MyTestStrategyA : Strategy`; `"NoSuchItemZZZ999", 1` → new empty doc titled `NoSuchItemZZZ999 : Function`. With the frame hidden (`ShowWindow(SW_HIDE)`), the command still executed and the window remained hidden (`IsWindowVisible=false`, `IsIconic=false`).
 
