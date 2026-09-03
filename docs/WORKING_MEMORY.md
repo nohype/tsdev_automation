@@ -11,39 +11,38 @@ paths, and process rules live in AGENTS.md).
 - **TVS #1 DONE (commit ad1f93a): `tsdevctl open`** — lifecycle + pipe channel.
 - **TVS #2 DONE (commit b94e63f): `tsdevctl exists`** — phantom-discriminator check.
 - **TVS #3 DONE (commit cadbccd): `tsdevctl getsrc`** — open-read-close, source emission.
-- **TVS #4 DONE (this commit): `tsdevctl insert`** — the first write operation.
-  - Implementation: proactive exists check (exit 11 on collision) → pipe-open
-    phantom (MDI command target) → show frame if hidden (REQUIRED for the New
-    dialog's OK) → WM_COMMAND <NewCmdId> to the phantom's MDI child → TS_IDD_*
-    create dialog → WM_SETTEXT name + IDOK → new real doc → WM_SETTEXT source →
-    MDI-activate → verify (WM_COMMAND 0x296a, frame stays VISIBLE) → poll →
-    failure classification (dialog safety net + Output error-list summary
-    "N error(s)" via cross-process 32-bit LVITEM read) → close docs
-    (close_doc_discard answers No on the failure path) → post-verify exists check.
-  - Exit codes: 0 ok, 11 already-exists, 12 compile-failed (message includes
-    "[item 'X' was created and saved uncompiled]" — the verify path saves
-    before compiling, so failed items remain in the library, R10-reported).
-  - Adversarially reviewed + APPROVED (2 cycles; the R6 pre-existing-window
-    fix, verify-timeout discard close, and the name-set result check applied).
-  - E2E (live, elevated, real TSDev): Strategy insert exit 0 (13.3s) + exists +
-    getsrc exact; duplicate → 11; garbage source → 12 in 6.4s with the error
-    text; Function insert exit 0 (8.0s); Function mismatched-name → 12. No
-    residual dialogs / crash reports / stray processes.
-  - Reviewer notes (non-blocking, for the next team): extend run_unit_tests.ps1
-    to build the tsdevctl target (main.cpp /W4 /WX coverage); E2E for
-    Indicator/ShowMe/TradingApp inserts; the error-list staleness probe;
-    the usage text could mention the name charset restriction.
+- **TVS #4 DONE (commit 35976b4): `tsdevctl insert`** — the first write operation.
+- **TVS #5 DONE (this commit): `tsdevctl modify`** — replace source + reverify.
+  - Implementation: proactive exists check (exit 1 NotFound if absent) →
+    pipe-open the REAL item → WM_SETTEXT new source → show frame if hidden
+    (REQUIRED for verify) → WM_COMMAND 0x296a (verify, frame stays VISIBLE) →
+    two-phase "*" poll → failure classification (dialog safety net + Output
+    error-list summary) → on compile failure: close_doc_discard + exit 12
+    with "[item 'X' was saved with uncompiled new source]" (R10) → on success:
+    close_doc_window → post-verify SOURCE CONFIRMATION (open_read_and_close +
+    rtrim_ws compare; exit 10 if source not updated) → hide frame.
+  - Exit codes: 0 ok, 1 not-found, 12 compile-failed, 10 source-not-updated.
+  - Adversarially reviewed + APPROVED (1 cycle; one LOW stale-comment fix
+    applied: args.cpp --output comment updated to "non-getsrc verbs").
+  - E2E (live, elevated, real TSDev, targeted run): insert Strategy exit 0
+    (13.2s) → modify with valid source exit 0 (8.1s) → getsrc confirms
+    "MODIFIED_MARKER_XYZ" present → modify nonexistent exit 1 not_found
+    (0.2s) → modify garbage exit 12 compile_error (6.7s). No residual
+    dialogs / crash reports / stray processes.
+  - Known E2E issue (pre-existing, not modify-specific): the full
+    run_e2e.ps1 wedges TSDev after ~20 rapid pipe operations (the
+    exists/getsrc sections), causing the modify section to time out. This is
+    the KB-documented pipe-wedge condition (rapid back-to-back probing as a
+    possible trigger). The targeted modify-only run (with 2s pauses between
+    commands) passes cleanly. Fix: add inter-command pauses to run_e2e.ps1
+    or split the E2E into separate script sections.
 - Test items created in the TSDev library during E2E (no delete verb yet —
-  manual cleanup or the Delete TVS): Tvs4S190626, Tvs4Rv191516, Tvs4F190725,
-  Tvs4Bad190656, Tvs4Bad190814, Tvs4RvBad, Tvs4FinalOk, Tvs4FinalBad,
-  Tvs4OkStrat, Tvs4InsertFlow, Tvs4HiddenInsert, Tvs4CopyStrat, Tvs4E2EStrat,
-  Tvs4FinalStrat, Tvs4CopyStrat, Tvs4Bad190656, Tvs4Bad190814, Tvs4Fn190725,
-  Tvs4F190725, Tvs4S190626 and earlier Tvs4* variants. The phantom docs
-  (Style_Phantom_*, Tvs4* phantoms) were closed via tmp/cleanup_docs.py before
-  the final TSDev restart; the library items remain until Delete exists.
+  manual cleanup or the Delete TVS): Tvs4* variants (from TVS #4),
+  E2eMod5_20260903T175216, E2eMod5b_20260903T175342 (from TVS #5). The
+  library items remain until Delete exists.
 - Ghidra: project `tsdev`, program `/TSDev.exe` open (18478 funcs), MCP bridge
-  connected (Ghidra GUI pid 17384, bridge-mcp-ghidra pid 15592 — restart via the
-  headless analyzer if stale). Frida 17.17.0 available for live tracing.
+  connected (restart via the headless analyzer if stale). Frida 17.17.0
+  available for live tracing.
 - **Open UX consideration (user, 2026-09-03, not yet a numbered requirement):**
   "optimally, users can keep working while the tool runs — no popups; a single
   startup flicker is acceptable, then quiet." Assessment: achievable with
@@ -59,7 +58,9 @@ paths, and process rules live in AGENTS.md).
   inside TSDev. Residual artifact even then: a sub-second focus steal while
   TSDev's modal dialog exists. The verify phase is already quiet (errors go to
   the error list, no MessageBox, when the frame is visible).
-- **Recommended next TVS: `tsdevctl modify`** — it reuses insert's proven
-  machinery (pipe-open a REAL item → WM_SETTEXT new source → verify → poll →
-  error-list classification) without the New-dialog complexity. Delete after
-  that (it enables the insert-failure cleanup + the E2E gate's item cleanup).
+- **Recommended next TVS: `tsdevctl delete`** — it enables the insert-failure
+  cleanup + the E2E gate's item cleanup (the test-item list above grows every
+  TVS). Upsert after that (it is insert-or-modify, both proven). List last
+  (it requires the item-enumeration mechanism, which has no external trigger
+  yet — KB line 45: the Open dialog's enumeration is inside ORELUI20.dll, out
+  of scope; a new enumeration mechanism is needed, possibly via injection).

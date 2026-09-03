@@ -276,6 +276,83 @@ foreach ($type in $types) {
 # fail the E2E if no encrypted item exists.
 Write-Host "info: decrypt verification probe — getsrc reads editor text (what TSDev renders), inheriting TSDev's own decryption by construction. Explicit verification with a known encrypted item is pending an encrypted-item fixture."
 
+# --- modify: insert a fresh Strategy, modify it, verify the source changed ---
+$modifyName = "E2eModify_$stamp"
+$insertSrcFile = Join-Path $env:TEMP "tsdevctl_modify_insert_$stamp.eld"
+"Buy next bar at market;`nSell next bar at market;" | Set-Content -Path $insertSrcFile -Encoding UTF8 -NoNewline
+$before = Get-DocTitlesNormalized
+$insertOut = Invoke-Tsdevctl @("insert", "--type", "Strategy", "--name", $modifyName, "--source", $insertSrcFile, "--json")
+$insertExit = $LASTEXITCODE
+$insert = $null
+try { $insert = $insertOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: modify insert output is not valid JSON"; $failures++ }
+if ($insertExit -ne 0) { Write-Host "FAIL: modify insert expected exit 0"; $failures++ }
+if ($insert -and -not $insert.ok) { Write-Host "FAIL: modify insert expected ok:true"; $failures++ }
+$afterInsert = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterInsert) -ne $null) { Write-Host "FAIL: modify insert left document windows behind"; $failures++ }
+else { Write-Host "ok: modify insert left no residue" }
+
+# Modify the item with different source.
+$modifySrcFile = Join-Path $env:TEMP "tsdevctl_modify_new_$stamp.eld"
+"// MODIFIED_MARKER_XYZ`nBuy next bar at market;`nSell next bar at market;" | Set-Content -Path $modifySrcFile -Encoding UTF8 -NoNewline
+$before = Get-DocTitlesNormalized
+$modifyOut = Invoke-Tsdevctl @("modify", "--type", "Strategy", "--name", $modifyName, "--source", $modifySrcFile, "--json")
+$modifyExit = $LASTEXITCODE
+$modify = $null
+try { $modify = $modifyOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: modify output is not valid JSON"; $failures++ }
+if ($modifyExit -ne 0) { Write-Host "FAIL: modify expected exit 0"; $failures++ }
+if ($modify -and -not $modify.ok) { Write-Host "FAIL: modify expected ok:true"; $failures++ }
+$afterModify = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterModify) -ne $null) { Write-Host "FAIL: modify left document windows behind"; $failures++ }
+else { Write-Host "ok: modify left no residue" }
+
+# getsrc to verify the source changed.
+$before = Get-DocTitlesNormalized
+$verifyOut = Invoke-Tsdevctl @("getsrc", "--type", "Strategy", "--name", $modifyName, "--json")
+$verifyExit = $LASTEXITCODE
+$verify = $null
+try { $verify = $verifyOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: modify getsrc output is not valid JSON"; $failures++ }
+if ($verifyExit -ne 0) { Write-Host "FAIL: modify getsrc expected exit 0"; $failures++ }
+if ($verify -and -not $verify.ok) { Write-Host "FAIL: modify getsrc expected ok:true"; $failures++ }
+if ($verify -and "$($verify.exists)" -ne "True") { Write-Host "FAIL: modify getsrc expected exists:true"; $failures++ }
+if ($verify -and $verify.source -notlike "*MODIFIED_MARKER_XYZ*") { Write-Host "FAIL: modify getsrc source does not contain the modified marker"; $failures++ }
+$afterVerify = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterVerify) -ne $null) { Write-Host "FAIL: modify getsrc left document windows behind"; $failures++ }
+else { Write-Host "ok: modify getsrc left no residue" }
+
+# Modify a nonexistent item -> exit 1 (NotFound).
+$noSuchName = "E2eNoSuchModify_$stamp"
+$before = Get-DocTitlesNormalized
+$noOut = Invoke-Tsdevctl @("modify", "--type", "Strategy", "--name", $noSuchName, "--source", $modifySrcFile, "--json")
+$noExit = $LASTEXITCODE
+$no = $null
+try { $no = $noOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: modify nonexistent output is not valid JSON"; $failures++ }
+if ($noExit -ne 1) { Write-Host "FAIL: modify nonexistent expected exit 1 (NotFound)"; $failures++ }
+if ($no -and $no.ok) { Write-Host "FAIL: modify nonexistent expected ok:false"; $failures++ }
+if ($no -and $no.error.name -ne "not_found") { Write-Host "FAIL: modify nonexistent expected error.name not_found"; $failures++ }
+$afterNo = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterNo) -ne $null) { Write-Host "FAIL: modify nonexistent left document windows behind"; $failures++ }
+else { Write-Host "ok: modify nonexistent left no residue" }
+
+# Modify the item with garbage source -> exit 12 (CompileFailed).
+$garbageFile = Join-Path $env:TEMP "tsdevctl_modify_garbage_$stamp.eld"
+"This is not valid EasyLanguage!!!" | Set-Content -Path $garbageFile -Encoding UTF8 -NoNewline
+$before = Get-DocTitlesNormalized
+$garbOut = Invoke-Tsdevctl @("modify", "--type", "Strategy", "--name", $modifyName, "--source", $garbageFile, "--json")
+$garbExit = $LASTEXITCODE
+$garb = $null
+try { $garb = $garbOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: modify garbage output is not valid JSON"; $failures++ }
+if ($garbExit -ne 12) { Write-Host "FAIL: modify garbage expected exit 12 (CompileFailed)"; $failures++ }
+if ($garb -and $garb.ok) { Write-Host "FAIL: modify garbage expected ok:false"; $failures++ }
+if ($garb -and $garb.error.name -ne "compile_error") { Write-Host "FAIL: modify garbage expected error.name compile_error"; $failures++ }
+$afterGarb = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterGarb) -ne $null) { Write-Host "FAIL: modify garbage left document windows behind"; $failures++ }
+else { Write-Host "ok: modify garbage left no residue" }
+
+# Clean up temp files.
+Remove-Item -Path $insertSrcFile -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $modifySrcFile -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $garbageFile -Force -ErrorAction SilentlyContinue
+
 $crashAfter = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
 if ($crashAfter) { Write-Host "FAIL: TSCrashReport.exe appeared"; $failures++ }
 

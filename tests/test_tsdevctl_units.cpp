@@ -482,6 +482,112 @@ void test_parse_args_insert() {
     }
 }
 
+void test_parse_args_modify() {
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"MyFn"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\src\\fn.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(p.ok && opts.verb == L"modify" && opts.type == L"Function" && opts.type_number == 1 &&
+                  opts.name == L"MyFn" && opts.source_path == L"C:\\src\\fn.eld",
+              "modify with type+name+source parses");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(!p.ok, "modify without --source is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"open"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with open is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"exists"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with exists is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"getsrc"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with getsrc is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"PaintBar"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "modify with unsupported type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Bad,Name"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "modify with name containing comma is rejected");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Bad\"Name"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "modify with name containing quote is rejected");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source")};
+        const ParseOutcome p = parse_args(7, argv, opts);
+        check(!p.ok, "modify --source without a value is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\o.eld")};
+        const ParseOutcome p = parse_args(10, argv, opts);
+        check(!p.ok, "--output with modify is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"modify"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"TradingApp"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"App1"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld"),
+                           const_cast<wchar_t*>(L"--json")};
+        const ParseOutcome p = parse_args(9, argv, opts);
+        check(p.ok && opts.verb == L"modify" && opts.type_number == 5122 && opts.json,
+              "modify with TradingApp and --json parses");
+    }
+}
+
 void test_from_utf8() {
     check(from_utf8("") == L"", "from_utf8 empty passthrough");
     check(from_utf8("hello") == L"hello", "from_utf8 ASCII");
@@ -501,6 +607,7 @@ int wmain() {
     test_parse_args_exists();
     test_parse_args_getsrc();
     test_parse_args_insert();
+    test_parse_args_modify();
     test_phantom_classifier();
     test_json();
     test_json_getsrc();

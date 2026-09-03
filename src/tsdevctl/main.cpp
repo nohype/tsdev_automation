@@ -1041,6 +1041,303 @@ int run_insert(const Options& opts) {
     return static_cast<int>(Exit::Ok);
 }
 
+// Strips trailing whitespace (spaces, tabs, CR, LF) from `s`. Used by modify's
+// post-verify source confirmation: read_doc_text already strips trailing NULs,
+// and trailing-newline differences between the set and re-read source must not
+// cause a false mismatch.
+std::wstring rtrim_ws(std::wstring s) {
+    while (!s.empty()) {
+        const wchar_t c = s.back();
+        if (c == L' ' || c == L'\t' || c == L'\r' || c == L'\n') s.pop_back();
+        else break;
+    }
+    return s;
+}
+
+int run_modify(const Options& opts) {
+    OpResult result;
+    result.op = L"modify";
+    result.type = opts.type;
+    result.name = opts.name;
+    Session session;
+    // Set when the operation had to show the (hidden) frame for the verify
+    // phase; the hidden state is restored on every exit path (R7).
+    bool frame_shown = false;
+    const auto started = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&] {
+        return static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+                .count());
+    };
+    auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
+        hide_if_launched(opts, session);
+        if (frame_shown && !opts.nohide) {
+            const auto f = static_cast<HWND>(find_main_frame(session.pid));
+            if (f) ShowWindow(f, SW_HIDE);
+        }
+        if (session.process) {
+            CloseHandle(session.process);
+            session.process = nullptr;
+        }
+        result.ok = false;
+        result.error_code = static_cast<int>(code);
+        result.error_name = name;
+        result.error_message = message;
+        result.elapsed_ms = elapsed_ms();
+        emit(opts, result);
+        return static_cast<int>(code);
+    };
+
+    BusyGuard busy = BusyGuard::acquire();
+    if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
+
+    if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    const Exit ready = ensure_tsdev_ready(opts, result, session);
+    if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
+
+    // Read the source file before any TSDev interaction so a missing/unreadable
+    // file fails fast without touching TSDev state.
+    std::wstring source_text;
+    std::wstring source_error;
+    if (!read_source_file(opts.source_path, source_text, source_error))
+        return fail(Exit::Unexpected, L"source_read_failed", source_error);
+
+    // Proactive exists check: open the name through TSDev's own channel and
+    // read the editor. A phantom error page means the item does not exist
+    // (R2: notify if absent); a real item means it is safe to modify. The doc
+    // opened for the check is closed by open_read_and_close.
+    const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_before = list_doc_windows(session.pid);
+    ReadOutcome exists_outcome;
+    {
+        const std::optional<Failure> failure =
+            open_read_and_close(opts, session, dialogs_before, docs_before, exists_outcome);
+        if (failure) return fail(failure->code, failure->name, failure->message);
+    }
+    if (!exists_outcome.exists)
+        return fail(Exit::NotFound, L"not_found", L"item does not exist in the TSDev library");
+
+    // Open the real item for modify: send the same pipe payload (open-or-
+    // create on an existing name opens the real document).
+    const std::set<HWND> dialogs_before2 = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_before2 = list_doc_windows(session.pid);
+    const std::wstring expected = opts.name + L" : " + opts.type_label;
+    const std::wstring needle = L" - " + expected;
+    const std::optional<Failure> open_failure = send_and_wait(opts, session, dialogs_before2, needle);
+    if (open_failure) {
+        const std::optional<Failure> late_failure =
+            close_late_open(opts, session, docs_before2, dialogs_before2, expected);
+        if (late_failure) return fail(late_failure->code, late_failure->name, late_failure->message);
+        return fail(open_failure->code, open_failure->name, open_failure->message);
+    }
+
+    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
+    const DocMatch match = find_doc_window(docs_before2, docs_after, expected);
+    if (match.window == nullptr)
+        return fail(Exit::Timeout, L"timeout", L"frame title changed but no matching document window appeared");
+
+    const HWND doc_hwnd = static_cast<HWND>(match.window->window);
+
+    // Activate the doc window (MDI activation) so MFC command routing targets
+    // this document when the verify command is sent to the frame.
+    const HWND frame = static_cast<HWND>(find_main_frame(session.pid));
+    const HWND mdiclient = frame ? FindWindowExW(frame, nullptr, L"MDIClient", nullptr) : nullptr;
+    if (mdiclient) {
+        DWORD_PTR activate_result = 0;
+        SendMessageTimeoutW(mdiclient, WM_MDIACTIVATE, reinterpret_cast<WPARAM>(doc_hwnd), 0,
+                            SMTO_ABORTIFHUNG, 2000, &activate_result);
+    }
+
+    // The frame MUST be visible during the verify: with it hidden the "*"
+    // dirty marker is never removed (KB), which would break the completion
+    // poll below. The tool already hides TSDev by default (R7), so show it
+    // here and restore the hidden state at exit.
+    const bool frame_was_hidden = frame && !IsWindowVisible(frame);
+    if (frame_was_hidden) {
+        frame_shown = true;
+        ShowWindow(frame, SW_SHOW);
+    }
+
+    // Set the new source into the editor via WM_SETTEXT (no clipboard, no UI
+    // automation). If the set fails, close the doc and fail.
+    if (!set_doc_text(doc_hwnd, source_text)) {
+        std::wstring close_note;
+        const std::set<HWND> d_before = snapshot_tsdev_dialogs(session.pid);
+        if (match.opened_by_us) {
+            const auto cf = close_doc_window(opts, session, d_before, *match.window);
+            if (cf) close_note = L" [also: failed to close document: " + cf->message + L"]";
+        }
+        return fail(Exit::Unexpected, L"set_text_failed",
+                    L"could not set editor text via WM_SETTEXT" + close_note);
+    }
+
+    // Activate the document again so the verify command routes to it.
+    if (mdiclient) {
+        DWORD_PTR activate_result = 0;
+        SendMessageTimeoutW(mdiclient, WM_MDIACTIVATE, reinterpret_cast<WPARAM>(doc_hwnd), 0,
+                            SMTO_ABORTIFHUNG, 2000, &activate_result);
+    }
+
+    // Trigger the verify (compile + save) code path via WM_COMMAND 0x296a,
+    // the same command ID the menu sends. PostMessageW (not SendMessageW)
+    // because the failure path shows a modal MessageBox that would block.
+    const std::set<HWND> dialogs_before_verify = snapshot_tsdev_dialogs(session.pid);
+    PostMessageW(frame, WM_COMMAND, 0x296a, 0);
+
+    // Poll for compile completion. With the frame visible, compile failures
+    // are SILENT: TSDev routes the errors into its Output error list and
+    // removes the "*" quickly for BOTH success and failure (proven live,
+    // 2026-09-03), so the "*" cycle alone cannot classify the result — the
+    // error-list summary read after the poll is authoritative. A dialog
+    // observed during the poll (detected + dismissed by check_new_dialogs)
+    // is kept as a safety net. On the success path the "*" dirty marker is
+    // removed when the compile finishes; the post-verify source confirmation
+    // remains the definitive success check.
+    std::wstring compile_error;
+    bool compile_error_seen = false;
+    const auto verify_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    // Two-phase poll: wait for the "*" dirty marker to appear (compile
+    // started), then for it to disappear (compile finished). WM_SETTEXT may
+    // not set the document's modified flag, so the "*" may never appear —
+    // fall back to the post-verify source confirmation after a sub-deadline.
+    bool dirty_seen = false;
+    const auto first_check_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    const auto no_dirty_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
+    for (;;) {
+        if (!process_alive(session.pid))
+            return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited during verify");
+        if (crash_report_running())
+            return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected during verify");
+        if (!IsWindow(doc_hwnd)) {
+            std::wstring close_note;
+            const std::set<HWND> d_before = snapshot_tsdev_dialogs(session.pid);
+            if (match.opened_by_us) {
+                const auto cf = close_doc_window(opts, session, d_before, *match.window);
+                if (cf) close_note = L" [also: failed to close document: " + cf->message + L"]";
+            }
+            return fail(Exit::Crashed, L"tsdev_died",
+                        L"document window disappeared during verify" + close_note);
+        }
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before_verify);
+        if (!dialog_text.empty()) {
+            compile_error = dialog_text;
+            compile_error_seen = true;
+            Sleep(500);  // let TSDev finish its internal failure cleanup (error markers etc.)
+            break;  // dialog during verify = compile failed; do not wait for the "*" cycle
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now < first_check_time) { Sleep(100); continue; }  // minimum wait before first title check
+        // Read the raw title via a bounded cross-process read to check for
+        // the "*" dirty marker. GetWindowTextW can block indefinitely if the
+        // target's UI thread is wedged; SendMessageTimeoutW aborts on hang.
+        wchar_t title_buf[256]{};
+        DWORD_PTR copied = 0;
+        std::wstring title;
+        if (SendMessageTimeoutW(doc_hwnd, WM_GETTEXT, 256, reinterpret_cast<LPARAM>(title_buf),
+                                SMTO_ABORTIFHUNG, 2000, &copied)) {
+            title = title_buf;
+        }
+        if (!title.empty() && title.back() == L'*') {
+            dirty_seen = true;
+        } else if (dirty_seen) {
+            break;  // "*" appeared then disappeared = compile finished
+        } else if (now >= no_dirty_deadline) {
+            break;  // "*" never appeared — fall back to post-verify source confirmation
+        }
+        if (!opts.timeouts_disabled && now >= verify_deadline) {
+            std::wstring close_note;
+            const std::set<HWND> d_before = snapshot_tsdev_dialogs(session.pid);
+            // The doc may be dirty (the source was set; the compile outcome is
+            // unknown) — answer No to any save prompt so the close completes.
+            if (match.opened_by_us) {
+                const auto cf = close_doc_discard(opts, session, d_before, *match.window);
+                if (cf) close_note = L" [also: failed to close document: " + cf->message + L"]";
+            }
+            return fail(Exit::Timeout, L"timeout",
+                        L"verify did not complete within the timeout" + close_note);
+        }
+        Sleep(100);
+    }
+
+    // Failure classification (both sources, before any doc closing). The
+    // frame is visible during the verify, so compile failures are routed to
+    // TSDev's Output error list silently (no dialog — KB). The list's summary
+    // row ("N error(s), M warning(s)") is authoritative for the compile
+    // result; the dialog path is a safety net (not expected with the frame
+    // visible).
+    bool compile_failed = false;
+    std::wstring failure_text;
+    if (compile_error_seen) {
+        compile_failed = true;
+        failure_text = compile_error;
+    } else {
+        std::wstring error_rows;
+        int error_count = 0;
+        if (read_compile_error_summary(session.pid, error_count, error_rows) && error_count > 0) {
+            compile_failed = true;
+            failure_text = !error_rows.empty() ? error_rows : std::to_wstring(error_count) + L" error(s)";
+        }
+    }
+
+    // A failed compile leaves the document dirty ("*" already removed): close
+    // it answering No to TSDev's save prompt. The verify path saves before
+    // compiling, so the item remains in the library with uncompiled NEW
+    // source (R10) — state that in the error itself.
+    if (compile_failed) {
+        std::wstring close_note;
+        if (match.opened_by_us) {
+            const auto cf = close_doc_discard(opts, session, dialogs_before_verify, *match.window);
+            if (cf) close_note = L" [also: " + cf->message + L"]";
+        }
+        return fail(Exit::CompileFailed, L"compile_error",
+                    failure_text +
+                    L" [item '" + opts.name + L"' was saved with uncompiled new source]" +
+                    close_note);
+    }
+
+    // Close the document (not dirty on the success path, so no save prompt).
+    if (match.opened_by_us) {
+        const std::set<HWND> d_before = snapshot_tsdev_dialogs(session.pid);
+        const auto cf = close_doc_window(opts, session, d_before, *match.window);
+        if (cf) return fail(cf->code, cf->name, cf->message);
+    }
+
+    // Post-verify SOURCE CONFIRMATION (key difference from insert): the item
+    // already existed, so existence alone is NOT confirmation — the source
+    // must have been updated. Re-read the item's source and compare it with
+    // the source that was set (trailing whitespace stripped on both sides).
+    const std::set<HWND> dialogs_before3 = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_before3 = list_doc_windows(session.pid);
+    ReadOutcome verify_outcome;
+    {
+        const std::optional<Failure> failure =
+            open_read_and_close(opts, session, dialogs_before3, docs_before3, verify_outcome);
+        if (failure) return fail(failure->code, failure->name, failure->message);
+    }
+    if (!verify_outcome.exists)
+        return fail(Exit::Unexpected, L"not_found",
+                    L"verify completed but the item was not found after verify");
+    if (rtrim_ws(verify_outcome.editor_text) != rtrim_ws(source_text))
+        return fail(Exit::Unexpected, L"source_not_updated",
+                    L"verify completed but the source was not updated (the item may still have its old source)");
+
+    hide_if_launched(opts, session);
+    if (frame_shown && !opts.nohide) {
+        const auto f = static_cast<HWND>(find_main_frame(session.pid));
+        if (f) ShowWindow(f, SW_HIDE);
+    }
+    result.ok = true;
+    result.elapsed_ms = elapsed_ms();
+    emit(opts, result);
+    if (session.process) CloseHandle(session.process);
+    return static_cast<int>(Exit::Ok);
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -1057,5 +1354,6 @@ int wmain(int argc, wchar_t** argv) {
     if (opts.verb == L"exists") return run_exists(opts);
     if (opts.verb == L"getsrc") return run_getsrc(opts);
     if (opts.verb == L"insert") return run_insert(opts);
+    if (opts.verb == L"modify") return run_modify(opts);
     return run_open(opts);
 }
