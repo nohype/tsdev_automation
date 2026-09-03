@@ -22,7 +22,9 @@ if (-not $cmake) { Write-Error "cmake not found"; exit 1 }
 
 & $cmake -S $repoRoot -B $buildDir -A x64 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
-& $cmake --build $buildDir --config Release --target test_tsdevctl_units | Out-Null
+# Build both the unit test target and the tsdevctl target so that main.cpp
+# is compiled under /W4 /WX (the unit test target only links tsdevlib).
+& $cmake --build $buildDir --config Release --target test_tsdevctl_units tsdevctl | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
 
 $exe = Join-Path $buildDir "Release\test_tsdevctl_units.exe"

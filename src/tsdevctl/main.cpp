@@ -17,7 +17,9 @@
 #include <iostream>
 #include <optional>
 #include <set>
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -63,6 +65,127 @@ void hide_if_launched(const Options& opts, const Session& session) {
         if (frame) ShowWindow(frame, SW_HIDE);
     }
 }
+
+// --- Quiet-UX frame management (R7: no visual flicker, no focus stealing) ---
+// The frame must be WS_VISIBLE for the New dialog's name propagation and the
+// verify "*" removal (verified live: WS_VISIBLE off-screen works; SW_HIDE
+// breaks both). SW_SHOWNA shows without stealing focus (verified live with
+// another application foreground: focus was NOT stolen). Moving the frame
+// off-screen eliminates visual flicker while keeping WS_VISIBLE. The New
+// dialog creation repositions the frame back on-screen (verified live), so
+// the frame must be re-moved off-screen after the dialog appears.
+constexpr int kOffscreenX = -32000;
+constexpr int kOffscreenY = -32000;
+
+void move_offscreen(HWND hwnd) {
+    SetWindowPos(hwnd, nullptr, kOffscreenX, kOffscreenY, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+struct FrameState {
+    bool shown = false;      // we called SW_SHOWNA; need SW_HIDE at end
+    bool moved = false;      // we moved the frame off-screen; need to restore
+    RECT saved_rect = {};    // original frame position before we moved it
+    DWORD fg_thread = 0;     // foreground window's thread (for focus restore)
+    HWND fg_window = nullptr; // user's foreground window before we showed the frame
+};
+
+// Shows the frame quietly: SW_SHOWNA (no focus steal) if hidden, then moves
+// off-screen (WS_VISIBLE kept — required for the New dialog's name propagation
+// and the verify "*" removal, KB). Saves the original position for restoration.
+// The foreground window must be saved earlier (at the start of the operation,
+// before any TSDev interaction) via save_foreground().
+// When nohide is true, shows on-screen with SW_SHOW (the user explicitly wants
+// to watch; accepts flicker and focus steal).
+void show_frame_quiet(HWND frame, bool nohide, FrameState& state) {
+    if (!frame) return;
+    if (!IsWindowVisible(frame)) {
+        state.shown = true;
+        ShowWindow(frame, nohide ? SW_SHOW : SW_SHOWNA);
+    }
+    if (!nohide) {
+        GetWindowRect(frame, &state.saved_rect);
+        move_offscreen(frame);
+        state.moved = true;
+    }
+}
+
+// Saves the user's foreground window at the start of the operation, before
+// any TSDev interaction (launch, pipe-open, etc.) can steal focus. The focus
+// is restored at exit via restore_frame_quiet.
+void save_foreground(FrameState& state) {
+    state.fg_window = GetForegroundWindow();
+    if (state.fg_window)
+        state.fg_thread = GetWindowThreadProcessId(state.fg_window, nullptr);
+}
+
+// Restores focus to the user's foreground window using AttachThreadInput,
+// which allows SetForegroundWindow to work even if our process doesn't have
+// the input focus (Windows' foreground management would otherwise block it).
+void restore_foreground(HWND fg_window, DWORD fg_thread) {
+    if (!fg_window || !fg_thread || !IsWindow(fg_window)) return;
+    const DWORD our_thread = GetCurrentThreadId();
+    AttachThreadInput(our_thread, fg_thread, TRUE);
+    SetForegroundWindow(fg_window);
+    AttachThreadInput(our_thread, fg_thread, FALSE);
+}
+
+// Restores the frame to its original state: hidden first (if we showed it),
+// then position restored, then focus restored to the user's foreground window.
+// Hiding before position restore eliminates a brief on-screen flash and a race
+// with FrameGuard (which would move the visible frame back off-screen).
+void restore_frame_quiet(HWND frame, const FrameState& state, bool nohide) {
+    if (!frame || !IsWindow(frame)) return;
+    if (state.shown && !nohide) {
+        ShowWindow(frame, SW_HIDE);
+    }
+    if (state.moved) {
+        SetWindowPos(frame, nullptr, state.saved_rect.left, state.saved_rect.top, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (!nohide) {
+        restore_foreground(state.fg_window, state.fg_thread);
+    }
+}
+
+// Frame guard: a background thread that continuously keeps the frame off-screen
+// while the New dialog creation repositions it on-screen. TSDev's New dialog
+// creation calls SetWindowPos on the frame to move it back on-screen (verified
+// live), which can steal focus from the user's foreground application. The
+// guard thread polls the frame position every 10ms and immediately moves it
+// back off-screen, minimizing the on-screen time to ~10ms (one poll interval).
+// This eliminates both visual flicker and focus stealing.
+class FrameGuard {
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+    HWND frame_ = nullptr;
+public:
+    FrameGuard() = default;
+    FrameGuard(const FrameGuard&) = delete;
+    FrameGuard& operator=(const FrameGuard&) = delete;
+
+    void start(HWND frame) {
+        if (!frame || running_.load()) return;
+        frame_ = frame;
+        running_.store(true);
+        thread_ = std::thread([this]() {
+            while (running_.load()) {
+                if (IsWindow(frame_) && IsWindowVisible(frame_)) {
+                    RECT r{};
+                    GetWindowRect(frame_, &r);
+                    if (r.left > kOffscreenX + 1000)
+                        move_offscreen(frame_);
+                }
+                Sleep(10);
+            }
+        });
+    }
+    void stop() {
+        running_.store(false);
+        if (thread_.joinable()) thread_.join();
+    }
+    ~FrameGuard() { stop(); }
+};
 
 // Attaches to a running TSDev or launches a hidden one (R5/R7). Records the
 // failure in `result` and returns the exit code to propagate (Exit::Ok when
@@ -630,9 +753,15 @@ int run_insert(const Options& opts) {
     result.type = opts.type;
     result.name = opts.name;
     Session session;
-    // Set when the operation had to show the (hidden) frame for TSDev's New
-    // dialog; the hidden state is restored on every exit path (R7).
-    bool frame_shown = false;
+    // Quiet-UX frame state: the frame is shown via SW_SHOWNA (no focus steal)
+    // and moved off-screen (WS_VISIBLE kept — required for the New dialog's
+    // name propagation and the verify "*" removal, KB). The original position
+    // and hidden state are restored on every exit path (R7).
+    FrameState frame_state;
+    // FrameGuard declared before the fail lambda so the lambda can stop it.
+    // The guard is started later (before the New dialog command) and stopped
+    // on every exit path via the fail lambda or the success path.
+    FrameGuard frame_guard;
     const auto started = std::chrono::steady_clock::now();
     auto elapsed_ms = [&] {
         return static_cast<unsigned long long>(
@@ -640,11 +769,9 @@ int run_insert(const Options& opts) {
                 .count());
     };
     auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
+        frame_guard.stop();
         hide_if_launched(opts, session);
-        if (frame_shown && !opts.nohide) {
-            const auto f = static_cast<HWND>(find_main_frame(session.pid));
-            if (f) ShowWindow(f, SW_HIDE);
-        }
+        restore_frame_quiet(static_cast<HWND>(find_main_frame(session.pid)), frame_state, opts.nohide);
         if (session.process) {
             CloseHandle(session.process);
             session.process = nullptr;
@@ -662,6 +789,10 @@ int run_insert(const Options& opts) {
     if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
 
     if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    // Save the user's foreground window before any TSDev interaction (launch,
+    // pipe-open, etc.) can steal focus. Restored at exit via restore_frame_quiet.
+    if (!opts.nohide) save_foreground(frame_state);
 
     const Exit ready = ensure_tsdev_ready(opts, result, session);
     if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
@@ -721,16 +852,17 @@ int run_insert(const Options& opts) {
     // Trigger TSDev's own "New <Type>" command on the phantom's MDI child
     // (app-class commands are only routable via an MDI child window; the frame
     // suppresses them). This opens TSDev's "New <Type>" dialog.
-    // The frame MUST be visible when the dialog's OK is dispatched — with a
-    // hidden frame TSDev creates the document with an empty name (KB). The
-    // tool already hides TSDev by default (R7), so show it here and restore
-    // the hidden state at exit.
-    const bool frame_was_hidden = frame && !IsWindowVisible(frame);
-    if (frame_was_hidden) {
-        frame_shown = true;
-        ShowWindow(frame, SW_SHOW);
-    }
+    // The frame MUST be WS_VISIBLE when the dialog's OK is dispatched — with a
+    // hidden frame TSDev creates the document with an empty name (KB). Show
+    // it quietly (SW_SHOWNA + off-screen) and restore at exit (R7).
+    show_frame_quiet(frame, opts.nohide, frame_state);
     const std::set<HWND> wins_before_new = snapshot_tsdev_windows(session.pid);
+    // Start the frame guard: a background thread that continuously keeps the
+    // frame off-screen while the New dialog creation repositions it on-screen.
+    // This eliminates visual flicker and focus stealing (the dialog creation's
+    // SetWindowPos can steal focus from the user's foreground application).
+    // The guard was declared before the fail lambda so the lambda can stop it.
+    if (!opts.nohide) frame_guard.start(frame);
     PostMessageW(doc_hwnd, WM_COMMAND, static_cast<WPARAM>(opts.type_new_cmd_id), 0);
     // The create-dialog class is type-specific (TS_IDD_COMMONCREATE for
     // Strategy, TS_IDD_FUNCCREATE for Function, ... — KB); match the common
@@ -738,6 +870,8 @@ int run_insert(const Options& opts) {
     const HWND create_dlg = wait_for_tsdev_dialog(session.pid, L"TS_IDD_",
                                                   wins_before_new, opts.timeouts_disabled,
                                                   opts.timeout_ms);
+    // Stop the frame guard: the dialog has appeared, the frame is now stable.
+    frame_guard.stop();
     if (!create_dlg) {
         std::wstring close_note;
         if (match.opened_by_us) {
@@ -747,6 +881,16 @@ int run_insert(const Options& opts) {
         }
         return fail(Exit::Timeout, L"timeout",
                     L"New " + opts.type + L" dialog did not appear" + close_note);
+    }
+
+    // The New dialog creation repositions the frame back on-screen (verified
+    // live). Re-move the frame off-screen to eliminate visual flicker while
+    // keeping WS_VISIBLE (required for name propagation and verify, KB).
+    // The dialog itself is a small window that doesn't steal focus (verified
+    // live: with the frame off-screen, the dialog appearing on-screen did NOT
+    // steal focus from another application).
+    if (!opts.nohide && frame) {
+        move_offscreen(frame);
     }
 
     // Fill the name (first Edit child) and confirm with IDOK — the same code
@@ -869,10 +1013,10 @@ int run_insert(const Options& opts) {
                             SMTO_ABORTIFHUNG, 2000, &activate_result);
     }
 
-    // The frame stays VISIBLE during the verify: with it hidden the "*" dirty
-    // marker is never removed (neither success nor failure updates the title,
-    // KB), which would break the completion poll below. The hidden state is
-    // restored on every exit path via frame_shown.
+    // The frame stays WS_VISIBLE during the verify: with it hidden the "*"
+    // dirty marker is never removed (neither success nor failure updates the
+    // title, KB), which would break the completion poll below. The frame is
+    // off-screen (quiet-UX) and restored on every exit path via frame_state.
 
     // Trigger the verify (compile + save) code path via WM_COMMAND 0x296a,
     // the same command ID the menu sends. PostMessageW (not SendMessageW)
@@ -1030,10 +1174,7 @@ int run_insert(const Options& opts) {
                     L"compile/verify did not save the item (no error dialog, but item not found after verify)");
 
     hide_if_launched(opts, session);
-    if (frame_shown && !opts.nohide) {
-        const auto f = static_cast<HWND>(find_main_frame(session.pid));
-        if (f) ShowWindow(f, SW_HIDE);
-    }
+    restore_frame_quiet(static_cast<HWND>(find_main_frame(session.pid)), frame_state, opts.nohide);
     result.ok = true;
     result.elapsed_ms = elapsed_ms();
     emit(opts, result);
@@ -1054,15 +1195,24 @@ std::wstring rtrim_ws(std::wstring s) {
     return s;
 }
 
+// Normalizes line endings for source comparison: removes all \r characters,
+// so \r\n (Windows) and \n (Unix/TSDev editor) compare equal. The source file
+// may have \r\n (Windows text mode), while TSDev's editor normalizes to \n.
+// Without this, modify's post-verify source confirmation would falsely report
+// "source_not_updated" for Windows-line-ending source files.
+std::wstring normalize_eols(std::wstring s) {
+    s.erase(std::remove(s.begin(), s.end(), L'\r'), s.end());
+    return s;
+}
+
 int run_modify(const Options& opts) {
     OpResult result;
     result.op = L"modify";
     result.type = opts.type;
     result.name = opts.name;
     Session session;
-    // Set when the operation had to show the (hidden) frame for the verify
-    // phase; the hidden state is restored on every exit path (R7).
-    bool frame_shown = false;
+    // Quiet-UX frame state: same as insert — SW_SHOWNA + off-screen.
+    FrameState frame_state;
     const auto started = std::chrono::steady_clock::now();
     auto elapsed_ms = [&] {
         return static_cast<unsigned long long>(
@@ -1071,10 +1221,7 @@ int run_modify(const Options& opts) {
     };
     auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
         hide_if_launched(opts, session);
-        if (frame_shown && !opts.nohide) {
-            const auto f = static_cast<HWND>(find_main_frame(session.pid));
-            if (f) ShowWindow(f, SW_HIDE);
-        }
+        restore_frame_quiet(static_cast<HWND>(find_main_frame(session.pid)), frame_state, opts.nohide);
         if (session.process) {
             CloseHandle(session.process);
             session.process = nullptr;
@@ -1092,6 +1239,10 @@ int run_modify(const Options& opts) {
     if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
 
     if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    // Save the user's foreground window before any TSDev interaction (launch,
+    // pipe-open, etc.) can steal focus. Restored at exit via restore_frame_quiet.
+    if (!opts.nohide) save_foreground(frame_state);
 
     const Exit ready = ensure_tsdev_ready(opts, result, session);
     if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
@@ -1149,15 +1300,11 @@ int run_modify(const Options& opts) {
                             SMTO_ABORTIFHUNG, 2000, &activate_result);
     }
 
-    // The frame MUST be visible during the verify: with it hidden the "*"
+    // The frame MUST be WS_VISIBLE during the verify: with it hidden the "*"
     // dirty marker is never removed (KB), which would break the completion
-    // poll below. The tool already hides TSDev by default (R7), so show it
-    // here and restore the hidden state at exit.
-    const bool frame_was_hidden = frame && !IsWindowVisible(frame);
-    if (frame_was_hidden) {
-        frame_shown = true;
-        ShowWindow(frame, SW_SHOW);
-    }
+    // poll below. Show it quietly (SW_SHOWNA + off-screen) and restore at
+    // exit (R7).
+    show_frame_quiet(frame, opts.nohide, frame_state);
 
     // Set the new source into the editor via WM_SETTEXT (no clipboard, no UI
     // automation). If the set fails, close the doc and fail.
@@ -1322,15 +1469,12 @@ int run_modify(const Options& opts) {
     if (!verify_outcome.exists)
         return fail(Exit::Unexpected, L"not_found",
                     L"verify completed but the item was not found after verify");
-    if (rtrim_ws(verify_outcome.editor_text) != rtrim_ws(source_text))
+    if (rtrim_ws(normalize_eols(verify_outcome.editor_text)) != rtrim_ws(normalize_eols(source_text)))
         return fail(Exit::Unexpected, L"source_not_updated",
                     L"verify completed but the source was not updated (the item may still have its old source)");
 
     hide_if_launched(opts, session);
-    if (frame_shown && !opts.nohide) {
-        const auto f = static_cast<HWND>(find_main_frame(session.pid));
-        if (f) ShowWindow(f, SW_HIDE);
-    }
+    restore_frame_quiet(static_cast<HWND>(find_main_frame(session.pid)), frame_state, opts.nohide);
     result.ok = true;
     result.elapsed_ms = elapsed_ms();
     emit(opts, result);
