@@ -4,12 +4,13 @@
 #include <cstdlib>
 
 ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
-    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc|insert|modify|delete)"};
+    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc|insert|modify|delete|list)"};
     if (std::wstring(argv[1]) == L"--help" || std::wstring(argv[1]) == L"-h") return {true, true, L""};
     const std::wstring verb = argv[1];
-    if (verb != L"open" && verb != L"exists" && verb != L"getsrc" && verb != L"insert" && verb != L"modify" && verb != L"delete")
-        return {false, false, L"unknown command (expected: open|exists|getsrc|insert|modify|delete)"};
+    if (verb != L"open" && verb != L"exists" && verb != L"getsrc" && verb != L"insert" && verb != L"modify" && verb != L"delete" && verb != L"list")
+        return {false, false, L"unknown command (expected: open|exists|getsrc|insert|modify|delete|list)"};
     out.verb = verb;
+    bool name_given = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::wstring arg = argv[i];
@@ -44,6 +45,7 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
         } else if (arg == L"--name") {
             if (i + 1 >= argc) return {false, false, L"missing value for --name"};
             out.name = argv[++i];
+            name_given = true;
         } else if (arg == L"--output") {
             if (i + 1 >= argc) return {false, false, L"missing value for --output"};
             out.output_path = argv[++i];
@@ -67,6 +69,19 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
     if ((out.verb == L"insert" || out.verb == L"modify") && out.source_path.empty())
         return {false, false, L"--source is required for insert and modify"};
 
+    // Per-verb validation. list is the only verb that takes neither a
+    // required --type nor a --name: absent --type = all items, present
+    // --type = per-type filter; --name is not valid with list (enumeration
+    // is all-items or per-type, never by name).
+    if (out.verb == L"list") {
+        if (name_given)
+            return {false, false, L"--name is not valid with list"};
+        if (!out.type.empty() && !type_from_name(out.type, out.type_number, out.type_new_cmd_id, out.type_label))
+            return {false, false, L"unsupported type '" + out.type +
+                                      L"' (supported: Strategy, Function, Indicator, ShowMe, TradingApp)"};
+        return {true, false, L""};
+    }
+
     if (out.type.empty()) return {false, false, L"--type is required (Strategy|Function|Indicator|ShowMe|TradingApp)"};
     if (out.name.empty()) return {false, false, L"--name is required"};
     if (!type_from_name(out.type, out.type_number, out.type_new_cmd_id, out.type_label))
@@ -89,6 +104,7 @@ std::wstring usage_text() {
         L"  tsdevctl insert --type <Type> --name <Name> --source <file> [options]\n"
         L"  tsdevctl modify --type <Type> --name <Name> --source <file> [options]\n"
         L"  tsdevctl delete --type <Type> --name <Name> [options]\n"
+        L"  tsdevctl list   [--type <Type>] [options]\n"
         L"\n"
         L"open: Opens the named item in TSDev (existing item) or starts a new empty\n"
         L"document titled with that name (TSDev's own open-or-create behavior).\n"
@@ -145,13 +161,29 @@ std::wstring usage_text() {
         L"by SHA-256 before injection (version-specific addresses). ShowMe items\n"
         L"may crash TSDev after deletion succeeds; the CLI restarts TSDev and\n"
         L"verifies the deletion in that case.\n"
+        L"list: Enumerates the TSDev library items (all, or per component type\n"
+        L"with --type) by triggering the same enumeration code path the UI Open\n"
+        L"dialog uses: a small DLL is injected into TSDev.exe and calls the\n"
+        L"enumeration inside ORELUI20.dll directly (no window is created and no\n"
+        L"message pump runs; TSDev window visibility is never changed). Each item\n"
+        L"is emitted as \"<Type>  <verbatim stored name>  (ProgId: <progid>)\"\n"
+        L"(the ProgId part is omitted when empty), followed by a summary count\n"
+        L"line. --name is not valid with list. --type is optional: absent = all\n"
+        L"items; present = only items of that type. The filter matches the exact\n"
+        L"full type against TSDev's own type numbers, so the built-in Functions\n"
+        L"entry (a separate internal type) is NOT matched by --type Function.\n"
+        L"Type labels come from TSDev's own category table; unknown types get a\n"
+        L"stable numeric label. The ORELUI20.dll build is verified by SHA-256\n"
+        L"before injection (version-specific internals).\n"
         L"TSDev.exe is attached to if running, otherwise launched hidden.\n"
         L"\n"
         L"Options:\n"
         L"  --type <name>      Component type: Strategy, Function, Indicator,\n"
-        L"                     ShowMe or TradingApp\n"
+        L"                     ShowMe or TradingApp. Required for all verbs except\n"
+        L"                     list (optional there: absent = all items).\n"
         L"  --name <name>      Item name (no commas or double quotes; TSDev's\n"
-        L"                     pipe encoding does not support them)\n"
+        L"                     pipe encoding does not support them). Required for\n"
+        L"                     all verbs except list (not valid there).\n"
         L"  --output <file>    (getsrc only) Write source to this file (UTF-8, no\n"
         L"                     BOM) instead of stdout\n"
         L"  --source <file>    (insert/modify) Read EasyLanguage source from this\n"
@@ -178,7 +210,8 @@ std::wstring usage_text() {
         L"  8 TSDev crashed\n"
         L"  9 busy (another automation invocation is running)\n"
         L"  10 unexpected TSDev state (e.g. no editor control, injection failed,\n"
-        L"     version mismatch, hook error)\n"
+        L"     version mismatch, hook error; list: enumeration failure, truncated\n"
+        L"     results, ORELUI20.dll version mismatch)\n"
         L"  11 insert: item already exists in the TSDev library\n"
         L"  12 insert/modify: compile/verify failed (error dialog or item not saved)\n";
 }

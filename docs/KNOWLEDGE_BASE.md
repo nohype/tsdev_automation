@@ -428,6 +428,16 @@ addresses below are image-relative (add runtime base).
   ActivityBar 5, Function-built-in 852, PaintBar 29, ShowMe 65,
   ProbabilityMap 2, TradingApp 14). 5 `E2eTvs7_Enum_*` test items found with
   correct verbatim names + types + ProgIds. Evidence: B §2.5–2.6.
+- **Enumeration works from an injected DLL (production-verified,
+  2026-09-04):** the same recipe executed inside TSDev.exe from
+  `enum_hook.dll` (loaded via `LoadLibraryW` + its exported entry called via
+  `CreateRemoteThread`), resolving the ordinals with
+  `GetProcAddress(hMod, MAKEINTRESOURCEA(n))` and the two non-exported
+  surfaces from the runtime module base — no crash, no dialog, no window
+  created, TSDev window visibility unchanged. Live run: 2507 items across
+  the same 9 types (counts drift with the library; 9-type set matches).
+  Evidence: TVS #8 implementation smoke (`tsdevctl list --json`, exit 0;
+  per-type counts in the TVS #8 commit message).
 
 ### Delete routine (`DeleteItem`)
 

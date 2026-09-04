@@ -2,12 +2,15 @@
 #include "tsdevlib/doc_read.h"
 #include "tsdevlib/inject.h"
 #include "tsdevlib/json_writer.h"
+#include "tsdevlib/list_types.h"
 #include "tsdevlib/type_table.h"
+#include "enum_hook/shared.h"
 
 #include <windows.h>
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -716,6 +719,239 @@ void test_json_delete() {
           "delete error json shape");
 }
 
+void test_parse_args_list() {
+    // list without --type and without --name parses: absent --type = all items.
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list")};
+        const ParseOutcome p = parse_args(2, argv, opts);
+        check(p.ok && opts.verb == L"list" && opts.type.empty() && opts.name.empty(),
+              "list without --type/--name parses (all items)");
+    }
+    // list with --type parses and maps the type number (per-type filter).
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(p.ok && opts.verb == L"list" && opts.type == L"Function" && opts.type_number == 1,
+              "list --type Function parses");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"ShowMe"),
+                           const_cast<wchar_t*>(L"--json")};
+        const ParseOutcome p = parse_args(5, argv, opts);
+        check(p.ok && opts.type_number == 1282 && opts.json, "list --type ShowMe --json parses");
+    }
+    // --name supplied with list is rejected (Usage, exit 2 path).
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "list with --name is a usage error");
+    }
+    // Invalid --type value is a usage error (as today).
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"PaintBar")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "list with unsupported type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--type")};
+        const ParseOutcome p = parse_args(3, argv, opts);
+        check(!p.ok, "list --type without a value is a usage error");
+    }
+    // Per-verb flag rejection: --output/--source stay invalid for list.
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\o.eld")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "--output with list is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"list"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "--source with list is a usage error");
+    }
+    // Existing verbs' behavior must not change: --name still required for them.
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "delete without --name is still a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"open"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "open without --type is still a usage error");
+    }
+}
+
+void test_usage_contains_list() {
+    const std::wstring usage = usage_text();
+    check(usage.find(L"list") != std::wstring::npos, "usage text contains list");
+    check(usage.find(L"tsdevctl list") != std::wstring::npos, "usage text has list usage line");
+    check(usage.find(L"--name is not valid with list") != std::wstring::npos,
+          "usage documents that --name is not valid with list");
+    check(usage.find(L"built-in") != std::wstring::npos,
+          "usage documents that --type Function does not match the built-in Functions entry");
+}
+
+void test_list_type_labels() {
+    // Reverse map of TSDev's own category table (ORELUI20.dll DAT_1008fd04,
+    // 13 entries; SSOT: docs/KNOWLEDGE_BASE.md "ORELUI20.dll + ORLIB20.dll
+    // ordinals"). Full type = (subtype << 8) | category.
+    check(list_type_label(2, 20) == L"TradingApp", "label (2,20) TradingApp");
+    check(list_type_label(2, 0) == L"Indicator", "label (2,0) Indicator");
+    check(list_type_label(2, 5) == L"ShowMe", "label (2,5) ShowMe");
+    check(list_type_label(2, 4) == L"PaintBar", "label (2,4) PaintBar");
+    check(list_type_label(2, 10) == L"VolatilityModel", "label (2,10) VolatilityModel");
+    check(list_type_label(2, 12) == L"PricingModel", "label (2,12) PricingModel");
+    check(list_type_label(2, 14) == L"BidAskModel", "label (2,14) BidAskModel");
+    check(list_type_label(2, 16) == L"SearchStrategy", "label (2,16) SearchStrategy");
+    check(list_type_label(2, 18) == L"ProbabilityMap", "label (2,18) ProbabilityMap");
+    check(list_type_label(0, 0) == L"Strategy", "label (0,0) Strategy");
+    check(list_type_label(3, 0) == L"ActivityBar", "label (3,0) ActivityBar");
+    check(list_type_label(1, 0) == L"Function", "label (1,0) Function");
+    check(list_type_label(4, 0) == L"Function (built-in)", "label (4,0) Function (built-in)");
+    // Unknown pair: stable numeric fallback label — never empty, never guessed.
+    check(list_type_label(9, 9) == L"Type(0x0909)", "unknown type gets a stable numeric fallback label");
+    check(list_type_label(6, 3) == L"Type(0x0306)", "second unknown type gets a stable numeric fallback label");
+}
+
+void test_list_record_matches() {
+    // The --type filter matches the exact full type ((subtype<<8)|category)
+    // against type_number from type_table.h.
+    check(list_record_matches(1, 0, 1), "Function record (1,0) matches --type Function (1)");
+    check(list_record_matches(2, 0, 2), "Indicator record (2,0) matches --type Indicator (2)");
+    check(list_record_matches(2, 5, 1282), "ShowMe record (2,5) matches --type ShowMe (1282)");
+    check(list_record_matches(2, 20, 5122), "TradingApp record (2,20) matches --type TradingApp (5122)");
+    check(list_record_matches(0, 0, 0), "Strategy record (0,0) matches --type Strategy (0)");
+    check(!list_record_matches(4, 0, 1),
+          "built-in Functions entry (4,0) is NOT matched by --type Function (1)");
+    check(!list_record_matches(1, 0, 2), "Function record does not match Indicator");
+    check(!list_record_matches(2, 5, 2), "ShowMe record does not match Indicator (same category)");
+}
+
+void test_record_copy_truncation() {
+    wchar_t buf[256];
+    // Short name fits, NUL-terminated.
+    check(!copy_fixed_wstr(buf, 256, L"abc") && std::wstring(buf) == L"abc",
+          "short copy is exact and NUL-terminated");
+    // Exactly 255 chars fits (255-cap convention).
+    const std::wstring s255(255, L'x');
+    check(!copy_fixed_wstr(buf, 256, s255.c_str()) && wcslen(buf) == 255,
+          "255-char copy fits exactly");
+    // 256 chars: reports truncation, copy stays NUL-terminated at 255.
+    const std::wstring s256(256, L'a');
+    check(copy_fixed_wstr(buf, 256, s256.c_str()), "256-char source reports truncation");
+    check(wcslen(buf) == 255, "truncated copy is NUL-terminated at 255 chars");
+    // Empty source.
+    check(!copy_fixed_wstr(buf, 256, L"") && std::wstring(buf) == L"",
+          "empty copy is empty and NUL-terminated");
+}
+
+void test_list_filter_and_json() {
+    // Canned records (no TSDev): marshalling shape -> filter -> JSON.
+    EnumRecord recs[3] = {};
+    copy_fixed_wstr(recs[0].name, 256, L"MyTestStrategyA");
+    copy_fixed_wstr(recs[0].progid, 256, L"MyTestStrategyA");
+    recs[0].category = 0; recs[0].subtype = 0; recs[0].record_id = 10;
+    copy_fixed_wstr(recs[1].name, 256, L"MyFn");
+    copy_fixed_wstr(recs[1].progid, 256, L"MyFn");
+    recs[1].category = 1; recs[1].subtype = 0; recs[1].record_id = 11;
+    copy_fixed_wstr(recs[2].name, 256, L"MyShow");
+    recs[2].progid[0] = L'\0';  // empty ProgId must be preserved as empty
+    recs[2].category = 2; recs[2].subtype = 5; recs[2].record_id = 12;
+
+    // Filter --type Function (1): only the Function record passes.
+    std::vector<ListItem> fn_items;
+    for (const EnumRecord& r : recs) {
+        if (!list_record_matches(r.category, r.subtype, 1)) continue;
+        ListItem it;
+        it.name = r.name;
+        it.prog_id = r.progid;
+        it.type = list_type_label(r.category, r.subtype);
+        fn_items.push_back(it);
+    }
+    check(fn_items.size() == 1 && fn_items[0].type == L"Function" && fn_items[0].name == L"MyFn",
+          "type filter selects only the Function record");
+
+    // Filtered JSON shape (contract: ok, op, type, count, items, tsdev_pid, elapsed_ms, error).
+    OpResult filtered;
+    filtered.ok = true;
+    filtered.op = L"list";
+    filtered.type = L"Function";
+    filtered.has_pid = true;
+    filtered.pid = 42;
+    filtered.elapsed_ms = 77;
+    const std::wstring fj = make_list_result_json(filtered, fn_items);
+    check(fj == L"{\"ok\":true,\"op\":\"list\",\"type\":\"Function\",\"count\":1,"
+                 L"\"items\":[{\"name\":\"MyFn\",\"type\":\"Function\",\"prog_id\":\"MyFn\"}],"
+                 L"\"tsdev_pid\":42,\"elapsed_ms\":77,\"error\":null}",
+          "list filtered json shape");
+
+    // No filter: all records; empty ProgId stays empty; unknown type falls back.
+    std::vector<ListItem> all;
+    for (const EnumRecord& r : recs) {
+        ListItem it;
+        it.name = r.name;
+        it.prog_id = r.progid;
+        it.type = list_type_label(r.category, r.subtype);
+        all.push_back(it);
+    }
+    check(all.size() == 3, "no filter keeps all records");
+    check(all[2].type == L"ShowMe" && all[2].prog_id.empty(), "empty ProgId preserved");
+    OpResult unfiltered;
+    unfiltered.ok = true;
+    unfiltered.op = L"list";
+    unfiltered.type.clear();  // no --type given
+    const std::wstring uj = make_list_result_json(unfiltered, all);
+    check(uj == L"{\"ok\":true,\"op\":\"list\",\"type\":null,\"count\":3,"
+                 L"\"items\":[{\"name\":\"MyTestStrategyA\",\"type\":\"Strategy\",\"prog_id\":\"MyTestStrategyA\"},"
+                 L"{\"name\":\"MyFn\",\"type\":\"Function\",\"prog_id\":\"MyFn\"},"
+                 L"{\"name\":\"MyShow\",\"type\":\"ShowMe\",\"prog_id\":\"\"}],"
+                 L"\"tsdev_pid\":null,\"elapsed_ms\":0,\"error\":null}",
+          "list unfiltered json shape (type null, empty prog_id kept)");
+
+    // Empty result (count 0 is a success).
+    OpResult empty_res;
+    empty_res.ok = true;
+    empty_res.op = L"list";
+    empty_res.type = L"Strategy";
+    const std::wstring ej = make_list_result_json(empty_res, {});
+    check(ej == L"{\"ok\":true,\"op\":\"list\",\"type\":\"Strategy\",\"count\":0,\"items\":[],"
+                 L"\"tsdev_pid\":null,\"elapsed_ms\":0,\"error\":null}",
+          "list empty json shape (count 0, empty items array)");
+
+    // Failure shape: ok:false + error object, same list keys.
+    OpResult fail_res;
+    fail_res.ok = false;
+    fail_res.op = L"list";
+    fail_res.type = L"Function";
+    fail_res.error_code = 10;
+    fail_res.error_name = L"version_mismatch";
+    fail_res.error_message = L"ORELUI20.dll SHA-256 mismatch";
+    const std::wstring erj = make_list_result_json(fail_res, {});
+    check(erj == L"{\"ok\":false,\"op\":\"list\",\"type\":\"Function\",\"count\":0,\"items\":[],"
+                 L"\"tsdev_pid\":null,\"elapsed_ms\":0,"
+                 L"\"error\":{\"code\":10,\"name\":\"version_mismatch\",\"message\":\"ORELUI20.dll SHA-256 mismatch\"}}",
+          "list failure json shape");
+}
+
 void test_from_utf8() {
     check(from_utf8("") == L"", "from_utf8 empty passthrough");
     check(from_utf8("hello") == L"hello", "from_utf8 ASCII");
@@ -737,7 +973,13 @@ int wmain() {
     test_parse_args_insert();
     test_parse_args_modify();
     test_parse_args_delete();
+    test_parse_args_list();
     test_usage_contains_delete();
+    test_usage_contains_list();
+    test_list_type_labels();
+    test_list_record_matches();
+    test_record_copy_truncation();
+    test_list_filter_and_json();
     test_json_delete();
     {
         // Verify get_export_rva finds ReArmHook in delete_hook.dll (next to the test exe).

@@ -346,6 +346,102 @@ foreach ($type in $types) {
     else { Write-Host "ok: getsrc phantom ($type) left no residue" }
 }
 
+# --- list: all items (JSON) --------------------------------------------------
+# list does NOT use the pipe: it injects enum_hook.dll and enumerates inside
+# TSDev via ORELUI20.dll (no window created, no visibility change).
+$before = Get-DocTitlesNormalized
+$listJsonOut = Invoke-Tsdevctl @("list", "--json")
+$listJsonExit = $LASTEXITCODE
+$listJson = $null
+try { $listJson = $listJsonOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: list output is not valid JSON"; $failures++ }
+if ($listJsonExit -ne 0) { Write-Host "FAIL: list expected exit 0"; $failures++ }
+if ($listJson -and -not $listJson.ok) { Write-Host "FAIL: list expected ok:true"; $failures++ }
+if ($listJson -and $listJson.op -ne "list") { Write-Host "FAIL: list expected op list"; $failures++ }
+if ($listJson -and "$($listJson.type)" -ne "") { Write-Host "FAIL: list without --type expected type null"; $failures++ }
+if ($listJson -and [int]$listJson.count -le 0) { Write-Host "FAIL: list expected count > 0"; $failures++ }
+if ($listJson -and $null -eq $listJson.items) { Write-Host "FAIL: list expected items array"; $failures++ }
+if ($listJson -and @($listJson.items).Count -ne [int]$listJson.count) { Write-Host "FAIL: list count does not match items length"; $failures++ }
+if ($listJson -and -not $listJson.tsdev_pid) { Write-Host "FAIL: list expected tsdev_pid"; $failures++ }
+# All 5 R13 types must be represented (the library holds items of each).
+if ($listJson) {
+    $listedTypes = @($listJson.items | ForEach-Object { $_.type } | Sort-Object -Unique)
+    foreach ($t in $types) {
+        if ($listedTypes -notcontains $t) { Write-Host "FAIL: list is missing type $t (found: $($listedTypes -join ', '))"; $failures++ }
+    }
+}
+# A known item appears with its correct type and verbatim stored name.
+if ($listJson) {
+    $known = @($listJson.items | Where-Object { $_.name -eq "MyTestStrategyA" })
+    if ($known.Count -ne 1) { Write-Host "FAIL: list expected exactly one MyTestStrategyA item"; $failures++ }
+    elseif ($known[0].type -ne "Strategy") { Write-Host "FAIL: list MyTestStrategyA expected type Strategy"; $failures++ }
+    if ($known.Count -eq 1 -and [string]::IsNullOrEmpty($known[0].prog_id)) { Write-Host "FAIL: list MyTestStrategyA expected a ProgId"; $failures++ }
+}
+# Every item has a non-empty verbatim name and a type label.
+if ($listJson) {
+    $unnamed = @($listJson.items | Where-Object { [string]::IsNullOrEmpty($_.name) -or [string]::IsNullOrEmpty($_.type) })
+    if ($unnamed.Count -gt 0) { Write-Host "FAIL: list returned $($unnamed.Count) item(s) without name or type"; $failures++ }
+}
+$crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after list"; $failures++ }
+$afterList = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterList) -ne $null) { Write-Host "FAIL: list left document windows behind"; $failures++ }
+else { Write-Host "ok: list (JSON) enumerated $($listJson.count) items, left no residue" }
+
+# --- list: per-type filter (JSON) --------------------------------------------
+$before = Get-DocTitlesNormalized
+$listFnOut = Invoke-Tsdevctl @("list", "--type", "Function", "--json")
+$listFnExit = $LASTEXITCODE
+$listFn = $null
+try { $listFn = $listFnOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: list --type output is not valid JSON"; $failures++ }
+if ($listFnExit -ne 0) { Write-Host "FAIL: list --type Function expected exit 0"; $failures++ }
+if ($listFn -and -not $listFn.ok) { Write-Host "FAIL: list --type Function expected ok:true"; $failures++ }
+if ($listFn -and $listFn.type -ne "Function") { Write-Host "FAIL: list --type Function expected type Function"; $failures++ }
+if ($listFn -and [int]$listFn.count -le 0) { Write-Host "FAIL: list --type Function expected count > 0"; $failures++ }
+if ($listFn) {
+    $wrongType = @($listFn.items | Where-Object { $_.type -ne "Function" })
+    if ($wrongType.Count -gt 0) { Write-Host "FAIL: list --type Function returned $($wrongType.Count) non-Function item(s)"; $failures++ }
+    if (@($listFn.items).Count -ne [int]$listFn.count) { Write-Host "FAIL: list --type Function count does not match items length"; $failures++ }
+}
+$crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after list --type"; $failures++ }
+$afterListFn = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterListFn) -ne $null) { Write-Host "FAIL: list --type left document windows behind"; $failures++ }
+else { Write-Host "ok: list --type Function returned only Function items" }
+
+# --- list: human output (one line per item + summary) ------------------------
+$before = Get-DocTitlesNormalized
+$listHumanOut = Invoke-Tsdevctl @("list")
+$listHumanExit = $LASTEXITCODE
+if ($listHumanExit -ne 0) { Write-Host "FAIL: list (human) expected exit 0"; $failures++ }
+$listHuman = @($listHumanOut)
+if ($listHuman.Count -lt 2) { Write-Host "FAIL: list (human) expected item lines plus a summary line"; $failures++ }
+if ($listHuman.Count -ge 1 -and $listHuman[-1] -notmatch '^list: \d+ item\(s\) \(pid \d+, \d+ ms\)$') {
+    Write-Host "FAIL: list (human) summary line malformed: '$($listHuman[-1])'"; $failures++
+}
+if ($listHuman.Count -ge 2) {
+    # Item line: "<Type>  <name>" plus "  (ProgId: <progid>)" when non-empty
+    # (two-space separators; the type label may contain spaces itself).
+    $first = $listHuman[0]
+    if (($first -notmatch '  \(ProgId: .+\)$') -and ($first -notmatch '  \S')) {
+        Write-Host "FAIL: list (human) item line malformed: '$first'"; $failures++
+    }
+}
+$crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after list (human)"; $failures++ }
+$afterListHuman = Get-DocTitlesNormalized
+if ((Compare-Object $before $afterListHuman) -ne $null) { Write-Host "FAIL: list (human) left document windows behind"; $failures++ }
+else { Write-Host "ok: list (human) emitted $($listHuman.Count - 1) item lines + summary" }
+
+# --- list: usage errors -------------------------------------------------------
+$listNameOut = Invoke-Tsdevctl @("list", "--name", "X", "--json")
+$listNameExit = $LASTEXITCODE
+if ($listNameExit -ne 2) { Write-Host "FAIL: list --name expected exit 2 (Usage)"; $failures++ }
+else { Write-Host "ok: list --name rejected with Usage (exit 2)" }
+$listBadTypeOut = Invoke-Tsdevctl @("list", "--type", "PaintBar", "--json")
+$listBadTypeExit = $LASTEXITCODE
+if ($listBadTypeExit -ne 2) { Write-Host "FAIL: list --type PaintBar expected exit 2 (Usage)"; $failures++ }
+else { Write-Host "ok: list --type PaintBar rejected with Usage (exit 2)" }
+
 # --- getsrc: decrypt verification probe (informational) ---------------------
 # TSDev decrypts encrypted/protected items when rendering them in the editor.
 # getsrc reads the editor text, so it inherits TSDev's decryption. This probe

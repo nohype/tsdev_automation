@@ -84,3 +84,37 @@ std::wstring make_result_json(const OpResult& r) {
     json += L"}";
     return json;
 }
+
+std::wstring make_list_result_json(const OpResult& r, const std::vector<ListItem>& items) {
+    std::wstring json = L"{\"ok\":";
+    json += r.ok ? L"true" : L"false";
+    json += L",\"op\":\"" + json_escape(r.op) + L"\"";
+    // type is null when no --type filter was given (r.type empty).
+    if (r.type.empty()) {
+        json += L",\"type\":null";
+    } else {
+        json += L",\"type\":\"" + json_escape(r.type) + L"\"";
+    }
+    json += L",\"count\":" + std::to_wstring(items.size());
+    json += L",\"items\":[";
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i != 0) json += L",";
+        json += L"{\"name\":\"" + json_escape(items[i].name) + L"\"";
+        json += L",\"type\":\"" + json_escape(items[i].type) + L"\"";
+        json += L",\"prog_id\":\"" + json_escape(items[i].prog_id) + L"\"}";
+    }
+    json += L"]";
+    json += L",\"tsdev_pid\":";
+    json += r.has_pid ? std::to_wstring(r.pid) : L"null";
+    json += L",\"elapsed_ms\":" + std::to_wstring(r.elapsed_ms);
+    json += L",\"error\":";
+    if (r.error_code == 0) {
+        json += L"null";
+    } else {
+        json += L"{\"code\":" + std::to_wstring(r.error_code);
+        json += L",\"name\":\"" + json_escape(r.error_name) + L"\"";
+        json += L",\"message\":\"" + json_escape(r.error_message) + L"\"}";
+    }
+    json += L"}";
+    return json;
+}

@@ -32,5 +32,8 @@ add_library(delete_hook SHARED src/delete_hook/dllmain.cpp)
 target_include_directories(delete_hook PRIVATE src/delete_hook)
 target_link_libraries(delete_hook PRIVATE user32)
 
+add_library(enum_hook SHARED src/enum_hook/dllmain.cpp)
+target_include_directories(enum_hook PRIVATE src/enum_hook)
+
 add_executable(test_tsdevctl_units tests/test_tsdevctl_units.cpp)
 target_link_libraries(test_tsdevctl_units PRIVATE tsdevlib)

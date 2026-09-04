@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 std::wstring json_escape(const std::wstring& value);
 std::string to_utf8(const std::wstring& value);
@@ -27,3 +28,18 @@ struct OpResult {
 };
 
 std::wstring make_result_json(const OpResult& result);
+
+// One enumerated library item (list verb). type is the resolved type label
+// (TSDev's own category-table label, or the stable numeric fallback).
+struct ListItem {
+    std::wstring name;
+    std::wstring type;
+    std::wstring prog_id;
+};
+
+// List-result JSON (hand-rolled, same approach as make_result_json):
+// {"ok":..,"op":"list","type":"<Type>"|null,"count":N,
+//  "items":[{"name":..,"type":..,"prog_id":..},...],
+//  "tsdev_pid":..,"elapsed_ms":..,"error":..}
+// r.type empty (no --type filter) emits "type":null; count == items.size().
+std::wstring make_list_result_json(const OpResult& result, const std::vector<ListItem>& items);

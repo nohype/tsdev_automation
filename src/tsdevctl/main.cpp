@@ -7,11 +7,13 @@
 #include "tsdevlib/exit_codes.h"
 #include "tsdevlib/inject.h"
 #include "tsdevlib/json_writer.h"
+#include "tsdevlib/list_types.h"
 #include "tsdevlib/pipe_client.h"
 #include "tsdevlib/tsdev_process.h"
 #include "tsdevlib/window_watch.h"
 
 #include "../delete_hook/shared.h"
+#include "../enum_hook/shared.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -612,6 +614,18 @@ bool read_source_file(const std::wstring& path, std::wstring& text, std::wstring
 static const char* kTsdevKnownSha256 =
     "9099AA600F0A035C0290107EB1852CD61690330C53B14C9F9D01899395DCAF9A";
 
+// Known ORELUI20.dll SHA-256 for the build whose non-exported enumeration
+// surfaces are computed in the enum hook DLL (module base + 0x44820 for the
+// CAnalysisTypeInfo ctor, module base + 0x8fd04 for the 13-entry
+// type-category table — both VERSION-BRITTLE). The list verb verifies this
+// hash before injecting so a mismatched build fails cleanly (exit 10)
+// instead of using wrong offsets inside TSDev.
+// Computed from the verified installation:
+//   C:\Program Files (x86)\TradeStation 9.5\Program\ORELUI20.dll
+//   (1,184,248 bytes, build Nov 30 2018; Get-FileHash, 2026-09-04).
+static const char* kOreluiKnownSha256 =
+    "EAE56C50731798484A66EAF6B7F8B8818F355E1956107FB1E12CB5529853B79F";
+
 // Computes the SHA-256 hash of a file and returns it as an uppercase hex
 // string. Returns an empty string on failure.
 std::wstring compute_file_sha256(const std::wstring& path) {
@@ -911,6 +925,239 @@ int run_delete(const Options& opts) {
     result.ok = true;
     result.elapsed_ms = elapsed_ms();
     emit(opts, result);
+    if (session.process) CloseHandle(session.process);
+    return static_cast<int>(Exit::Ok);
+}
+
+// Derives the enum_hook.dll path from the executable's directory (the DLL
+// sits next to tsdevctl.exe, like delete_hook.dll).
+std::wstring get_enum_dll_path() {
+    wchar_t exe_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::wstring p = exe_path;
+    const size_t slash = p.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return L"enum_hook.dll";
+    return p.substr(0, slash + 1) + L"enum_hook.dll";
+}
+
+// Emits the list result: JSON (machine) or one human line per item plus a
+// summary count line.
+void emit_list(const Options& opts, const OpResult& result, const std::vector<ListItem>& items) {
+    if (opts.json) {
+        std::cout << to_utf8(make_list_result_json(result, items)) << "\n";
+        std::cout.flush();
+        return;
+    }
+    for (const ListItem& item : items) {
+        std::wstring line = item.type + L"  " + item.name;
+        if (!item.prog_id.empty()) line += L"  (ProgId: " + item.prog_id + L")";
+        std::cout << to_utf8(line) << "\n";
+    }
+    std::wstring summary = result.op + L": ";
+    if (result.ok) {
+        summary += std::to_wstring(items.size()) + L" item(s)";
+    } else {
+        summary += L"failed";
+    }
+    if (result.has_pid && result.ok) {
+        summary += L" (pid " + std::to_wstring(result.pid) +
+                   L", " + std::to_wstring(result.elapsed_ms) + L" ms)";
+    }
+    if (result.error_code != 0)
+        summary += L" [" + std::to_wstring(result.error_code) + L" " + result.error_name + L"] " + result.error_message;
+    std::cout << to_utf8(summary) << "\n";
+    std::cout.flush();
+}
+
+int run_list(const Options& opts) {
+    OpResult result;
+    result.op = L"list";
+    result.type = opts.type;  // empty (no --type) → "type":null in JSON
+    Session session;
+    std::vector<ListItem> items;
+    const auto started = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&] {
+        return static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+                .count());
+    };
+    auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
+        hide_if_launched(opts, session);
+        if (session.process) {
+            CloseHandle(session.process);
+            session.process = nullptr;
+        }
+        result.ok = false;
+        result.error_code = static_cast<int>(code);
+        result.error_name = name;
+        result.error_message = message;
+        result.elapsed_ms = elapsed_ms();
+        emit_list(opts, result, items);
+        return static_cast<int>(code);
+    };
+
+    BusyGuard busy = BusyGuard::acquire();
+    if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
+
+    if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    const Exit ready = ensure_tsdev_ready(opts, result, session);
+    if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
+
+    // Version-brittle guard: the enum hook computes two NON-exported surfaces
+    // from the ORELUI20.dll module base (offsets 0x44820 and 0x8fd04), which
+    // are specific to the verified build. Verify the DLL's SHA-256 before
+    // injecting so a mismatched build fails cleanly instead of crashing TSDev.
+    const std::wstring tsdev_exe = locate_tsdev_exe(opts.ts_path);
+    if (tsdev_exe.empty())
+        return fail(Exit::Unexpected, L"tsdev_not_found",
+                    L"cannot locate TSDev.exe for version verification");
+    const size_t exe_slash = tsdev_exe.find_last_of(L'\\');
+    const std::wstring orelui_path = exe_slash == std::wstring::npos
+        ? std::wstring(L"ORELUI20.dll")
+        : tsdev_exe.substr(0, exe_slash + 1) + L"ORELUI20.dll";
+    const std::wstring orelui_hash = compute_file_sha256(orelui_path);
+    if (orelui_hash.empty())
+        return fail(Exit::Unexpected, L"hash_check_failed",
+                    L"cannot compute ORELUI20.dll SHA-256 hash (expected next to TSDev.exe)");
+    if (orelui_hash != from_utf8(kOreluiKnownSha256)) {
+        return fail(Exit::Unexpected, L"version_mismatch",
+                    L"ORELUI20.dll SHA-256 mismatch (expected " + from_utf8(kOreluiKnownSha256) +
+                    L", got " + orelui_hash + L") — enumeration offsets are version-specific");
+    }
+
+    // Set up shared memory and completion event for the injected DLL.
+    const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
+    const std::wstring map_name = L"Local\\TSDevAutomation.Enum." + std::to_wstring(session.pid);
+    const std::wstring event_name = L"Local\\TSDevAutomation.EnumDone." + std::to_wstring(session.pid);
+
+    const HANDLE done_event = CreateEventW(nullptr, FALSE, FALSE, event_name.c_str());
+    if (!done_event) return fail(Exit::Unexpected, L"event_create_failed", L"CreateEventW failed");
+
+    const HANDLE mapping = CreateFileMappingW(
+        INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(EnumShared), map_name.c_str());
+    if (!mapping) {
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"mapping_create_failed", L"CreateFileMappingW failed");
+    }
+    auto* shared = static_cast<EnumShared*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(EnumShared)));
+    if (!shared) {
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"map_view_failed", L"MapViewOfFile failed");
+    }
+    memset(shared, 0, sizeof(EnumShared));
+
+    // Inject the DLL, then call RunEnum via CreateRemoteThread. The
+    // enumeration runs inside the remote thread; completion is governed by
+    // the done-event wait below (not the remote-thread exit code alone).
+    const std::wstring dll_path = get_enum_dll_path();
+    unsigned long remote_base = 0;
+    std::wstring inject_error;
+    if (!inject_dll(session.pid, dll_path, remote_base, inject_error)) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"injection_failed", inject_error);
+    }
+
+    const unsigned long run_enum_rva = get_export_rva(dll_path, "RunEnum");
+    if (run_enum_rva == 0) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"runenum_not_found",
+                    L"could not find RunEnum export RVA in enum_hook.dll");
+    }
+    void* remote_run_enum = reinterpret_cast<void*>(remote_base + run_enum_rva);
+
+    std::wstring call_error;
+    if (!call_remote_function(session.pid, remote_run_enum, call_error)) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"enum_start_failed", call_error);
+    }
+
+    // Wait for the DLL to signal completion, checking dialogs and crashes
+    // while waiting (no pipe use — the enumeration is in-process).
+    const auto wait_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    DWORD wait_result = WAIT_TIMEOUT;
+    bool process_died = false;
+    for (;;) {
+        const DWORD remaining = opts.timeouts_disabled
+            ? INFINITE
+            : static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                  wait_deadline - std::chrono::steady_clock::now()).count());
+        if (!opts.timeouts_disabled && remaining == 0) { wait_result = WAIT_TIMEOUT; break; }
+        wait_result = WaitForSingleObject(done_event, remaining);
+        if (wait_result == WAIT_OBJECT_0) break;
+        if (wait_result == WAIT_FAILED) break;
+        // WAIT_TIMEOUT: check for a crash, an error dialog, or process death
+        // before reporting the timeout.
+        if (!process_alive(session.pid)) { process_died = true; break; }
+        if (crash_report_running()) { wait_result = WAIT_TIMEOUT; break; }
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+        if (!dialog_text.empty()) { wait_result = WAIT_TIMEOUT; break; }
+    }
+
+    // Read the results from shared memory.
+    const long status = shared->status;
+    const long crash_flag = shared->crash_flag;
+    const long truncated_flag = shared->truncated_flag;
+    long count = shared->count;
+    const long capacity = static_cast<long>(sizeof(EnumShared::records) / sizeof(EnumRecord));
+    if (count < 0 || count > capacity) count = 0;  // corrupt header — fail below via status
+
+    if (wait_result == WAIT_OBJECT_0 && status == EnumDone && crash_flag == 0 && truncated_flag == 0) {
+        for (long i = 0; i < count; ++i) {
+            const EnumRecord& rec = shared->records[i];
+            if (opts.type_number >= 0 &&
+                !list_record_matches(rec.category, rec.subtype, opts.type_number)) {
+                continue;
+            }
+            ListItem item;
+            item.name = rec.name;
+            item.prog_id = rec.progid;
+            item.type = list_type_label(rec.category, rec.subtype);
+            items.push_back(item);
+        }
+    }
+
+    UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+    CloseHandle(done_event);
+
+    if (process_died)
+        return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited during the enumeration");
+    if (wait_result == WAIT_TIMEOUT)
+        return fail(Exit::Timeout, L"timeout", L"enumeration did not complete within the timeout");
+    if (wait_result == WAIT_FAILED)
+        return fail(Exit::Unexpected, L"wait_failed", L"WaitForSingleObject failed for the done event");
+    if (crash_report_running())
+        return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected after list");
+    if (!process_alive(session.pid))
+        return fail(Exit::Crashed, L"tsdev_died", L"TSDev exited after the enumeration");
+    if (crash_flag)
+        return fail(Exit::Crashed, L"enum_crashed", L"an exception occurred inside the enumeration");
+    if (status != EnumDone)
+        return fail(Exit::Unexpected, L"enum_error", L"the enumeration reported an error");
+    if (truncated_flag)
+        return fail(Exit::Unexpected, L"truncated",
+                    L"the enumeration exceeded the record capacity or a stored name/ProgId "
+                    L"exceeds 255 characters; results are not reported (no silent truncation)");
+
+    // Check for error dialogs after the operation (mandatory rule).
+    const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
+    if (!dialog_text.empty())
+        return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
+
+    hide_if_launched(opts, session);
+    result.ok = true;
+    result.elapsed_ms = elapsed_ms();
+    emit_list(opts, result, items);
     if (session.process) CloseHandle(session.process);
     return static_cast<int>(Exit::Ok);
 }
@@ -1813,5 +2060,6 @@ int wmain(int argc, wchar_t** argv) {
     if (opts.verb == L"insert") return run_insert(opts);
     if (opts.verb == L"modify") return run_modify(opts);
     if (opts.verb == L"delete") return run_delete(opts);
+    if (opts.verb == L"list") return run_list(opts);
     return run_open(opts);
 }
