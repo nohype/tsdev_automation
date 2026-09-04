@@ -30,14 +30,16 @@ paths, and process rules live in AGENTS.md).
   gate PASSED (all 5 R13 types clean insert/modify/delete, zero dialogs, no
   regression). No production code changed. See "TVS #7 research findings"
   below and `docs/RE_ORELUI20.md` (final deliverable).
-- **TVS #8 SCOPED (PM session 2, 2026-09-04): `tsdevctl list` via ORELUI20.dll
-  in-process enumeration.** Every scope premise verified against the repo
-  (list verb absent; delete_hook/injection/exit-code/test/RE-doc facts
-  confirmed). Adversarial review: APPROVED (round 1 DISAPPROVED — 2 blocking
-  + 4 non-blocking findings, all fixed; round 2 APPROVED — its one
-  non-blocking finding [stale nlohmann path] fixed). Exact scope: "TVS #8"
-  section below. Next team
-  implements it; do NOT re-plan TVS #7 and do NOT re-run its A–E subtasks.
+- **TVS #8 SCOPED + RE-VERIFIED (PM sessions 2–3, 2026-09-04): `tsdevctl list`
+  via ORELUI20.dll in-process enumeration.** PM session 3 re-verified every
+  scope premise against the repo at HEAD bbf8226 (independent subagent
+  audit): all 16 premises PASS; scope CONFIRMED unchanged; 4 implementation
+  notes added to the "TVS #8" section. Adversarial review: PM session 2 —
+  round 1 DISAPPROVED (2 blocking + 4 non-blocking, all fixed), round 2
+  APPROVED (its one non-blocking finding [stale nlohmann path] fixed);
+  PM session 3 — addendum review APPROVED (0 blocking; 2 cosmetic rewords
+  applied). Exact scope: "TVS #8" section below. Next team implements it;
+  do NOT re-plan TVS #7 and do NOT re-run its A–E subtasks.
 - Ghidra: project `tsdev`, programs `/TSDev.exe` and `/ORELUI20.dll` open,
   MCP bridge connected (restart via the headless analyzer if stale). Frida
   17.17.0 available for RE/research only — NOT for production (users don't
@@ -282,6 +284,40 @@ OUT OF SCOPE (keep it minimal — separate TVSs):
 - Batch/manifest/stdin for `list` (R4 is cross-cutting; separate TVS).
 - Python package wiring (R1; CLI-first like TVSs 1–6; later cross-cutting TVS).
 
+### Implementation notes (PM session 3 premise re-verification — all 16 premises PASS at HEAD bbf8226)
+
+Implementer-facing precision notes; they add no new requirements (each open
+choice is explicitly the implementer's call):
+
+1. Mapping/event name constants are NOT centralized: `Local\TSDevAutomation.
+   Delete[Done].<pid>` are duplicated string literals in `main.cpp:730-731`
+   and `delete_hook/dllmain.cpp:297,309` (`delete_hook/shared.h:8-17` holds
+   only the struct + crash flag). `enum_hook`'s `Local\TSDevAutomation.
+   Enum[Done].<pid>` names follow the same two-sided convention — keep both
+   sides in sync (or centralize); implementer's call.
+2. `call_remote_function` (`src/tsdevlib/inject.cpp:74`) invokes the remote
+   entry parameterless (`lpParameter = nullptr`) and treats a 0 remote exit
+   code as failure — exactly the contract the scope's remote-entry return
+   contract already specifies (no params; nonzero = setup OK; results via
+   the file mapping; completion governed by the done-event wait). No
+   `inject.cpp` changes needed; ordinal resolution (Ordinal_17/1291/166 via
+   `GetProcAddress(hMod, MAKEINTRESOURCEA(n))`) happens inside the DLL.
+3. `tests/run_e2e.ps1` has NO reusable dialog-check helper: TSCrashReport
+   checks are repeated inline `Get-Process -Name TSCrashReport` snippets;
+   TSDev error-dialog detection rides on the CLI's own exit code 7 / JSON
+   error output. Replicate the inline pattern (or extract a helper) for the
+   list scenarios — implementer's call.
+4. The live build hand-rolls JSON in `src/tsdevlib/json_writer.cpp` (which
+   owns `OpResult` + `make_result_json`); nlohmann exists only under
+   `archive/third_party/` and is unused by the current build. Prefer
+   extending the existing hand-rolled JSON approach for the list result;
+   re-vendoring nlohmann remains allowed per the scope but is likely
+   unnecessary.
+5. When mirroring `run_delete`'s pattern, mirror ONLY the mapping/inject/
+   wait/dialog-check portion — NOT the post-wait delete-specific steps
+   (restart-on-crash, exists-verify via open-read-close); the list flow is
+   "read records → filter → emit" with no pipe use, per the scope.
+
 ### Acceptance gate (mandatory, AGENTS.md)
 - `tests/run_unit_tests.ps1` passes (cmake -A Win32; CI builds without
   TradeStation).
@@ -291,11 +327,13 @@ OUT OF SCOPE (keep it minimal — separate TVSs):
   items.
 
 ### Handoff
-This session = PM scoping only (premises repo-verified; adversarial review
-APPROVED — round-1 blocking findings fixed, round-2 non-blocking finding
-fixed). No execution. The
-next team implements TVS #8 (TDD red-green), then runs the acceptance gate.
-If the recorded Strategy insert timeout reproduces during the gate's
+This session = PM scope re-verification + finalization (PM session 3). PM
+session 2 scoped the TVS and got it review-approved; PM session 3
+independently re-verified all 16 scope premises against HEAD bbf8226 (all
+PASS), confirmed the scope unchanged, and added the implementation notes
+above (adversarial review of the notes: APPROVED, 0 blocking). No execution.
+The next team implements TVS #8 (TDD red-green), then runs the acceptance
+gate. If the recorded Strategy insert timeout reproduces during the gate's
 insert/modify/delete regression: STOP and escalate to the PM — do NOT
 expand TVS #8 scope to fix it (it is a recorded SSOT bug, out of scope
 here). Do NOT re-plan TVS #7 (research is done); do NOT expand scope.
