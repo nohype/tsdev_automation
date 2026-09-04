@@ -14,48 +14,30 @@ paths, and process rules live in AGENTS.md).
 - **TVS #4 DONE (commit 35976b4): `tsdevctl insert`** — the first write operation.
 - **TVS #5 DONE (commit 4d96592): `tsdevctl modify`** — replace source + reverify.
 - **Quiet-UX + foundation fixes DONE (commit 27f6412).**
-- **TVS #6 DONE (this commit): `tsdevctl delete`** — destructor-path library deletion.
-  - **Implementation:** DLL injection into TSDev.exe. Inline hook on
-    `FUN_004944b0` (document open). On target match, sets up the three
-    conditions the CELDocument destructor requires to call `FUN_0044c0f0`
-    (library deletion): (1) calls `vtable[0x1F4]` (loader) to set
-    `doc+0x174=1`, (2) calls `vtable[0x1B4]` (clear-saved) to make `IsSaved`
-    return false, (3) sets `doc+0x17C=1` (modified). Then calls
-    `vtable[0x8c]` (OnCloseDocument) — the destructor handles library deletion
-    during close, after editor views are destroyed. This satisfies the
-    "documents must be closed before deletion" requirement.
-  - **TradingApp fix:** `CELApplicationDoc`'s vtable[0x1B4] is an empty stub
-    (`FUN_00413900`). For TradingApp (type `0x1402`), the hook calls
-    `FUN_0044f3d0` (common clear-saved helper) directly. See
-    `docs/RE_DELETE_TRADINGAPP.md`.
-  - **Re-injection fix:** PE export RVA parsing for `ReArmHook` address
-    resolution. The previous local-DLL-load approach was unreliable under ASLR
-    (DLL rebases differently in CLI vs TSDev). The PE parser reads the export
-    RVA from the DLL file on disk; `remote_base + RVA` is always correct.
-  - **Restored session documents:** TSDev restores 30+ previous-session
-    documents on launch. These cause the delete hook's `OnCloseDocument` to
-    crash with `0xc000041d` (STATUS_FATAL_USER_CALLBACK_ERROR in mfc140u.dll),
-    bypassing `__try/__except`. The E2E script closes all restored documents
-    via WM_CLOSE before operations. The delete implementation itself does NOT
-    manage restored documents — callers that launch TSDev should be aware.
-  - **Research:** exhaustive RE investigation found no higher-level deletion
-    API. The UI delete command (`0x80e8`) does NOT delete Function items. No
-    pipe command, exported function, or name-string-accepting delete function
-    exists. A "pipe-open + modify + activate + close-without-saving" approach
-    is NOT viable (two of three destructor conditions have no high-level
-    trigger). See `docs/RE_DELETE_UI_FLOW.md`, `docs/RE_DELETE_VIEW_ACTIVATION.md`.
-  - **Adversarial reviews:** 2 review cycles. First review (implementation):
-    DISAPPROVE → fixed dead code, re-entry guard, error-path document cleanup.
-    Second review (view-activation research): APPROVED with vtable[0x6c]
-    correction applied to `RE_DELETE_UI_FLOW.md`.
-  - **E2E (live, elevated, real TSDev):** all 5 R13 types passed
-    (Function, Strategy, Indicator, TradingApp, ShowMe). Each: insert →
-    exists → delete → verify gone. Nonexistent delete → exit 1. No crash
-    dialogs. TSDev restarted (graceful WM_CLOSE) between types to prevent
-    pipe-wedge. ShowMe does NOT crash when restored documents are closed first.
-  - **KB updated:** delete section in `docs/KNOWLEDGE_BASE.md` updated to
-    reflect the destructor-path mechanism, TradingApp fix, and new
-    version-specific addresses.
+- **TVS #6 DONE (commit 67ac757): `tsdevctl delete`** — destructor-path library
+  deletion. **TEMPORARY — to be replaced.**
+  - **Current implementation:** DLL injection into TSDev.exe. Inline hook on
+    `FUN_004944b0` (document open). On target match, artificially sets up the
+    three conditions the CELDocument destructor requires to call `FUN_0044c0f0`
+    (library deletion), then calls `OnCloseDocument`. This satisfies the
+    "documents must be closed before deletion" requirement but operates at a
+    low abstraction level (7 binary-internal coupling points: 3 vtable offsets,
+    2 struct offsets, 2 function addresses).
+  - **Why it's temporary:** the real UI delete path is in `ORELUI20.dll` (the
+    Open dialog's Delete button — works for all types including Functions,
+    deletes at the library-record level, no document-state manipulation needed).
+    This path was unreachable under the old constraint (d) which prohibited
+    touching orlib DLLs. Constraint (d) has now been relaxed to allow
+    calling/hooking functions in any module loaded within the TSDev.exe
+    process. The delete should be reimplemented to use the `ORELUI20.dll` path.
+    See `docs/RE_DELETE_OPEN_DIALOG.md`.
+  - **E2E passed** for all 5 R13 types with the current destructor-path
+    approach. The replacement must pass the same E2E.
+- **Constraint (d) relaxed (this commit):** the process boundary is now the
+  safety boundary. Code injected into the TSDev.exe process may call and hook
+  functions in any module loaded into that process (`ORELUI20.dll`,
+  `ORLIB20.dll`, `mfc140u.dll`, etc.). Separate processes remain off-limits.
+  This unblocks higher-level paths for delete and list.
 - Test items from earlier E2E runs may remain in the library (leftover from
   failed runs before the restored-docs fix). These are test artifacts with
   `E2eDel_*` / `E2eModify_*` prefixes. They do not interfere with new
@@ -66,7 +48,25 @@ paths, and process rules live in AGENTS.md).
 
 ## Next TVS for the next team (PM-set, 2026-09-04)
 
-**Recommended: `tsdevctl upsert`** (insert-or-modify, both proven). Then `list`
-(requires the item-enumeration mechanism, which has no external trigger yet —
-KB: the Open dialog's enumeration is inside ORELUI20.dll, out of scope; a new
-enumeration mechanism is needed, possibly via injection).
+**Priority 1: Reimplement `tsdevctl delete` via the `ORELUI20.dll` path.**
+The current destructor-path approach is temporary. The Open dialog's Delete
+button (`CELFileOpenDialog` in `ORELUI20.dll`) deletes at the library-record
+level and works for all types including Functions — no document-state
+manipulation needed. Research needed: find the `ORELUI20.dll` function that
+performs the delete (likely calls `ORLIB20.dll`'s `_SetSigDeleted` directly),
+determine its calling convention and parameters, and call it from injected
+code. This replaces 7 binary-internal coupling points with what should be a
+single function call. See `docs/RE_DELETE_OPEN_DIALOG.md` for the TSDev.exe
+side of the analysis (the `ORELUI20.dll` side is new RE work).
+
+**Priority 2: `tsdevctl list` via `ORELUI20.dll` enumeration.**
+The Open dialog enumerates all items internally in `ORELUI20.dll`. Now that
+we can call into loaded modules, the enumeration mechanism is reachable.
+Research needed: find the enumeration function in `ORELUI20.dll`, determine
+how to iterate all items (or items per type), and extract verbatim stored
+names and ProgIds. This also enables verbatim-name and ProgId output in
+`exists`. See `docs/RE_DELETE_OPEN_DIALOG.md` §6 for the TSDev.exe-side
+analysis of what `CELFileOpenDialog` exposes.
+
+**Priority 3: `tsdevctl upsert`** (insert-or-modify, both proven — no new
+mechanism needed).
