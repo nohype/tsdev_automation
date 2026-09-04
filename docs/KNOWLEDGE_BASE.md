@@ -1,6 +1,6 @@
 # TSDev.exe Knowledge Base
 
-Authoritative knowledge base of discovered facts about **TSDev.exe** only. Current proven knowledge only: every statement cites its evidence; no assumptions, conclusions, history, or unevidenced claims. Scope is TSDev.exe exclusively — per `AGENTS.md`, no other binary or process is in scope, and facts about other binaries do not belong here. All addresses are from TSDev 9.5 and are version-specific.
+Authoritative knowledge base of discovered facts about **TSDev.exe and modules loaded in the TSDev.exe process** (`ORELUI20.dll`, `ORLIB20.dll`, `mfc140u.dll`, etc. — per the relaxed constraint (d), these share TSDev.exe's address space and are in scope). Current proven knowledge only: every statement cites its evidence; no assumptions, conclusions, history, or unevidenced claims. Separate processes are out of scope (per `AGENTS.md` constraint (d)). All addresses are from TSDev 9.5 (build Nov 30 2018) and are version-specific.
 
 The UI save path below is the definition of "the same verify (compile + save) code path the UI triggers" that the automation drives.
 
@@ -318,3 +318,207 @@ The dependent recalc itself executes outside TSDev.exe; these are distilled end-
 - An open TradingApp WinForms form reinitializes immediately when the TradingApp itself or a caller Function is modified.
 
 Evidence: user-confirmed runtime observation.
+
+---
+
+## ORELUI20.dll + ORLIB20.dll ordinals (enumeration + delete, TVS #7)
+
+Proven facts about `ORELUI20.dll` and the `ORLIB20.dll` ordinals reached via
+it, from TVS #7 (static RE + Frida dynamic verification, 2026-09-04). Full
+reasoning + evidence appendix in `docs/RE_ORELUI20.md`; working inputs in
+`docs/RE_ORELUI20_STATIC.md` (subtask A) and `docs/RE_ORELUI20_DYNAMIC.md`
+(subtask B). This section is the SSOT for these facts.
+
+**Module base:** `ORELUI20.dll` static/image base `0x10000000` (analyzed
+image); runtime base varies with ASLR (Frida-observed `0x01a00000`).
+Production code must resolve the base at runtime, not hardcode it. All
+addresses below are image-relative (add runtime base).
+
+### Enumeration surface (`CELFileOpenDialog` + `LoadList`)
+
+- **`CELFileOpenDialog`** is a C++ class exported from `ORELUI20.dll` by
+  ordinal (76 member methods resolved; all exported by ordinal). Key exported
+  surfaces:
+
+  | Method | Ordinal | Address | Signature |
+  |--------|---------|---------|-----------|
+  | Constructor (all-types) | Ordinal_17 | `0x1000f2f0` | `__thiscall CELFileOpenDialog(this, map<string,long>*, CWnd*)` |
+  | Destructor | Ordinal_166 | `0x1000fad0` | `__thiscall ~CELFileOpenDialog(this)` |
+  | `LoadList` | Ordinal_1291 | `0x10012290` | `__thiscall void LoadList(this, int packedType, CAnalysisTypeInfo*)` |
+
+  Evidence: A §1.1 (`list_class_members` + `get_xrefs_to` "Entry Point"
+  EXTERNAL refs + Ordinal_XXX labels).
+
+- **Headless construction works (Frida-verified):** a `CELFileOpenDialog`
+  constructed via Ordinal_17 with a NULL `CWnd*` and an empty/zeroed map does
+  NOT crash and does NOT create a dialog window. `LoadList` does not touch any
+  UI control — it calls only `ORLIB20.dll` library functions and stores
+  results in the `CMapWordToPtr` at `this+0x3bc`. A live/`DoModal`'d dialog is
+  NOT required for enumeration. Evidence: B §2.8, §5.
+
+- **`LoadList` must be called per-type** with the packed type value from the
+  type-category table at `DAT_1008fd04` (13 entries, indices 0..12), NOT with
+  `type=0`. `type=0` does NOT bypass the power-type filter (`cati+0x04`).
+  This matches `InitLists`' iteration. Evidence: B §2.2.2 (correction to A's
+  static recipe).
+
+- **`CAnalysisTypeInfo` ctor = `FUN_10044820`** (`0x10044820`, **NOT exported**
+  — production code must use module base + offset `0x44820`; version-brittle
+  per purpose b). Signature: `__thiscall FUN_10044820(this, int category, int
+  subtype, int index)` — **4 params, not 1**. Populates `this+0x00`=category,
+  `this+0x04`=subtype (power-type filter), `this+0x08`=index,
+  `this+0x0c`=`CMapWordToPtr` (hash size 10). Evidence: B §2.2.1 (correction
+  to A's static recipe).
+
+- **`CMapWordToPtr` CAssoc layout is swapped** from standard MFC:
+  `{ pNext@0x00, value@0x04, key@0x08 }` (standard MFC is
+  `{ pNext@0x00, key@0x04, value@0x08 }`). With the standard layout "values"
+  read as garbage; with the swapped layout they are valid `CELTechInfo*`.
+  Walking code: `value = pAssoc->offset(0x04).readPointer()` (CELTechInfo*),
+  `key = pAssoc->offset(0x08).readU16()` (recordId). Evidence: B §2.2.3
+  (correction to A's static recipe).
+
+- **`CELTechInfo` record layout (0x44 = 68 bytes):**
+
+  | Offset | Type | Field |
+  |--------|------|-------|
+  | `+0x08` | `uint16` | category (type low byte) |
+  | `+0x0a` | `uint16` | subtype (type high byte) |
+  | `+0x0c` | `uint16` | record id |
+  | `+0x10` | `CString` | name (verbatim stored name, case-preserved) |
+  | `+0x1c` | `CString` | ProgId |
+  | `+0x40` | `void*` | info object pointer (ORLIB20 record handle) |
+
+  (Other fields at +0x00/+0x14/+0x18/+0x20/+0x28/+0x2c documented in A §1.3,
+  not needed for automation.) Evidence: A §1.3 (`FUN_10044b90` populator +
+  `FUN_10044960` ctor); B §2.4 (dynamically confirmed).
+
+- **Type-category table (`DAT_1008fd04`, 13 entries):** full type =
+  `(subtype << 8) | category`. `CELTechInfo+0x08` = category,
+  `CELTechInfo+0x0a` = subtype.
+
+  | Index | Packed | Category | Subtype | Type name |
+  |-------|--------|----------|---------|-----------|
+  | 0 | 0x1402 | 2 | 20 | TradingApp |
+  | 1 | 0x0002 | 2 | 0 | Indicator |
+  | 2 | 0x0502 | 2 | 5 | ShowMe |
+  | 3 | 0x0402 | 2 | 4 | PaintBar |
+  | 4 | 0x0a02 | 2 | 10 | VolatilityModel |
+  | 5 | 0x0c02 | 2 | 12 | PricingModel |
+  | 6 | 0x0e02 | 2 | 14 | BidAskModel |
+  | 7 | 0x1002 | 2 | 16 | SearchStrategy |
+  | 8 | 0x1202 | 2 | 18 | ProbabilityMap |
+  | 9 | 0x0000 | 0 | 0 | Strategy |
+  | 10 | 0x0003 | 3 | 0 | ActivityBar |
+  | 11 | 0x0001 | 1 | 0 | Function |
+  | 12 | 0x0004 | 4 | 0 | Function (built-in) |
+
+  Evidence: A §1.2 (`GetAnalysisTypeCount`=13, `InitLists` iterates 0..12);
+  B §2.3 (dynamically confirmed mapping).
+
+- **Verbatim-name preservation (Frida-verified):** names are stored verbatim
+  (case-preserved, no normalization). `FUN_10044b90` copies the name from
+  `FUN_1006cb30(info_obj)` directly into the `CString` at `CELTechInfo+0x10`
+  via `CString::operator=`. Mixed-case test item
+  `E2eTvs7_EnumFn_MixedCase` enumerated as exactly
+  `E2eTvs7_EnumFn_MixedCase`. Evidence: A §1.4; B §2.7.
+
+- **Enumeration dynamic verification (Frida-verified):** 2958 items
+  enumerated across 9 types (Strategy 1655, Function 92, Indicator 244,
+  ActivityBar 5, Function-built-in 852, PaintBar 29, ShowMe 65,
+  ProbabilityMap 2, TradingApp 14). 5 `E2eTvs7_Enum_*` test items found with
+  correct verbatim names + types + ProgIds. Evidence: B §2.5–2.6.
+
+### Delete routine (`DeleteItem`)
+
+- **`DeleteItem`** — exported by **ordinal 587 (0x24A)**, address
+  `0x10010dd0` (image base `0x10000000`). Calling convention `__thiscall`,
+  callee cleans (`RET 0x4`). Signature:
+  `bool __thiscall CELFileOpenDialog::DeleteItem(CELFileOpenDialog *this, CELTechInfo *item)`.
+  Evidence: A §2.1–2.2 (`get_xrefs_to` "Entry Point" + call from `OnDelete`
+  `0x10012a74`); B §3.1 (`dumpbin /EXPORTS ORELUI20.dll` →
+  `587  24A 00010DD0 ?DeleteItem@CELFileOpenDialog@@IAAE_NPAVCELTechInfo@@@Z`).
+
+- **Internal delegation (decompiled):** reads type (`item+0x08`), subtype
+  (`item+0x0a`), record id (`item+0x0c`); guard 1 — built-in function (type 4
+  && `this+0x278==0` → message box, return false); guard 2 — open in QE
+  (`GetFileOpenInQE()` → message box, return false); then
+  `Ordinal_59(parent_hwnd, type, id, 0)` (ORLIB20 ord 59, IAT `0x1008d850` —
+  library-record-level delete, internally handles record-id-to-handle lookup
+  and calls `_SetSigDeleted`) + `Ordinal_17(type, id)` (ORLIB20 ord 17, IAT
+  `0x1008d854` — cache refresh) + `DeleteTypeInfoItem` (internal list
+  cleanup); returns `true`. Evidence: A §2.3; B §3.2 (confirmed).
+
+- **`ORELUI20.dll` does NOT import `_SetSigDeleted@4`** — the delete is
+  performed by `Ordinal_59` (higher-level, takes `(HWND, ushort type, ushort
+  id, int reserved)`). The invocation recipe does NOT call `_SetSigDeleted`
+  directly. Evidence: A §2.4 (`list_external_locations` shows
+  `_IsSigDeleted@4` but NOT `_SetSigDeleted@4`).
+
+- **No document-state manipulation needed.** `DeleteItem` operates at the
+  library-record level (type + id → `ORLIB20.dll`), NOT through a TSDev
+  document object. The `doc+0x174`/`doc+0x17C` conditions that block the
+  tree-view delete path for Functions do NOT apply. This is the key advantage
+  over the current destructor-path delete (7 binary-internal coupling points).
+  Evidence: A §2.5; B §3.2.
+
+- **Preconditions:** (1) item must not be a built-in function (type 4) unless
+  developer mode active (`this+0x278 != 0`) — not an issue for user-created
+  items; (2) item must not be currently open in the Query Editor
+  (`GetFileOpenInQE` checks this — satisfied when documents are closed before
+  delete). Evidence: A §2.5; B §3.2.
+
+- **A live dialog is NOT required for delete (Frida-verified):** `DeleteItem`
+  operates on a `CELTechInfo*` and calls `ORLIB20.dll` directly. It uses
+  `this+0x20` (dialog HWND) as parent for error message boxes — NULL with a
+  non-windowed instance; does not crash when delete succeeds (no error box on
+  success). Evidence: B §3.4–3.6.
+
+- **Alternative direct path (not Frida-tested, documented as fallback):**
+  `Ordinal_59(NULL, type, recordId, 0)` + `Ordinal_17(type, recordId)` — both
+  stable `ORLIB20.dll` ordinal exports, no dialog instance needed. Requires
+  only type + record id from enumeration. Redundant with `DeleteItem` (which
+  already calls these and adds safety checks). Evidence: A §2.6; B §5
+  ("NOT TESTED — redundant").
+
+- **Delete dynamic verification (Frida-verified):** `DeleteItem` returned
+  `true` for Function, Indicator, ShowMe, TradingApp; all confirmed deleted
+  via re-enumeration (ShowMe + TradingApp also via `tsdevctl exists`=false).
+  Strategy NOT Frida-tested (tsdevctl insert timeout — production bug, see
+  below). Minimal bar exceeded (TradingApp + 3 others). Evidence: B §3.4–3.5.
+
+### Per-operation assessment (which operations benefit via ORELUI20.dll)
+
+| Op | Benefits? | Evidence |
+|----|-----------|----------|
+| `delete` | YES | `DeleteItem` (Ord 587) + `Ordinal_59` delete at library-record level, no document-state manipulation; Frida-verified 4 types incl. TradingApp. Replaces 7 destructor-path coupling points. |
+| `list` | YES | `LoadList` (Ord 1291) enumerates all items; `CELTechInfo` gives verbatim name + ProgId + type; Frida-verified 2958 items. |
+| `exists` | YES | Same enumeration surface; verbatim names enable exact case-sensitive matching; ProgIds available. |
+| `getsrc` | No | Enumeration provides metadata, not source content (source is document content via WM_GETTEXT). |
+| `insert` | No | No library-level insert/create routine in ORELUI20.dll. |
+| `modify` | No | Operates on document content, not library records. |
+| `upsert` | No (transitive) | Composition of insert/modify/exists; benefits transitively from exists robustification. |
+
+Evidence: A §3; B §7. This is the answer to the user question that motivated
+TVS #7.
+
+### Known issues (tsdevctl production bugs — NOT fixed in TVS #7, research only; flagged for next implementation TVS)
+
+> **production bug — not fixed in TVS #7 (research only); flagged for next
+> implementation TVS.**
+
+1. **`tsdevctl insert --type Strategy` timeout** (exit 6, "item did not open
+   within the timeout"). Observed during TVS #7 B delete-test item creation.
+   Possibly interfered with by an open Strategy document. No dialog/crash
+   during insert attempts. Blocked Frida-delete verification for Strategy.
+   Not a Frida issue. Evidence: B §3.3.
+2. **`tsdevctl exists` timeout for Function/Indicator** during B
+   delete-verification. Deletions confirmed via Frida re-enumeration instead.
+   Not a Frida issue. Evidence: B §3.4.
+3. **`tsdevctl delete --type Strategy` crash** — caused a `TSCrashReport`;
+   TSDev PID 3140 crashed. Not caused by Frida instrumentation (no
+   dialogs/crashes during any Frida operation). Must be fixed before the
+   production E2E gate. Evidence: B §4.
+
+Evidence: `docs/RE_ORELUI20_DYNAMIC.md` §3.3, §3.4, §4; `docs/RE_ORELUI20.md`
+§5.
