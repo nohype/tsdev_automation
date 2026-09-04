@@ -27,6 +27,12 @@ struct EnumShared {
     volatile long status;         // EnumStatus (set by DLL)
     volatile long crash_flag;     // 1 if an exception occurred (set by DLL)
     volatile long truncated_flag; // 1 if capacity/field truncation occurred (set by DLL)
+    // 1 if an implausible in-memory layout was encountered (implausible
+    // CString length or hash-table size — possible TradeStation version
+    // change or corruption). The enumeration stops and the CLI must fail the
+    // whole operation (exit 10) instead of reporting a partial list as
+    // complete. Distinct from truncated_flag so the CLI error is accurate.
+    volatile long layout_error_flag;
     EnumRecord records[8192];     // capacity 8192 (~8.4 MB; observed max 2958 items)
 };
 

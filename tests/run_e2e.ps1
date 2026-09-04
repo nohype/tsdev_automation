@@ -419,11 +419,31 @@ if ($listHuman.Count -ge 1 -and $listHuman[-1] -notmatch '^list: \d+ item\(s\) \
     Write-Host "FAIL: list (human) summary line malformed: '$($listHuman[-1])'"; $failures++
 }
 if ($listHuman.Count -ge 2) {
-    # Item line: "<Type>  <name>" plus "  (ProgId: <progid>)" when non-empty
-    # (two-space separators; the type label may contain spaces itself).
-    $first = $listHuman[0]
-    if (($first -notmatch '  \(ProgId: .+\)$') -and ($first -notmatch '  \S')) {
-        Write-Host "FAIL: list (human) item line malformed: '$first'"; $failures++
+    # Item line format: "<Type>  <name>" optionally followed by
+    # "  (ProgId: <progid>)" — two-space separators, and the leading type
+    # label must be one of TSDev's own category-table labels (or the stable
+    # numeric fallback). A malformed line must fail. Label list per the SSOT
+    # (docs/KNOWLEDGE_BASE.md, "ORELUI20.dll + ORLIB20.dll ordinals" table);
+    # parentheses are regex-escaped where the label contains them.
+    $typeLabels = @(
+        'TradingApp', 'Indicator', 'ShowMe', 'PaintBar', 'VolatilityModel',
+        'PricingModel', 'BidAskModel', 'SearchStrategy', 'ProbabilityMap',
+        'Strategy', 'ActivityBar', 'Function \(built-in\)', 'Function',
+        'Type\(0x[0-9A-Fa-f]{4}\)'
+    )
+    $labelPattern = $typeLabels -join '|'
+    $itemLineOk = $false
+    if ($listHuman[0] -match "^($labelPattern)  (.+)$") {
+        # The remainder is the plain name, or "<name>  (ProgId: <progid>)";
+        # a "(ProgId:" not introduced by the two-space separator form is
+        # malformed (and so is anything trailing the ProgId part).
+        $rest = $Matches[2]
+        if (($rest -match '^.+  \(ProgId: .+\)$') -or ($rest -notmatch '\(ProgId:')) {
+            $itemLineOk = $true
+        }
+    }
+    if (-not $itemLineOk) {
+        Write-Host "FAIL: list (human) item line malformed: '$($listHuman[0])'"; $failures++
     }
 }
 $crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue

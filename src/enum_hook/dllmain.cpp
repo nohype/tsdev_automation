@@ -76,8 +76,10 @@ bool read_cstring_field(const void* cstring_field, const wchar_t** out_data, siz
 }
 
 // Appends one CELTechInfo record to the shared mapping. Returns false when
-// the record capacity is exhausted (truncated_flag set; the caller stops and
-// still signals done).
+// the record capacity is exhausted (truncated_flag set) or the record's
+// CString layout is implausible (layout_error_flag set) — in both cases the
+// caller stops the enumeration and still signals done; the CLI then fails
+// the whole operation instead of reporting a partial list as complete.
 bool append_record(EnumShared* shared, const unsigned char* cel) {
     if (shared->count >= static_cast<long>(sizeof(EnumShared::records) / sizeof(EnumRecord))) {
         shared->truncated_flag = 1;
@@ -89,8 +91,14 @@ bool append_record(EnumShared* shared, const unsigned char* cel) {
     size_t progid_len = 0;
     // CELTechInfo layout (dynamically confirmed, KB): category@+0x08,
     // subtype@+0x0a, record id@+0x0c, name CString@+0x10, ProgId CString@+0x1c.
-    if (!read_cstring_field(cel + 0x10, &name, &name_len)) return false;
-    if (!read_cstring_field(cel + 0x1c, &progid, &progid_len)) return false;
+    if (!read_cstring_field(cel + 0x10, &name, &name_len)) {
+        shared->layout_error_flag = 1;
+        return false;
+    }
+    if (!read_cstring_field(cel + 0x1c, &progid, &progid_len)) {
+        shared->layout_error_flag = 1;
+        return false;
+    }
     EnumRecord& rec = shared->records[shared->count];
     bool truncated = copy_fixed_wstr(rec.name, sizeof(rec.name) / sizeof(rec.name[0]), name);
     truncated = copy_fixed_wstr(rec.progid, sizeof(rec.progid) / sizeof(rec.progid[0]), progid)
@@ -105,14 +113,19 @@ bool append_record(EnumShared* shared, const unsigned char* cel) {
 
 // Walks a populated CMapWordToPtr (at cati+0x0c) and appends every
 // CELTechInfo record. Returns false when the enumeration must stop
-// (capacity overflow or an implausible map/CString layout).
+// (capacity overflow, an implausible map layout, or an unreadable record);
+// every stop path sets truncated_flag or layout_error_flag so the CLI can
+// fail the operation instead of reporting a partial list as complete.
 bool walk_type_map(EnumShared* shared, const unsigned char* map) {
     // CMapWordToPtr layout: +0x00 vtable, +0x04 m_pHashTable (CAssoc**),
     // +0x08 m_nHashTableSize.
     void* const* hash_table = static_cast<void* const*>(*reinterpret_cast<void* const*>(map + 0x04));
     const unsigned long hash_size = *reinterpret_cast<const unsigned long*>(map + 0x08);
     if (!hash_table || hash_size == 0) return true;  // empty map: nothing to enumerate
-    if (hash_size > (1u << 20)) return false;        // implausible layout — refuse to walk
+    if (hash_size > (1u << 20)) {                    // implausible layout — refuse to walk
+        shared->layout_error_flag = 1;
+        return false;
+    }
     for (unsigned long i = 0; i < hash_size; ++i) {
         // Correction B-3: the CAssoc layout is SWAPPED from standard MFC —
         // { pNext@0x00, value@0x04 = CELTechInfo*, key@0x08 = recordId }.
@@ -161,6 +174,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI RunEnum(LPVOID) {
     shared->status = EnumPending;
     shared->crash_flag = 0;
     shared->truncated_flag = 0;
+    shared->layout_error_flag = 0;
 
     // Resolve ORELUI20.dll in-process (it is loaded into TSDev.exe; no
     // LoadLibrary — the module must already be present).

@@ -1087,11 +1087,18 @@ int run_list(const Options& opts) {
     DWORD wait_result = WAIT_TIMEOUT;
     bool process_died = false;
     for (;;) {
+        // Deadline check BEFORE computing the wait: once now >= deadline the
+        // loop must exit with the timeout error. Computing the wait first
+        // would wrap a negative (deadline - now) through the DWORD cast to
+        // ~49.7 days, overshooting the configured timeout.
+        if (!opts.timeouts_disabled && std::chrono::steady_clock::now() >= wait_deadline) {
+            wait_result = WAIT_TIMEOUT;
+            break;
+        }
         const DWORD remaining = opts.timeouts_disabled
             ? INFINITE
             : static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(
                   wait_deadline - std::chrono::steady_clock::now()).count());
-        if (!opts.timeouts_disabled && remaining == 0) { wait_result = WAIT_TIMEOUT; break; }
         wait_result = WaitForSingleObject(done_event, remaining);
         if (wait_result == WAIT_OBJECT_0) break;
         if (wait_result == WAIT_FAILED) break;
@@ -1107,11 +1114,13 @@ int run_list(const Options& opts) {
     const long status = shared->status;
     const long crash_flag = shared->crash_flag;
     const long truncated_flag = shared->truncated_flag;
+    const long layout_error_flag = shared->layout_error_flag;
     long count = shared->count;
     const long capacity = static_cast<long>(sizeof(EnumShared::records) / sizeof(EnumRecord));
     if (count < 0 || count > capacity) count = 0;  // corrupt header — fail below via status
 
-    if (wait_result == WAIT_OBJECT_0 && status == EnumDone && crash_flag == 0 && truncated_flag == 0) {
+    if (wait_result == WAIT_OBJECT_0 && status == EnumDone && crash_flag == 0 &&
+        truncated_flag == 0 && layout_error_flag == 0) {
         for (long i = 0; i < count; ++i) {
             const EnumRecord& rec = shared->records[i];
             if (opts.type_number >= 0 &&
@@ -1148,6 +1157,11 @@ int run_list(const Options& opts) {
         return fail(Exit::Unexpected, L"truncated",
                     L"the enumeration exceeded the record capacity or a stored name/ProgId "
                     L"exceeds 255 characters; results are not reported (no silent truncation)");
+    if (layout_error_flag)
+        return fail(Exit::Unexpected, L"enum_layout_error",
+                    L"the enumeration encountered an implausible in-memory layout "
+                    L"(possible TradeStation version change); results are not reported "
+                    L"(never emit a partial list as complete)");
 
     // Check for error dialogs after the operation (mandatory rule).
     const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before);
