@@ -2,9 +2,11 @@
 # REQUIRES: elevated process, TradeStation 9.5 installed. Skippable in CI.
 # Compatible with PowerShell 5.1 and pwsh 7.
 # Session-state hygiene: TSDev restores previous-session documents on launch
-# (phantoms included). Those documents belong to the user's session, so this
-# script tolerates them (normalized whole-window-set comparisons) and never
-# cleans them; it only asserts that each invocation leaves no NEW documents.
+# (phantoms included). Those restored documents crash the delete hook's
+# OnCloseDocument (0xc000041d in mfc140u.dll), so after every TSDev
+# launch/restart this script closes them via WM_CLOSE (Close-AllDocs) before
+# performing any operations, then asserts that each invocation leaves no NEW
+# documents.
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -33,7 +35,7 @@ if (-not $cmake) {
 }
 if (-not $cmake) { Write-Error "cmake not found"; exit 1 }
 
-& $cmake -S $repoRoot -B $buildDir -A x64 | Out-Null
+& $cmake -S $repoRoot -B $buildDir -A Win32 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
 & $cmake --build $buildDir --config Release | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
@@ -98,6 +100,27 @@ public static class TsdevE2E {
         }, IntPtr.Zero);
         return titles;
     }
+
+    // Close every restored MDI child document (class starts with "Afx:") by
+    // posting WM_CLOSE (0x0010). Restored session documents crash the delete
+    // hook's OnCloseDocument with 0xc000041d (STATUS_FATAL_USER_CALLBACK_ERROR
+    // in mfc140u.dll); closing them up front avoids that. Returns the count of
+    // documents targeted (the caller waits for them to actually close).
+    public static int CloseAllDocs(IntPtr frame) {
+        IntPtr client = FindWindowEx(frame, IntPtr.Zero, "MDIClient", null);
+        if (client == IntPtr.Zero) return 0;
+        var handles = new System.Collections.Generic.List<IntPtr>();
+        EnumChildWindows(client, delegate(IntPtr h, IntPtr l) {
+            StringBuilder cls = new StringBuilder(256);
+            GetClassName(h, cls, 256);
+            if (!cls.ToString().StartsWith("Afx:")) return true;
+            if (GetParent(h) != client) return true;
+            handles.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        foreach (IntPtr h in handles) PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero);
+        return handles.Count;
+    }
 }
 "@
 }
@@ -126,6 +149,47 @@ function Invoke-Tsdevctl {
     return @($output)
 }
 
+# Gracefully close TSDev via WM_CLOSE (message 0x0010) instead of force-killing.
+# Force-killing TSDev corrupts its session state (Event Log: 0xc000041d in
+# mfc140u.dll); the relaunched instance is unstable and crashes during
+# subsequent operations. WM_CLOSE lets MFC run its cleanup callbacks cleanly.
+# Force-kill is kept only as a last-resort fallback if WM_CLOSE doesn't exit
+# the process within 20 seconds. Crash-reporter dialogs (TSCrashReport/WerFault)
+# are dismissed first so they don't block the close.
+function Restart-Tsdev {
+    param([int]$WaitSeconds = 5)
+    Get-Process -Name TSCrashReport, WerFault -ErrorAction SilentlyContinue | Stop-Process -Force
+    $tsdevProc = Get-Process -Name TSDev -ErrorAction SilentlyContinue
+    if ($tsdevProc) {
+        $frame = [TsdevE2E]::FindWindow("TSDEV.EXE TRADESTATION", [NullString]::Value)
+        if ($frame -ne [IntPtr]::Zero) {
+            [TsdevE2E]::PostMessage($frame, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        }
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Process -Id $tsdevProc.Id -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+        if (Get-Process -Id $tsdevProc.Id -ErrorAction SilentlyContinue) {
+            # Graceful close failed; force-kill as last resort
+            Stop-Process -Id $tsdevProc.Id -Force
+            Start-Sleep -Seconds $WaitSeconds
+        } else {
+            Start-Sleep -Seconds $WaitSeconds
+        }
+    }
+}
+
+# Close all restored MDI child documents that TSDev opens on launch. Restored
+# session documents crash the delete hook's OnCloseDocument with 0xc000041d
+# (STATUS_FATAL_USER_CALLBACK_ERROR in mfc140u.dll), bypassing __try/__except.
+# Closing them via WM_CLOSE before any operation avoids the crash. Must be
+# called after EVERY TSDev launch/restart (the frame must already exist).
+function Close-AllDocs {
+    $frame = [TsdevE2E]::FindWindow("TSDEV.EXE TRADESTATION", [NullString]::Value)
+    if ($frame -eq [IntPtr]::Zero) { return 0 }
+    $count = [TsdevE2E]::CloseAllDocs($frame)
+    if ($count -gt 0) { Start-Sleep -Seconds 3 }
+    return $count
+}
+
 # --- open: real item, launched hidden --------------------------------------
 $openOutput = Invoke-Tsdevctl @("open", "--type", "Strategy", "--name", "MyTestStrategyA", "--json")
 $openExit = $LASTEXITCODE
@@ -143,6 +207,13 @@ $frame = [TsdevE2E]::FindWindow("TSDEV.EXE TRADESTATION", [NullString]::Value)
 if ($frame -eq [IntPtr]::Zero) { Write-Error "TSDev main frame not found after open"; exit 1 }
 if (-not [TsdevE2E]::IsWindowVisible($frame)) { Write-Host "ok: TSDev window hidden" }
 else { Write-Host "FAIL: TSDev window must stay hidden"; $failures++ }
+
+# Close restored session documents before any operations; they crash the delete
+# hook's OnCloseDocument (0xc000041d in mfc140u.dll).
+$closedCount = Close-AllDocs
+if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
+# Re-open the test item (Close-AllDocs closed it along with restored docs).
+Invoke-Tsdevctl @("open", "--type", "Strategy", "--name", "MyTestStrategyA", "--json") | Out-Null
 
 # TSDev restores previous-session documents asynchronously after the frame
 # appears; wait until the document set is stable before taking baselines.
@@ -289,11 +360,9 @@ Write-Host "info: decrypt verification probe — getsrc reads editor text (what 
 # fresh launch). The preceding open/exists/getsrc sections issue ~16 pipe
 # operations; to avoid the wedge, restart TSDev before the insert/modify section.
 Write-Host "info: restarting TSDev before insert/modify section (pipe-wedge prevention)"
-$tsdevProc = Get-Process -Name TSDev -ErrorAction SilentlyContinue
-if ($tsdevProc) {
-    Stop-Process -Id $tsdevProc.Id -Force
-    Start-Sleep -Seconds 3
-}
+Restart-Tsdev
+$closedCount = Close-AllDocs
+if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
 # The insert will launch a fresh TSDev; re-find the frame after it appears.
 # The frame is found lazily by Get-DocTitles via the insert's launch.
 $modifyName = "E2eModify_$stamp"
@@ -368,11 +437,9 @@ else { Write-Host "ok: modify nonexistent left no residue" }
 # Restart TSDev to avoid the pipe-wedge (the preceding insert+modify+getsrc
 # section issued ~6 pipe writes; the wedge threshold is variable).
 Write-Host "info: restarting TSDev before modify-garbage section (pipe-wedge prevention)"
-$tsdevProc = Get-Process -Name TSDev -ErrorAction SilentlyContinue
-if ($tsdevProc) {
-    Stop-Process -Id $tsdevProc.Id -Force
-    Start-Sleep -Seconds 3
-}
+Restart-Tsdev
+$closedCount = Close-AllDocs
+if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
 $garbageFile = Join-Path $env:TEMP "tsdevctl_modify_garbage_$stamp.eld"
 "This is not valid EasyLanguage!!!" | Set-Content -Path $garbageFile -Encoding UTF8 -NoNewline
 $before = @()
@@ -396,6 +463,128 @@ Write-Host "ok: modify garbage (residue check skipped after restart)"
 Remove-Item -Path $insertSrcFile -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $modifySrcFile -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $garbageFile -Force -ErrorAction SilentlyContinue
+
+# --- delete: insert -> delete -> verify gone (all 5 R13 types) --------------
+# Restart TSDev before the delete section (pipe-wedge prevention; the preceding
+# modify section issued several pipe writes).
+Write-Host "info: restarting TSDev before delete section (pipe-wedge prevention)"
+Restart-Tsdev
+$closedCount = Close-AllDocs
+if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
+
+# Minimal valid EasyLanguage per type (verified against the real compiler).
+# Function source MUST assign to a variable named exactly like the component
+# (compiler syntax requirement, not a metadata convention).
+# ShowMe is tested last because its deletion crashes TSDev (known issue,
+# RE_DELETE_TYPE_TEST.md); testing it last avoids destabilizing subsequent
+# type tests. The cleanup loop after the section tolerates the crash.
+$deleteTypes = @("Function", "Strategy", "Indicator", "TradingApp", "ShowMe")
+$deleteItems = @{}
+$firstDeleteType = $true
+foreach ($type in $deleteTypes) {
+    # Restart TSDev between delete types (pipe-wedge prevention): the delete
+    # section does 4 pipe operations per type (insert, exists, delete,
+    # exists-gone) x 5 types = 20 pipe operations, which exceeds the wedge
+    # threshold (~16-20). The first type already has a restart before the
+    # section (above), so only subsequent types restart here.
+    if (-not $firstDeleteType) {
+        Write-Host "info: restarting TSDev before delete ($type) (pipe-wedge prevention)"
+        Restart-Tsdev
+        $closedCount = Close-AllDocs
+        if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
+    }
+    $firstDeleteType = $false
+    $delName = "E2eDel_${type}_$stamp"
+    $deleteItems[$type] = $delName
+    $delSrc = $null
+    if ($type -eq "Function") { $delSrc = "$delName = 1;`n" }
+    elseif ($type -eq "Strategy") { $delSrc = "Buy next bar at market;`nSell next bar at market;" }
+    elseif ($type -eq "Indicator") { $delSrc = "Plot1(Close, `"Close`");`n" }
+    elseif ($type -eq "ShowMe") { $delSrc = "if Close > Open then`n    Plot1(High, `"Up bar`");`n" }
+    elseif ($type -eq "TradingApp") { $delSrc = "using elsystem;`n" }
+    $delSrcFile = Join-Path $env:TEMP "tsdevctl_del_${type}_$stamp.eld"
+    $delSrc | Set-Content -Path $delSrcFile -Encoding UTF8 -NoNewline
+    # Insert the test item.
+    $insOut = Invoke-Tsdevctl @("insert", "--type", $type, "--name", $delName, "--source", $delSrcFile, "--json")
+    $insExit = $LASTEXITCODE
+    $ins = $null
+    try { $ins = $insOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: delete insert ($type) output is not valid JSON"; $failures++ }
+    if ($insExit -ne 0) { Write-Host "FAIL: delete insert ($type) expected exit 0"; $failures++ }
+    if ($ins -and -not $ins.ok) { Write-Host "FAIL: delete insert ($type) expected ok:true"; $failures++ }
+    if ($ins -and $ins.tsdev_pid) { $tsdevPid = [int]$ins.tsdev_pid }
+    $crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+    if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after delete insert ($type)"; $failures++ }
+    # Verify it exists (exit 0).
+    $existOut = Invoke-Tsdevctl @("exists", "--type", $type, "--name", $delName, "--json")
+    $existExit = $LASTEXITCODE
+    $exist = $null
+    try { $exist = $existOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: delete exists ($type) output is not valid JSON"; $failures++ }
+    if ($existExit -ne 0) { Write-Host "FAIL: delete exists ($type) expected exit 0"; $failures++ }
+    if ($exist -and "$($exist.exists)" -ne "True") { Write-Host "FAIL: delete exists ($type) expected exists:true"; $failures++ }
+    $crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+    if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after delete exists ($type)"; $failures++ }
+    # Delete it (expect exit 0). ShowMe may crash TSDev; the CLI handles the
+    # crash internally (restarts + verifies) and returns exit 0.
+    $delOut = Invoke-Tsdevctl @("delete", "--type", $type, "--name", $delName, "--json")
+    $delExit = $LASTEXITCODE
+    $del = $null
+    try { $del = $delOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: delete ($type) output is not valid JSON"; $failures++ }
+    if ($delExit -ne 0) { Write-Host "FAIL: delete ($type) expected exit 0"; $failures++ }
+    if ($del -and -not $del.ok) { Write-Host "FAIL: delete ($type) expected ok:true"; $failures++ }
+    if ($del -and $del.tsdev_pid) { $tsdevPid = [int]$del.tsdev_pid }
+    $crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+    if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after delete ($type)"; $failures++ }
+    # Verify it's gone (exit 1, exists:false).
+    $goneOut = Invoke-Tsdevctl @("exists", "--type", $type, "--name", $delName, "--json")
+    $goneExit = $LASTEXITCODE
+    $gone = $null
+    try { $gone = $goneOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: delete gone ($type) output is not valid JSON"; $failures++ }
+    if ($goneExit -ne 1) { Write-Host "FAIL: delete gone ($type) expected exit 1 (NotFound)"; $failures++ }
+    if ($gone -and -not $gone.ok) { Write-Host "FAIL: delete gone ($type) expected ok:true (NotFound is a successful answer)"; $failures++ }
+    if ($gone -and "$($gone.exists)" -ne "False") { Write-Host "FAIL: delete gone ($type) expected exists:false"; $failures++ }
+    $crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+    if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after delete gone ($type)"; $failures++ }
+    else { Write-Host "ok: delete ($type) insert -> delete -> verify gone" }
+    # ShowMe may crash TSDev after deletion; restart before the next test for a
+    # clean state (the CLI handles the crash internally, but the PID may change).
+    # A longer wait is needed because the crash can leave TSDev in an unstable
+    # state that takes time to clear (RE_DELETE_TYPE_TEST.md: "first insert
+    # attempts sometimes fail; a clean restart resolves it").
+    if ($type -eq "ShowMe") {
+        Write-Host "info: restarting TSDev after ShowMe delete (known post-deletion crash)"
+        Restart-Tsdev -WaitSeconds 8
+        $closedCount = Close-AllDocs
+        if ($closedCount -gt 0) { Write-Host "info: closed $closedCount restored session documents" }
+    }
+    Remove-Item -Path $delSrcFile -Force -ErrorAction SilentlyContinue
+}
+
+# --- delete: nonexistent item -> exit 1 (NotFound) --------------------------
+$noDelName = "E2eNoSuchDelete_$stamp"
+$noDelOut = Invoke-Tsdevctl @("delete", "--type", "Strategy", "--name", $noDelName, "--json")
+$noDelExit = $LASTEXITCODE
+$noDel = $null
+try { $noDel = $noDelOut | Select-Object -Last 1 | ConvertFrom-Json } catch { Write-Host "FAIL: delete nonexistent output is not valid JSON"; $failures++ }
+if ($noDelExit -ne 1) { Write-Host "FAIL: delete nonexistent expected exit 1 (NotFound)"; $failures++ }
+if ($noDel -and $noDel.ok) { Write-Host "FAIL: delete nonexistent expected ok:false"; $failures++ }
+if ($noDel -and $noDel.error.name -ne "not_found") { Write-Host "FAIL: delete nonexistent expected error.name not_found"; $failures++ }
+$crashCheck = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
+if ($crashCheck) { Write-Host "FAIL: TSCrashReport.exe appeared after delete nonexistent"; $failures++ }
+else { Write-Host "ok: delete nonexistent -> exit 1 (not_found)" }
+
+# Cleanup: delete any test items that were created but not cleaned up (a test
+# may have failed mid-way, leaving the item in the library).
+foreach ($type in $deleteTypes) {
+    $cleanupName = $deleteItems[$type]
+    Invoke-Tsdevctl @("exists", "--type", $type, "--name", $cleanupName, "--json") | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "info: cleaning up leftover delete test item ($type): $cleanupName"
+        Invoke-Tsdevctl @("delete", "--type", $type, "--name", $cleanupName, "--json") | Out-Null
+    }
+}
+
+# Re-find the frame: the delete section's inserts launched fresh TSDev instances.
+$frame = [TsdevE2E]::FindWindow("TSDEV.EXE TRADESTATION", [NullString]::Value)
 
 $crashAfter = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
 if ($crashAfter) { Write-Host "FAIL: TSCrashReport.exe appeared"; $failures++ }

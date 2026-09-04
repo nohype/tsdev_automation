@@ -4,11 +4,11 @@
 #include <cstdlib>
 
 ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
-    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc|insert|modify)"};
+    if (argc < 2) return {false, false, L"missing command (expected: open|exists|getsrc|insert|modify|delete)"};
     if (std::wstring(argv[1]) == L"--help" || std::wstring(argv[1]) == L"-h") return {true, true, L""};
     const std::wstring verb = argv[1];
-    if (verb != L"open" && verb != L"exists" && verb != L"getsrc" && verb != L"insert" && verb != L"modify")
-        return {false, false, L"unknown command (expected: open|exists|getsrc|insert|modify)"};
+    if (verb != L"open" && verb != L"exists" && verb != L"getsrc" && verb != L"insert" && verb != L"modify" && verb != L"delete")
+        return {false, false, L"unknown command (expected: open|exists|getsrc|insert|modify|delete)"};
     out.verb = verb;
 
     for (int i = 2; i < argc; ++i) {
@@ -59,7 +59,7 @@ ParseOutcome parse_args(int argc, wchar_t** argv, Options& out) {
     if (!out.output_path.empty() && out.verb != L"getsrc")
         return {false, false, L"--output is only valid with getsrc"};
 
-    // --source is insert/modify-specific: reject it for open/exists/getsrc.
+    // --source is insert/modify-specific: reject it for open/exists/getsrc/delete.
     if (!out.source_path.empty() && out.verb != L"insert" && out.verb != L"modify")
         return {false, false, L"--source is only valid with insert or modify"};
 
@@ -88,6 +88,7 @@ std::wstring usage_text() {
         L"  tsdevctl getsrc --type <Type> --name <Name> [--output <file>] [options]\n"
         L"  tsdevctl insert --type <Type> --name <Name> --source <file> [options]\n"
         L"  tsdevctl modify --type <Type> --name <Name> --source <file> [options]\n"
+        L"  tsdevctl delete --type <Type> --name <Name> [options]\n"
         L"\n"
         L"open: Opens the named item in TSDev (existing item) or starts a new empty\n"
         L"document titled with that name (TSDev's own open-or-create behavior).\n"
@@ -135,6 +136,15 @@ std::wstring usage_text() {
         L"new source in that case (the verify path saves before compiling).\n"
         L"Success is confirmed by re-reading the item's source and comparing it\n"
         L"with the source that was set.\n"
+        L"delete: Deletes the named item from the TSDev library by triggering the\n"
+        L"same deletion code path the UI would. A small DLL is injected into\n"
+        L"TSDev.exe to hook the document-open function; when the target item is\n"
+        L"opened via the control pipe, the hook marks it as deleted, clears the\n"
+        L"modified flag, and closes the document. If the item does not exist,\n"
+        L"the operation fails with exit code 1. The TSDev.exe build is verified\n"
+        L"by SHA-256 before injection (version-specific addresses). ShowMe items\n"
+        L"may crash TSDev after deletion succeeds; the CLI restarts TSDev and\n"
+        L"verifies the deletion in that case.\n"
         L"TSDev.exe is attached to if running, otherwise launched hidden.\n"
         L"\n"
         L"Options:\n"
@@ -158,7 +168,7 @@ std::wstring usage_text() {
         L"Exit codes:\n"
         L"  0 success (exists/getsrc: item exists, source emitted for getsrc)\n"
         L"  1 exists/getsrc: item does not exist (successful answer, not an error);\n"
-        L"     modify: item does not exist in the TSDev library (error)\n"
+        L"     modify/delete: item does not exist in the TSDev library (error)\n"
         L"  2 usage error\n"
         L"  3 not running elevated (required)\n"
         L"  4 TSDev.exe not found or launch failed\n"
@@ -167,7 +177,8 @@ std::wstring usage_text() {
         L"  7 TSDev error dialog detected (message text in output)\n"
         L"  8 TSDev crashed\n"
         L"  9 busy (another automation invocation is running)\n"
-        L"  10 unexpected TSDev state (e.g. no editor control in the opened document)\n"
+        L"  10 unexpected TSDev state (e.g. no editor control, injection failed,\n"
+        L"     version mismatch, hook error)\n"
         L"  11 insert: item already exists in the TSDev library\n"
         L"  12 insert/modify: compile/verify failed (error dialog or item not saved)\n";
 }

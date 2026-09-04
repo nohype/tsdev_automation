@@ -1,7 +1,10 @@
 #include "tsdevlib/args.h"
 #include "tsdevlib/doc_read.h"
+#include "tsdevlib/inject.h"
 #include "tsdevlib/json_writer.h"
 #include "tsdevlib/type_table.h"
+
+#include <windows.h>
 
 #include <cstdio>
 #include <string>
@@ -588,6 +591,131 @@ void test_parse_args_modify() {
     }
 }
 
+void test_parse_args_delete() {
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"MyFn")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(p.ok && opts.verb == L"delete" && opts.type == L"Function" && opts.type_number == 1 &&
+                  opts.name == L"MyFn" && opts.source_path.empty(),
+              "delete with type+name parses, no source required");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Strategy")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "delete without --name is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(4, argv, opts);
+        check(!p.ok, "delete without --type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--source"), const_cast<wchar_t*>(L"C:\\s.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--source with delete is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"ShowMe"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"MyShow"),
+                           const_cast<wchar_t*>(L"--json")};
+        const ParseOutcome p = parse_args(7, argv, opts);
+        check(p.ok && opts.verb == L"delete" && opts.type_number == 1282 && opts.json,
+              "delete with ShowMe and --json parses");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"PaintBar"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(!p.ok, "delete with unsupported type is a usage error");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"Bad,Name")};
+        const ParseOutcome p = parse_args(6, argv, opts);
+        check(!p.ok, "delete with name containing comma is rejected");
+    }
+    {
+        Options opts;
+        wchar_t* argv[] = {const_cast<wchar_t*>(L"tsdevctl"), const_cast<wchar_t*>(L"delete"),
+                           const_cast<wchar_t*>(L"--type"), const_cast<wchar_t*>(L"Function"),
+                           const_cast<wchar_t*>(L"--name"), const_cast<wchar_t*>(L"X"),
+                           const_cast<wchar_t*>(L"--output"), const_cast<wchar_t*>(L"C:\\o.eld")};
+        const ParseOutcome p = parse_args(8, argv, opts);
+        check(!p.ok, "--output with delete is a usage error");
+    }
+}
+
+void test_usage_contains_delete() {
+    const std::wstring usage = usage_text();
+    check(usage.find(L"delete") != std::wstring::npos, "usage text contains delete");
+    check(usage.find(L"tsdevctl delete") != std::wstring::npos, "usage text has delete usage line");
+}
+
+void test_json_delete() {
+    // delete success
+    OpResult del_ok;
+    del_ok.ok = true;
+    del_ok.op = L"delete";
+    del_ok.type = L"Function";
+    del_ok.name = L"MyFn";
+    del_ok.has_pid = true;
+    del_ok.pid = 42;
+    del_ok.elapsed_ms = 500;
+    const std::wstring ok_json = make_result_json(del_ok);
+    check(ok_json == L"{\"ok\":true,\"op\":\"delete\",\"type\":\"Function\",\"name\":\"MyFn\","
+                     L"\"tsdev_pid\":42,\"elapsed_ms\":500,\"error\":null}",
+          "delete success json shape");
+
+    // delete not found
+    OpResult del_no;
+    del_no.ok = false;
+    del_no.op = L"delete";
+    del_no.type = L"Function";
+    del_no.name = L"Missing";
+    del_no.error_code = 1;
+    del_no.error_name = L"not_found";
+    del_no.error_message = L"item does not exist in the TSDev library";
+    del_no.elapsed_ms = 100;
+    const std::wstring no_json = make_result_json(del_no);
+    check(no_json == L"{\"ok\":false,\"op\":\"delete\",\"type\":\"Function\",\"name\":\"Missing\","
+                      L"\"tsdev_pid\":null,\"elapsed_ms\":100,"
+                      L"\"error\":{\"code\":1,\"name\":\"not_found\",\"message\":\"item does not exist in the TSDev library\"}}",
+          "delete not-found json shape");
+
+    // delete error (injection failed)
+    OpResult del_err;
+    del_err.ok = false;
+    del_err.op = L"delete";
+    del_err.type = L"Strategy";
+    del_err.name = L"X";
+    del_err.error_code = 10;
+    del_err.error_name = L"injection_failed";
+    del_err.error_message = L"OpenProcess failed";
+    del_err.elapsed_ms = 50;
+    const std::wstring err_json = make_result_json(del_err);
+    check(err_json == L"{\"ok\":false,\"op\":\"delete\",\"type\":\"Strategy\",\"name\":\"X\","
+                       L"\"tsdev_pid\":null,\"elapsed_ms\":50,"
+                       L"\"error\":{\"code\":10,\"name\":\"injection_failed\",\"message\":\"OpenProcess failed\"}}",
+          "delete error json shape");
+}
+
 void test_from_utf8() {
     check(from_utf8("") == L"", "from_utf8 empty passthrough");
     check(from_utf8("hello") == L"hello", "from_utf8 ASCII");
@@ -608,6 +736,25 @@ int wmain() {
     test_parse_args_getsrc();
     test_parse_args_insert();
     test_parse_args_modify();
+    test_parse_args_delete();
+    test_usage_contains_delete();
+    test_json_delete();
+    {
+        // Verify get_export_rva finds ReArmHook in delete_hook.dll (next to the test exe).
+        wchar_t exe_dir[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe_dir, MAX_PATH);
+        std::wstring dll_path(exe_dir);
+        const size_t slash = dll_path.find_last_of(L'\\');
+        if (slash != std::wstring::npos) dll_path = dll_path.substr(0, slash + 1) + L"delete_hook.dll";
+        else dll_path = L"delete_hook.dll";
+        const unsigned long rva = get_export_rva(dll_path, "ReArmHook");
+        check(rva != 0, "get_export_rva finds ReArmHook");
+        if (rva != 0) {
+            wchar_t buf[64];
+            swprintf_s(buf, L"ReArmHook RVA = 0x%lX", rva);
+            std::wprintf(L"%ls\n", buf);
+        }
+    }
     test_phantom_classifier();
     test_json();
     test_json_getsrc();

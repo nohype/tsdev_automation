@@ -5,12 +5,16 @@
 #include "tsdevlib/elevation.h"
 #include "tsdevlib/error_list.h"
 #include "tsdevlib/exit_codes.h"
+#include "tsdevlib/inject.h"
 #include "tsdevlib/json_writer.h"
 #include "tsdevlib/pipe_client.h"
 #include "tsdevlib/tsdev_process.h"
 #include "tsdevlib/window_watch.h"
 
+#include "../delete_hook/shared.h"
+
 #include <windows.h>
+#include <bcrypt.h>
 #include <algorithm>
 #include <chrono>
 #include <cwctype>
@@ -600,6 +604,300 @@ bool read_source_file(const std::wstring& path, std::wstring& text, std::wstring
     }
     text = from_utf8(raw);
     return true;
+}
+
+// Known TSDev.exe SHA-256 for the build whose addresses are hardcoded in the
+// delete hook DLL. The CLI verifies the hash before injecting to avoid using
+// version-specific addresses on an incompatible build.
+static const char* kTsdevKnownSha256 =
+    "9099AA600F0A035C0290107EB1852CD61690330C53B14C9F9D01899395DCAF9A";
+
+// Computes the SHA-256 hash of a file and returns it as an uppercase hex
+// string. Returns an empty string on failure.
+std::wstring compute_file_sha256(const std::wstring& path) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return L"";
+    std::string hash_hex;
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE hash_handle = nullptr;
+    DWORD hash_len = 0;
+    DWORD result_len = 0;
+    bool ok = false;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0) {
+        if (BCryptGetProperty(alg, BCRYPT_HASH_LENGTH,
+                              reinterpret_cast<PUCHAR>(&hash_len), sizeof(hash_len), &result_len, 0) == 0) {
+            if (BCryptCreateHash(alg, &hash_handle, nullptr, 0, nullptr, 0, 0) == 0) {
+                std::vector<BYTE> buf(64 * 1024);
+                for (;;) {
+                    DWORD read_bytes = 0;
+                    if (!ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &read_bytes, nullptr) || read_bytes == 0)
+                        break;
+                    if (BCryptHashData(hash_handle, buf.data(), read_bytes, 0) != 0) break;
+                }
+                std::vector<BYTE> hash(hash_len);
+                if (BCryptFinishHash(hash_handle, hash.data(), hash_len, 0) == 0) {
+                    char hex[65];
+                    for (DWORD i = 0; i < hash_len; ++i)
+                        sprintf_s(hex + i * 2, 3, "%02X", hash[i]);
+                    hex[hash_len * 2] = '\0';
+                    hash_hex = hex;
+                    ok = true;
+                }
+            }
+        }
+    }
+    if (hash_handle) BCryptDestroyHash(hash_handle);
+    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    CloseHandle(h);
+    return ok ? from_utf8(hash_hex) : L"";
+}
+
+// Derives the delete_hook.dll path from the executable's directory (the DLL
+// sits next to tsdevctl.exe).
+std::wstring get_dll_path() {
+    wchar_t exe_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::wstring p = exe_path;
+    const size_t slash = p.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return L"delete_hook.dll";
+    return p.substr(0, slash + 1) + L"delete_hook.dll";
+}
+
+int run_delete(const Options& opts) {
+    OpResult result;
+    result.op = L"delete";
+    result.type = opts.type;
+    result.name = opts.name;
+    Session session;
+    const auto started = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&] {
+        return static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+                .count());
+    };
+    auto fail = [&](Exit code, const wchar_t* name, const std::wstring& message) {
+        hide_if_launched(opts, session);
+        if (session.process) {
+            CloseHandle(session.process);
+            session.process = nullptr;
+        }
+        result.ok = false;
+        result.error_code = static_cast<int>(code);
+        result.error_name = name;
+        result.error_message = message;
+        result.elapsed_ms = elapsed_ms();
+        emit(opts, result);
+        return static_cast<int>(code);
+    };
+
+    BusyGuard busy = BusyGuard::acquire();
+    if (!busy) return fail(Exit::Busy, L"busy", L"another tsdevctl invocation is running");
+
+    if (!is_elevated()) return fail(Exit::NotElevated, L"not_elevated", L"tsdevctl must run in an elevated process (R8)");
+
+    const Exit ready = ensure_tsdev_ready(opts, result, session);
+    if (ready != Exit::Ok) return fail(ready, result.error_name.c_str(), result.error_message);
+
+    // Verify the TSDev.exe build matches the hardcoded addresses.
+    const std::wstring tsdev_exe = locate_tsdev_exe(opts.ts_path);
+    if (tsdev_exe.empty())
+        return fail(Exit::Unexpected, L"tsdev_not_found",
+                    L"cannot locate TSDev.exe for version verification");
+    const std::wstring actual_hash = compute_file_sha256(tsdev_exe);
+    if (actual_hash.empty())
+        return fail(Exit::Unexpected, L"hash_check_failed",
+                    L"cannot compute TSDev.exe SHA-256 hash");
+    if (actual_hash != from_utf8(kTsdevKnownSha256)) {
+        return fail(Exit::Unexpected, L"version_mismatch",
+                    L"TSDev.exe SHA-256 mismatch (expected " + from_utf8(kTsdevKnownSha256) +
+                    L", got " + actual_hash + L") — delete hook addresses are version-specific");
+    }
+
+    // Check the item exists before attempting deletion.
+    const std::set<HWND> dialogs_before = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_before = list_doc_windows(session.pid);
+    ReadOutcome exists_outcome;
+    {
+        const std::optional<Failure> failure =
+            open_read_and_close(opts, session, dialogs_before, docs_before, exists_outcome);
+        if (failure) return fail(failure->code, failure->name, failure->message);
+    }
+    if (!exists_outcome.exists)
+        return fail(Exit::NotFound, L"not_found", L"item does not exist in the TSDev library");
+
+    // Set up shared memory and completion event for the injected DLL.
+    const std::wstring map_name = L"Local\\TSDevAutomation.Delete." + std::to_wstring(session.pid);
+    const std::wstring event_name = L"Local\\TSDevAutomation.DeleteDone." + std::to_wstring(session.pid);
+
+    const HANDLE done_event = CreateEventW(nullptr, FALSE, FALSE, event_name.c_str());
+    if (!done_event) return fail(Exit::Unexpected, L"event_create_failed", L"CreateEventW failed");
+
+    const HANDLE mapping = CreateFileMappingW(
+        INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DeleteShared), map_name.c_str());
+    if (!mapping) {
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"mapping_create_failed", L"CreateFileMappingW failed");
+    }
+    auto* shared = static_cast<DeleteShared*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(DeleteShared)));
+    if (!shared) {
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"map_view_failed", L"MapViewOfFile failed");
+    }
+    memset(shared, 0, sizeof(DeleteShared));
+    opts.name.copy(shared->target_name, 255);
+    shared->target_name[opts.name.size() < 256 ? opts.name.size() : 255] = L'\0';
+    shared->fn_open = reinterpret_cast<void*>(0x004944b0);
+    shared->fn_delete = reinterpret_cast<void*>(0x0044c0f0);
+    shared->modified_offset = 0x17c;
+    shared->vtable_close_offset = 0x8c;
+    shared->status = DeletePending;
+    shared->crash_flag = 0;
+
+    // Inject the DLL into TSDev, then call ReArmHook via CreateRemoteThread.
+    // DllMain no longer installs the hook (it just loads the DLL); ReArmHook
+    // does all the work, so first and subsequent loads are identical.
+    const std::wstring dll_path = get_dll_path();
+    unsigned long remote_base = 0;
+    std::wstring inject_error;
+    if (!inject_dll(session.pid, dll_path, remote_base, inject_error)) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"injection_failed", inject_error);
+    }
+
+    // Resolve ReArmHook's address in the remote process: parse the DLL's PE
+    // export table on disk to get the export RVA, then add it to the remote
+    // base. This is reliable regardless of ASLR rebasing differences between
+    // the CLI process and TSDev.exe.
+    const unsigned long rearm_rva = get_export_rva(dll_path, "ReArmHook");
+    if (rearm_rva == 0) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"rearm_not_found",
+                    L"could not find ReArmHook export RVA in delete_hook.dll");
+    }
+    void* remote_rearm = reinterpret_cast<void*>(remote_base + rearm_rva);
+
+    std::wstring rearm_error;
+    if (!call_remote_function(session.pid, remote_rearm, rearm_error)) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::Unexpected, L"rearm_failed", rearm_error);
+    }
+
+    // Pipe-open the item — this calls FUN_004944b0, which triggers the hook.
+    // Re-send periodically (like send_and_wait) because the pipe command is
+    // idempotent: if the document is still open from the exists check, the
+    // first send may just activate it without calling FUN_004944b0. Re-sending
+    // gives TSDev time to finish closing the previous document.
+    const std::set<HWND> dialogs_before2 = snapshot_tsdev_dialogs(session.pid);
+    const std::wstring payload = L"\"" + opts.name + L"\", " + std::to_wstring(opts.type_number);
+    std::wstring pipe_error;
+    if (!pipe_send(payload, opts.timeouts_disabled, opts.timeout_ms, pipe_error)) {
+        UnmapViewOfFile(shared);
+        CloseHandle(mapping);
+        CloseHandle(done_event);
+        return fail(Exit::PipeFailed, L"pipe_failed", pipe_error);
+    }
+
+    // Wait for the DLL to signal completion, re-sending the pipe command
+    // every 3 seconds (matching send_and_wait's re-send interval).
+    const auto wait_deadline = opts.timeouts_disabled
+        ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::milliseconds(opts.timeout_ms);
+    auto last_send = std::chrono::steady_clock::now();
+    DWORD wait_result = WAIT_TIMEOUT;
+    bool process_died = false;
+    for (;;) {
+        const DWORD remaining = opts.timeouts_disabled
+            ? INFINITE
+            : static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                  wait_deadline - std::chrono::steady_clock::now()).count());
+        if (!opts.timeouts_disabled && remaining == 0) { wait_result = WAIT_TIMEOUT; break; }
+        wait_result = WaitForSingleObject(done_event, remaining);
+        if (wait_result == WAIT_OBJECT_0) break;
+        if (wait_result == WAIT_FAILED) break;
+        // WAIT_TIMEOUT: check if the process died (ShowMe can crash during
+        // FUN_0044c0f0 before the done event is signaled — the item is still
+        // deleted). This must be checked before the timeout return so the
+        // crash-restart + verify path handles it.
+        if (!process_alive(session.pid)) { process_died = true; break; }
+        if (crash_report_running()) { wait_result = WAIT_TIMEOUT; break; }
+        const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_before2);
+        if (!dialog_text.empty()) { wait_result = WAIT_TIMEOUT; break; }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_send >= std::chrono::milliseconds(3000)) {
+            pipe_send(payload, opts.timeouts_disabled, opts.timeout_ms, pipe_error);
+            last_send = now;
+        }
+    }
+
+    // Read the status from shared memory.
+    const long status = shared->status;
+    const long crash_flag = shared->crash_flag;
+
+    UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+    CloseHandle(done_event);
+
+    if (wait_result == WAIT_TIMEOUT && !process_died)
+        return fail(Exit::Timeout, L"timeout", L"delete hook did not complete within the timeout");
+
+    // Check for crash dialogs.
+    if (crash_report_running())
+        return fail(Exit::Crashed, L"crash_report", L"TSCrashReport.exe detected after delete");
+
+    // Check if TSDev is still alive (ShowMe crash case — the process may have
+    // died during FUN_0044c0f0 before the done event was signaled, or after
+    // the hook completed). Restart TSDev and verify the deletion.
+    if (!process_alive(session.pid)) {
+        if (session.process) { CloseHandle(session.process); session.process = nullptr; }
+        session.launched = false;
+        session.pid = 0;
+        const Exit restart = ensure_tsdev_ready(opts, result, session);
+        if (restart != Exit::Ok)
+            return fail(Exit::Crashed, L"tsdev_crashed",
+                        L"TSDev crashed after delete and could not be restarted");
+    }
+
+    // Verify the deletion via exists check.
+    const std::set<HWND> dialogs_after = snapshot_tsdev_dialogs(session.pid);
+    const std::vector<DocWindow> docs_after = list_doc_windows(session.pid);
+    ReadOutcome verify_outcome;
+    {
+        const std::optional<Failure> failure =
+            open_read_and_close(opts, session, dialogs_after, docs_after, verify_outcome);
+        if (failure) return fail(failure->code, failure->name, failure->message);
+    }
+
+    if (verify_outcome.exists) {
+        // Item still exists — deletion failed.
+        if (crash_flag)
+            return fail(Exit::Crashed, L"delete_crashed",
+                        L"an exception occurred during deletion and the item still exists");
+        if (status != DeleteDone)
+            return fail(Exit::Unexpected, L"hook_error",
+                        L"the delete hook reported an error and the item still exists");
+        return fail(Exit::Unexpected, L"delete_failed",
+                    L"the hook completed but the item still exists in the library");
+    }
+
+    // Check for error dialogs after the operation.
+    const std::wstring dialog_text = check_new_dialogs(session.pid, dialogs_after);
+    if (!dialog_text.empty())
+        return fail(Exit::ErrorDialog, L"error_dialog", L"TSDev dialog: " + dialog_text);
+
+    hide_if_launched(opts, session);
+    result.ok = true;
+    result.elapsed_ms = elapsed_ms();
+    emit(opts, result);
+    if (session.process) CloseHandle(session.process);
+    return static_cast<int>(Exit::Ok);
 }
 
 int run_exists(const Options& opts) {
@@ -1499,5 +1797,6 @@ int wmain(int argc, wchar_t** argv) {
     if (opts.verb == L"getsrc") return run_getsrc(opts);
     if (opts.verb == L"insert") return run_insert(opts);
     if (opts.verb == L"modify") return run_modify(opts);
+    if (opts.verb == L"delete") return run_delete(opts);
     return run_open(opts);
 }

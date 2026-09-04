@@ -199,6 +199,86 @@ Evidence: decompilation-derived.
 
 ---
 
+## TSDev.exe Delete operation
+
+`tsdevctl delete --type <Type> --name <Name>` deletes items by injecting a 32-bit DLL into TSDev.exe that hooks the document-open function (`FUN_004944b0` at `0x004944b0` — already documented above as the pipe/0x8001 open-by-pair handler). Full RE detail in `docs/RE_DELETE_FINDINGS.md`; live verification in `docs/RE_DELETE_LIVE_VERIFY.md`.
+
+### Delete mechanism (hook-based)
+
+- The hook intercepts document-open calls, matches the target name, and calls the library deletion function `FUN_0044c0f0` directly, then clears the modified flag at `doc+0x17c`, then calls `OnCloseDocument` via `vtable[0x8c]`.
+- The direct call to `FUN_0044c0f0` is used instead of the UI delete command (`0x80e8` / `FUN_00482f50`) because the UI delete routine does not remove Function items (its map at `doc+0x32c` is empty for those documents).
+- `FUN_0044c0f0` was live-verified for all 5 R13 types: Function, Strategy, Indicator, ShowMe, TradingApp.
+
+### DLL injection and re-injection
+
+- The DLL (`delete_hook.dll`) is injected via `CreateRemoteThread` → `LoadLibraryW`.
+- The DLL's exported function `ReArmHook` is called via `CreateRemoteThread` after injection to install the inline hook.
+- `ReArmHook` must be called on EVERY delete (including when the DLL is already loaded), because `DllMain` only returns TRUE on attach and does not install the hook.
+- The remote address of `ReArmHook` is computed by parsing the DLL's PE export table on disk to get the export's RVA, then adding it to the remote base returned by `LoadLibraryW`. This is reliable regardless of ASLR rebasing differences between the CLI process and TSDev.exe. (The previous approach of loading the DLL locally and computing the offset was unreliable because ASLR can rebase the DLL differently in different processes.)
+
+### Restored session documents and the delete hook
+
+- TSDev restores previous-session documents on launch (sometimes 30+ documents); the async nature of this is already documented above.
+- Restored session documents cause the delete hook's `OnCloseDocument` call to crash with `0xc000041d` (STATUS_FATAL_USER_CALLBACK_ERROR in `mfc140u.dll`). This crash bypasses `__try/__except`.
+- The E2E script closes all restored documents via WM_CLOSE before performing any operations.
+- The delete implementation itself does NOT close restored documents (it only manages the document it opens). Callers that launch TSDev should be aware of this.
+
+### Exit codes for delete
+
+| Code | Meaning |
+|------|---------|
+| `0` | deleted successfully |
+| `1` | item does not exist |
+| `6` | timeout (hook did not complete within the timeout) |
+| `7` | TSDev error dialog |
+| `8` | crash (TSCrashReport.exe detected or TSDev process died) |
+| `9` | busy (another tsdevctl invocation is running) |
+| `10` | unexpected state (injection/version/hook failure) |
+
+### Version-specific addresses (TSDev 9.5, build Nov 30 2018)
+
+The build SHA-256 is already documented above (`9099AA…CAF9A`). Additional delete-specific addresses:
+
+| Item | Address / value |
+|------|-----------------|
+| Document open function (hook target) | `FUN_004944b0` @ `0x004944b0` |
+| Original first 5 bytes | `55 8B EC 6A FF` |
+| Library deletion function | `FUN_0044c0f0` @ `0x0044c0f0` |
+| Modified flag offset | `doc + 0x17c` |
+| OnCloseDocument vtable offset | `vtable + 0x8c` |
+
+### Document type fields
+
+| Offset | Field |
+|--------|-------|
+| `doc+0x1e8` | type |
+| `doc+0x1ea` | subtype |
+| `doc+0x1ec` | category |
+
+### Type/subtype mappings (delete hook match criteria)
+
+These are consistent with the per-type category mapping already documented above; the subtype `0x0` values for Strategy/Function/Indicator are newly verified.
+
+| Type | type (`0x1e8`) | subtype (`0x1ea`) |
+|------|---------------|-------------------|
+| Strategy | `0x0` | `0x0` |
+| Function | `0x1` | `0x0` |
+| Indicator | `0x2` | `0x0` |
+| ShowMe | `0x2` | `0x5` |
+| TradingApp | `0x2` | `0x14` |
+
+### E2E verification (live, all 5 R13 types)
+
+- All 5 R13 types verified: insert → exists → delete → verify gone.
+- Nonexistent delete returns exit 1 (not_found).
+- No crash dialogs during any delete operation (when restored documents are closed first).
+- ShowMe does not crash during delete when restored documents are closed first.
+- The E2E script restarts TSDev (graceful WM_CLOSE) between each delete type to prevent the pipe-wedge condition (already documented above).
+
+Evidence: `docs/RE_DELETE_FINDINGS.md` (Ghidra static analysis), `docs/RE_DELETE_LIVE_VERIFY.md` (live E2E verification), TSDev.exe Ghidra decompilation (`FUN_004944b0`, `FUN_0044c0f0`, `FUN_00482f50`).
+
+---
+
 ## TSDev.exe UI characteristics relevant to automation
 
 - TSDev.exe has NO "Find Dependents" / "Find References" / "Where Used" / "Used By" UI feature for regular functions/indicators. Evidence: `strings` analysis of TSDev.exe (narrow + wide) found no such menu text; runtime menu exploration found no such feature.

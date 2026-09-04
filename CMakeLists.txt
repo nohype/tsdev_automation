@@ -16,6 +16,7 @@ add_library(tsdevlib STATIC
     src/tsdevlib/doc_read.cpp
     src/tsdevlib/elevation.cpp
     src/tsdevlib/error_list.cpp
+    src/tsdevlib/inject.cpp
     src/tsdevlib/json_writer.cpp
     src/tsdevlib/pipe_client.cpp
     src/tsdevlib/type_table.cpp
@@ -25,7 +26,11 @@ add_library(tsdevlib STATIC
 target_include_directories(tsdevlib PUBLIC src)
 
 add_executable(tsdevctl src/tsdevctl/main.cpp)
-target_link_libraries(tsdevctl PRIVATE tsdevlib)
+target_link_libraries(tsdevctl PRIVATE tsdevlib bcrypt)
+
+add_library(delete_hook SHARED src/delete_hook/dllmain.cpp)
+target_include_directories(delete_hook PRIVATE src/delete_hook)
+target_link_libraries(delete_hook PRIVATE user32)
 
 add_executable(test_tsdevctl_units tests/test_tsdevctl_units.cpp)
 target_link_libraries(test_tsdevctl_units PRIVATE tsdevlib)

@@ -20,11 +20,12 @@ if (-not $cmake) {
 }
 if (-not $cmake) { Write-Error "cmake not found"; exit 1 }
 
-& $cmake -S $repoRoot -B $buildDir -A x64 | Out-Null
+# Win32 (x86) is required: tsdevctl.exe and delete_hook.dll must be 32-bit
+# to match TSDev.exe (32-bit) for DLL injection.
+& $cmake -S $repoRoot -B $buildDir -A Win32 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
-# Build both the unit test target and the tsdevctl target so that main.cpp
-# is compiled under /W4 /WX (the unit test target only links tsdevlib).
-& $cmake --build $buildDir --config Release --target test_tsdevctl_units tsdevctl | Out-Null
+# Build all targets so that main.cpp and the DLL are compiled under /W4 /WX.
+& $cmake --build $buildDir --config Release | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
 
 $exe = Join-Path $buildDir "Release\test_tsdevctl_units.exe"
