@@ -125,7 +125,7 @@ Counts, listings, and details that could drift live in ONE authoritative locatio
 The PM keeps this list current and identifies the next step toward 100% acceptance; update it as project state changes.
 
 - Requirements interview complete (2026-09-03); this file is the requirements SSOT for the new branch.
-- TVSs #1–#7 done; TVS #8 scoped + review-approved: `tsdevctl list` via ORELUI20.dll in-process enumeration — next team implements it (see `docs/WORKING_MEMORY.md`, section "TVS #8").
+- TVSs #1–#8 done (`list` via ORELUI20.dll in-process enumeration: implemented, review-approved, acceptance gate PASS — see `docs/WORKING_MEMORY.md` + `docs/TVS8_E2E_GATE.md`). Next team determines and scopes the next minimal TVS.
 - Keep it clean, minimal and relevant: no history/records that are not critically relevant; do not plan more than one TVS ahead; never document what the code documents.
 
 ## Standing notes

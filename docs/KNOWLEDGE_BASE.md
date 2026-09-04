@@ -512,23 +512,49 @@ addresses below are image-relative (add runtime base).
 Evidence: A §3; B §7. This is the answer to the user question that motivated
 TVS #7.
 
-### Known issues (tsdevctl production bugs — NOT fixed in TVS #7, research only; flagged for next implementation TVS)
+### Known issues (tsdevctl production bugs — recorded; flagged for a future implementation TVS)
 
-> **production bug — not fixed in TVS #7 (research only); flagged for next
+> **production bugs — recorded, not fixed; flagged for a future
 > implementation TVS.**
 
 1. **`tsdevctl insert --type Strategy` timeout** (exit 6, "item did not open
    within the timeout"). Observed during TVS #7 B delete-test item creation.
    Possibly interfered with by an open Strategy document. No dialog/crash
    during insert attempts. Blocked Frida-delete verification for Strategy.
-   Not a Frida issue. Evidence: B §3.3.
-2. **`tsdevctl exists` timeout for Function/Indicator** during B
-   delete-verification. Deletions confirmed via Frida re-enumeration instead.
-   Not a Frida issue. Evidence: B §3.4.
+   Not a Frida issue. State-dependent: NOT reproduced in the TVS #8
+   acceptance gate (3/3 clean Strategy inserts, 7.3–9.2 s). Evidence: B §3.3;
+   `docs/TVS8_E2E_GATE.md`.
+2. **`tsdevctl exists` timeout** — Function/Indicator during TVS #7 B
+   delete-verification; ShowMe observed in the TVS #8 gate (exit 6 at
+   60.5 s, advisory cleanup probe; R10 timeout contract honored, no
+   popup). Deletions were confirmed via Frida re-enumeration instead.
+   Not a Frida issue. Evidence: B §3.4; `docs/TVS8_E2E_GATE.md`.
 3. **`tsdevctl delete --type Strategy` crash** — caused a `TSCrashReport`;
    TSDev PID 3140 crashed. Not caused by Frida instrumentation (no
-   dialogs/crashes during any Frida operation). Must be fixed before the
-   production E2E gate. Evidence: B §4.
+   dialogs/crashes during any Frida operation). State-dependent (manifests
+   when a Strategy document is open in QE); did not reproduce in the TVS #7
+   or TVS #8 gates. The delete-reimpl via ORELUI20.dll `DeleteItem` is
+   expected to obsolete this bug. Evidence: B §4.
+4. **`run_delete` wait-loop timeout wraparound** (main.cpp) — a
+   WaitForSingleObject return past the deadline wraps the negative
+   remaining time to ~49.7 days (hang risk). `run_list`'s loop was fixed in
+   TVS #8 (commit 321ff8d); run_delete still carries the original pattern.
+   Fix both loops (incl. run_list's residual two-`now()` race) in one
+   future cross-cutting TVS. Evidence: TVS #8 review round 2, finding 1.
+5. **inject.cpp delete-specific error string on list failures** —
+   "remote function returned 0 (ReArmHook failed)" surfaces as the list
+   error message when RunEnum setup fails. Cosmetic; fix when inject.cpp is
+   next touched. Evidence: TVS #8 review round 1, finding 3.
+6. **Hook-DLL swap-while-loaded rebuild/upgrade hazard** — replacing
+   enum_hook.dll/delete_hook.dll on disk while a tool-launched TSDev still
+   holds the old module loaded: `get_export_rva` reads the new on-disk file
+   while `LoadLibraryW` returns the stale loaded module → wrong-address
+   remote call → crash (observed 2026-09-04 during the TVS #8 fix round;
+   TSCrashReport read/dismissed, fresh instance clean). Not covered by the
+   TSDev.exe/ORELUI20.dll SHA-256 guards. Hardening candidate: resolve the
+   export from the remote loaded module instead of the on-disk file. Same
+   hazard has existed for delete_hook.dll since TVS #6. Evidence:
+   `docs/TVS8_E2E_GATE.md`; TVS #8 review round 2, finding 2.
 
 Evidence: `docs/RE_ORELUI20_DYNAMIC.md` §3.3, §3.4, §4; `docs/RE_ORELUI20.md`
-§5.
+§5; `docs/TVS8_E2E_GATE.md`; TVS #8 adversarial review rounds 1–2.
