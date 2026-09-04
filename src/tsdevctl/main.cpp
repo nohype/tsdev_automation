@@ -749,9 +749,10 @@ int run_delete(const Options& opts) {
     opts.name.copy(shared->target_name, 255);
     shared->target_name[opts.name.size() < 256 ? opts.name.size() : 255] = L'\0';
     shared->fn_open = reinterpret_cast<void*>(0x004944b0);
-    shared->fn_delete = reinterpret_cast<void*>(0x0044c0f0);
     shared->modified_offset = 0x17c;
     shared->vtable_close_offset = 0x8c;
+    shared->vtable_loader_offset = 0x1F4;
+    shared->vtable_clear_saved_offset = 0x1B4;
     shared->status = DeletePending;
     shared->crash_flag = 0;
 
@@ -877,12 +878,26 @@ int run_delete(const Options& opts) {
 
     if (verify_outcome.exists) {
         // Item still exists — deletion failed.
-        if (crash_flag)
-            return fail(Exit::Crashed, L"delete_crashed",
-                        L"an exception occurred during deletion and the item still exists");
-        if (status != DeleteDone)
+        if (crash_flag || status != DeleteDone) {
+            // The loader or clear-saved may have crashed before OnCloseDocument
+            // was called, leaving the document opened by the pipe open in TSDev.
+            // Close any matching document window opened by the delete operation.
+            std::wstring close_note;
+            const std::wstring expected = opts.name + L" : " + opts.type_label;
+            const DocMatch match = find_doc_window(docs_before, docs_after, expected);
+            if (match.window != nullptr && match.opened_by_us) {
+                const std::set<HWND> d_before = snapshot_tsdev_dialogs(session.pid);
+                const auto cf = close_doc_discard(opts, session, d_before, *match.window);
+                if (cf) close_note = L" [also: failed to close residue document: " + cf->message + L"]";
+            }
+            if (crash_flag)
+                return fail(Exit::Crashed, L"delete_crashed",
+                            L"an exception occurred during deletion and the item still exists; "
+                            L"a document may remain open in TSDev" + close_note);
             return fail(Exit::Unexpected, L"hook_error",
-                        L"the delete hook reported an error and the item still exists");
+                        L"the delete hook reported an error and the item still exists; "
+                        L"a document may remain open in TSDev" + close_note);
+        }
         return fail(Exit::Unexpected, L"delete_failed",
                     L"the hook completed but the item still exists in the library");
     }

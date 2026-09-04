@@ -7,9 +7,12 @@
 // The CLI verifies the TSDev.exe SHA-256 before injecting, so these are
 // safe to hardcode — a mismatched build is rejected before injection.
 static void* const kFnOpen   = reinterpret_cast<void*>(0x004944b0);
-static void* const kFnDelete = reinterpret_cast<void*>(0x0044c0f0);
-static const int  kModifiedOffset     = 0x17c;
-static const int  kVtableCloseOffset  = 0x8c;
+static void* const kFnClearSaved = reinterpret_cast<void*>(0x0044f3d0);
+static const int  kModifiedOffset          = 0x17c;
+static const int  kVtableCloseOffset       = 0x8c;
+static const int  kVtableLoaderOffset      = 0x1F4;
+static const int  kVtableClearSavedOffset  = 0x1B4;
+static const unsigned short kTradingAppType = 0x1402;
 
 // Original first 5 bytes of FUN_004944b0: push ebp; mov ebp,esp; push -1
 static constexpr unsigned char kOriginalBytes[5] = { 0x55, 0x8B, 0xEC, 0x6A, 0xFF };
@@ -40,6 +43,15 @@ typedef void (*ThiscallVoidFn)(void* thisPtr);
 
 // Saved copy of the item name (copied before the original function destroys it).
 static wchar_t g_saved_name[256] = {};
+
+// Re-entry guard: the CLI re-sends the pipe command every 3 seconds while
+// waiting for the done event, and each re-send calls FUN_004944b0, firing the
+// hook. If a previous do_delete is still running (e.g. during the loader or
+// clear-saved call) when a new pipe-send arrives, the hook could fire again on
+// a new document. The hook runs in TSDev's main thread, so there's no true
+// concurrency, but nested message processing can re-enter; this flag prevents
+// that. Checked after name_matches so non-matching opens still pass through.
+static volatile long g_delete_in_progress = 0;
 
 static bool name_matches(const wchar_t* a, const wchar_t* b) {
     if (!a || !b) return false;
@@ -78,19 +90,72 @@ static void cleanup() {
 }
 
 // C helper called from the naked hook after the original function returns.
-// Performs the deletion (FUN_0044c0f0, clear modified flag, OnCloseDocument)
-// if the saved name matches the target. Uses __try/__except for crash safety.
+// Uses the destructor path: sets up the three conditions the CELDocument
+// destructor (FUN_0044a640) requires to call FUN_0044c0f0 (library deletion),
+// then calls OnCloseDocument which triggers the destructor. The destructor
+// handles both deletion and document cleanup in the correct order, then
+// frees the doc object.
+//
+// The three destructor conditions (all must be met):
+//   1. doc+0x174 != 0 — set by vtable[0x1F4] (loader) if the item exists
+//   2. !CELProperties::IsSaved — set by vtable[0x1B4] which calls
+//      CELProperties::SetSaved(false) on the properties at doc+0x210
+//   3. doc+0x17C != 0 — set directly (modified flag)
+//
+// After OnCloseDocument returns, the doc pointer is INVALID (freed by the
+// destructor). Do NOT access doc after the close call.
 static void __cdecl do_delete(void* doc) {
     if (!g_shared || !doc) return;
     if (!name_matches(g_saved_name, g_shared->target_name)) return;
+    if (g_delete_in_progress) return;
+    g_delete_in_progress = 1;
 
     __try {
-        const ThiscallVoidFn fn_delete = reinterpret_cast<ThiscallVoidFn>(g_shared->fn_delete);
-        fn_delete(doc);
-
-        *reinterpret_cast<volatile long*>(static_cast<char*>(doc) + g_shared->modified_offset) = 0;
-
         void** vtable = *reinterpret_cast<void***>(doc);
+
+        // 1. Call vtable[0x1F4] (loader / FUN_0044f8e0) — sets doc+0x174 = 1
+        //    if the item exists in the library. The loader clears doc+0x17C
+        //    and doc+0x174 at the start, then sets doc+0x174 = 1 if found.
+        //    Must be called BEFORE setting doc+0x17C (it clears it).
+        const ThiscallVoidFn loader =
+            reinterpret_cast<ThiscallVoidFn>(vtable[g_shared->vtable_loader_offset / sizeof(void*)]);
+        loader(doc);
+
+        // 2. Call vtable[0x1B4] (FUN_00458160 for CELFunctionDoc) — calls
+        //    FUN_0044f3d0 which calls CELProperties::SetSaved(false) on the
+        //    properties at doc+0x210. This makes the destructor's IsSaved
+        //    check return false. IsSaved is in an external DLL and checks
+        //    an internal CELProperties field set by SetSaved; the field
+        //    offset is not visible from TSDev.exe static analysis.
+        //
+        //    TradingApp (CELApplicationDoc, type 0x1402) has an empty stub
+        //    at vtable[0x1B4] (FUN_00413900) that does NOT call SetSaved.
+        //    For this type, call FUN_0044f3d0 directly. See
+        //    docs/RE_DELETE_TRADINGAPP.md for the full analysis.
+        const unsigned char type_lo = *(reinterpret_cast<unsigned char*>(doc) + 0x1e8);
+        const unsigned char type_hi = *(reinterpret_cast<unsigned char*>(doc) + 0x1ea);
+        const unsigned short doc_type = static_cast<unsigned short>((type_hi << 8) | type_lo);
+        if (doc_type == kTradingAppType) {
+            const ThiscallVoidFn clear_saved_direct =
+                reinterpret_cast<ThiscallVoidFn>(kFnClearSaved);
+            clear_saved_direct(doc);
+        } else {
+            vtable = *reinterpret_cast<void***>(doc);
+            const ThiscallVoidFn clear_saved =
+                reinterpret_cast<ThiscallVoidFn>(vtable[g_shared->vtable_clear_saved_offset / sizeof(void*)]);
+            clear_saved(doc);
+        }
+
+        // 3. Set doc+0x17C = 1 (modified flag). Must be AFTER the loader
+        //    (which clears it). The destructor requires this to be non-zero.
+        *reinterpret_cast<volatile long*>(static_cast<char*>(doc) + g_shared->modified_offset) = 1;
+
+        // 4. Call vtable[0x8c] (OnCloseDocument / FUN_004508e0) — closes the
+        //    document, destroys views, and calls delete this (the destructor).
+        //    The destructor sees doc+0x174=1, !IsSaved=true, doc+0x17C=1,
+        //    and calls FUN_0044c0f0 (library deletion). After this call,
+        //    doc is freed — do NOT access doc below.
+        vtable = *reinterpret_cast<void***>(doc);
         const ThiscallVoidFn close_doc =
             reinterpret_cast<ThiscallVoidFn>(vtable[g_shared->vtable_close_offset / sizeof(void*)]);
         close_doc(doc);
@@ -100,6 +165,8 @@ static void __cdecl do_delete(void* doc) {
         g_shared->crash_flag = 1;
         g_shared->status = DeleteError;
     }
+
+    g_delete_in_progress = 0;
 
     if (g_done_event) SetEvent(g_done_event);
     unhook();
@@ -245,9 +312,10 @@ extern "C" __declspec(dllexport) DWORD WINAPI ReArmHook(LPVOID) {
     // The CLI fills in addresses; copy them into the shared struct as
     // a fallback in case they were not set (they should always be set).
     if (!g_shared->fn_open)   g_shared->fn_open   = kFnOpen;
-    if (!g_shared->fn_delete) g_shared->fn_delete = kFnDelete;
-    if (!g_shared->modified_offset)     g_shared->modified_offset     = kModifiedOffset;
-    if (!g_shared->vtable_close_offset) g_shared->vtable_close_offset = kVtableCloseOffset;
+    if (!g_shared->modified_offset)           g_shared->modified_offset           = kModifiedOffset;
+    if (!g_shared->vtable_close_offset)       g_shared->vtable_close_offset       = kVtableCloseOffset;
+    if (!g_shared->vtable_loader_offset)      g_shared->vtable_loader_offset      = kVtableLoaderOffset;
+    if (!g_shared->vtable_clear_saved_offset) g_shared->vtable_clear_saved_offset = kVtableClearSavedOffset;
 
     g_shared->status = DeletePending;
     g_shared->crash_flag = 0;

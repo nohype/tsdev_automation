@@ -203,10 +203,19 @@ Evidence: decompilation-derived.
 
 `tsdevctl delete --type <Type> --name <Name>` deletes items by injecting a 32-bit DLL into TSDev.exe that hooks the document-open function (`FUN_004944b0` at `0x004944b0` — already documented above as the pipe/0x8001 open-by-pair handler). Full RE detail in `docs/RE_DELETE_FINDINGS.md`; live verification in `docs/RE_DELETE_LIVE_VERIFY.md`.
 
-### Delete mechanism (hook-based)
+### Delete mechanism (destructor path)
 
-- The hook intercepts document-open calls, matches the target name, and calls the library deletion function `FUN_0044c0f0` directly, then clears the modified flag at `doc+0x17c`, then calls `OnCloseDocument` via `vtable[0x8c]`.
-- The direct call to `FUN_0044c0f0` is used instead of the UI delete command (`0x80e8` / `FUN_00482f50`) because the UI delete routine does not remove Function items (its map at `doc+0x32c` is empty for those documents).
+The delete hook uses TSDev's own document destructor to perform library deletion in the correct lifecycle order (editor views destroyed before library item deleted). Full RE detail in `docs/RE_DELETE_UI_FLOW.md`, `docs/RE_DELETE_VIEW_ACTIVATION.md`, and `docs/RE_DELETE_TRADINGAPP.md`.
+
+- The hook intercepts document-open calls (`FUN_004944b0`), matches the target name, then sets up the three conditions the CELDocument destructor (`FUN_0044a640`) requires to call `FUN_0044c0f0` (library deletion):
+  1. **`doc+0x174 = 1`** (opened-from-library) — set by calling `vtable[0x1F4]` (loader `FUN_0044f8e0`), which is the same function the tree-view open path calls.
+  2. **`!IsSaved`** — set by calling `vtable[0x1B4]` (clear-saved, calls `CELProperties::SetSaved(false)` via `FUN_0044f3d0`). **TradingApp exception:** `CELApplicationDoc`'s vtable[0x1B4] is an empty stub (`FUN_00413900`); for TradingApp (type `0x1402`), the hook calls `FUN_0044f3d0` directly.
+  3. **`doc+0x17C = 1`** (modified flag) — set directly. This flag is NOT set by `vtable[0x6c]` (which sets `doc+0x48`, MFC's `m_bModified`); only the constructor writes `doc+0x17C = 1`, and `OnOpenDocument` clears it during pipe-open.
+- The hook then calls `vtable[0x8c]` (`OnCloseDocument` / `FUN_004508e0`), which destroys the editor views, then calls `delete this` (the destructor). The destructor sees all three conditions met and calls `FUN_0044c0f0` (library deletion). The doc object is freed during this call — no doc access after `OnCloseDocument`.
+- This approach was chosen after exhaustive research (see `docs/RE_DELETE_UI_FLOW.md` §12, `docs/RE_DELETE_VIEW_ACTIVATION.md` §7) found no higher-level deletion API:
+  - The UI delete command (`0x80e8` / `FUN_00482f50`) does NOT delete Function items from the library (it saves and clears the modified flag, preventing the destructor from calling `FUN_0044c0f0`).
+  - No pipe command, exported function, or name-string-accepting delete function exists.
+  - A higher-level "pipe-open + modify text + activate view + close-without-saving" approach is NOT viable because two of three destructor conditions (`!IsSaved` and `doc+0x17C != 0`) have no high-level trigger (see `docs/RE_DELETE_VIEW_ACTIVATION.md`).
 - `FUN_0044c0f0` was live-verified for all 5 R13 types: Function, Strategy, Indicator, ShowMe, TradingApp.
 
 ### DLL injection and re-injection
@@ -243,9 +252,18 @@ The build SHA-256 is already documented above (`9099AA…CAF9A`). Additional del
 |------|-----------------|
 | Document open function (hook target) | `FUN_004944b0` @ `0x004944b0` |
 | Original first 5 bytes | `55 8B EC 6A FF` |
-| Library deletion function | `FUN_0044c0f0` @ `0x0044c0f0` |
+| Library deletion function (called by destructor) | `FUN_0044c0f0` @ `0x0044c0f0` |
+| CELDocument destructor | `FUN_0044a640` @ `0x0044a640` |
+| Document loader (vtable[0x1F4]) | `FUN_0044f8e0` @ `0x0044f8e0` |
+| Common clear-saved helper (called directly for TradingApp) | `FUN_0044f3d0` @ `0x0044f3d0` |
+| OnCloseDocument (vtable[0x8c]) | `FUN_004508e0` @ `0x004508e0` |
 | Modified flag offset | `doc + 0x17c` |
+| Opened-from-library flag offset | `doc + 0x174` |
 | OnCloseDocument vtable offset | `vtable + 0x8c` |
+| Loader vtable offset | `vtable + 0x1F4` |
+| Clear-saved vtable offset | `vtable + 0x1B4` |
+| TradingApp type code | `0x1402` |
+| TradingApp doc class vtable | `0x005638B0` (`CELApplicationDoc`) |
 
 ### Document type fields
 
