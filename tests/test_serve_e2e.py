@@ -45,6 +45,22 @@ def _cleanup(client: TsDevClient, name: str) -> None:
             pass
 
 
+def _assert_cancelled_marker(result, op: str, type_: str, name: str) -> None:
+    """Assert the exact synthetic not-run cancellation marker (TVS B)."""
+    assert result.op == op, f"marker op must be {op!r}, got {result.op!r}"
+    assert result.type == type_, f"marker type must be {type_!r}, got {result.type!r}"
+    assert result.name == name, f"marker name must be {name!r}, got {result.name!r}"
+    assert result.success is False, f"{name}: expected cancelled marker, got {result}"
+    assert result.exit_code == 12, f"{name}: marker exit_code must be 12, got {result.exit_code}"
+    assert result.error is not None, f"{name}: marker must carry an error payload"
+    assert result.error.code == "cancelled", (
+        f"{name}: marker error.code must be 'cancelled', got {result.error.code!r}"
+    )
+    assert result.error.message == "Batch cancelled before this item was attempted", (
+        f"{name}: unexpected marker message {result.error.message!r}"
+    )
+
+
 @pytest.mark.e2e
 class TestServeE2E:
     """Full lifecycle E2E test for serve mode (TVS-K.6a).
@@ -1336,6 +1352,173 @@ class TestServeE2E:
                 client.delete("strategy", name)
             except Exception:
                 pass
+            if client._broker is not None:
+                try:
+                    client._broker.shutdown()
+                except Exception:
+                    pass
+
+    # -- TVS B: serve on_progress callback E2E -----------------------------
+
+    def test_serve_batch_on_progress_tvsb(self):
+        """TVS B live: ``on_progress`` callbacks over the real serve broker.
+
+        Non-elevated auto-broker E2E proving the serve batch progress
+        contract end-to-end:
+
+        1. ``BatchProgress`` callbacks fire synchronously in input order
+           after every attempted result, and a per-item failure does not
+           stop the batch (callback-driven continuation).
+        2. ``return False`` cancels before the next item — after a success
+           AND after a failure — and the returned list stays full length:
+           unattempted items become exit-12 ``cancelled`` markers that the
+           callback never sees.
+        3. One stable broker process serves every batch call and remains
+           usable after cancellations.
+        4. UUID-derived disposable names; exact cleanup in ``finally``.
+        """
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        import uuid
+
+        from tsdev_automation import BatchProgress
+
+        cli_path = _find_cli()
+
+        # UUID-derived disposable names: no fixed-name collisions across runs.
+        uid = uuid.uuid4().hex[:8].upper()
+        name_a = f"TS_B_{uid}_A"      # inserted, deleted by cancel-after-success
+        name_b = f"TS_B_{uid}_B"      # inserted, marker twice, deleted singly
+        name_c = f"TS_B_{uid}_C"      # never attempted (cancelled marker)
+        name_bad = f"TS_B_{uid}_BAD"  # compile-failure item (never exists)
+        name_ghost = f"TS_B_{uid}_GHOST"  # never created (not-found delete)
+        names = [name_a, name_b, name_c, name_bad, name_ghost]
+
+        def _ins_src(n: str) -> str:
+            return (
+                f"{{ TVS B serve progress {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+                "if FastMA < SlowMA then SellShort next bar at Market;\n"
+            )
+
+        invalid_source = "{ TVS B broken }\nInputs: ;\n{ syntax error }\n"
+
+        client = TsDevClient(cli_path=cli_path)
+        assert client._serve_active(), (
+            "serve must be active (non-elevated session + use_serve=True); "
+            "if this fails the batch-over-serve path is not being exercised"
+        )
+
+        broker_handle: int | None = None
+
+        try:
+            # Pre-cleanup: best-effort delete of leftovers through the broker.
+            for n in names:
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
+
+            # --- 1. Callback continuation after an item failure -----------
+            events: list = []
+            results = client.batch_insert(
+                [
+                    BatchItem("strategy", name_a, _ins_src(name_a)),
+                    BatchItem("strategy", name_bad, invalid_source),
+                    BatchItem("strategy", name_b, _ins_src(name_b)),
+                ],
+                on_progress=events.append,
+            )
+            broker_handle = client.broker_process_handle()
+            assert broker_handle is not None, (
+                "broker must be started after batch_insert (serve bypassed)"
+            )
+            assert len(results) == 3
+            assert len(events) == 3
+            assert all(isinstance(p, BatchProgress) for p in events)
+            assert [p.index for p in events] == [1, 2, 3]
+            assert [p.total for p in events] == [3, 3, 3]
+            for p, r in zip(events, results):
+                assert p.result == r
+            assert results[0].success and results[0].name == name_a
+            assert results[1].success is False and results[1].exit_code == 8
+            assert results[1].error is not None and results[1].error.code == "compile_error"
+            # The third item was attempted despite the second item's failure.
+            assert results[2].success and results[2].name == name_b
+
+            assert client.broker_process_handle() == broker_handle
+            assert client.exists("strategy", name_a).exists
+            assert client.exists("strategy", name_b).exists
+            assert not client.exists("strategy", name_bad).exists
+            assert client.broker_process_handle() == broker_handle
+
+            # --- 2. Cancel after a success --------------------------------
+            events2: list = []
+
+            def _cancel(p) -> bool:
+                events2.append(p)
+                return False
+
+            results2 = client.batch_delete(
+                [
+                    BatchItem("strategy", name_a),
+                    BatchItem("strategy", name_b),
+                    BatchItem("strategy", name_c),
+                ],
+                on_progress=_cancel,
+            )
+            assert client.broker_process_handle() == broker_handle
+            assert len(results2) == 3, "cancelled batch must return a full-length list"
+            assert len(events2) == 1, "callback must not be invoked for markers"
+            assert results2[0].success
+            _assert_cancelled_marker(results2[1], "delete", "strategy", name_b)
+            _assert_cancelled_marker(results2[2], "delete", "strategy", name_c)
+            assert not client.exists("strategy", name_a).exists
+            assert client.exists("strategy", name_b).exists
+            assert not client.exists("strategy", name_c).exists
+            assert client.broker_process_handle() == broker_handle
+
+            # --- 3. Cancel after a failure --------------------------------
+            events3: list = []
+
+            def _cancel3(p) -> bool:
+                events3.append(p)
+                return False
+
+            results3 = client.batch_delete(
+                [BatchItem("strategy", name_ghost), BatchItem("strategy", name_b)],
+                on_progress=_cancel3,
+            )
+            assert client.broker_process_handle() == broker_handle
+            assert len(results3) == 2
+            assert len(events3) == 1, "callback must not be invoked for markers"
+            assert results3[0].success is False
+            assert results3[0].exit_code == 5
+            assert results3[0].error is not None
+            assert results3[0].error.code == "not_found"
+            _assert_cancelled_marker(results3[1], "delete", "strategy", name_b)
+            assert client.exists("strategy", name_b).exists
+            assert client.broker_process_handle() == broker_handle
+
+            # --- 4. Broker still usable after cancellations ---------------
+            d = client.delete("strategy", name_b)
+            assert d.success, f"delete after cancelled batches failed: {d}"
+            assert not client.exists("strategy", name_b).exists
+            assert client.broker_process_handle() == broker_handle
+
+        finally:
+            # Exact cleanup: every name this test could have created, then
+            # broker shutdown so no elevated broker process is leaked.
+            for n in names:
+                try:
+                    client.delete("strategy", n)
+                except Exception:
+                    pass
             if client._broker is not None:
                 try:
                     client._broker.shutdown()

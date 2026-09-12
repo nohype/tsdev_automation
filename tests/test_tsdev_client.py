@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import inspect
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
 
 import pytest
@@ -26,6 +30,7 @@ from tsdev_automation import (
     AlreadyExistsError,
     ArtifactMissingError,
     BatchItem,
+    BatchProgress,
     CompileError,
     NotFoundError,
     TsDevClient,
@@ -863,7 +868,7 @@ class TestBatchUpsert:
             [BatchItem("strategy", "A", "a;"), BatchItem("function", "B", "b;")]
         )
         cmd = seen["cmd"]
-        assert cmd == [str(client.cli_path), "batch-upsert", "--batch-stdin"]
+        assert cmd == [str(client.cli_path), "--json", "batch-upsert", "--batch-stdin"]
         assert cmd[-1] == "--batch-stdin"
         assert "--batch-stdin" in cmd
         # The input manifest contains lines for both items.
@@ -934,7 +939,7 @@ class TestBatchDir:
         monkeypatch.setattr(subprocess, "run", fake_run)
         results = client.batch_insert_dir("strategy", "C:/mydir")
         cmd = seen["cmd"]
-        assert cmd == [str(client.cli_path), "batch-insert-dir", "strategy", "C:/mydir"]
+        assert cmd == [str(client.cli_path), "--json", "batch-insert-dir", "strategy", "C:/mydir"]
         assert "-t" not in cmd, "no -t flags when extensions=None"
         assert seen["kw"].get("input") == "", "input must be empty string for dir batch"
         assert len(results) == 1 and results[0].success
@@ -951,7 +956,7 @@ class TestBatchDir:
         monkeypatch.setattr(subprocess, "run", fake_run)
         results = client.batch_modify_dir("strategy", "C:/mydir")
         cmd = seen["cmd"]
-        assert cmd == [str(client.cli_path), "batch-modify-dir", "strategy", "C:/mydir"]
+        assert cmd == [str(client.cli_path), "--json", "batch-modify-dir", "strategy", "C:/mydir"]
         assert "-t" not in cmd
         assert seen["kw"].get("input") == ""
         assert len(results) == 1 and results[0].success
@@ -968,7 +973,7 @@ class TestBatchDir:
         monkeypatch.setattr(subprocess, "run", fake_run)
         results = client.batch_delete_dir("strategy", "C:/mydir")
         cmd = seen["cmd"]
-        assert cmd == [str(client.cli_path), "batch-delete-dir", "strategy", "C:/mydir"]
+        assert cmd == [str(client.cli_path), "--json", "batch-delete-dir", "strategy", "C:/mydir"]
         assert "-t" not in cmd
         assert seen["kw"].get("input") == ""
         assert len(results) == 1 and results[0].success
@@ -985,7 +990,7 @@ class TestBatchDir:
         monkeypatch.setattr(subprocess, "run", fake_run)
         results = client.batch_upsert_dir("strategy", "C:/mydir")
         cmd = seen["cmd"]
-        assert cmd == [str(client.cli_path), "batch-upsert-dir", "strategy", "C:/mydir"]
+        assert cmd == [str(client.cli_path), "--json", "batch-upsert-dir", "strategy", "C:/mydir"]
         assert "-t" not in cmd
         assert seen["kw"].get("input") == ""
         assert len(results) == 1 and results[0].success
@@ -1045,6 +1050,168 @@ class TestBatchDir:
             client.batch_insert_dir("strategy", "C:/mydir", extensions=[""])
         with pytest.raises(ValueError, match="extension"):
             client.batch_insert_dir("strategy", "C:/mydir", extensions=["el", ""])
+
+
+def _batch_progress_stderr(op: str) -> str:
+    result = json.dumps(json.loads(_success_json(op, "strategy", "A")), separators=(",", ":"))
+    return (
+        f'{{"event":"batch_item_started","batch_operation":"{op}","index":1,"total":1,"type":"strategy","name":"A"}}\n'
+        f'{{"event":"batch_item_completed","batch_operation":"{op}","index":1,"total":1,"type":"strategy","name":"A","success":true,"exit_code":0,"result":{result}}}\n'
+        f'{{"event":"batch_completed","batch_operation":"{op}","completed":1,"total":1,"successes":1,"failures":0,"not_run":0,"cancelled":false,"close_failed":false,"exit_code":0}}\n'
+        "orlib20: warehouse flushed\n"
+    )
+
+
+class TestBatchDirectJson:
+    def test_batch_insert_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("insert")
+        arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert([BatchItem("strategy", "A", "a;")])
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-insert", "--batch-stdin"]
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_modify_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("modify")
+        arr = json.dumps([json.loads(_success_json("modify", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_modify([BatchItem("strategy", "A", "a;")])
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-modify", "--batch-stdin"]
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_delete_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("delete")
+        arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-delete", "--batch-stdin"]
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_upsert_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("upsert")
+        arr = json.dumps([json.loads(_success_json("upsert", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_upsert([BatchItem("strategy", "A", "a;")])
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-upsert", "--batch-stdin"]
+        assert isinstance(seen["kw"]["input"], str)
+        assert seen["kw"]["input"], "input string must be non-empty"
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_insert_dir_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("insert")
+        arr = json.dumps([json.loads(_success_json("insert", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert_dir("strategy", "C:/mydir")
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-insert-dir", "strategy", "C:/mydir"]
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_modify_dir_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("modify")
+        arr = json.dumps([json.loads(_success_json("modify", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_modify_dir("strategy", "C:/mydir")
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-modify-dir", "strategy", "C:/mydir"]
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_delete_dir_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("delete")
+        arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_delete_dir("strategy", "C:/mydir")
+        assert seen["cmd"] == [str(client.cli_path), "--json", "batch-delete-dir", "strategy", "C:/mydir"]
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
+
+    def test_batch_upsert_dir_direct_includes_json(self, client: TsDevClient, monkeypatch) -> None:
+        stderr = _batch_progress_stderr("upsert")
+        arr = json.dumps([json.loads(_success_json("upsert", "strategy", "A"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["kw"] = kw
+            return _make_completed(arr, stderr=stderr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_upsert_dir("strategy", "C:/mydir", extensions=["el", "txt"])
+        assert seen["cmd"] == [
+            str(client.cli_path), "--json", "batch-upsert-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"
+        ]
+        assert seen["kw"].get("input") == ""
+        assert len(results) == 1 and results[0].success
+        assert results[0].stdout == arr
+        assert results[0].stderr == stderr
 
 
 class TestCliMain:
@@ -2032,22 +2199,126 @@ class TestServeRouting:
         assert ei.value.result.error.existing_prog_id == 7
 
 
+def _serve_client(tmp_path: Path, broker=None) -> TsDevClient:
+    """A non-elevated serve-routed client with an (optional) injected broker."""
+    fake_cli = tmp_path / "fake_cli.exe"
+    fake_cli.write_text("")
+    c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+    c._is_elevated = False
+    if broker is not None:
+        c._broker = broker
+    return c
+
+
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def _progress_member(batch: dict) -> dict:
+    """The ``progress`` member a serve response carries for a tagged request."""
+    return {
+        "batch_id": batch.get("id"),
+        "index": batch.get("index"),
+        "total": batch.get("total"),
+        "phase": "completed",
+    }
+
+
+def _serve_batch_broker(outcomes: list[dict]) -> MagicMock:
+    """Fake serve broker enforcing the tagged-batch request/response contract.
+
+    ``call()`` requires every request to carry ``batch`` metadata of exactly
+    ``{id, index, total}`` — a ``uuid4().hex`` id stable across the whole
+    batch and ``1 <= index <= total`` — and returns the next outcome dict
+    enriched with the matching ``progress`` member, mirroring the real serve
+    response enrichment.
+    """
+    broker = MagicMock()
+    calls: list[dict] = []
+    seen_ids: list[str] = []
+
+    def _call(request: dict) -> dict:
+        batch = request.get("batch")
+        assert isinstance(batch, dict), f"batch request must carry batch metadata: {request!r}"
+        assert set(batch) == {"id", "index", "total"}, (
+            f"batch metadata must be exactly id/index/total: {batch!r}"
+        )
+        assert (
+            isinstance(batch["id"], str)
+            and len(batch["id"]) == 32
+            and set(batch["id"]) <= _HEX_DIGITS
+        ), f"batch id must be a uuid4().hex string: {batch!r}"
+        assert isinstance(batch["index"], int) and isinstance(batch["total"], int)
+        assert 1 <= batch["index"] <= batch["total"], (
+            f"batch index/total out of range: {batch!r}"
+        )
+        if seen_ids:
+            assert batch["id"] == seen_ids[0], (
+                f"batch id must be stable across the batch: {batch!r}"
+            )
+        else:
+            seen_ids.append(batch["id"])
+        calls.append(request)
+        resp = dict(outcomes[len(calls) - 1])
+        resp["progress"] = _progress_member(batch)
+        return resp
+
+    broker.call.side_effect = _call
+    return broker
+
+
+def _assert_batch_request(
+    request: dict,
+    op: str,
+    type_: str,
+    name: str,
+    index: int,
+    total: int,
+    source: str | None = None,
+) -> str:
+    """Assert a tagged serve request's ordinary fields and exact batch metadata.
+
+    Returns the batch id so tests can assert id stability across requests.
+    """
+    expected = {"op": op, "type": type_, "name": name}
+    if source is not None:
+        expected["source"] = source
+    req = dict(request)
+    batch = req.pop("batch")
+    assert req == expected
+    assert set(batch) == {"id", "index", "total"}
+    assert (
+        isinstance(batch["id"], str)
+        and len(batch["id"]) == 32
+        and set(batch["id"]) <= _HEX_DIGITS
+    )
+    assert batch["index"] == index
+    assert batch["total"] == total
+    return batch["id"]
+
+
+def _assert_cancelled_marker(result: TsDevResult, op: str, type_: str, name: str) -> None:
+    """Assert the exact synthetic not-run cancellation marker fields."""
+    assert result.op == op
+    assert result.type == type_
+    assert result.name == name
+    assert result.success is False
+    assert result.exit_code == 12
+    assert result.error is not None
+    assert result.error.code == "cancelled"
+    assert result.error.message == "Batch cancelled before this item was attempted"
+
+
 class TestServeBatchRouting:
     """Batch ops route through the serve broker when _serve_active()."""
 
-    def test_batch_insert_serve_routes_through_broker(self, monkeypatch, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        fake_broker = MagicMock()
+    def test_batch_insert_serve_routes_through_broker(self, tmp_path):
         # Two items: one success, one failure (already_exists).
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 100},
             {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 5,
              "error": {"code": "already_exists", "message": "B exists"}},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         items = [
             BatchItem(type="strategy", name="A", source="// EL source A"),
             BatchItem(type="strategy", name="B", source="// EL source B"),
@@ -2059,78 +2330,59 @@ class TestServeBatchRouting:
         assert results[1].success is False
         assert results[1].error is not None
         assert results[1].error.code == "already_exists"
-        # Verify broker was called twice with correct requests.
+        # Verify broker was called twice with correctly tagged requests.
         assert fake_broker.call.call_count == 2
         req0 = fake_broker.call.call_args_list[0][0][0]
-        assert req0 == {"op": "insert", "type": "strategy", "name": "A", "source": "// EL source A"}
+        batch_id = _assert_batch_request(req0, "insert", "strategy", "A", 1, 2, "// EL source A")
         req1 = fake_broker.call.call_args_list[1][0][0]
-        assert req1 == {"op": "insert", "type": "strategy", "name": "B", "source": "// EL source B"}
+        assert _assert_batch_request(req1, "insert", "strategy", "B", 2, 2, "// EL source B") == batch_id
 
-    def test_batch_upsert_serve_routes_through_broker(self, monkeypatch, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "upsert", "type": "function", "name": "F", "success": True, "exit_code": 0, "prog_id": 200}
-        c._broker = fake_broker
+    def test_batch_upsert_serve_routes_through_broker(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "upsert", "type": "function", "name": "F", "success": True, "exit_code": 0, "prog_id": 200},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_upsert([BatchItem(type="function", name="F", source="// EL")])
         assert len(results) == 1
         assert results[0].success is True
         req = fake_broker.call.call_args[0][0]
-        assert req["op"] == "upsert"
+        _assert_batch_request(req, "upsert", "function", "F", 1, 1, "// EL")
 
-    def test_batch_delete_serve_routes_through_broker(self, monkeypatch, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "delete", "type": "strategy", "name": "X", "success": True, "exit_code": 0}
-        c._broker = fake_broker
+    def test_batch_delete_serve_routes_through_broker(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "X", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_delete([BatchItem(type="strategy", name="X")])
         assert len(results) == 1
         assert results[0].success is True
         req = fake_broker.call.call_args[0][0]
-        assert req == {"op": "delete", "type": "strategy", "name": "X"}
+        _assert_batch_request(req, "delete", "strategy", "X", 1, 1)
 
-    def test_batch_modify_serve_routes_through_broker(self, monkeypatch, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "modify", "type": "indicator", "name": "I", "success": True, "exit_code": 0, "prog_id": 300}
-        c._broker = fake_broker
+    def test_batch_modify_serve_routes_through_broker(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "modify", "type": "indicator", "name": "I", "success": True, "exit_code": 0, "prog_id": 300},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_modify([BatchItem(type="indicator", name="I", source="// EL")])
         assert len(results) == 1
         assert results[0].success is True
         req = fake_broker.call.call_args[0][0]
-        assert req["op"] == "modify"
-        assert "source" in req
+        _assert_batch_request(req, "modify", "indicator", "I", 1, 1, "// EL")
 
     def test_batch_serve_source_none_raises_valueerror(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        c._broker = MagicMock()
+        c = _serve_client(tmp_path, MagicMock())
         with pytest.raises(ValueError, match="source is required"):
             c.batch_insert([BatchItem(type="strategy", name="A", source=None)])
 
     def test_batch_serve_per_item_failure_not_raised(self, tmp_path):
         """Per-item failures are collected, not raised (matching non-serve batch)."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        fake_broker = MagicMock()
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
             {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 8,
              "error": {"code": "compile_error", "message": "bad code"}},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert([
             BatchItem(type="strategy", name="A", source="// ok"),
             BatchItem(type="strategy", name="B", source="// bad"),
@@ -2142,12 +2394,8 @@ class TestServeBatchRouting:
 
     def test_batch_serve_validates_type_upfront(self, tmp_path):
         """Unknown type raises ValueError before any broker call."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         fake_broker = MagicMock()
-        c._broker = fake_broker
+        c = _serve_client(tmp_path, fake_broker)
         with pytest.raises(ValueError, match="unknown component type"):
             c.batch_insert([BatchItem(type="bogus", name="A", source="// EL")])
         fake_broker.call.assert_not_called()
@@ -2185,101 +2433,80 @@ class TestServeBatchRouting:
 
     def test_batch_serve_broker_crash_propagates(self, tmp_path):
         """Broker crash during batch propagates as TsDevCrashError, not collected."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         fake_broker = MagicMock()
         fake_broker.call.side_effect = TsDevCrashError(message="broker crashed", exit_code=0xC0000005)
-        c._broker = fake_broker
+        c = _serve_client(tmp_path, fake_broker)
         with pytest.raises(TsDevCrashError, match="broker crashed"):
             c.batch_insert([BatchItem(type="strategy", name="A", source="// EL")])
 
     def test_batch_serve_source_as_file_path(self, tmp_path):
         """BatchItem.source as a file path is read via _read_source."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         # Create a real .el file to use as source.
         src_file = tmp_path / "my_strategy.el"
         src_file.write_text("// real file source")
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "test", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "test", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert([BatchItem(type="strategy", name="test", source=str(src_file))])
         assert len(results) == 1
         assert results[0].success is True
         req = fake_broker.call.call_args[0][0]
-        assert req["source"] == "// real file source"
+        _assert_batch_request(req, "insert", "strategy", "test", 1, 1, "// real file source")
 
 
 class TestServeBatchDirRouting:
     """batch_*_dir ops route through the serve broker when _serve_active()."""
 
     def test_batch_insert_dir_serve_enumerates_files(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         # Create a temp dir with .el files.
         d = tmp_path / "el_dir"
         d.mkdir()
         (d / "alpha.el").write_text("// alpha source")
         (d / "beta.el").write_text("// beta source")
         (d / "readme.md").write_text("not EL")  # should be skipped
-        fake_broker = MagicMock()
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0, "prog_id": 1},
             {"op": "insert", "type": "strategy", "name": "beta", "success": True, "exit_code": 0, "prog_id": 2},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert len(results) == 2
         assert results[0].name == "alpha"
         assert results[1].name == "beta"
         assert fake_broker.call.call_count == 2
         req0 = fake_broker.call.call_args_list[0][0][0]
-        assert req0 == {"op": "insert", "type": "strategy", "name": "alpha", "source": "// alpha source"}
+        batch_id = _assert_batch_request(req0, "insert", "strategy", "alpha", 1, 2, "// alpha source")
         req1 = fake_broker.call.call_args_list[1][0][0]
-        assert req1 == {"op": "insert", "type": "strategy", "name": "beta", "source": "// beta source"}
+        assert _assert_batch_request(req1, "insert", "strategy", "beta", 2, 2, "// beta source") == batch_id
 
     def test_batch_delete_dir_serve_no_source_read(self, tmp_path):
         """batch_delete_dir in serve mode does not read file content."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "del_dir"
         d.mkdir()
         (d / "gamma.el").write_text("content ignored")
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "delete", "type": "strategy", "name": "gamma", "success": True, "exit_code": 0}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "gamma", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_delete_dir("strategy", str(d))
         assert len(results) == 1
         assert results[0].success is True
         req = fake_broker.call.call_args[0][0]
-        assert req == {"op": "delete", "type": "strategy", "name": "gamma"}
-        assert "source" not in req
+        _assert_batch_request(req, "delete", "strategy", "gamma", 1, 1)
 
     def test_batch_dir_serve_extension_filtering(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "ext_dir"
         d.mkdir()
         (d / "a.el").write_text("// a")
         (d / "b.txt").write_text("// b")
         (d / "c.md").write_text("// c")
         # Default extensions: .el + .txt -> a and b, not c.
-        fake_broker = MagicMock()
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1},
             {"op": "insert", "type": "strategy", "name": "b", "success": True, "exit_code": 0, "prog_id": 2},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert len(results) == 2
         names = [r.name for r in results]
@@ -2289,115 +2516,85 @@ class TestServeBatchDirRouting:
 
     def test_batch_dir_serve_t_override(self, tmp_path):
         """Custom -t extension overrides defaults."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "override_dir"
         d.mkdir()
         (d / "x.el").write_text("// x")
         (d / "y.eld").write_text("// y")
         # Only .eld files.
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "y", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "y", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d), extensions=["eld"])
         assert len(results) == 1
         assert results[0].name == "y"
 
     def test_batch_dir_serve_nonexistent_dir_raises(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        c._broker = MagicMock()
+        c = _serve_client(tmp_path, MagicMock())
         with pytest.raises(TsDevError, match="failed to open directory"):
             c.batch_insert_dir("strategy", str(tmp_path / "nonexistent"))
 
     def test_batch_dir_serve_empty_dir_raises(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "empty_dir"
         d.mkdir()
-        c._broker = MagicMock()
+        c = _serve_client(tmp_path, MagicMock())
         with pytest.raises(TsDevError, match="no files matching"):
             c.batch_insert_dir("strategy", str(d))
 
     def test_batch_dir_serve_unknown_type_raises(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        c._broker = MagicMock()
+        c = _serve_client(tmp_path, MagicMock())
         with pytest.raises(ValueError, match="unknown component type"):
             c.batch_insert_dir("bogus", str(tmp_path))
 
     def test_batch_dir_serve_invalid_extension_raises(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
-        c._broker = MagicMock()
         d = tmp_path / "ext_err_dir"
         d.mkdir()
+        c = _serve_client(tmp_path, MagicMock())
         with pytest.raises(ValueError, match="invalid extension"):
             c.batch_insert_dir("strategy", str(d), extensions=[""])
 
     def test_batch_dir_serve_subdirs_skipped(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "subdir_dir"
         d.mkdir()
         (d / "real.el").write_text("// real")
         sub = d / "subdir.el"
         sub.mkdir()  # a directory named .el — should be skipped
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "real", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "real", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert len(results) == 1
         assert results[0].name == "real"
 
     def test_batch_dir_serve_items_sorted_by_name(self, tmp_path):
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "sort_dir"
         d.mkdir()
         (d / "zebra.el").write_text("// z")
         (d / "alpha.el").write_text("// a")
         (d / "mango.el").write_text("// m")
-        fake_broker = MagicMock()
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0, "prog_id": 1},
             {"op": "insert", "type": "strategy", "name": "mango", "success": True, "exit_code": 0, "prog_id": 2},
             {"op": "insert", "type": "strategy", "name": "zebra", "success": True, "exit_code": 0, "prog_id": 3},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert [r.name for r in results] == ["alpha", "mango", "zebra"]
 
 
     def test_batch_dir_serve_source_read_failure_collected(self, monkeypatch, tmp_path):
         """Source-read failure produces source_file_error result, not raised."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "src_err_dir"
         d.mkdir()
         good = d / "good.el"
         good.write_text("// good source")
         bad = d / "bad.el"
         bad.write_text("// bad source")
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "good", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "good", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         # Make read_text raise OSError only for bad.el.
         real_read_text = Path.read_text
         def fake_read_text(self, *args, **kwargs):
@@ -2415,40 +2612,33 @@ class TestServeBatchDirRouting:
         assert results[0].error.code == "source_file_error"
         assert results[1].name == "good"
         assert results[1].success is True
-        # Broker was only called for the good file.
+        # Broker was only called for the good file — at its input position.
         assert fake_broker.call.call_count == 1
+        req = fake_broker.call.call_args[0][0]
+        _assert_batch_request(req, "insert", "strategy", "good", 2, 2, "// good source")
 
     def test_batch_dir_serve_broker_crash_propagates(self, tmp_path):
         """Broker crash during batch_dir propagates as exception, not collected."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "crash_dir"
         d.mkdir()
         (d / "x.el").write_text("// x")
         fake_broker = MagicMock()
         fake_broker.call.side_effect = TsDevCrashError(message="broker crashed", exit_code=0xC0000005)
-        c._broker = fake_broker
+        c = _serve_client(tmp_path, fake_broker)
         with pytest.raises(TsDevCrashError, match="broker crashed"):
             c.batch_insert_dir("strategy", str(d))
 
     def test_batch_dir_serve_case_insensitive_extension(self, tmp_path):
         """File extension matching is case-insensitive."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "ci_dir"
         d.mkdir()
         (d / "upper.EL").write_text("// upper")
         (d / "lower.el").write_text("// lower")
-        fake_broker = MagicMock()
-        fake_broker.call.side_effect = [
+        fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "lower", "success": True, "exit_code": 0, "prog_id": 1},
             {"op": "insert", "type": "strategy", "name": "upper", "success": True, "exit_code": 0, "prog_id": 2},
-        ]
-        c._broker = fake_broker
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert len(results) == 2
         names = [r.name for r in results]
@@ -2457,37 +2647,1818 @@ class TestServeBatchDirRouting:
 
     def test_batch_dir_serve_dot_prefix_optional(self, tmp_path):
         """Extension without dot prefix matches same as with dot."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "dot_dir"
         d.mkdir()
         (d / "a.el").write_text("// a")
         (d / "b.txt").write_text("// b")
         # "el" (no dot) should match .el files only (overrides defaults).
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d), extensions=["el"])
         assert len(results) == 1
         assert results[0].name == "a"
 
     def test_batch_dir_serve_multi_dot_stem(self, tmp_path):
         """path.stem() strips only the last extension."""
-        fake_cli = tmp_path / "fake_cli.exe"
-        fake_cli.write_text("")
-        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
-        c._is_elevated = False
         d = tmp_path / "multi_dot_dir"
         d.mkdir()
         (d / "my.strategy.el").write_text("// ms")
-        fake_broker = MagicMock()
-        fake_broker.call.return_value = {"op": "insert", "type": "strategy", "name": "my.strategy", "success": True, "exit_code": 0, "prog_id": 1}
-        c._broker = fake_broker
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "my.strategy", "success": True, "exit_code": 0, "prog_id": 1},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
         results = c.batch_insert_dir("strategy", str(d))
         assert len(results) == 1
         assert results[0].name == "my.strategy"
+
+
+class TestBatchProgressApi:
+    """TVS B public API surface: BatchProgress model, alias, signatures."""
+
+    _BATCH_METHODS = (
+        "batch_insert", "batch_modify", "batch_delete", "batch_upsert",
+        "batch_insert_dir", "batch_modify_dir", "batch_delete_dir", "batch_upsert_dir",
+    )
+
+    def test_batch_progress_frozen_dataclass_exported(self) -> None:
+        from tsdev_automation import BatchProgress, BatchProgressCallback
+        from tsdev_automation.results import (
+            BatchProgress as ResultsBatchProgress,
+            BatchProgressCallback as ResultsBatchProgressCallback,
+        )
+
+        assert BatchProgress is ResultsBatchProgress
+        assert BatchProgressCallback is ResultsBatchProgressCallback
+        result = TsDevResult(op="insert", type="strategy", name="A", success=True, exit_code=0)
+        progress = BatchProgress(index=1, total=3, result=result)
+        assert progress.index == 1
+        assert progress.total == 3
+        assert progress.result is result
+        with pytest.raises(FrozenInstanceError):
+            progress.index = 2
+
+    def test_batch_progress_callback_alias(self) -> None:
+        from typing import Callable
+
+        from tsdev_automation import BatchProgress, BatchProgressCallback
+
+        assert BatchProgressCallback == Callable[[BatchProgress], bool | None]
+
+    @pytest.mark.parametrize("method_name", _BATCH_METHODS)
+    def test_on_progress_is_keyword_only(self, method_name: str) -> None:
+        sig = inspect.signature(getattr(TsDevClient, method_name))
+        param = sig.parameters.get("on_progress")
+        assert param is not None, f"{method_name} must accept on_progress"
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default is None
+
+    @pytest.mark.parametrize("method_name", _BATCH_METHODS)
+    def test_on_progress_rejects_positional(self, method_name: str, client: TsDevClient) -> None:
+        method = getattr(client, method_name)
+        if method_name.endswith("_dir"):
+            args: tuple = ("strategy", "C:/mydir", ["el"], lambda p: None)
+        else:
+            args = ([BatchItem("strategy", "A", "a;")], lambda p: None)
+        with pytest.raises(TypeError):
+            method(*args)
+
+
+class TestServeBatchOnProgress:
+    """TVS B serve path: tagged requests, validated progress, on_progress."""
+
+    _OPS = [
+        pytest.param(
+            "batch_insert", "insert",
+            [BatchItem("strategy", "A", "// a"), BatchItem("function", "B", "// b")],
+            id="insert",
+        ),
+        pytest.param(
+            "batch_modify", "modify",
+            [BatchItem("indicator", "A", "// a"), BatchItem("strategy", "B", "// b")],
+            id="modify",
+        ),
+        pytest.param(
+            "batch_delete", "delete",
+            [BatchItem("strategy", "A"), BatchItem("function", "B")],
+            id="delete",
+        ),
+        pytest.param(
+            "batch_upsert", "upsert",
+            [BatchItem("strategy", "A", "// a"), BatchItem("function", "B", "// b")],
+            id="upsert",
+        ),
+    ]
+
+    @pytest.mark.parametrize("method_name,op,items", _OPS)
+    def test_tagged_requests_and_callbacks_all_ops(self, tmp_path, method_name, op, items):
+        outcomes = [
+            {"op": op, "type": it.type, "name": it.name, "success": True, "exit_code": 0, "prog_id": i + 1}
+            for i, it in enumerate(items)
+        ]
+        fake_broker = _serve_batch_broker(outcomes)
+        c = _serve_client(tmp_path, fake_broker)
+        from tsdev_automation import BatchProgress
+
+        seen: list = []
+        results = getattr(c, method_name)(items, on_progress=seen.append)
+        assert len(results) == 2
+        assert all(r.success for r in results)
+        assert fake_broker.call.call_count == 2
+        batch_id = None
+        for i, it in enumerate(items):
+            req = fake_broker.call.call_args_list[i][0][0]
+            rid = _assert_batch_request(req, op, it.type, it.name, i + 1, 2, it.source)
+            if batch_id is None:
+                batch_id = rid
+            else:
+                assert rid == batch_id, "batch id must be stable across the batch"
+            progress = seen[i]
+            assert isinstance(progress, BatchProgress)
+            assert progress.index == i + 1
+            assert progress.total == 2
+            assert progress.result == results[i]
+        assert len(seen) == 2
+
+    def test_no_callback_still_tags_requests(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0},
+            {"op": "delete", "type": "strategy", "name": "B", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_delete([BatchItem("strategy", "A"), BatchItem("strategy", "B")])
+        assert [r.success for r in results] == [True, True]
+        assert fake_broker.call.call_count == 2
+
+    def test_callback_invoked_after_success_and_failure_in_order(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 8,
+             "error": {"code": "compile_error", "message": "bad"}},
+            {"op": "insert", "type": "strategy", "name": "C", "success": True, "exit_code": 0, "prog_id": 2},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+        results = c.batch_insert(
+            [
+                BatchItem("strategy", "A", "// a"),
+                BatchItem("strategy", "B", "// b"),
+                BatchItem("strategy", "C", "// c"),
+            ],
+            on_progress=seen.append,
+        )
+        assert len(results) == 3
+        assert [p.index for p in seen] == [1, 2, 3]
+        assert [p.total for p in seen] == [3, 3, 3]
+        assert [p.result.success for p in seen] == [True, False, True]
+        assert seen[1].result.error is not None
+        assert seen[1].result.error.code == "compile_error"
+        for p, r in zip(seen, results):
+            assert p.result == r
+
+    def test_true_none_and_zero_continue(self, tmp_path):
+        """Only ``return is False`` cancels: True/None/0 all continue."""
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0},
+            {"op": "delete", "type": "strategy", "name": "B", "success": True, "exit_code": 0},
+            {"op": "delete", "type": "strategy", "name": "C", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        returns = iter([True, None, 0])
+        results = c.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("strategy", "B"), BatchItem("strategy", "C")],
+            on_progress=lambda p: next(returns),
+        )
+        assert fake_broker.call.call_count == 3
+        assert len(results) == 3
+        assert all(r.success for r in results)
+
+    def test_false_cancels_after_success(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = c.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("function", "B"), BatchItem("indicator", "C")],
+            on_progress=cb,
+        )
+        assert fake_broker.call.call_count == 1
+        assert len(seen) == 1, "callback must not be invoked for not-run markers"
+        assert len(results) == 3
+        assert results[0].success is True
+        _assert_cancelled_marker(results[1], "delete", "function", "B")
+        _assert_cancelled_marker(results[2], "delete", "indicator", "C")
+
+    def test_false_cancels_after_failure(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": False, "exit_code": 5,
+             "error": {"code": "not_found", "message": "missing"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = c.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("strategy", "B")],
+            on_progress=cb,
+        )
+        assert fake_broker.call.call_count == 1
+        assert len(seen) == 1
+        assert len(results) == 2
+        assert results[0].success is False
+        assert results[0].error is not None and results[0].error.code == "not_found"
+        _assert_cancelled_marker(results[1], "delete", "strategy", "B")
+
+    def test_false_on_final_item_ignored(self, tmp_path):
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0},
+            {"op": "delete", "type": "strategy", "name": "B", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            # False only on the final item — must be ignored.
+            return p.index < p.total
+
+        results = c.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("strategy", "B")],
+            on_progress=cb,
+        )
+        assert fake_broker.call.call_count == 2
+        assert len(seen) == 2
+        assert len(results) == 2
+        assert all(r.success for r in results)
+
+    def test_callback_exception_stops_and_reraises(self, tmp_path):
+        """A callback exception stops broker requests, re-raises the original,
+        and leaves the broker usable (no marker list is returned)."""
+        broker = MagicMock()
+
+        def _call(request: dict) -> dict:
+            resp = {
+                "op": request.get("op"), "type": "strategy",
+                "name": request.get("name"), "success": True, "exit_code": 0,
+            }
+            batch = request.get("batch")
+            if batch is not None:
+                resp["progress"] = _progress_member(batch)
+            return resp
+
+        broker.call.side_effect = _call
+        c = _serve_client(tmp_path, broker)
+        seen: list = []
+
+        class Boom(Exception):
+            pass
+
+        def cb(p):
+            seen.append(p)
+            raise Boom("callback failed")
+
+        with pytest.raises(Boom, match="callback failed"):
+            c.batch_delete(
+                [BatchItem("strategy", "A"), BatchItem("strategy", "B")],
+                on_progress=cb,
+            )
+        assert broker.call.call_count == 1, "no further broker requests after callback exception"
+        assert len(seen) == 1
+        # The broker stays usable for subsequent ops through the same client.
+        assert c.exists("strategy", "Z").success is True
+
+    _OMIT = object()
+
+    @pytest.mark.parametrize(
+        "make_progress",
+        [
+            pytest.param(lambda b: TestServeBatchOnProgress._OMIT, id="missing"),
+            pytest.param(lambda b: "completed", id="nonobject-string"),
+            pytest.param(lambda b: 7, id="nonobject-int"),
+            pytest.param(lambda b: {**_progress_member(b), "extra": 1}, id="extra-member"),
+            pytest.param(lambda b: {**_progress_member(b), "batch_id": "0" * 32}, id="wrong-batch-id"),
+            pytest.param(lambda b: {**_progress_member(b), "batch_id": 12345}, id="wrong-batch-id-type"),
+            pytest.param(lambda b: {**_progress_member(b), "index": 99}, id="wrong-index"),
+            pytest.param(lambda b: {**_progress_member(b), "index": True}, id="index-bool"),
+            pytest.param(lambda b: {**_progress_member(b), "total": 99}, id="wrong-total"),
+            pytest.param(lambda b: {**_progress_member(b), "total": True}, id="total-bool"),
+            pytest.param(lambda b: {**_progress_member(b), "phase": "started"}, id="wrong-phase"),
+            pytest.param(
+                lambda b: {"batch_id": b.get("id"), "index": b.get("index"), "total": b.get("total")},
+                id="missing-phase",
+            ),
+        ],
+    )
+    def test_progress_validation_matrix(self, tmp_path, make_progress):
+        """Malformed/mismatched ``progress`` response members raise TsDevError."""
+        broker = MagicMock()
+
+        def _call(request: dict) -> dict:
+            resp = {"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0}
+            progress = make_progress(request.get("batch") or {})
+            if progress is not TestServeBatchOnProgress._OMIT:
+                resp["progress"] = progress
+            return resp
+
+        broker.call.side_effect = _call
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(TsDevError):
+            c.batch_delete([BatchItem("strategy", "A")])
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param([{"op": "delete", "type": "strategy", "name": "A", "success": True, "exit_code": 0}], id="top-level-list"),
+            pytest.param("completed", id="top-level-string"),
+            pytest.param(7, id="top-level-int"),
+        ],
+    )
+    def test_response_non_object_raises(self, tmp_path, response):
+        """A non-dict top-level broker response raises TsDevError, not AttributeError."""
+        broker = MagicMock()
+        broker.call.return_value = response
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(TsDevError):
+            c.batch_delete([BatchItem("strategy", "A")])
+
+    def test_empty_batch_returns_empty_no_callback(self, tmp_path):
+        broker = MagicMock()
+        c = _serve_client(tmp_path, broker)
+        seen: list = []
+        results = c.batch_insert([], on_progress=seen.append)
+        assert results == []
+        assert seen == []
+        broker.call.assert_not_called()
+
+    def test_prevalidation_runs_before_broker_and_callback(self, tmp_path):
+        broker = MagicMock()
+        c = _serve_client(tmp_path, broker)
+        seen: list = []
+        with pytest.raises(ValueError, match="unknown component type"):
+            c.batch_insert([BatchItem("bogus", "A", "// a")], on_progress=seen.append)
+        broker.call.assert_not_called()
+        assert seen == []
+        with pytest.raises(ValueError, match="source is required"):
+            c.batch_insert([BatchItem("strategy", "A", None)], on_progress=seen.append)
+        broker.call.assert_not_called()
+        assert seen == []
+
+    def test_from_json_tolerates_progress_member(self):
+        """A response carrying ``progress`` parses as a normal TsDevResult."""
+        obj = json.loads(_success_json("delete", "strategy", "A"))
+        obj["progress"] = {"batch_id": "x" * 32, "index": 1, "total": 2, "phase": "completed"}
+        r = TsDevResult.from_json(obj)
+        assert r.success is True
+        assert r.name == "A"
+
+
+class TestServeBatchDirOnProgress:
+    """TVS B serve directory batches: tagged requests + on_progress."""
+
+    _DIR_OPS = [
+        pytest.param("batch_insert_dir", "insert", id="insert"),
+        pytest.param("batch_modify_dir", "modify", id="modify"),
+        pytest.param("batch_delete_dir", "delete", id="delete"),
+        pytest.param("batch_upsert_dir", "upsert", id="upsert"),
+    ]
+
+    @staticmethod
+    def _make_dir(tmp_path: Path, *names: str) -> Path:
+        d = tmp_path / "el_dir"
+        d.mkdir()
+        for n in names:
+            stem = Path(n).stem
+            (d / n).write_text(f"// {stem} source")
+        return d
+
+    @staticmethod
+    def _fail_read_of(monkeypatch, filename: str) -> None:
+        real_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self.name == filename:
+                raise OSError("permission denied")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    @pytest.mark.parametrize("method_name,op", _DIR_OPS)
+    def test_dir_ops_tagged_and_callback(self, tmp_path, method_name, op):
+        d = self._make_dir(tmp_path, "alpha.el", "beta.el")
+        needs_source = op != "delete"
+        fake_broker = _serve_batch_broker([
+            {"op": op, "type": "strategy", "name": "alpha", "success": True, "exit_code": 0},
+            {"op": op, "type": "strategy", "name": "beta", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+        results = getattr(c, method_name)("strategy", str(d), on_progress=seen.append)
+        assert len(results) == 2
+        assert all(r.success for r in results)
+        assert fake_broker.call.call_count == 2
+        batch_id = None
+        for i, n in enumerate(("alpha", "beta")):
+            req = fake_broker.call.call_args_list[i][0][0]
+            rid = _assert_batch_request(
+                req, op, "strategy", n, i + 1, 2,
+                f"// {n} source" if needs_source else None,
+            )
+            if batch_id is None:
+                batch_id = rid
+            else:
+                assert rid == batch_id
+            assert seen[i].index == i + 1
+            assert seen[i].total == 2
+            assert seen[i].result == results[i]
+        assert len(seen) == 2
+
+    def test_dir_items_sorted_order_with_callbacks(self, tmp_path):
+        d = self._make_dir(tmp_path, "zebra.el", "alpha.el", "mango.el")
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0},
+            {"op": "insert", "type": "strategy", "name": "mango", "success": True, "exit_code": 0},
+            {"op": "insert", "type": "strategy", "name": "zebra", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+        results = c.batch_insert_dir("strategy", str(d), on_progress=seen.append)
+        assert [p.result.name for p in seen] == ["alpha", "mango", "zebra"]
+        assert [p.index for p in seen] == [1, 2, 3]
+        assert [p.total for p in seen] == [3, 3, 3]
+        assert [r.name for r in results] == ["alpha", "mango", "zebra"]
+
+    def test_dir_read_failure_invokes_callback_and_can_cancel(self, tmp_path, monkeypatch):
+        """A local source-read failure is an actual completed result: it
+        invokes the callback, and False cancels — remaining items become
+        exact not-run markers."""
+        d = self._make_dir(tmp_path, "bad.el", "good.el", "last.el")
+        broker = MagicMock()
+        c = _serve_client(tmp_path, broker)
+        self._fail_read_of(monkeypatch, "bad.el")
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = c.batch_insert_dir("strategy", str(d), on_progress=cb)
+        assert len(results) == 3
+        assert len(seen) == 1
+        assert seen[0].index == 1
+        assert seen[0].total == 3
+        assert seen[0].result.success is False
+        assert seen[0].result.error is not None
+        assert seen[0].result.error.code == "source_file_error"
+        broker.call.assert_not_called()
+        _assert_cancelled_marker(results[1], "insert", "strategy", "good")
+        _assert_cancelled_marker(results[2], "insert", "strategy", "last")
+
+    def test_dir_read_failure_continues_when_not_cancelled(self, tmp_path, monkeypatch):
+        d = self._make_dir(tmp_path, "bad.el", "good.el")
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "good", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        self._fail_read_of(monkeypatch, "bad.el")
+        seen: list = []
+        results = c.batch_insert_dir("strategy", str(d), on_progress=seen.append)
+        assert len(results) == 2
+        assert len(seen) == 2
+        assert seen[0].index == 1
+        assert seen[0].result.error is not None
+        assert seen[0].result.error.code == "source_file_error"
+        assert seen[1].index == 2
+        assert seen[1].result.success is True
+        assert fake_broker.call.call_count == 1
+        req = fake_broker.call.call_args[0][0]
+        _assert_batch_request(req, "insert", "strategy", "good", 2, 2, "// good source")
+
+    def test_dir_false_cancels_after_broker_item(self, tmp_path):
+        d = self._make_dir(tmp_path, "alpha.el", "beta.el", "gamma.el")
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "alpha", "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = c.batch_delete_dir("strategy", str(d), on_progress=cb)
+        assert fake_broker.call.call_count == 1
+        assert len(seen) == 1
+        assert len(results) == 3
+        assert results[0].success is True
+        _assert_cancelled_marker(results[1], "delete", "strategy", "beta")
+        _assert_cancelled_marker(results[2], "delete", "strategy", "gamma")
+
+
+# ---------------------------------------------------------------------------
+# TVS C direct-mode on_progress harness (mocked subprocess.Popen)
+# ---------------------------------------------------------------------------
+#
+# The fake below simulates ``tsdev_cli --batch-progress-control`` over
+# bounded-buffer in-memory pipes (a kernel-buffer model): stderr carries the
+# NDJSON batch events, stdin carries the framed ``TSDEV_BATCH_CONTROL/1``
+# manifest followed by per-item ``continue``/``cancel`` decision lines, and
+# stdout carries the single final JSON array.  A scripted child thread runs
+# the real protocol, so the tests stay strict on wire bytes, decisions,
+# concurrency (a controller that never drains stdout/stderr deadlocks just
+# like a real full pipe) and cleanup, while remaining tolerant of how the
+# production controller splits its own reads/writes across threads.
+
+_BATCH_CONTROL_HEADER = b"TSDEV_BATCH_CONTROL/1 "
+_FAKE_PIPE_CAPACITY = 8192
+# Bounds pathological deadlocks (a controller that never drains, never
+# writes decisions, or never flushes).  Correct runs complete in ms.
+_FAKE_STALL_S = 10.0
+
+
+class _FakePipeCore:
+    """Shared state of one bounded-buffer pipe (kernel-buffer model)."""
+
+    def __init__(self, capacity: int = _FAKE_PIPE_CAPACITY) -> None:
+        self.cond = threading.Condition()
+        self.buf = bytearray()
+        self.capacity = capacity
+        self.write_eof = False  # writer closed -> readers observe EOF
+        self.read_eof = False   # reader closed -> writers observe EPIPE
+        self.aborted = False    # terminate()/kill(): pending ops fail fast
+
+
+class _FakePipeReader(io.BufferedIOBase):
+    """Read end of a fake pipe: blocking reads, EOF once the writer closes."""
+
+    def __init__(self, core: _FakePipeCore) -> None:
+        super().__init__()
+        self._core = core
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return False
+
+    def _take(self, n: int) -> bytes:
+        c = self._core
+        with c.cond:
+            while not c.buf:
+                if c.write_eof or c.aborted or c.read_eof:
+                    return b""
+                c.cond.wait()
+            take = len(c.buf) if n is None or n < 0 else min(n, len(c.buf))
+            out = bytes(c.buf[:take])
+            del c.buf[:take]
+            c.cond.notify_all()
+            return out
+
+    def readinto(self, b) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        data = self._take(len(b))
+        b[: len(data)] = data
+        return len(data)
+
+    def readinto1(self, b) -> int:
+        return self.readinto(b)
+
+    def read(self, size: int = -1) -> bytes:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        if size is None or size < 0:
+            chunks: list[bytes] = []
+            while True:
+                chunk = self._take(65536)
+                if not chunk:
+                    return b"".join(chunks)
+                chunks.append(chunk)
+        return self._take(size)
+
+    def read1(self, size: int = -1) -> bytes:
+        return self.read(size)
+
+    def peek(self, size: int = 1) -> bytes:
+        c = self._core
+        with c.cond:
+            while not c.buf and not (c.write_eof or c.aborted or c.read_eof):
+                c.cond.wait()
+            return bytes(c.buf[: max(1, size)])
+
+    def readline(self, size: int = -1) -> bytes:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        c = self._core
+        out = bytearray()
+        with c.cond:
+            while True:
+                if c.buf:
+                    limit = len(c.buf) if size is None or size < 0 else min(len(c.buf), size - len(out))
+                    if limit <= 0:
+                        return bytes(out)
+                    nl = c.buf.find(b"\n", 0, limit)
+                    take = nl + 1 if nl >= 0 else limit
+                    out += c.buf[:take]
+                    del c.buf[:take]
+                    c.cond.notify_all()
+                    if nl >= 0 or (size is not None and 0 <= size <= len(out)):
+                        return bytes(out)
+                    continue
+                if c.write_eof or c.aborted or c.read_eof:
+                    return bytes(out)
+                c.cond.wait()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        c = self._core
+        with c.cond:
+            c.read_eof = True
+            c.cond.notify_all()
+        super().close()
+
+
+class _FakePipeWriter(io.BufferedIOBase):
+    """Write end of a fake pipe.
+
+    With ``buffered=True`` this emulates the real ``Popen(stdin=PIPE)``
+    ``BufferedWriter``: bytes sit in a pending buffer until ``flush()`` /
+    ``close()`` (or the pending buffer fills) — a producer that never
+    flushes never delivers, which is the real-pipe contract the controller
+    must honor.  With ``buffered=False`` bytes go straight into the pipe
+    (the child's own stdout/stderr producers).
+    """
+
+    def __init__(
+        self,
+        core: _FakePipeCore,
+        *,
+        buffered: bool,
+        wire_sink: bytearray | None = None,
+    ) -> None:
+        super().__init__()
+        self._core = core
+        self._buffered = buffered
+        self._pending = bytearray()
+        self._wire = wire_sink
+        self.flushes = 0
+
+    def writable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return False
+
+    def _push(self, data: bytes) -> None:
+        if not data:
+            return
+        c = self._core
+        deadline = time.monotonic() + _FAKE_STALL_S
+        with c.cond:
+            off = 0
+            while off < len(data):
+                if c.aborted or c.read_eof:
+                    raise BrokenPipeError("fake pipe read end is closed")
+                room = c.capacity - len(c.buf)
+                if room <= 0:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        raise BrokenPipeError("fake pipe write stalled: reader is not draining")
+                    c.cond.wait(min(0.2, rem))
+                    continue
+                n = min(room, len(data) - off)
+                chunk = data[off : off + n]
+                c.buf += chunk
+                if self._wire is not None:
+                    self._wire += chunk
+                off += n
+                c.cond.notify_all()
+
+    def write(self, b) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        if isinstance(b, str):
+            b = b.encode("utf-8")
+        data = bytes(b)
+        if self._buffered:
+            self._pending += data
+            if len(self._pending) >= _FAKE_PIPE_CAPACITY:
+                self._push(bytes(self._pending))
+                self._pending.clear()
+        else:
+            self._push(data)
+        return len(data)
+
+    def flush(self) -> None:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        self.flushes += 1
+        if self._pending:
+            self._push(bytes(self._pending))
+            self._pending.clear()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        if self._pending:
+            try:
+                self._push(bytes(self._pending))
+            except BrokenPipeError:
+                pass
+            self._pending.clear()
+        c = self._core
+        with c.cond:
+            c.write_eof = True
+            c.cond.notify_all()
+        super().close()
+
+
+def _as_bytes(x) -> bytes:
+    return bytes(x) if isinstance(x, (bytes, bytearray)) else str(x).encode("utf-8")
+
+
+def _auto_item_lines(op: str, index: int, total: int, item: "_CliItem") -> list[str]:
+    """Canonical compact NDJSON started/completed event pair (C++ schema)."""
+    result = item.result or {}
+    started = {
+        "event": "batch_item_started", "batch_operation": op,
+        "index": index, "total": total, "type": item.type, "name": item.name,
+    }
+    completed = {
+        "event": "batch_item_completed", "batch_operation": op,
+        "index": index, "total": total, "type": item.type, "name": item.name,
+        "success": result.get("success"), "exit_code": result.get("exit_code"),
+        "result": result,
+    }
+    return [
+        json.dumps(started, separators=(",", ":")),
+        json.dumps(completed, separators=(",", ":")),
+    ]
+
+
+def _cancelled_marker(op: str, type_: str, name: str) -> dict:
+    """The CLI's synthesized not-run array element (exit 12)."""
+    return {
+        "op": op, "type": type_, "name": name,
+        "success": False, "exit_code": 12,
+        "error": {
+            "code": "cancelled",
+            "message": "Batch cancelled before this item was attempted",
+        },
+    }
+
+
+def _control_error_line(token: str) -> str:
+    """The ``batch_control_error`` diagnostic emitted on channel anomalies."""
+    msg = (
+        "control channel closed before decision was read"
+        if token == "<eof>"
+        else f"invalid decision token {token!r}"
+    )
+    return json.dumps(
+        {"event": "batch_control_error", "message": msg, "action": "cancel"},
+        separators=(",", ":"),
+    )
+
+
+@dataclass
+class _CliItem:
+    """One scripted batch item for the fake CLI.
+
+    ``lines=None`` emits the canonical ``batch_item_started`` +
+    ``batch_item_completed`` NDJSON pair; an explicit tuple replaces it (for
+    malformed-event coverage).  ``extra`` appends raw lines after the item's
+    events (interleaved diagnostics).  ``await_decision=None`` follows the
+    real protocol: a decision is read only when ``index < total``.
+    """
+
+    type: str
+    name: str
+    result: dict | None = None
+    lines: tuple | None = None
+    extra: tuple = ()
+    await_decision: bool | None = None
+
+
+@dataclass
+class _CliScenario:
+    """Script for the fake ``--batch-progress-control`` CLI process."""
+
+    op: str
+    items: list
+    exit_code: int = 0
+    stdout: object = None           # None -> auto JSON array (attempted + markers)
+    pre_lines: tuple = ()           # raw stderr lines before any item events
+    summary: dict | None = None     # explicit batch_completed object
+    summary_lines: tuple | None = None  # raw lines replacing the summary event
+    omit_summary: bool = False
+    close_failed: bool = False      # rewrite attempted successes to exit-6 failures
+    pre_run_stderr: object = None   # pre-run failure: diagnostic + exit, no run
+    hang: bool = False              # emit nothing, never exit (until abort/stall)
+    crash_after: int | None = None  # emit item events through this index, then die
+    manifest: bool | None = None    # None -> infer from "--batch-stdin" in argv
+
+
+class _FakeCliProc:
+    """Thread-safe ``subprocess.Popen`` stand-in running a scripted
+    ``tsdev_cli --batch-progress-control`` session on in-memory pipes."""
+
+    def __init__(self, cmd, scenario: _CliScenario) -> None:
+        self.args = list(cmd)
+        self.pid = 4242
+        self.returncode: int | None = None  # set only via wait/poll/communicate
+        self.wait_calls = 0
+        self.poll_calls = 0
+        self.terminated = False
+        self.killed = False
+        # Observables for the tests.
+        self.stdin_wire = bytearray()   # exact bytes the producer flushed
+        self.decisions: list[str] = []  # parsed decision tokens in order
+        self.manifest_declared: int | None = None
+        self.manifest_bytes: bytes | None = None
+        self.manifest_error: bytes | None = None
+        self.manifest_sources: list[tuple[str, bool]] = []  # (path, existed)
+        self.child_error: str | None = None
+
+        self._scenario = scenario
+        self._in_core = _FakePipeCore()
+        self._out_core = _FakePipeCore()
+        self._err_core = _FakePipeCore()
+        self.stdin = _FakePipeWriter(self._in_core, buffered=True, wire_sink=self.stdin_wire)
+        self.stdout = _FakePipeReader(self._out_core)
+        self.stderr = _FakePipeReader(self._err_core)
+        self._stdout_w = _FakePipeWriter(self._out_core, buffered=False)
+        self._stderr_w = _FakePipeWriter(self._err_core, buffered=False)
+        self._abort = threading.Event()
+        self._done = threading.Event()
+        self._exit_code: int | None = None
+        self._term_rc: int | None = None
+        self._thread = threading.Thread(target=self._run, name="fake-tsdev-cli", daemon=True)
+        self._thread.start()
+
+    # -- Popen surface -----------------------------------------------------
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls += 1
+        if not self._done.wait(timeout):
+            raise subprocess.TimeoutExpired(self.args, timeout)
+        if self.returncode is None:
+            self.returncode = self._exit_code
+        return self.returncode
+
+    def poll(self):
+        self.poll_calls += 1
+        if self._done.is_set() and self.returncode is None:
+            self.returncode = self._exit_code
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._kill(1)
+
+    def kill(self) -> None:
+        self.killed = True
+        self._kill(1)
+
+    def communicate(self, input=None, timeout=None):
+        if input is not None:
+            try:
+                self.stdin.write(input)
+                self.stdin.flush()
+                self.stdin.close()
+            except (BrokenPipeError, ValueError):
+                pass
+        drained: dict = {}
+
+        def _drain(name: str, stream) -> None:
+            try:
+                drained[name] = stream.read()
+            except Exception:
+                drained[name] = b""
+
+        t_out = threading.Thread(target=_drain, args=("out", self.stdout), daemon=True)
+        t_err = threading.Thread(target=_drain, args=("err", self.stderr), daemon=True)
+        t_out.start()
+        t_err.start()
+        self.wait(timeout)
+        t_out.join()
+        t_err.join()
+        return drained.get("out") or b"", drained.get("err") or b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for stream in (self.stdin, self.stdout, self.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        try:
+            self.wait(_FAKE_STALL_S)
+        except Exception:
+            pass
+        return False
+
+    def _kill(self, rc: int) -> None:
+        if self._done.is_set():
+            return
+        self._term_rc = rc
+        self._abort.set()
+        for core in (self._in_core, self._out_core, self._err_core):
+            with core.cond:
+                core.aborted = True
+                core.cond.notify_all()
+        self._done.wait(_FAKE_STALL_S)
+
+    # -- scripted child (runs on its own thread) ----------------------------
+
+    def _run(self) -> None:
+        try:
+            self._run_scenario()
+        except Exception as e:  # broken pipes, scenario bugs
+            self.child_error = f"{type(e).__name__}: {e}"
+            if self._exit_code is None:
+                self._exit_code = self._term_rc if self._term_rc is not None else 70
+        finally:
+            for w in (self._stdout_w, self._stderr_w):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            with self._in_core.cond:
+                self._in_core.read_eof = True
+                self._in_core.cond.notify_all()
+            if self._exit_code is None:
+                self._exit_code = self._term_rc if self._term_rc is not None else 0
+            self._done.set()
+
+    def _run_scenario(self) -> None:
+        s = self._scenario
+        expect_manifest = s.manifest if s.manifest is not None else ("--batch-stdin" in self.args)
+        if expect_manifest and not self._read_manifest():
+            self._emit_err_line("tsdev_cli: malformed TSDEV_BATCH_CONTROL manifest header")
+            self._exit_code = 1
+            return
+        if s.pre_run_stderr is not None:
+            self._emit_err_line(s.pre_run_stderr)
+            self._exit_code = s.exit_code
+            return
+        if s.hang:
+            self._abort.wait(_FAKE_STALL_S)
+            self._exit_code = self._term_rc if self._term_rc is not None else s.exit_code
+            return
+        for ln in s.pre_lines:
+            self._emit_err_line(ln)
+        items = list(s.items)
+        total = len(items)
+        attempted: list[dict] = []
+        cancelled = False
+        for i, item in enumerate(items, start=1):
+            if self._abort.is_set():
+                return
+            lines = item.lines if item.lines is not None else _auto_item_lines(s.op, i, total, item)
+            for ln in (*lines, *item.extra):
+                self._emit_err_line(ln)
+            if s.crash_after == i:
+                if s.stdout is not None:
+                    self._emit_out(s.stdout)
+                self._exit_code = s.exit_code
+                return
+            if isinstance(item.result, dict):
+                attempted.append(dict(item.result))
+            want = item.await_decision if item.await_decision is not None else i < total
+            if want:
+                tok = self._read_decision()
+                if tok == "continue":
+                    continue
+                cancelled = True
+                if tok != "cancel":
+                    self._emit_err_line(_control_error_line(tok))
+                break
+        # End of batch: close-failure rewrite, not-run markers, summary, array.
+        final = attempted
+        if s.close_failed:
+            for r in final:
+                if r.get("success"):
+                    r["success"] = False
+                    r["exit_code"] = 6
+                    r.pop("prog_id", None)
+                    r.pop("ell_path", None)
+                    r["error"] = {
+                        "code": "entry_op_failure",
+                        "message": "closeWarehouse failed at end of batch",
+                    }
+        markers = (
+            [_cancelled_marker(s.op, it.type, it.name) for it in items[len(attempted):]]
+            if cancelled
+            else []
+        )
+        rc = 3 if cancelled else s.exit_code
+        self._emit_summary(s, final, total, len(markers), cancelled, rc)
+        payload = (
+            s.stdout
+            if s.stdout is not None
+            else json.dumps(final + markers, separators=(",", ":")) + "\n"
+        )
+        self._emit_out(payload)
+        self._exit_code = rc
+
+    # -- child-side I/O ------------------------------------------------------
+
+    def _emit_err_line(self, ln) -> None:
+        data = _as_bytes(ln)
+        if data.endswith(b"\n"):
+            data = data[:-1]
+        self._stderr_w.write(data + b"\n")
+
+    def _emit_out(self, payload) -> None:
+        self._stdout_w.write(_as_bytes(payload))
+
+    def _emit_summary(self, s: _CliScenario, final: list, total: int,
+                      not_run: int, cancelled: bool, rc: int) -> None:
+        if s.omit_summary:
+            return
+        if s.summary_lines is not None:
+            for ln in s.summary_lines:
+                self._emit_err_line(ln)
+            return
+        if s.summary is not None:
+            obj = s.summary
+        else:
+            obj = {
+                "event": "batch_completed",
+                "batch_operation": s.op,
+                "completed": len(final),
+                "total": total,
+                "successes": sum(1 for r in final if r.get("success")),
+                "failures": sum(1 for r in final if not r.get("success")),
+                "not_run": not_run,
+                "cancelled": cancelled,
+                "close_failed": bool(s.close_failed),
+                "exit_code": rc,
+            }
+        self._emit_err_line(json.dumps(obj, separators=(",", ":")))
+
+    def _child_read(self, n: int) -> bytes:
+        """Read up to ``n`` stdin bytes (child side), stall-capped."""
+        c = self._in_core
+        out = bytearray()
+        deadline = time.monotonic() + _FAKE_STALL_S
+        with c.cond:
+            while len(out) < n:
+                if c.buf:
+                    take = min(n - len(out), len(c.buf))
+                    out += c.buf[:take]
+                    del c.buf[:take]
+                    c.cond.notify_all()
+                    continue
+                if c.write_eof or c.aborted or c.read_eof:
+                    break
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    break
+                c.cond.wait(min(0.2, rem))
+        return bytes(out)
+
+    def _child_readline(self) -> bytes:
+        """Read one stdin line (child side); ``b""`` on EOF/stall."""
+        c = self._in_core
+        out = bytearray()
+        deadline = time.monotonic() + _FAKE_STALL_S
+        with c.cond:
+            while True:
+                if c.buf:
+                    nl = c.buf.find(b"\n")
+                    take = len(c.buf) if nl < 0 else nl + 1
+                    out += c.buf[:take]
+                    del c.buf[:take]
+                    c.cond.notify_all()
+                    if nl >= 0:
+                        return bytes(out)
+                    continue
+                if c.write_eof or c.aborted or c.read_eof:
+                    return bytes(out)
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    return bytes(out)
+                c.cond.wait(min(0.2, rem))
+
+    def _read_manifest(self) -> bool:
+        """Consume the framed ``TSDEV_BATCH_CONTROL/1 <len>`` manifest."""
+        line = self._child_readline()
+        if not line.startswith(_BATCH_CONTROL_HEADER):
+            self.manifest_error = line or b"<eof>"
+            return False
+        try:
+            n = int(line[len(_BATCH_CONTROL_HEADER):].strip())
+        except ValueError:
+            self.manifest_error = line
+            return False
+        self.manifest_declared = n
+        self.manifest_bytes = self._child_read(n)
+        if len(self.manifest_bytes) != n:
+            return False
+        text = self.manifest_bytes.decode("utf-8", "replace")
+        for ln in text.splitlines():
+            parts = ln.split(None, 2)
+            if len(parts) == 3:
+                self.manifest_sources.append((parts[2], os.path.isfile(parts[2])))
+        return True
+
+    def _read_decision(self) -> str:
+        """Read one decision line; EOF/stall records the ``<eof>`` anomaly."""
+        line = self._child_readline()
+        tok = line.rstrip(b"\r\n")
+        if not line:
+            tok = b"<eof>"
+        text = tok.decode("utf-8", "replace")
+        self.decisions.append(text)
+        return text
+
+
+def _install_fake_popen(monkeypatch, scenario: _CliScenario) -> list[_FakeCliProc]:
+    """Patch ``subprocess.Popen`` to a scripted fake; ``subprocess.run`` is
+    forbidden on the ``on_progress`` path.  Returns the spawned-proc list."""
+    procs: list[_FakeCliProc] = []
+
+    def factory(cmd, *args, **kwargs):
+        proc = _FakeCliProc(list(cmd), scenario)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", factory)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        MagicMock(
+            side_effect=AssertionError(
+                "subprocess.run must not be used when on_progress is supplied"
+            )
+        ),
+    )
+    return procs
+
+
+def _assert_proc_clean(proc: _FakeCliProc) -> None:
+    """End-of-call hygiene: pipes closed, child reaped, helper thread done."""
+    assert proc._done.is_set(), "fake child thread must have exited"
+    assert proc.returncode is not None, "child must be reaped via wait/poll/communicate"
+    assert proc.stdin.closed, "stdin pipe must be closed after the call"
+    assert proc.stdout.closed, "stdout pipe must be closed after the call"
+    assert proc.stderr.closed, "stderr pipe must be closed after the call"
+
+
+class TestDirectBatchOnProgress:
+    """TVS C: direct-mode ``on_progress`` drives ``tsdev_cli`` over a
+    ``subprocess.Popen`` control channel.
+
+    Final contract replacing the transient TVS B ``NotImplementedError``
+    guard: the CLI runs with ``--json`` + ``--batch-progress-control``;
+    manifest batches stream a framed ``TSDEV_BATCH_CONTROL/1`` header +
+    manifest bytes over stdin (kept open for per-item ``continue`` /
+    ``cancel`` decisions, no temp manifest); directory batches keep the
+    native ``batch-*-dir`` argv with stdin carrying decisions only.
+    ``batch_item_completed`` NDJSON events on stderr drive synchronous
+    callbacks; the final stdout JSON array — exit-12 markers and the
+    close-failure rewrite included — is the authoritative return value.
+    """
+
+    _ITEM_OPS = [
+        pytest.param("batch_insert", "insert", True, id="insert"),
+        pytest.param("batch_modify", "modify", True, id="modify"),
+        pytest.param("batch_delete", "delete", False, id="delete"),
+        pytest.param("batch_upsert", "upsert", True, id="upsert"),
+    ]
+    _DIR_OPS = [
+        pytest.param("batch_insert_dir", "insert", id="insert_dir"),
+        pytest.param("batch_modify_dir", "modify", id="modify_dir"),
+        pytest.param("batch_delete_dir", "delete", id="delete_dir"),
+        pytest.param("batch_upsert_dir", "upsert", id="upsert_dir"),
+    ]
+
+    @pytest.mark.parametrize("method_name,op,needs_source", _ITEM_OPS)
+    def test_manifest_batch_control_wire_and_callbacks(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path, method_name, op, needs_source
+    ) -> None:
+        src_a = tmp_path / "a.el"
+        src_a.write_text("// a", encoding="utf-8")
+        src_b = tmp_path / "b.el"
+        src_b.write_text("// b", encoding="utf-8")
+        items = [
+            BatchItem("strategy", "A", str(src_a) if needs_source else None),
+            BatchItem("function", "B", str(src_b) if needs_source else None),
+        ]
+        res_a = json.loads(_success_json(op, "strategy", "A", prog_id=11))
+        res_b = json.loads(_success_json(op, "function", "B", prog_id=22))
+        scenario = _CliScenario(
+            op=op,
+            items=[_CliItem("strategy", "A", res_a), _CliItem("function", "B", res_b)],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+        results = getattr(client, method_name)(items, on_progress=seen.append)
+        assert len(procs) == 1, "direct on_progress must launch exactly one Popen child"
+        proc = procs[0]
+        cmd = proc.args
+        assert cmd[0] == str(client.cli_path)
+        assert "--json" in cmd
+        assert f"batch-{op}" in cmd
+        assert "--batch-stdin" in cmd
+        assert cmd.count("--batch-progress-control") == 1
+        assert not any(str(c).endswith(".manifest") for c in cmd), "no temp manifest file"
+        # Exact wire bytes: control header + UTF-8 manifest + one decision.
+        # delete manifests carry no source path (2-token lines), matching the
+        # no-callback contract ("delete manifest must not reference source
+        # files"); source ops reference the materialized .el paths.
+        manifest = (
+            f"strategy A {src_a}\nfunction B {src_b}\n".encode("utf-8")
+            if needs_source
+            else b"strategy A\nfunction B\n"
+        )
+        expected = _BATCH_CONTROL_HEADER + str(len(manifest)).encode() + b"\n" + manifest + b"continue\n"
+        assert bytes(proc.stdin_wire) == expected
+        assert proc.manifest_declared == len(manifest)
+        assert proc.manifest_bytes == manifest
+        assert proc.decisions == ["continue"], "one continue decision (index<total only)"
+        assert proc.stdin.flushes >= 1, "manifest/decisions must be flushed to the child"
+        assert len(seen) == 2
+        for i, (p, r) in enumerate(zip(seen, results), start=1):
+            assert isinstance(p, BatchProgress)
+            assert p.index == i and p.total == 2
+            assert p.result.success == r.success
+            assert p.result.name == r.name
+            assert p.result.exit_code == r.exit_code
+        assert [r.name for r in results] == ["A", "B"]
+        assert results[0].prog_id == 11 and results[1].prog_id == 22
+        _assert_proc_clean(proc)
+
+    @pytest.mark.parametrize("method_name,op", _DIR_OPS)
+    def test_dir_batch_control_decisions_only_stdin(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path, method_name, op
+    ) -> None:
+        d = tmp_path / "el_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a", encoding="utf-8")
+        (d / "b.el").write_text("// b", encoding="utf-8")
+        res_a = json.loads(_success_json(op, "strategy", "a", prog_id=1))
+        res_b = json.loads(_success_json(op, "strategy", "b", prog_id=2))
+        scenario = _CliScenario(
+            op=op,
+            items=[_CliItem("strategy", "a", res_a), _CliItem("strategy", "b", res_b)],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+        results = getattr(client, method_name)(
+            "strategy", str(d), extensions=["el"], on_progress=seen.append
+        )
+        assert len(procs) == 1
+        proc = procs[0]
+        cmd = proc.args
+        assert f"batch-{op}-dir" in cmd
+        assert "strategy" in cmd and str(d) in cmd
+        assert "-t" in cmd and "el" in cmd, "native -t extension args preserved"
+        assert "--json" in cmd
+        assert cmd.count("--batch-progress-control") == 1
+        assert "--batch-stdin" not in cmd, "dir batches never use stdin manifest framing"
+        assert proc.manifest_bytes is None
+        # stdin carries decision lines only — no manifest framing.
+        assert bytes(proc.stdin_wire) == b"continue\n"
+        assert proc.decisions == ["continue"]
+        assert [p.index for p in seen] == [1, 2]
+        assert [p.total for p in seen] == [2, 2]
+        assert [r.name for r in results] == ["a", "b"]
+        _assert_proc_clean(proc)
+
+    def test_callback_true_none_and_zero_continue(self, client: TsDevClient, monkeypatch) -> None:
+        """Only ``return is False`` cancels: True/None/0 all write continue."""
+        scenario = _CliScenario(
+            op="delete",
+            items=[
+                _CliItem("strategy", n, json.loads(_success_json("delete", "strategy", n)))
+                for n in ("A", "B", "C")
+            ],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        returns = iter([True, None, 0])
+        results = client.batch_delete(
+            [BatchItem("strategy", n) for n in ("A", "B", "C")],
+            on_progress=lambda p: next(returns),
+        )
+        assert procs[0].decisions == ["continue", "continue"]
+        assert [r.success for r in results] == [True, True, True]
+        _assert_proc_clean(procs[0])
+
+    def test_false_cancels_after_success_full_markers(self, client: TsDevClient, monkeypatch) -> None:
+        scenario = _CliScenario(
+            op="delete",
+            items=[
+                _CliItem("strategy", "A", json.loads(_success_json("delete", "strategy", "A"))),
+                _CliItem("function", "B", json.loads(_success_json("delete", "function", "B"))),
+                _CliItem("indicator", "C", json.loads(_success_json("delete", "indicator", "C"))),
+            ],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = client.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("function", "B"), BatchItem("indicator", "C")],
+            on_progress=cb,
+        )
+        proc = procs[0]
+        assert proc.decisions == ["cancel"]
+        assert len(seen) == 1, "callback must not be invoked for not-run markers"
+        assert len(results) == 3, "final array is full length on cancel"
+        assert results[0].success is True
+        for r, (t, n) in zip(results[1:], [("function", "B"), ("indicator", "C")]):
+            assert r.success is False
+            assert r.exit_code == 12
+            assert r.op == "delete" and r.type == t and r.name == n
+            assert r.error is not None and r.error.code == "cancelled"
+            assert r.error.message == "Batch cancelled before this item was attempted"
+        assert proc.returncode == 3, "cooperative cancel exits 3"
+        _assert_proc_clean(proc)
+
+    def test_false_cancels_after_failure_full_markers(self, client: TsDevClient, monkeypatch) -> None:
+        res_a = json.loads(_failure_json("delete", "strategy", "A", "not_found", "missing", exit_code=5))
+        res_b = json.loads(_success_json("delete", "function", "B"))
+        scenario = _CliScenario(
+            op="delete",
+            items=[_CliItem("strategy", "A", res_a), _CliItem("function", "B", res_b)],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+
+        def cb(p):
+            seen.append(p)
+            return False
+
+        results = client.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("function", "B")], on_progress=cb
+        )
+        proc = procs[0]
+        assert proc.decisions == ["cancel"]
+        assert len(seen) == 1
+        assert len(results) == 2
+        assert results[0].success is False
+        assert results[0].error is not None and results[0].error.code == "not_found"
+        assert results[1].exit_code == 12 and results[1].error.code == "cancelled"
+        assert proc.returncode == 3
+        _assert_proc_clean(proc)
+
+    def test_final_item_false_writes_no_decision(self, client: TsDevClient, monkeypatch) -> None:
+        """``False`` on the final item is a no-op: no decision is requested
+        (``index < total`` guard) so none may be written."""
+        scenario = _CliScenario(
+            op="delete",
+            items=[
+                _CliItem("strategy", n, json.loads(_success_json("delete", "strategy", n)))
+                for n in ("A", "B", "C")
+            ],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        results = client.batch_delete(
+            [BatchItem("strategy", n) for n in ("A", "B", "C")],
+            on_progress=lambda p: p.index < p.total,
+        )
+        proc = procs[0]
+        assert proc.decisions == ["continue", "continue"]
+        wire = bytes(proc.stdin_wire)
+        assert wire.count(b"continue\n") == 2
+        assert b"cancel" not in wire, "no decision may be written after the final item"
+        assert [r.success for r in results] == [True, True, True]
+        _assert_proc_clean(proc)
+
+    def test_callback_exception_sends_cancel_then_reraises(self, client: TsDevClient, monkeypatch) -> None:
+        scenario = _CliScenario(
+            op="delete",
+            items=[
+                _CliItem("strategy", n, json.loads(_success_json("delete", "strategy", n)))
+                for n in ("A", "B", "C")
+            ],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+
+        class Boom(Exception):
+            pass
+
+        def cb(p):
+            raise Boom("progress callback failed")
+
+        with pytest.raises(Boom, match="progress callback failed"):
+            client.batch_delete(
+                [BatchItem("strategy", n) for n in ("A", "B", "C")], on_progress=cb
+            )
+        proc = procs[0]
+        assert proc.decisions == ["cancel"], "exception path must write cancel before re-raising"
+        assert proc._done.is_set(), "child must be drained/waited to a safe close"
+        assert proc.returncode == 3
+        _assert_proc_clean(proc)
+
+    def test_framed_manifest_declares_utf8_byte_length(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "s.el"
+        src.write_text("// s", encoding="utf-8")
+        name = "名Café"  # multi-byte UTF-8: byte length != char length
+        scenario = _CliScenario(
+            op="insert",
+            items=[_CliItem("strategy", name, json.loads(_success_json("insert", "strategy", name)))],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        results = client.batch_insert(
+            [BatchItem("strategy", name, str(src))], on_progress=lambda p: None
+        )
+        proc = procs[0]
+        manifest_text = f"strategy {name} {src}\n"
+        manifest = manifest_text.encode("utf-8")
+        assert len(manifest) > len(manifest_text), "fixture must exercise multi-byte chars"
+        assert proc.manifest_declared == len(manifest), "header declares the UTF-8 byte length"
+        assert proc.manifest_bytes == manifest
+        expected = _BATCH_CONTROL_HEADER + str(len(manifest)).encode() + b"\n" + manifest
+        assert bytes(proc.stdin_wire) == expected
+        assert results[0].success is True
+        _assert_proc_clean(proc)
+
+    def test_string_sources_materialized_and_cleaned(self, client: TsDevClient, monkeypatch) -> None:
+        """String sources still materialize to temp ``.el`` files referenced by
+        the framed manifest (the manifest itself is never a temp file); the
+        temp sources are cleaned up after the call."""
+        scenario = _CliScenario(
+            op="insert",
+            items=[_CliItem("strategy", "A", json.loads(_success_json("insert", "strategy", "A")))],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        results = client.batch_insert(
+            [BatchItem("strategy", "A", "input(close,1);")], on_progress=lambda p: None
+        )
+        assert results[0].success is True
+        proc = procs[0]
+        cmd = proc.args
+        assert "--batch-stdin" in cmd
+        assert not any(str(c).endswith(".manifest") for c in cmd)
+        assert len(proc.manifest_sources) == 1
+        src_path, existed = proc.manifest_sources[0]
+        assert src_path.endswith(".el")
+        assert existed, "materialized temp source must exist while the CLI runs"
+        assert not os.path.isfile(src_path), "temp source must be cleaned up"
+        _assert_proc_clean(proc)
+
+    def test_final_array_authoritative_over_events(self, client: TsDevClient, monkeypatch) -> None:
+        """The event-time per-item result may be superseded by the end-of-batch
+        close-failure rewrite; the final stdout array is authoritative."""
+        res = json.loads(_success_json("insert", "strategy", "A", prog_id=5))
+        scenario = _CliScenario(
+            op="insert",
+            items=[_CliItem("strategy", "A", res)],
+            close_failed=True,
+            exit_code=2,
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+        results = client.batch_insert(
+            [BatchItem("strategy", "A", "x;")], on_progress=seen.append
+        )
+        assert len(seen) == 1
+        assert seen[0].result.success is True, "event-time view precedes the rewrite"
+        assert results[0].success is False, "the final array is authoritative"
+        assert results[0].exit_code == 6
+        assert results[0].error is not None and results[0].error.code == "entry_op_failure"
+        _assert_proc_clean(procs[0])
+
+    def test_interleaved_diagnostics_tolerated(self, client: TsDevClient, monkeypatch) -> None:
+        """Non-JSON stderr lines and unrecognized JSON objects are diagnostics,
+        not events: they never drive callbacks and never abort the batch."""
+        res_a = json.loads(_success_json("delete", "strategy", "A"))
+        res_b = json.loads(_success_json("delete", "function", "B"))
+        scenario = _CliScenario(
+            op="delete",
+            items=[
+                _CliItem("strategy", "A", res_a, extra=("tsdev_cli: mid-batch diagnostic",)),
+                _CliItem("function", "B", res_b),
+            ],
+            pre_lines=(
+                "orlib20: loading warehouse...",
+                '{"event":"telemetry","note":"not a batch event"}',
+                "[1,2,3]",
+                "not json at all {",
+            ),
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+        results = client.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("function", "B")], on_progress=seen.append
+        )
+        assert len(seen) == 2, "only batch_item_completed events drive callbacks"
+        assert [p.index for p in seen] == [1, 2]
+        assert [r.success for r in results] == [True, True]
+        # stderr diagnostics are retained on the results.
+        assert "orlib20: loading warehouse" in results[0].stderr
+        assert "mid-batch diagnostic" in results[0].stderr
+        _assert_proc_clean(procs[0])
+
+    def test_batch_control_error_retained_as_diagnostic(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """A ``batch_control_error`` line from the child is a retained
+        stderr diagnostic, not a protocol violation — the run still
+        completes and returns the authoritative array."""
+        res_a = json.loads(_success_json("delete", "strategy", "A"))
+        control_err = json.dumps(
+            {"event": "batch_control_error",
+             "message": "control channel hiccup", "action": "cancel"},
+            separators=(",", ":"),
+        )
+        scenario = _CliScenario(
+            op="delete",
+            items=[_CliItem("strategy", "A", res_a, extra=(control_err,))],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        results = client.batch_delete(
+            [BatchItem("strategy", "A")], on_progress=lambda p: None
+        )
+        assert results[0].success is True
+        assert "batch_control_error" in results[0].stderr
+        assert "control channel hiccup" in results[0].stderr
+        _assert_proc_clean(procs[0])
+
+    @staticmethod
+    def _malformed_scenario(case: str) -> _CliScenario:
+        op = "delete"
+
+        def res(name):
+            return json.loads(_success_json(op, "strategy", name))
+
+        def started(i, total, name):
+            return json.dumps(
+                {"event": "batch_item_started", "batch_operation": op,
+                 "index": i, "total": total, "type": "strategy", "name": name},
+                separators=(",", ":"),
+            )
+
+        def completed(i, total, name, result, bop=op, include_result=True):
+            ev = {
+                "event": "batch_item_completed", "batch_operation": bop,
+                "index": i, "total": total, "type": "strategy", "name": name,
+                "success": result["success"], "exit_code": result["exit_code"],
+            }
+            if include_result:
+                ev["result"] = result
+            return json.dumps(ev, separators=(",", ":"))
+
+        def items(item1):
+            return _CliScenario(op=op, items=[item1, _CliItem("strategy", "B", res("B"))])
+
+        if case == "completed_wrong_index":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), completed(2, 2, "A", res("A")))))
+        if case == "completed_wrong_total":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), completed(1, 3, "A", res("A")))))
+        if case == "completed_wrong_op":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), completed(1, 2, "A", res("A"), bop="insert"))))
+        if case == "completed_wrong_name":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), completed(1, 2, "ZZZ", res("A")))))
+        if case == "completed_wrong_type":
+            ev = json.dumps(
+                {"event": "batch_item_completed", "batch_operation": op,
+                 "index": 1, "total": 2, "type": "function", "name": "A",
+                 "success": True, "exit_code": 0, "result": res("A")},
+                separators=(",", ":"),
+            )
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), ev)))
+        if case == "completed_result_missing":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(started(1, 2, "A"), completed(1, 2, "A", res("A"), include_result=False))))
+        if case == "completed_result_not_object":
+            ev = json.dumps(
+                {"event": "batch_item_completed", "batch_operation": op,
+                 "index": 1, "total": 2, "type": "strategy", "name": "A",
+                 "success": True, "exit_code": 0, "result": "oops"},
+                separators=(",", ":"),
+            )
+            return items(_CliItem("strategy", "A", res("A"), lines=(started(1, 2, "A"), ev)))
+        if case == "completed_before_started":
+            return items(_CliItem("strategy", "A", res("A"),
+                                  lines=(completed(1, 2, "A", res("A")),)))
+        if case == "missing_completion":
+            return _CliScenario(op=op, items=[
+                _CliItem("strategy", "A", res("A"), lines=(started(1, 1, "A"),))
+            ])
+        if case == "missing_summary":
+            s = items(_CliItem("strategy", "A", res("A")))
+            s.omit_summary = True
+            return s
+        if case == "summary_wrong_total":
+            s = items(_CliItem("strategy", "A", res("A")))
+            s.summary = {
+                "event": "batch_completed", "batch_operation": op,
+                "completed": 2, "total": 99, "successes": 2, "failures": 0,
+                "not_run": 0, "cancelled": False, "close_failed": False, "exit_code": 0,
+            }
+            return s
+        if case == "summary_wrong_completed":
+            s = items(_CliItem("strategy", "A", res("A")))
+            s.summary = {
+                "event": "batch_completed", "batch_operation": op,
+                "completed": 99, "total": 2, "successes": 2, "failures": 0,
+                "not_run": 0, "cancelled": False, "close_failed": False, "exit_code": 0,
+            }
+            return s
+        raise AssertionError(f"unknown malformed case {case!r}")
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "completed_wrong_index",
+            "completed_wrong_total",
+            "completed_wrong_op",
+            "completed_wrong_name",
+            "completed_wrong_type",
+            "completed_result_missing",
+            "completed_result_not_object",
+            "completed_before_started",
+            "missing_completion",
+            "missing_summary",
+            "summary_wrong_total",
+            "summary_wrong_completed",
+        ],
+    )
+    def test_malformed_events_raise_tsdev_error(self, client: TsDevClient, monkeypatch, case: str) -> None:
+        """Event order/index/total/op/type/name/nested-result validation:
+        malformed, mismatched, or missing completion/summary -> TsDevError."""
+        scenario = self._malformed_scenario(case)
+        procs = _install_fake_popen(monkeypatch, scenario)
+        items = [BatchItem(it.type, it.name) for it in scenario.items]
+        with pytest.raises(TsDevError):
+            client.batch_delete(items, on_progress=lambda p: None)
+        _assert_proc_clean(procs[0])
+
+    def test_dir_malformed_event_raises_tsdev_error(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        d = tmp_path / "el_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a", encoding="utf-8")
+        op = "delete"
+        res_a = json.loads(_success_json(op, "strategy", "a"))
+        good_started = json.dumps(
+            {"event": "batch_item_started", "batch_operation": op,
+             "index": 1, "total": 1, "type": "strategy", "name": "a"},
+            separators=(",", ":"),
+        )
+        bad_completed = json.dumps(
+            {"event": "batch_item_completed", "batch_operation": op,
+             "index": 2, "total": 1, "type": "strategy", "name": "a",
+             "success": True, "exit_code": 0, "result": res_a},
+            separators=(",", ":"),
+        )
+        scenario = _CliScenario(
+            op=op,
+            items=[_CliItem("strategy", "a", res_a,
+                            lines=(good_started, bad_completed), await_decision=False)],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        with pytest.raises(TsDevError):
+            client.batch_delete_dir("strategy", str(d), on_progress=lambda p: None)
+        _assert_proc_clean(procs[0])
+
+    def test_timeout_maps_to_timeout_error(self, fake_cli: Path, monkeypatch) -> None:
+        """A non-responsive child is terminated and waited on, then mapped to
+        ``TimeoutError`` — same contract as the ``subprocess.run`` path."""
+        scenario = _CliScenario(op="delete", items=[], hang=True)
+        procs = _install_fake_popen(monkeypatch, scenario)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, timeout=0.5)
+        c._is_elevated = True
+        with pytest.raises(TimeoutError):
+            c.batch_delete([BatchItem("strategy", "A")], on_progress=lambda p: None)
+        proc = procs[0]
+        assert proc.terminated or proc.killed, "timeout must terminate the child"
+        assert proc.returncode is not None, "child must be reaped after terminate"
+        _assert_proc_clean(proc)
+
+    @pytest.mark.parametrize(
+        "exit_code,crash_name",
+        [(-1073741819, "ACCESS_VIOLATION"), (0xC00000FD, "STACK_OVERFLOW")],
+        ids=["access_violation_signed", "stack_overflow"],
+    )
+    def test_crash_exit_maps_to_crash_error(
+        self, client: TsDevClient, monkeypatch, exit_code, crash_name
+    ) -> None:
+        """An NT-status crash exit mid-run maps through ``_is_crash_exit`` to
+        ``TsDevCrashError`` — same contract as the ``subprocess.run`` path."""
+        res_a = json.loads(_success_json("delete", "strategy", "A"))
+        scenario = _CliScenario(
+            op="delete",
+            items=[_CliItem("strategy", "A", res_a)],
+            crash_after=1,
+            exit_code=exit_code,
+            stdout=b"",
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        with pytest.raises(TsDevCrashError) as ei:
+            client.batch_delete([BatchItem("strategy", "A")], on_progress=lambda p: None)
+        assert ei.value.exit_code == exit_code
+        assert crash_name in str(ei.value)
+        _assert_proc_clean(procs[0])
+
+    @pytest.mark.parametrize("exit_code,fail_b", [(0, False), (2, True)], ids=["clean", "with_failures"])
+    def test_run_exit_codes_accepted(
+        self, client: TsDevClient, monkeypatch, exit_code, fail_b
+    ) -> None:
+        """Ran-to-completion exits 0/2 are accepted; the array is returned."""
+        res_a = json.loads(_success_json("delete", "strategy", "A"))
+        res_b = (
+            json.loads(_failure_json("delete", "strategy", "B", "not_found", "missing", exit_code=5))
+            if fail_b
+            else json.loads(_success_json("delete", "strategy", "B"))
+        )
+        scenario = _CliScenario(
+            op="delete",
+            items=[_CliItem("strategy", "A", res_a), _CliItem("strategy", "B", res_b)],
+            exit_code=exit_code,
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        results = client.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("strategy", "B")],
+            on_progress=lambda p: None,
+        )
+        proc = procs[0]
+        assert proc.returncode == exit_code
+        assert len(results) == 2
+        assert results[0].success is True
+        assert results[1].success is (not fail_b)
+        _assert_proc_clean(proc)
+
+    def test_prerun_exit1_raises_tsdev_error(self, client: TsDevClient, monkeypatch) -> None:
+        """A pre-run failure (usage/manifest, exit 1) emits no events and maps
+        to ``TsDevError`` — same contract as the ``subprocess.run`` path."""
+        scenario = _CliScenario(
+            op="delete", items=[], exit_code=1,
+            pre_run_stderr="tsdev_cli: usage error",
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        seen: list = []
+        with pytest.raises(TsDevError):
+            client.batch_delete([BatchItem("strategy", "A")], on_progress=seen.append)
+        assert seen == []
+        _assert_proc_clean(procs[0])
+
+    def test_stdout_drained_concurrently_with_stderr(self, fake_cli: Path, monkeypatch) -> None:
+        """A final array far larger than the pipe buffer forces interleaved
+        draining: a controller that waits for the child to exit (or for stderr
+        EOF) before reading stdout deadlocks exactly like a real full pipe."""
+        big = "x" * (256 * 1024)
+        res = {
+            "op": "delete", "type": "strategy", "name": "A",
+            "success": True, "exit_code": 0, "ell_path": big,
+        }
+        scenario = _CliScenario(op="delete", items=[_CliItem("strategy", "A", res)])
+        procs = _install_fake_popen(monkeypatch, scenario)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False, timeout=30)
+        c._is_elevated = True
+        results = c.batch_delete([BatchItem("strategy", "A")], on_progress=lambda p: None)
+        assert results[0].success is True
+        assert results[0].ell_path == big
+        _assert_proc_clean(procs[0])
+
+    def test_non_elevated_direct_raises_before_popen(self, fake_cli: Path, monkeypatch) -> None:
+        """The existing elevation preflight runs before any Popen launch:
+        ``use_serve=False`` + non-elevated -> ``ElevationRequiredError``."""
+        monkeypatch.setattr("tsdev_automation.client._detect_elevation", lambda: False)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        assert c._serve_active() is False
+        procs = _install_fake_popen(monkeypatch, _CliScenario(op="delete", items=[]))
+        with pytest.raises(exc.ElevationRequiredError):
+            c.batch_delete([BatchItem("strategy", "A")], on_progress=lambda p: None)
+        assert procs == [], "no Popen may be spawned before the elevation preflight"
+        with pytest.raises(exc.ElevationRequiredError):
+            c.batch_delete_dir("strategy", "C:/mydir", on_progress=lambda p: None)
+        assert procs == []
+        assert c._broker is None
 
 
 class TestElevationGuard:
@@ -3342,6 +5313,191 @@ class TestE2E:
         results = self.c.batch_insert_dir("strategy", str(d), extensions=["txt"])
         assert len(results) == 1
         assert all(r.success for r in results), results
+
+    # -- Part 7: direct-mode batch on_progress over --batch-progress-control
+    #    (TVS C) ------------------------------------------------------------
+
+    def test_e2e_direct_batch_on_progress(self, tmp_path: Path) -> None:
+        """TVS C: live direct ``on_progress`` batch through
+        ``tsdev_cli --batch-progress-control``.
+
+        Requires an ELEVATED session (``use_serve=False``): the client drives
+        one ``tsdev_cli`` child on binary pipes — a framed
+        ``TSDEV_BATCH_CONTROL/1`` manifest + ``continue``/``cancel``
+        decisions on stdin for manifest batches, decisions-only stdin for
+        directory batches, NDJSON progress on stderr, and the authoritative
+        final JSON array on stdout.  Covers: continue after a real per-item
+        compile failure, cancel after a success, cancel after a not_found
+        failure, full-length exit-12 ``cancelled`` markers (no callback for
+        markers), and a ``batch_insert_dir`` cancellation.  No broker is
+        ever started (``client._broker is None`` throughout).
+        """
+        if not _detect_elevation():
+            pytest.skip("direct batch-progress E2E requires an elevated session")
+
+        import uuid
+
+        # UUID-derived disposable function names: no fixed-name collisions.
+        uid = uuid.uuid4().hex[:8].upper()
+        name_a = f"TS_C_{uid}_A"      # inserted, then deleted by cancel-after-success
+        name_b = f"TS_C_{uid}_B"      # inserted, marker twice, deleted at end
+        name_c = f"TS_C_{uid}_C"      # never attempted (cancelled marker)
+        name_bad = f"TS_C_{uid}_BAD"  # compile-failure item (never exists)
+        name_ghost = f"TS_C_{uid}_GHOST"  # never created (not-found delete)
+        dir_a = f"TS_C_{uid}_DA"      # dir-batch: inserted
+        dir_b = f"TS_C_{uid}_DB"      # dir-batch: marker
+        dir_c = f"TS_C_{uid}_DC"      # dir-batch: marker
+        names = [name_a, name_b, name_c, name_bad, name_ghost, dir_a, dir_b, dir_c]
+
+        invalid_source = "{ TVS C broken }\nInputs: ;\n{ syntax error }\n"
+
+        client = TsDevClient(cli_path=e2e_cli, use_serve=False)
+        assert client._broker is None
+
+        def _marker(r: TsDevResult, op: str, t: str, n: str) -> None:
+            assert r.success is False
+            assert r.exit_code == 12
+            assert r.error is not None and r.error.code == "cancelled"
+            assert r.error.message == "Batch cancelled before this item was attempted"
+            assert r.op == op and r.type == t and r.name == n
+
+        def _same_result(a: TsDevResult, b: TsDevResult) -> bool:
+            # Event-time nested results carry no captured stdout/stderr while
+            # final-array results do — compare the JSON-derived fields only.
+            # Close-failure rewriting can legitimately change attempted
+            # successes between the event and the final (authoritative) array;
+            # every scenario here closes cleanly, so the fields must match.
+            return (
+                a.success == b.success
+                and a.op == b.op
+                and a.type == b.type
+                and a.name == b.name
+                and a.exit_code == b.exit_code
+                and a.prog_id == b.prog_id
+                and a.ell_path == b.ell_path
+                and a.error == b.error
+            )
+
+        try:
+            # Pre-cleanup: best-effort delete of leftovers from prior runs.
+            for n in names:
+                try:
+                    client.delete("function", n)
+                except Exception:
+                    pass
+
+            # --- 1. Callback continuation after a real compile failure ----
+            events: list = []
+            results = client.batch_insert(
+                [
+                    BatchItem("function", name_a, _src("function", "insert", name_a)),
+                    BatchItem("function", name_bad, invalid_source),
+                    BatchItem("function", name_b, _src("function", "insert", name_b)),
+                ],
+                on_progress=events.append,
+            )
+            assert client._broker is None, "direct path must never start a broker"
+            assert len(results) == 3
+            assert len(events) == 3
+            assert all(isinstance(p, BatchProgress) for p in events)
+            assert [p.index for p in events] == [1, 2, 3]
+            assert [p.total for p in events] == [3, 3, 3]
+            for p, r in zip(events, results):
+                assert _same_result(p.result, r), (
+                    "callback result fields must match the final array element "
+                    f"(stdout/stderr excluded): {p.result} vs {r}"
+                )
+            assert results[0].success and results[0].prog_id is not None and results[0].prog_id > 0
+            assert results[1].success is False and results[1].exit_code == 8
+            assert results[1].error is not None and results[1].error.code == "compile_error"
+            # The third item was attempted despite the second item's failure.
+            assert results[2].success and results[2].name == name_b
+            assert client.exists("function", name_a).exists
+            assert client.exists("function", name_b).exists
+            assert not client.exists("function", name_bad).exists
+
+            # --- 2. Cancel after a success --------------------------------
+            events2: list = []
+
+            def _cancel2(p) -> bool:
+                events2.append(p)
+                return False
+
+            results2 = client.batch_delete(
+                [
+                    BatchItem("function", name_a),
+                    BatchItem("function", name_b),
+                    BatchItem("function", name_c),
+                ],
+                on_progress=_cancel2,
+            )
+            assert client._broker is None
+            assert len(results2) == 3, "cancelled batch must return a full-length list"
+            assert len(events2) == 1, "callback must not be invoked for markers"
+            assert results2[0].success
+            _marker(results2[1], "delete", "function", name_b)
+            _marker(results2[2], "delete", "function", name_c)
+            assert not client.exists("function", name_a).exists
+            assert client.exists("function", name_b).exists
+            assert not client.exists("function", name_c).exists
+
+            # --- 3. Cancel after a not_found failure ----------------------
+            events3: list = []
+
+            def _cancel3(p) -> bool:
+                events3.append(p)
+                return False
+
+            results3 = client.batch_delete(
+                [BatchItem("function", name_ghost), BatchItem("function", name_b)],
+                on_progress=_cancel3,
+            )
+            assert client._broker is None
+            assert len(results3) == 2
+            assert len(events3) == 1, "callback must not be invoked for markers"
+            assert results3[0].success is False and results3[0].exit_code == 5
+            assert results3[0].error is not None and results3[0].error.code == "not_found"
+            _marker(results3[1], "delete", "function", name_b)
+            assert client.exists("function", name_b).exists
+
+            # --- 4. Decisions-only stdin: native batch_insert_dir cancel --
+            d = tmp_path / "ctrl_dir"
+            d.mkdir()
+            for n in (dir_a, dir_b, dir_c):
+                (d / f"{n}.el").write_text(
+                    _src("function", "insert", n), encoding="utf-8"
+                )
+            events4: list = []
+
+            def _cancel4(p) -> bool:
+                events4.append(p)
+                return False
+
+            results4 = client.batch_insert_dir(
+                "function", str(d), on_progress=_cancel4
+            )
+            assert client._broker is None
+            assert len(results4) == 3
+            assert len(events4) == 1, "callback must not be invoked for markers"
+            # Sorted file order: DA attempted first, DB/DC became markers.
+            assert results4[0].success and results4[0].name == dir_a
+            _marker(results4[1], "insert", "function", dir_b)
+            _marker(results4[2], "insert", "function", dir_c)
+            assert client.exists("function", dir_a).exists
+            assert not client.exists("function", dir_b).exists
+            assert not client.exists("function", dir_c).exists
+
+            # Verified production cleanup of what remains.
+            for n in (name_b, dir_a):
+                dr = client.delete("function", n)
+                assert dr.success, f"cleanup delete for {n} failed: {dr}"
+        finally:
+            # Exact cleanup: every name this test could have created.
+            for n in names:
+                try:
+                    client.delete("function", n)
+                except Exception:
+                    pass
 
     # -- Part 4: orphan sweep (no leftover warehouse entries) ---------------
 

@@ -45,7 +45,13 @@ from .exceptions import (
     UnknownTypeError,
     UsageError,
 )
-from .results import TsDevBatchResult, TsDevErrorInfo, TsDevResult
+from .results import (
+    BatchProgress,
+    BatchProgressCallback,
+    TsDevBatchResult,
+    TsDevErrorInfo,
+    TsDevResult,
+)
 
 __all__ = [
     "TsDevClient",
@@ -53,6 +59,8 @@ __all__ = [
     "TsDevResult",
     "TsDevErrorInfo",
     "TsDevBatchResult",
+    "BatchProgress",
+    "BatchProgressCallback",
     "TsDevError",
     "UsageError",
     "UnknownTypeError",

@@ -319,6 +319,24 @@ $SuiteResults = New-Object System.Collections.Generic.List[object]
 #   ScriptPath - absolute path to the sub-script .ps1 file
 #   Arguments  - array of string arguments to pass to the sub-script
 # ---------------------------------------------------------------------------
+# Cached result of a safe non-TS probe of the child `powershell` binary so
+# -Verbose can evidence that suite children really are Windows PowerShell 5.1.
+$script:WinPsChildInfo = $null
+function Get-WinPsChildInfo {
+    if ($null -eq $script:WinPsChildInfo) {
+        try {
+            # No quote literals inside -Command: nested quoting would strip
+            # them and break the child's parse. Edition and version arrive as
+            # separate output lines.
+            $out = & powershell -NoProfile -Command `
+                'Write-Output $PSVersionTable.PSEdition; Write-Output $PSVersionTable.PSVersion.ToString()' 2>$null
+            $lines = @($out | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+            $script:WinPsChildInfo = if ($lines.Count -ge 2) { "$($lines[0])/$($lines[1])" } else { 'unknown' }
+        } catch { $script:WinPsChildInfo = 'unknown' }
+    }
+    return $script:WinPsChildInfo
+}
+
 function Invoke-Suite {
     param(
         [Parameter(Mandatory = $true)] [int]$SuiteIndex,
@@ -356,6 +374,29 @@ function Invoke-Suite {
     # Launch the sub-script in a child PowerShell process. Relax error
     # preference so that a non-zero exit code from the child does not throw
     # a terminating error in this parent script.
+    #
+    # Put the Windows PowerShell system modules directory first in the child's
+    # PSModulePath: when the ambient ordering lists PowerShell-7 module dirs
+    # ahead of it, PS5.1 autoload resolves Core-only modules (e.g.
+    # Microsoft.PowerShell.Utility) and cmdlets such as Get-FileHash become
+    # unrecognizable in the suite children. Process-scoped; the parent's exact
+    # value is restored in finally even when the launch or the child fails.
+    $winPsModuleDir = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\Modules'
+    $savedPSModulePath = $env:PSModulePath
+    $childModulePath = New-Object 'System.Collections.Generic.List[string]'
+    $childModulePath.Add($winPsModuleDir)
+    foreach ($entry in ($savedPSModulePath -split ';')) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        if ($entry -ieq $winPsModuleDir) { continue }
+        $childModulePath.Add($entry)
+    }
+    $env:PSModulePath = ($childModulePath -join ';')
+    if ($Verbose) {
+        # $Verbose is a declared switch param (it does not set
+        # $VerbosePreference), so force emission with -Verbose.
+        Write-Verbose ("{0}: child {1}; PSModulePath[0]={2}" -f $SuiteName, (Get-WinPsChildInfo), $winPsModuleDir) -Verbose
+    }
+
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -370,6 +411,7 @@ function Invoke-Suite {
     }
     finally {
         $ErrorActionPreference = $prevEAP
+        $env:PSModulePath = $savedPSModulePath
     }
 
     $stopwatch.Stop()

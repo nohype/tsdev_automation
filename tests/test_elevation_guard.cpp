@@ -34,6 +34,9 @@
 //      When run elevated (the normal test-runner path) both return true; when
 //      run non-elevated (CI) both return false.
 //   2. errorCodeString(11, "") returns "not_elevated".
+//   3. (TVS C) errorCodeString(12, <op>) returns "cancelled" — the
+//      machine-readable code for the synthetic not-run markers appended
+//      after a cooperative batch cancel (op-independent, like 10/11).
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -128,6 +131,25 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::fprintf(stdout,
                      "    PASS: errorCodeString(11) == \"not_elevated\"\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 3 (TVS C): errorCodeString(12, <op>) returns "cancelled" for
+    // every op — the not-run marker code is op-independent.
+    // ------------------------------------------------------------------
+    {
+        std::string s1 = errorCodeString(12, "insert");
+        std::string s2 = errorCodeString(12, "delete");
+        std::fprintf(stdout,
+                     "  errorCodeString(12, \"insert\") = \"%s\", "
+                     "errorCodeString(12, \"delete\") = \"%s\"\n",
+                     s1.c_str(), s2.c_str());
+        if (s1 != "cancelled" || s2 != "cancelled") {
+            ec = fail("errorCodeString(12, op) != \"cancelled\"", 30);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: errorCodeString(12) == \"cancelled\"\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

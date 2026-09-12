@@ -54,6 +54,37 @@
 //  10. Unknown type: {"op":"insert","type":"foobar","name":"Test",
 //      "source":"..."} -> exitCode==2, error.code=="unknown_type".
 //
+// Checks (TVS A batch metadata):
+//   These exercise the optional nested "batch" member and the
+//   addServeProgress() response enrichment. The ServeRequest batch fields
+//   asserted here are: bool hasBatch; std::string batchId;
+//   size_t batchIndex; size_t batchTotal (populated only for tagged
+//   insert/modify/delete/upsert requests).
+//  11. Tagged insert accepted: batch {"id":"b-1","index":1,"total":3} ->
+//      parse succeeds, hasBatch==true, batchId/batchIndex/batchTotal set.
+//  12. Tagged modify/delete/upsert accepted (boundary index==total).
+//  13. "batch" on non-mutating ops (exists/get-source/quit) -> rejected
+//      exitCode==1 through the existing parse-failure path.
+//  14. Malformed "batch" rejected exitCode==1: non-object (incl. null),
+//      missing or extra member, empty/null/non-string id, index/total
+//      0/negative/null/bool/fraction/string, index>total.
+//  15. Untagged request unchanged: parses with hasBatch==false.
+//  16. addServeProgress(ordered_json& response, const ServeRequest& req):
+//      tagged req -> response gains exactly one new top-level member
+//      "progress" equal to
+//      {"batch_id":id,"index":i,"total":t,"phase":"completed"}; untagged req
+//      -> response byte-identical (no "progress", no other envelope).
+//  17. Tagged parse failures keep the progress data: a tagged request that
+//      fails AFTER 'batch' validated (unknown type / missing source) leaves
+//      out.hasBatch/batchIndex/batchTotal populated and the failure
+//      CliResult carrying op/typeStr/name as far as validation reached;
+//      taggedParseFailureLines renders the exact started/completed pair
+//      (human + JSON). Invalid 'batch' metadata itself -> hasBatch==false
+//      -> empty pair (untagged failure, no progress).
+//  18. 32-bit index/total boundaries: 4294967295 (UINT32_MAX) accepted when
+//      index<=total; 4294967296 rejected for index and for total (the
+//      binary is built Win32, size_t is 32-bit).
+//
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
@@ -447,6 +478,484 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::fprintf(stdout,
                      "    PASS: unknown type rejected with unknown_type\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 11 (TVS A): tagged insert request accepted.
+    //   {"op":"insert","type":"strategy","name":"Test","source":"x",
+    //    "batch":{"id":"b-1","index":1,"total":3}}
+    // Expected: parse succeeds; out.hasBatch==true, out.batchId=="b-1",
+    //   out.batchIndex==1, out.batchTotal==3.
+    // ------------------------------------------------------------------
+    {
+        ordered_json req = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"Test\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b-1\",\"index\":1,"
+            "\"total\":3}}");
+
+        ServeRequest out;
+        CliResult r = parseServeRequest(req, out);
+        std::fprintf(stdout, "  [11] tagged insert: %s\n",
+                     cliResultToJson(r).dump().c_str());
+
+        if (!r.success || r.exitCode != 0) {
+            ec = fail("check11: tagged insert should parse", 110);
+            return 0;
+        }
+        if (!out.hasBatch) {
+            ec = fail("check11: out.hasBatch != true", 111);
+            return 0;
+        }
+        if (out.batchId != "b-1") {
+            ec = fail("check11: out.batchId != \"b-1\"", 112);
+            return 0;
+        }
+        if (out.batchIndex != 1 || out.batchTotal != 3) {
+            ec = fail("check11: out.batchIndex/batchTotal != 1/3", 113);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: tagged insert parsed with batch metadata\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 12 (TVS A): batch metadata accepted on all mutating ops
+    //   (insert covered by check 11). Boundary case index==total is valid.
+    //   {"op":<modify|delete|upsert>,...,"batch":{"id":"b-2","index":3,
+    //    "total":3}}
+    // Expected: parse succeeds; out.hasBatch==true, batchIndex==3,
+    //   batchTotal==3.
+    // ------------------------------------------------------------------
+    {
+        const char* ops[] = {"modify", "delete", "upsert"};
+        for (int i = 0; i < 3; ++i) {
+            const std::string op = ops[i];
+            const std::string sourceMember =
+                (op == "delete") ? "" : ",\"source\":\"x\"";
+            ordered_json req = ordered_json::parse(
+                std::string("{\"op\":\"") + op +
+                "\",\"type\":\"strategy\",\"name\":\"T\"" + sourceMember +
+                ",\"batch\":{\"id\":\"b-2\",\"index\":3,\"total\":3}}");
+
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [12] tagged %s: %s\n", op.c_str(),
+                         cliResultToJson(r).dump().c_str());
+
+            if (!r.success || r.exitCode != 0) {
+                ec = fail("check12: tagged mutating op should parse", 120);
+                return 0;
+            }
+            if (!out.hasBatch || out.batchId != "b-2" ||
+                out.batchIndex != 3 || out.batchTotal != 3) {
+                ec = fail("check12: batch metadata not populated", 121);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: tagged modify/delete/upsert accepted\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 13 (TVS A): "batch" is accepted only on
+    //   insert/modify/delete/upsert. On non-mutating ops the whole request
+    //   is rejected through the existing parse-failure path (exitCode==1).
+    //   exists / get-source / quit each carry a valid batch object.
+    // ------------------------------------------------------------------
+    {
+        const char* reqs[] = {
+            "{\"op\":\"exists\",\"type\":\"indicator\",\"name\":\"X\","
+            "\"batch\":{\"id\":\"b\",\"index\":1,\"total\":3}}",
+            "{\"op\":\"get-source\",\"type\":\"function\",\"name\":\"X\","
+            "\"batch\":{\"id\":\"b\",\"index\":1,\"total\":3}}",
+            "{\"op\":\"quit\","
+            "\"batch\":{\"id\":\"b\",\"index\":1,\"total\":3}}",
+        };
+        for (int i = 0; i < 3; ++i) {
+            ordered_json req = ordered_json::parse(reqs[i]);
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [13.%d] batch on non-mutating op: %s\n",
+                         i, cliResultToJson(r).dump().c_str());
+            if (r.success) {
+                ec = fail("check13: batch on non-mutating op must reject",
+                          130);
+                return 0;
+            }
+            if (r.exitCode != 1) {
+                ec = fail("check13: exitCode != 1", 131);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: batch on non-mutating ops rejected\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 14 (TVS A): malformed "batch" metadata rejects the whole
+    //   request (exitCode==1). Each fragment below is substituted verbatim
+    //   for the "batch" member of an otherwise-valid tagged insert request.
+    // ------------------------------------------------------------------
+    {
+        struct BadBatch { const char* desc; const char* json; };
+        const BadBatch bad[] = {
+            {"non-object (bool)",     "true"},
+            {"non-object (string)",   "\"abc\""},
+            {"non-object (array)",    "[1,2,3]"},
+            {"non-object (null)",     "null"},
+            {"non-object (number)",   "7"},
+            {"missing id",            "{\"index\":1,\"total\":3}"},
+            {"missing index",         "{\"id\":\"b\",\"total\":3}"},
+            {"missing total",         "{\"id\":\"b\",\"index\":1}"},
+            {"extra member",          "{\"id\":\"b\",\"index\":1,\"total\":3,"
+                                      "\"seq\":0}"},
+            {"empty id",              "{\"id\":\"\",\"index\":1,\"total\":3}"},
+            {"null id",               "{\"id\":null,\"index\":1,\"total\":3}"},
+            {"bool id",               "{\"id\":true,\"index\":1,\"total\":3}"},
+            {"non-string id",         "{\"id\":7,\"index\":1,\"total\":3}"},
+            {"null index",            "{\"id\":\"b\",\"index\":null,\"total\":3}"},
+            {"index 0",               "{\"id\":\"b\",\"index\":0,\"total\":3}"},
+            {"index negative",        "{\"id\":\"b\",\"index\":-1,\"total\":3}"},
+            {"total 0",               "{\"id\":\"b\",\"index\":1,\"total\":0}"},
+            {"total negative",        "{\"id\":\"b\",\"index\":1,\"total\":-1}"},
+            {"null total",            "{\"id\":\"b\",\"index\":1,\"total\":null}"},
+            {"index > total",         "{\"id\":\"b\",\"index\":4,\"total\":3}"},
+            {"index bool",            "{\"id\":\"b\",\"index\":true,\"total\":3}"},
+            {"index fraction",        "{\"id\":\"b\",\"index\":1.5,\"total\":3}"},
+            {"index string",          "{\"id\":\"b\",\"index\":\"1\",\"total\":3}"},
+            {"total bool",            "{\"id\":\"b\",\"index\":1,\"total\":true}"},
+            {"total fraction",        "{\"id\":\"b\",\"index\":1,\"total\":3.5}"},
+            {"total string",          "{\"id\":\"b\",\"index\":1,\"total\":\"3\"}"},
+        };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) {
+            ordered_json req = ordered_json::parse(
+                std::string("{\"op\":\"insert\",\"type\":\"strategy\","
+                            "\"name\":\"T\",\"source\":\"x\",\"batch\":") +
+                bad[i].json + "}");
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [14.%u] %s: %s\n",
+                         static_cast<unsigned>(i), bad[i].desc,
+                         cliResultToJson(r).dump().c_str());
+            if (r.success) {
+                ec = fail("check14: malformed batch must reject", 140);
+                return 0;
+            }
+            if (r.exitCode != 1) {
+                ec = fail("check14: exitCode != 1", 141);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: malformed batch metadata rejected\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 15 (TVS A): untagged request unchanged — a valid insert
+    //   with no "batch" member parses exactly as before and reports
+    //   hasBatch==false.
+    // ------------------------------------------------------------------
+    {
+        ordered_json req = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"Test\","
+            "\"source\":\"x\"}");
+
+        ServeRequest out;
+        CliResult r = parseServeRequest(req, out);
+        std::fprintf(stdout, "  [15] untagged insert: %s\n",
+                     cliResultToJson(r).dump().c_str());
+
+        if (!r.success || r.exitCode != 0) {
+            ec = fail("check15: untagged insert should parse", 150);
+            return 0;
+        }
+        if (out.hasBatch) {
+            ec = fail("check15: out.hasBatch != false on untagged request",
+                      151);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: untagged request unchanged (hasBatch false)\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 16 (TVS A):
+    //   addServeProgress(ordered_json& response, const ServeRequest& req)
+    //   enriches the ordinary response frame for tagged requests only.
+    //   (a) tagged req -> response gains exactly ONE new top-level member
+    //       "progress" equal to {"batch_id":"b-9","index":2,"total":3,
+    //       "phase":"completed"}; every other member is unchanged (no other
+    //       top-level envelope/frame fields).
+    //   (b) untagged req -> response is byte-identical (no "progress").
+    // ------------------------------------------------------------------
+    {
+        ordered_json reqJson = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"Test\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b-9\",\"index\":2,"
+            "\"total\":3}}");
+        ServeRequest tagged;
+        CliResult pr = parseServeRequest(reqJson, tagged);
+        if (!pr.success || !tagged.hasBatch) {
+            ec = fail("check16: tagged setup request failed to parse", 160);
+            return 0;
+        }
+
+        CliResult res;
+        res.op       = "insert";
+        res.typeStr  = "strategy";
+        res.name     = "Test";
+        res.success  = true;
+        res.exitCode = 0;
+        res.progId   = 42;
+
+        ordered_json resp = cliResultToJson(res);
+        ordered_json orig = resp;
+        addServeProgress(resp, tagged);
+
+        if (!resp.contains("progress") || !resp["progress"].is_object() ||
+            resp["progress"].size() != 4) {
+            ec = fail("check16a: progress missing or not a 4-member object",
+                      161);
+            return 0;
+        }
+        const ordered_json& prog = resp["progress"];
+        if (!prog.contains("batch_id") ||
+            prog["batch_id"].get<std::string>() != "b-9") {
+            ec = fail("check16a: progress.batch_id != \"b-9\"", 162);
+            return 0;
+        }
+        if (!prog.contains("index") || !prog["index"].is_number_integer() ||
+            prog["index"].get<size_t>() != 2) {
+            ec = fail("check16a: progress.index != 2 (integer)", 163);
+            return 0;
+        }
+        if (!prog.contains("total") || !prog["total"].is_number_integer() ||
+            prog["total"].get<size_t>() != 3) {
+            ec = fail("check16a: progress.total != 3 (integer)", 164);
+            return 0;
+        }
+        if (!prog.contains("phase") ||
+            prog["phase"].get<std::string>() != "completed") {
+            ec = fail("check16a: progress.phase != \"completed\"", 165);
+            return 0;
+        }
+        resp.erase("progress");
+        if (resp != orig) {
+            ec = fail("check16a: addServeProgress altered other top-level "
+                      "members", 166);
+            return 0;
+        }
+
+        // (b) untagged: the response must be byte-identical.
+        ordered_json plainJson = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"Test\","
+            "\"source\":\"x\"}");
+        ServeRequest plain;
+        CliResult pr2 = parseServeRequest(plainJson, plain);
+        if (!pr2.success || plain.hasBatch) {
+            ec = fail("check16b: untagged setup request failed to parse",
+                      167);
+            return 0;
+        }
+        ordered_json resp2 = cliResultToJson(res);
+        const std::string before = resp2.dump();
+        addServeProgress(resp2, plain);
+        if (resp2.contains("progress") || resp2.dump() != before) {
+            ec = fail("check16b: untagged response not byte-identical", 168);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: addServeProgress enriches tagged only\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 17 (TVS A): tagged parse failures keep the progress data the
+    //   serve loop needs. When 'batch' validated but a later step fails,
+    //   out.hasBatch/batchIndex/batchTotal are populated and the failure
+    //   CliResult carries op/typeStr/name as far as validation reached —
+    //   taggedParseFailureLines(r, out, ...) must render the exact
+    //   started/completed pair. When 'batch' itself is invalid,
+    //   hasBatch==false and the helper returns an empty pair (untagged
+    //   failure -> no progress).
+    // ------------------------------------------------------------------
+    {
+        // (a) tagged request, unknown type: fails exit 2 AFTER batch
+        //   metadata was accepted. r has op/typeStr; r.name stays empty
+        //   (validation stopped at the type step).
+        ordered_json reqJson = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"bogus\",\"name\":\"T\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b-f\",\"index\":2,"
+            "\"total\":3}}");
+        ServeRequest out;
+        CliResult r = parseServeRequest(reqJson, out);
+        std::fprintf(stdout, "  [17a] tagged unknown type: %s\n",
+                     cliResultToJson(r).dump().c_str());
+        if (r.success || r.exitCode != 2) {
+            ec = fail("check17a: tagged unknown type should fail exit 2",
+                      170);
+            return 0;
+        }
+        if (!out.hasBatch || out.batchId != "b-f" ||
+            out.batchIndex != 2 || out.batchTotal != 3) {
+            ec = fail("check17a: batch metadata not populated on parse "
+                      "failure", 171);
+            return 0;
+        }
+        if (r.op != "insert" || r.typeStr != "bogus" || !r.name.empty()) {
+            ec = fail("check17a: CliResult op/typeStr/name not as expected",
+                      172);
+            return 0;
+        }
+        {
+            const auto lines = taggedParseFailureLines(r, out, false);
+            const std::string expStart =
+                "BATCH START [2/3] op=insert type=\"bogus\" name=\"\"";
+            const std::string expDone =
+                "BATCH FAILED [2/3] op=insert type=\"bogus\" name=\"\""
+                " exit_code=2 message=\"unknown type 'bogus'\"";
+            if (lines.first != expStart || lines.second != expDone) {
+                ec = fail("check17a: human progress pair mismatch", 173);
+                return 0;
+            }
+            const auto jlines = taggedParseFailureLines(r, out, true);
+            ordered_json js = ordered_json::parse(jlines.first);
+            ordered_json jc = ordered_json::parse(jlines.second);
+            if (js["event"] != "batch_item_started" ||
+                js["batch_operation"] != "insert" ||
+                js["index"] != 2 || js["total"] != 3 ||
+                js["type"] != "bogus" || js["name"] != "") {
+                ec = fail("check17a: JSON started event mismatch", 174);
+                return 0;
+            }
+            if (jc["event"] != "batch_item_completed" ||
+                jc["success"] != false || jc["exit_code"] != 2 ||
+                jc["result"] != cliResultToJson(r)) {
+                ec = fail("check17a: JSON completed event mismatch", 175);
+                return 0;
+            }
+        }
+
+        // (b) tagged request, missing source: fails exit 1 after type and
+        //   name were validated, so r carries all three fields.
+        ordered_json reqJson2 = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"batch\":{\"id\":\"b-s\",\"index\":1,\"total\":2}}");
+        ServeRequest out2;
+        CliResult r2 = parseServeRequest(reqJson2, out2);
+        std::fprintf(stdout, "  [17b] tagged missing source: %s\n",
+                     cliResultToJson(r2).dump().c_str());
+        if (r2.success || r2.exitCode != 1) {
+            ec = fail("check17b: tagged missing source should fail exit 1",
+                      176);
+            return 0;
+        }
+        if (!out2.hasBatch || out2.batchIndex != 1 || out2.batchTotal != 2) {
+            ec = fail("check17b: batch metadata not populated on parse "
+                      "failure", 177);
+            return 0;
+        }
+        if (r2.op != "insert" || r2.typeStr != "strategy" ||
+            r2.name != "T") {
+            ec = fail("check17b: CliResult op/typeStr/name not as expected",
+                      178);
+            return 0;
+        }
+        {
+            const auto lines = taggedParseFailureLines(r2, out2, false);
+            const std::string expStart =
+                "BATCH START [1/2] op=insert type=\"strategy\" name=\"T\"";
+            const std::string expDone =
+                "BATCH FAILED [1/2] op=insert type=\"strategy\" name=\"T\""
+                " exit_code=1 message=\"op 'insert' requires 'source'\"";
+            if (lines.first != expStart || lines.second != expDone) {
+                ec = fail("check17b: human progress pair mismatch", 179);
+                return 0;
+            }
+        }
+
+        // (c) invalid 'batch' metadata itself: hasBatch stays false, so
+        //   the helper returns an empty pair — an untagged parse failure
+        //   emits no progress.
+        ordered_json reqJson3 = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b\",\"index\":4,"
+            "\"total\":3}}");
+        ServeRequest out3;
+        CliResult r3 = parseServeRequest(reqJson3, out3);
+        std::fprintf(stdout, "  [17c] invalid batch metadata: %s\n",
+                     cliResultToJson(r3).dump().c_str());
+        if (r3.success || r3.exitCode != 1) {
+            ec = fail("check17c: invalid batch should fail exit 1", 180);
+            return 0;
+        }
+        if (out3.hasBatch) {
+            ec = fail("check17c: hasBatch must stay false on invalid "
+                      "metadata", 181);
+            return 0;
+        }
+        {
+            const auto lines = taggedParseFailureLines(r3, out3, false);
+            if (!lines.first.empty() || !lines.second.empty()) {
+                ec = fail("check17c: untagged failure must render no "
+                          "progress", 182);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: tagged parse failures keep progress data\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 18 (TVS A): 32-bit index/total boundaries. This binary is
+    //   built Win32 (size_t 32-bit), so 4294967295 (UINT32_MAX) is the
+    //   largest accepted value; 4294967296 must reject for either member.
+    // ------------------------------------------------------------------
+    {
+        ordered_json reqJson = ordered_json::parse(
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b-max\",\"index\":"
+            "4294967295,\"total\":4294967295}}");
+        ServeRequest out;
+        CliResult r = parseServeRequest(reqJson, out);
+        std::fprintf(stdout, "  [18a] UINT32_MAX boundary: %s\n",
+                     cliResultToJson(r).dump().c_str());
+        if (!r.success || r.exitCode != 0) {
+            ec = fail("check18a: index==total==4294967295 should parse",
+                      190);
+            return 0;
+        }
+        if (!out.hasBatch || out.batchIndex != 4294967295u ||
+            out.batchTotal != 4294967295u) {
+            ec = fail("check18a: 4294967295 not stored in size_t fields",
+                      191);
+            return 0;
+        }
+        const char* over[] = {
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b\",\"index\":"
+            "4294967296,\"total\":4294967296}}",
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"source\":\"x\",\"batch\":{\"id\":\"b\",\"index\":1,"
+            "\"total\":4294967296}}",
+        };
+        for (int i = 0; i < 2; ++i) {
+            ordered_json rq = ordered_json::parse(over[i]);
+            ServeRequest o;
+            CliResult rr = parseServeRequest(rq, o);
+            std::fprintf(stdout, "  [18b.%d] 2^32 rejected: %s\n", i,
+                         cliResultToJson(rr).dump().c_str());
+            if (rr.success || rr.exitCode != 1) {
+                ec = fail("check18b: 4294967296 must reject exit 1", 192);
+                return 0;
+            }
+            if (o.hasBatch) {
+                ec = fail("check18b: hasBatch must stay false on overflow",
+                          193);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: 32-bit index/total boundaries enforced\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

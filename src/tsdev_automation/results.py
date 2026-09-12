@@ -19,6 +19,7 @@ may be absent from a usage-error object, hence ``None`` defaults.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass
@@ -88,6 +89,29 @@ class TsDevResult:
             stdout=stdout,
             stderr=stderr,
         )
+
+
+@dataclass(frozen=True)
+class BatchProgress:
+    """Progress event passed to a batch ``on_progress`` callback.
+
+    Emitted once per attempted batch item, in input order, after the item's
+    actual :class:`TsDevResult` is available (success or failure).  ``index``
+    is the item's 1-based input position and ``total`` the batch item count.
+    """
+
+    index: int
+    total: int
+    result: TsDevResult
+
+
+BatchProgressCallback = Callable[[BatchProgress], bool | None]
+"""Callback invoked by the ``batch_*``/``batch_*_dir`` methods.
+
+Only a return value of ``False`` cancels the batch (before the next item);
+``True``, ``None``, and any other value continue.  An exception aborts the
+batch and propagates to the caller.
+"""
 
 
 @dataclass

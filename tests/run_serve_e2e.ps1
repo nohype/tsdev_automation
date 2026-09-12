@@ -19,12 +19,21 @@
 .PARAMETER PytestArgs
     Additional pytest arguments (default: "-v --tb=short").
 
+.PARAMETER TimeoutSeconds
+    Maximum seconds to wait for the scheduled task to reach a terminal state
+    (default: 330, range 90-3600). The task's ExecutionTimeLimit is set 30
+    seconds below this value (minimum 60 seconds) so the scheduler stops a
+    hung child before this runner's wait deadline expires.
+
 .EXAMPLE
     .\tests\run_serve_e2e.ps1
     .\tests\run_serve_e2e.ps1 -PytestArgs "-v --tb=long -s"
 #>
 param(
-    [string]$PytestArgs = "-v --tb=short"
+    [ValidateNotNullOrEmpty()]
+    [string]$PytestArgs = "-v --tb=short",
+    [ValidateRange(90, 3600)]
+    [int]$TimeoutSeconds = 330
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,7 +59,6 @@ $runnerExitCodeTaskResultFailure = 23
 $runnerExitCodeCleanupFailure = 24
 $runnerExitCodeRunnerFailure = 25
 $runnerExitCodeCaptureFailure = 26
-$timeoutSeconds = 120
 
 $taskRegistered = $false
 $taskStarted = $false
@@ -80,9 +88,25 @@ function Remove-RunArtifact {
         throw "Run artifact path is not a file: $Path"
     }
 
-    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
-        throw "Run artifact still exists after deletion: $Path"
+    # A still-closing child process can hold the file briefly after the task
+    # reports a terminal state; retry briefly rather than racing the handle.
+    $deadline = (Get-Date).AddSeconds(5)
+    $lastError = $null
+    while ($true) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) {
+                return
+            }
+            $lastError = [System.Exception]::new("file still exists after Remove-Item")
+        }
+        catch {
+            $lastError = $_.Exception
+        }
+        if ((Get-Date) -ge $deadline) {
+            throw "Run artifact could not be removed within 5s: ${Path}: $($lastError.Message)"
+        }
+        Start-Sleep -Milliseconds 250
     }
 }
 
@@ -138,7 +162,7 @@ try {
         $settings = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries `
-            -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+            -ExecutionTimeLimit (New-TimeSpan -Seconds ([Math]::Max(60, $TimeoutSeconds - 30)))
         Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath `
             -Action $action -Principal $principal -Settings $settings `
             -ErrorAction Stop | Out-Null
@@ -181,7 +205,7 @@ try {
         # for its terminal Ready state. A Ready state seen before a run is not
         # completion. LastRunTime change or an observed Running/Queued state is
         # the launch evidence; output text is never used for this decision.
-        $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
         while ((Get-Date) -lt $deadline) {
             try {
                 $task = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction Stop
@@ -221,12 +245,12 @@ try {
             if ($taskStarted) {
                 $failureKind = 'TIMEOUT'
                 $exitCode = $runnerExitCodeTimeout
-                Write-Host "[run_serve_e2e] ERROR: ${failureKind}: scheduled task did not reach Ready within ${timeoutSeconds}s."
+                Write-Host "[run_serve_e2e] ERROR: ${failureKind}: scheduled task did not reach Ready within ${TimeoutSeconds}s."
             }
             else {
                 $failureKind = 'TASK_LAUNCH_FAILURE'
                 $exitCode = $runnerExitCodeTaskLaunchFailure
-                Write-Host "[run_serve_e2e] ERROR: ${failureKind}: no scheduled-task run was observed within ${timeoutSeconds}s."
+                Write-Host "[run_serve_e2e] ERROR: ${failureKind}: no scheduled-task run was observed within ${TimeoutSeconds}s."
             }
         }
     }

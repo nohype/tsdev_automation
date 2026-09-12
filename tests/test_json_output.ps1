@@ -17,6 +17,11 @@
       5. insert compile-error (strategy)  -> success=false, exit_code=8, error.code=compile_error, compile_errors
       6. backward compat: insert WITHOUT --json -> human-readable "SUCCESS:" line on stdout, NOT valid JSON
       7. insert already-exists (strategy) -> success=false, exit_code=5, error.code=already_exists, error.existing_prog_id>0
+      8. batch-insert: default -> human BATCH progress on stderr; with --json
+         -> stdout stays exactly one JSON array while stderr carries one JSON
+         progress event object per line
+
+    This suite is standalone: it is not wired into tests/run_regression.ps1.
 
     Exit codes (this script):
       0 = all assertions passed
@@ -35,6 +40,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ---------------------------------------------------------------------------
+# Shared test helpers (batch progress event assertions).
+# ---------------------------------------------------------------------------
+Import-Module (Join-Path $PSScriptRoot "TestHelpers.psm1") -ErrorAction Stop -DisableNameChecking
 
 # ---------------------------------------------------------------------------
 # Resolve paths and run ID.
@@ -72,8 +82,23 @@ function Write-SourceFile {
 }
 
 # ---------------------------------------------------------------------------
+# Write-ManifestFile: writes a manifest (line-based) to a temp file in ASCII.
+# Returns the path.
+# ---------------------------------------------------------------------------
+function Write-ManifestFile {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter()] [string[]]$Lines = @()
+    )
+    $path = Join-Path $script:tmpDir "$Name.manifest"
+    $content = ($Lines -join "`r`n") + "`r`n"
+    [System.IO.File]::WriteAllText($path, $content, [System.Text.Encoding]::ASCII)
+    return $path
+}
+
+# ---------------------------------------------------------------------------
 # Invoke-CliRaw: runs tsdev_cli.exe with the given argument array, capturing
-# stdout and stderr SEPARATELY (stdout via the pipeline, stderr via 2>file).
+# stdout and stderr SEPARATELY (both via OS-level redirect files).
 # Returns a hashtable with Stdout (string), Stderr (string), ExitCode (int).
 #
 # Keeping stdout and stderr separate is essential for this test: we must
@@ -89,31 +114,65 @@ function Invoke-CliRaw {
     }
     $fullArgs += $Arguments
 
+    # Build a single quoted argument string for Start-Process.
+    $argParts = @()
+    foreach ($a in $fullArgs) {
+        if ($a -match '\s') {
+            $argParts += "`"$a`""
+        } else {
+            $argParts += $a
+        }
+    }
+    $argString = ($argParts -join " ")
+
+    $stdoutFile = Join-Path $script:tmpDir "stdout_$([System.Guid]::NewGuid().ToString('N')).txt"
     $stderrFile = Join-Path $script:tmpDir "stderr_$([System.Guid]::NewGuid().ToString('N')).txt"
 
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $exitCode = -2
+    $launchError = ''
+    $stdoutStr = ''
+    $stderrStr = ''
     try {
-        # Capture stdout through the pipeline; redirect stderr to a temp file.
-        $stdout = & $script:CliPath @fullArgs 2>$stderrFile
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $stdout = $_.Exception.Message
-        $exitCode = -2
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            # OS-level redirection writes the child's raw stdout/stderr bytes
+            # to files. `2>` on a native command wraps stderr in ErrorRecords —
+            # prefixing the first line and injecting error-record text — which
+            # corrupts line-exact assertions on batch progress output.
+            $proc = Start-Process -FilePath $script:CliPath `
+                -ArgumentList $argString `
+                -RedirectStandardOutput $stdoutFile `
+                -RedirectStandardError $stderrFile `
+                -Wait -NoNewWindow -PassThru
+            $exitCode = $proc.ExitCode
+        }
+        catch {
+            # Launch/wait failure only: record it for stderr; never
+            # fabricate stdout or overwrite a real exit code.
+            $launchError = $_.Exception.Message
+        }
+        finally {
+            $ErrorActionPreference = $prevEAP
+        }
+
+        if (Test-Path -Path $stdoutFile -PathType Leaf) {
+            $stdoutStr = ([System.IO.File]::ReadAllText($stdoutFile)).TrimEnd()
+        }
+        if (Test-Path -Path $stderrFile -PathType Leaf) {
+            $stderrStr = ([System.IO.File]::ReadAllText($stderrFile)).TrimEnd()
+        }
+        if ($launchError) {
+            if ($stderrStr) { $stderrStr += "`n" }
+            $stderrStr += $launchError
+        }
     }
     finally {
-        $ErrorActionPreference = $prevEAP
-    }
-
-    # Normalize stdout: pipeline may return an array of lines; join them.
-    $stdoutStr = if ($stdout -is [array]) { ($stdout -join "`n") } else { "$stdout" }
-    $stdoutStr = $stdoutStr.TrimEnd()
-
-    $stderrStr = ""
-    if (Test-Path -Path $stderrFile -PathType Leaf) {
-        $stderrStr = ([System.IO.File]::ReadAllText($stderrFile)).TrimEnd()
-        Remove-Item -Path $stderrFile -Force -ErrorAction SilentlyContinue
+        foreach ($f in @($stdoutFile, $stderrFile)) {
+            if (Test-Path -Path $f -PathType Leaf) {
+                Remove-Item -Path $f -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     return @{
@@ -169,7 +228,7 @@ function Run-TestCase {
 }
 
 # ---------------------------------------------------------------------------
-# Cleanup: re-delete every test name across all types (expecting exit 5).
+# Cleanup: re-delete every test name across all types (expecting exit 0 or 5).
 # ---------------------------------------------------------------------------
 function Test-Cleanup {
     param([string[]]$AllNames)
@@ -402,6 +461,51 @@ try {
         Assert-True ($cli3.ExitCode -eq 0) "step3 cleanup delete exit_code: expected 0, got $($cli3.ExitCode)"
     }
 
+    # -------------------------------------------------------------------
+    # Test 8: batch mode — stderr progress rendering
+    #         Default: human BATCH event lines on stderr; stdout unchanged.
+    #         --json: one JSON progress event object per stderr line while
+    #         stdout stays exactly one JSON array. The --json run re-inserts
+    #         the same manifest so both items fail with already_exists —
+    #         failed items still produce ordered progress events.
+    # -------------------------------------------------------------------
+    $nJ8a = "JsonTest_${runId}_Batch1"; $allTestNames += $nJ8a
+    $nJ8b = "JsonTest_${runId}_Batch2"; $allTestNames += $nJ8b
+    $fJ8a = Write-SourceFile "batch1" $src
+    $fJ8b = Write-SourceFile "batch2" $src
+    $manifestJ8 = Write-ManifestFile "batchj8" @(
+        "strategy $nJ8a $fJ8a",
+        "strategy $nJ8b $fJ8b"
+    )
+
+    Run-TestCase -TestId "J8-batch-stderr-progress" -Body {
+        # Default (no --json): human progress lines on stderr.
+        $cliHuman = Invoke-CliRaw -Arguments @("batch-insert", $manifestJ8)
+        Assert-True ($cliHuman.ExitCode -eq 0) "human exit_code: expected 0, got $($cliHuman.ExitCode)"
+        $arrHuman = [array]($cliHuman.Stdout | ConvertFrom-Json)
+        Assert-True ($arrHuman.Count -eq 2) "human array length: expected 2, got $($arrHuman.Count)"
+        Assert-BatchStderrProgress -Stderr $cliHuman.Stderr -Results $arrHuman -ExpectedExitCode 0
+
+        # --json: stdout is still exactly one JSON array; stderr carries one
+        # JSON event object per line (no human BATCH lines).
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestJ8)
+        Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (already_exists), got $($cli.ExitCode)"
+        $arr = [array]($cli.Stdout | ConvertFrom-Json)
+        Assert-True ($arr.Count -eq 2) "array length: expected 2, got $($arr.Count)"
+        $lineCount = ($cli.Stdout -split "`n").Count
+        Assert-True ($lineCount -eq 1) "stdout must be a single line (one JSON array), got $lineCount lines"
+        Assert-True ($arr[0].error.code -eq 'already_exists') "item0 error.code: expected already_exists, got $($arr[0].error.code)"
+        Assert-True ($arr[1].error.code -eq 'already_exists') "item1 error.code: expected already_exists, got $($arr[1].error.code)"
+        Assert-True ($cli.Stderr -cnotmatch 'BATCH ') "stderr must not contain human BATCH lines under --json, got: $($cli.Stderr)"
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+    }
+
+}
+catch {
+    # An error outside any Run-TestCase body: count it once, report it, and
+    # still fall through to the finally cleanup and the summary/exit code.
+    $script:failCount++
+    Write-Host "[FAIL] UNHANDLED ERROR: $($_.Exception.Message)" -ForegroundColor Red
 }
 finally {
     # Cleanup all created components (re-delete across all types).

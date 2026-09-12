@@ -64,6 +64,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------------------
+# Shared test helpers (batch progress event assertions).
+# ---------------------------------------------------------------------------
+Import-Module (Join-Path $PSScriptRoot "TestHelpers.psm1") -ErrorAction Stop -DisableNameChecking
+
+# ---------------------------------------------------------------------------
 # Resolve paths and run ID.
 # ---------------------------------------------------------------------------
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -129,29 +134,65 @@ function Invoke-CliRaw {
     }
     $fullArgs += $Arguments
 
+    # Build a single quoted argument string for Start-Process.
+    $argParts = @()
+    foreach ($a in $fullArgs) {
+        if ($a -match '\s') {
+            $argParts += "`"$a`""
+        } else {
+            $argParts += $a
+        }
+    }
+    $argString = ($argParts -join " ")
+
+    $stdoutFile = Join-Path $script:tmpDir "stdout_$([System.Guid]::NewGuid().ToString('N')).txt"
     $stderrFile = Join-Path $script:tmpDir "stderr_$([System.Guid]::NewGuid().ToString('N')).txt"
 
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $exitCode = -2
+    $launchError = ''
+    $stdoutStr = ''
+    $stderrStr = ''
     try {
-        $stdout = & $script:CliPath @fullArgs 2>$stderrFile
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $stdout = $_.Exception.Message
-        $exitCode = -2
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            # OS-level redirection writes the child's raw stdout/stderr bytes
+            # to files. `2>` on a native command wraps stderr in ErrorRecords —
+            # prefixing the first line and injecting error-record text — which
+            # corrupts line-exact assertions on batch progress output.
+            $proc = Start-Process -FilePath $script:CliPath `
+                -ArgumentList $argString `
+                -RedirectStandardOutput $stdoutFile `
+                -RedirectStandardError $stderrFile `
+                -Wait -NoNewWindow -PassThru
+            $exitCode = $proc.ExitCode
+        }
+        catch {
+            # Launch/wait failure only: record it for stderr; never
+            # fabricate stdout or overwrite a real exit code.
+            $launchError = $_.Exception.Message
+        }
+        finally {
+            $ErrorActionPreference = $prevEAP
+        }
+
+        if (Test-Path -Path $stdoutFile -PathType Leaf) {
+            $stdoutStr = ([System.IO.File]::ReadAllText($stdoutFile)).TrimEnd()
+        }
+        if (Test-Path -Path $stderrFile -PathType Leaf) {
+            $stderrStr = ([System.IO.File]::ReadAllText($stderrFile)).TrimEnd()
+        }
+        if ($launchError) {
+            if ($stderrStr) { $stderrStr += "`n" }
+            $stderrStr += $launchError
+        }
     }
     finally {
-        $ErrorActionPreference = $prevEAP
-    }
-
-    $stdoutStr = if ($stdout -is [array]) { ($stdout -join "`n") } else { "$stdout" }
-    $stdoutStr = $stdoutStr.TrimEnd()
-
-    $stderrStr = ""
-    if (Test-Path -Path $stderrFile -PathType Leaf) {
-        $stderrStr = ([System.IO.File]::ReadAllText($stderrFile)).TrimEnd()
-        Remove-Item -Path $stderrFile -Force -ErrorAction SilentlyContinue
+        foreach ($f in @($stdoutFile, $stderrFile)) {
+            if (Test-Path -Path $f -PathType Leaf) {
+                Remove-Item -Path $f -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     return @{
@@ -413,6 +454,7 @@ try {
         $j1 = $exists1.Stdout | ConvertFrom-Json
         Assert-True ($j1.exists -eq $true) "exists item1: expected true"
         Assert-True ($j1.prog_id -eq $arr[1].prog_id) "exists item1 prog_id: expected $($arr[1].prog_id), got $($j1.prog_id)"
+        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -466,6 +508,17 @@ try {
         $j1 = $exists1.Stdout | ConvertFrom-Json
         Assert-True ($j1.exists -eq $true) "exists item1: expected true"
         Assert-True ($j1.prog_id -eq $arr[1].prog_id) "exists item1 prog_id: expected $($arr[1].prog_id), got $($j1.prog_id)"
+        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+
+        # --json selects JSON progress rendering on stderr; stdout unchanged.
+        # Re-running the same manifest exercises the modify-path for both.
+        $cliJson = Invoke-CliStdin -ManifestFile $manifestPathBu2 -Arguments @("--json", "batch-upsert", "--batch-stdin")
+        Assert-True ($cliJson.ExitCode -eq 0) "json exit_code: expected 0, got $($cliJson.ExitCode)"
+        $arrJson = [array]($cliJson.Stdout | ConvertFrom-Json)
+        Assert-True ($arrJson.Count -eq 2) "json array length: expected 2, got $($arrJson.Count)"
+        Assert-True (($cliJson.Stdout -split "`n").Count -eq 1) "json stdout must be exactly one JSON array line, got: $($cliJson.Stdout)"
+        Assert-True ($cliJson.Stderr -cnotmatch 'BATCH ') "json stderr must not contain human BATCH lines, got: $($cliJson.Stderr)"
+        Assert-BatchJsonProgress -Stderr $cliJson.Stderr -Results $arrJson -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -492,6 +545,7 @@ try {
         Assert-True ($arr[1].success -eq $false) "item1 success: expected false"
         Assert-True ($null -ne $arr[1].error -and $null -ne $arr[1].error.code) "item1 error.code: expected non-null"
         Assert-True ($arr[1].error.code -eq 'compile_error') "item1 error.code: expected compile_error, got $($arr[1].error.code)"
+        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
     # -------------------------------------------------------------------
@@ -515,6 +569,7 @@ try {
         # stderr must contain an error message mentioning "empty".
         Assert-True ($cli.Stderr.Length -gt 0) "stderr must have an error message for empty manifest"
         Assert-True ($cli.Stderr -match 'empty') "stderr should mention 'empty', got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr -cnotmatch 'BATCH ') "stderr must not contain batch progress events when the batch did not run, got: $($cli.Stderr)"
     }
 
     # -------------------------------------------------------------------
@@ -530,8 +585,15 @@ try {
         # stderr must mention "requires exactly 1 argument".
         Assert-True ($cli.Stderr.Length -gt 0) "stderr must have an error message for usage error"
         Assert-True ($cli.Stderr -match 'requires exactly 1 argument') "stderr should mention 'requires exactly 1 argument', got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr -cnotmatch 'BATCH ') "stderr must not contain batch progress events when the batch did not run, got: $($cli.Stderr)"
     }
 
+}
+catch {
+    # An error outside any Run-TestCase body: count it once, report it, and
+    # still fall through to the finally cleanup and the summary/exit code.
+    $script:failCount++
+    Write-Host "[FAIL] UNHANDLED ERROR: $($_.Exception.Message)" -ForegroundColor Red
 }
 finally {
     # Cleanup all created components (re-delete across all types).

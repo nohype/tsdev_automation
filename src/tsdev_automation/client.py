@@ -22,9 +22,12 @@ import atexit
 import ctypes
 import json
 import os
+import queue
 import subprocess
 import tempfile
+import threading
 import time
+import uuid
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +35,7 @@ from typing import Sequence
 
 from . import _pipe
 from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, exception_for
-from .results import TsDevErrorInfo, TsDevResult
+from .results import BatchProgress, BatchProgressCallback, TsDevErrorInfo, TsDevResult
 
 # The component types confirmed in tsdev_cli.cpp (parseType).
 _VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp", "showme"})
@@ -90,6 +93,85 @@ def _validate_type(type_: str) -> str:
             f"unknown component type {type_!r} (expected one of {sorted(_VALID_TYPES)})"
         )
     return t
+
+
+_SERVE_PROGRESS_KEYS = frozenset({"batch_id", "index", "total", "phase"})
+
+
+def _validate_serve_progress(obj: dict, batch_id: str, index: int, total: int) -> None:
+    """Validate a tagged serve response's top-level ``progress`` member.
+
+    Runs before :meth:`TsDevResult.from_json`: the member must be a dict with
+    exactly ``batch_id``/``index``/``total``/``phase``, echoing the request's
+    batch id and 1-based item position, with ``phase == "completed"``.  Any
+    deviation raises :class:`TsDevError`.
+    """
+    if not isinstance(obj, dict):
+        raise TsDevError(
+            message=f"serve batch response is not a JSON object: {obj!r}"
+        )
+    progress = obj.get("progress")
+    if not isinstance(progress, dict):
+        raise TsDevError(
+            message=f"serve batch response missing or malformed 'progress' member: {progress!r}"
+        )
+    if set(progress) != _SERVE_PROGRESS_KEYS:
+        raise TsDevError(
+            message="serve batch response 'progress' must have exactly "
+            f"batch_id/index/total/phase members, got {sorted(progress)!r}"
+        )
+    pid = progress["batch_id"]
+    if not isinstance(pid, str) or pid != batch_id:
+        raise TsDevError(
+            message=f"serve batch response 'progress.batch_id' mismatch: expected {batch_id!r}, got {pid!r}"
+        )
+    idx = progress["index"]
+    if isinstance(idx, bool) or not isinstance(idx, int) or idx != index:
+        raise TsDevError(
+            message=f"serve batch response 'progress.index' mismatch: expected {index}, got {idx!r}"
+        )
+    tot = progress["total"]
+    if isinstance(tot, bool) or not isinstance(tot, int) or tot != total:
+        raise TsDevError(
+            message=f"serve batch response 'progress.total' mismatch: expected {total}, got {tot!r}"
+        )
+    if progress["phase"] != "completed":
+        raise TsDevError(
+            message=f"serve batch response 'progress.phase' mismatch: expected 'completed', got {progress['phase']!r}"
+        )
+
+
+def _cancelled_result(op: str, type_: str, name: str) -> TsDevResult:
+    """Synthesize the not-run marker for an item the batch never attempted."""
+    return TsDevResult(
+        op=op,
+        type=type_,
+        name=name,
+        success=False,
+        exit_code=12,
+        error=TsDevErrorInfo(
+            code="cancelled",
+            message="Batch cancelled before this item was attempted",
+        ),
+    )
+
+
+def _invoke_progress(
+    on_progress: BatchProgressCallback | None,
+    index: int,
+    total: int,
+    result: TsDevResult,
+) -> bool:
+    """Invoke the batch ``on_progress`` callback for one actual result.
+
+    Returns ``True`` when the callback returned ``False`` before the final
+    item — the only cancellation signal.  Callback exceptions propagate
+    unchanged to the caller (no markers, no further requests).
+    """
+    if on_progress is None:
+        return False
+    decision = on_progress(BatchProgress(index=index, total=total, result=result))
+    return decision is False and index < total
 
 
 def _resolve_cli_path(cli_path: str | os.PathLike | None) -> Path:
@@ -682,27 +764,66 @@ class TsDevClient:
             raise exception_for(result)
         return result
 
-    def batch_insert(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def batch_insert(
+        self,
+        items: Sequence[BatchItem],
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-insert many items. Returns one result per item (in order).
 
         Per-item failures are reported in the returned list (NOT raised); only
         a manifest-level failure (exit 1) raises :class:`TsDevError`.
+
+        ``on_progress`` is invoked synchronously with a
+        :class:`~tsdev_automation.results.BatchProgress` after each attempted
+        item's actual result, success or failure, in input order.  Only a
+        return value of ``False`` cancels — before the next item — and the
+        returned list stays full length: unattempted items become exit-12
+        ``cancelled`` markers that never invoke the callback.  A callback
+        exception aborts the batch and propagates unchanged.  The semantics
+        are identical on the serve path (tagged broker requests) and on the
+        direct elevated path (``--batch-progress-control`` cooperative
+        stdin control); a non-elevated ``use_serve=False`` session still
+        raises ``ElevationRequiredError`` before the CLI is launched.
         """
-        return self._batch("insert", items)
+        return self._batch("insert", items, on_progress)
 
-    def batch_modify(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def batch_modify(
+        self,
+        items: Sequence[BatchItem],
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-modify many items. See :meth:`batch_insert`."""
-        return self._batch("modify", items)
+        return self._batch("modify", items, on_progress)
 
-    def batch_delete(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def batch_delete(
+        self,
+        items: Sequence[BatchItem],
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-delete many items. See :meth:`batch_insert`."""
-        return self._batch("delete", items)
+        return self._batch("delete", items, on_progress)
 
-    def batch_upsert(self, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def batch_upsert(
+        self,
+        items: Sequence[BatchItem],
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-upsert many items (insert-or-modify). See :meth:`batch_insert`."""
-        return self._batch("upsert", items)
+        return self._batch("upsert", items, on_progress)
 
-    def batch_insert_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+    def batch_insert_dir(
+        self,
+        type: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None = None,
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-insert all .el files in a directory. File stem = item name, file content = EL source.
 
         ``extensions`` selects which file extensions to include. ``None`` (default)
@@ -710,21 +831,44 @@ class TsDevClient:
         list like ``["el"]`` selects only ``.el`` files; each element is passed to
         the CLI as a ``-t <ext>`` flag. Per-item failures are reported in the
         returned list (NOT raised); a directory-level failure (exit 1) raises
-        :class:`TsDevError`.
+        :class:`TsDevError`. ``on_progress`` behaves exactly as in
+        :meth:`batch_insert`; positions are sorted-entry positions, and a local
+        source-read failure is an actual result that invokes the callback.
         """
-        return self._batch_dir("insert", type, dir_path, extensions)
+        return self._batch_dir("insert", type, dir_path, extensions, on_progress)
 
-    def batch_modify_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+    def batch_modify_dir(
+        self,
+        type: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None = None,
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-modify all .el files in a directory. See :meth:`batch_insert_dir`."""
-        return self._batch_dir("modify", type, dir_path, extensions)
+        return self._batch_dir("modify", type, dir_path, extensions, on_progress)
 
-    def batch_delete_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+    def batch_delete_dir(
+        self,
+        type: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None = None,
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-delete all .el files in a directory (file stem = item name; content ignored). See :meth:`batch_insert_dir`."""
-        return self._batch_dir("delete", type, dir_path, extensions)
+        return self._batch_dir("delete", type, dir_path, extensions, on_progress)
 
-    def batch_upsert_dir(self, type: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None = None) -> list[TsDevResult]:
+    def batch_upsert_dir(
+        self,
+        type: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None = None,
+        *,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Batch-upsert all .el files in a directory. See :meth:`batch_insert_dir`."""
-        return self._batch_dir("upsert", type, dir_path, extensions)
+        return self._batch_dir("upsert", type, dir_path, extensions, on_progress)
 
     # -- internals ---------------------------------------------------------
 
@@ -848,21 +992,45 @@ class TsDevClient:
             raise exception_for(result)
         return result
 
-    def _batch(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def _batch(
+        self,
+        op: str,
+        items: Sequence[BatchItem],
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         if self._serve_active():
-            return self._batch_serve(op, items)
+            return self._batch_serve(op, items, on_progress)
         needs_source = op in ("insert", "modify", "upsert")
         cleanup: list[Path] = []
         try:
             manifest = self._build_manifest_string(items, needs_source, cleanup)
             sub = _BATCH_SUBCMD[op]
-            cmd = self._base_cmd() + [sub, "--batch-stdin"]
-            results = self._run_batch(cmd, input=manifest)
+            # --json selects NDJSON progress on stderr (stdout stays the
+            # final JSON array either way), so captured stderr is
+            # machine-readable.
+            if on_progress is None:
+                cmd = self._base_cmd() + ["--json", sub, "--batch-stdin"]
+                results = self._run_batch(cmd, input=manifest)
+            else:
+                # --batch-progress-control: the manifest goes to stdin as a
+                # framed TSDEV_BATCH_CONTROL/1 block and stdin stays open
+                # for per-item continue/cancel decisions.
+                cmd = self._base_cmd() + [
+                    "--json", sub, "--batch-stdin", "--batch-progress-control"
+                ]
+                results = self._run_batch_controlled(
+                    cmd, manifest.encode("utf-8"), op, on_progress
+                )
         finally:
             self._cleanup(cleanup)
         return results
 
-    def _batch_serve(self, op: str, items: Sequence[BatchItem]) -> list[TsDevResult]:
+    def _batch_serve(
+        self,
+        op: str,
+        items: Sequence[BatchItem],
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         """Route a batch op through the serve broker by looping over items.
 
         The broker's TsDevLib is long-lived (flushPerItem=false), so this is
@@ -870,6 +1038,13 @@ class TsDevClient:
         per-op warehouse flush.  Per-item failures are collected into the
         returned list (NOT raised), matching non-serve batch semantics.
         Broker-level failures (crash, broken pipe) propagate as exceptions.
+
+        Every request is tagged with ``batch`` metadata (one ``uuid4().hex``
+        id per call, 1-based index, total); each response's ``progress``
+        member is validated before result parsing.  ``on_progress`` is
+        invoked after each actual result; ``False`` cancels before the next
+        item and the unattempted remainder becomes exit-12 ``cancelled``
+        markers (no callback, no broker call, no source read for markers).
         """
         needs_source = op in ("insert", "modify", "upsert")
         # Pre-validate all items upfront (matches _build_manifest_string).
@@ -884,27 +1059,55 @@ class TsDevClient:
         if not validated:
             return []
         broker = self._ensure_broker()
+        batch_id = uuid.uuid4().hex
+        total = len(validated)
         results: list[TsDevResult] = []
-        for t, it in validated:
-            request: dict = {"op": op, "type": t, "name": it.name}
+        for i, (t, it) in enumerate(validated):
+            index = i + 1
+            request: dict = {
+                "op": op,
+                "type": t,
+                "name": it.name,
+                "batch": {"id": batch_id, "index": index, "total": total},
+            }
             if needs_source:
                 request["source"] = self._read_source(it.source)
             obj = broker.call(request)
-            results.append(TsDevResult.from_json(obj))
+            _validate_serve_progress(obj, batch_id, index, total)
+            result = TsDevResult.from_json(obj)
+            results.append(result)
+            if _invoke_progress(on_progress, index, total, result):
+                results.extend(
+                    _cancelled_result(op, t2, it2.name)
+                    for t2, it2 in validated[index:]
+                )
+                break
         return results
 
-    def _batch_dir(self, op: str, type_: str, dir_path: str | os.PathLike, extensions: Sequence[str] | None) -> list[TsDevResult]:
+    def _batch_dir(
+        self,
+        op: str,
+        type_: str,
+        dir_path: str | os.PathLike,
+        extensions: Sequence[str] | None,
+        on_progress: BatchProgressCallback | None = None,
+    ) -> list[TsDevResult]:
         if self._serve_active():
-            return self._batch_dir_serve(op, type_, dir_path, extensions)
+            return self._batch_dir_serve(op, type_, dir_path, extensions, on_progress)
         t = _validate_type(type_)
         exts = list(extensions) if extensions else []
         for e in exts:
             if not isinstance(e, str) or not e:
                 raise ValueError(f"invalid extension {e!r}: must be a non-empty string")
-        cmd = self._base_cmd() + [f"batch-{op}-dir", t, str(dir_path)]
+        # --json: see _batch — keeps captured stderr progress machine-readable.
+        cmd = self._base_cmd() + ["--json", f"batch-{op}-dir", t, str(dir_path)]
         for e in exts:
             cmd += ["-t", e]
-        return self._run_batch(cmd, input="")
+        if on_progress is None:
+            return self._run_batch(cmd, input="")
+        # Native directory enumeration; stdin carries decision lines only.
+        cmd.append("--batch-progress-control")
+        return self._run_batch_controlled(cmd, None, op, on_progress)
 
     def _batch_dir_serve(
         self,
@@ -912,6 +1115,7 @@ class TsDevClient:
         type_: str,
         dir_path: str | os.PathLike,
         extensions: Sequence[str] | None,
+        on_progress: BatchProgressCallback | None = None,
     ) -> list[TsDevResult]:
         """Route a directory batch op through the serve broker.
 
@@ -931,6 +1135,15 @@ class TsDevClient:
         ``source_file_error`` (exit 3), matching the C++ path.  Per-item
         operation failures are collected (NOT raised).  Broker-level
         failures (crash, broken pipe) propagate as exceptions.
+
+        Requests are tagged and responses validated exactly as in
+        :meth:`_batch_serve`; the 1-based position is the sorted entry-list
+        position (a local read failure still consumes an index).  Sources
+        are read lazily per entry so cancellation and callback exceptions
+        never touch files the batch never reached.  ``False`` from
+        ``on_progress`` cancels before the next entry: the remainder become
+        exit-12 ``cancelled`` markers (no callback, no broker call, no
+        source read for markers).
         """
         t = _validate_type(type_)
         # Normalize extensions (matches C++ parseDirectory).
@@ -955,22 +1168,15 @@ class TsDevClient:
             )
 
         needs_source = op in ("insert", "modify", "upsert")
-        # (name, file_path, source_or_None) — source is None when read failed.
-        entries: list[tuple[str, str, str | None]] = []
+        # (name, file_path) — source is read lazily inside the loop.
+        entries: list[tuple[str, Path]] = []
         for entry in dir_p.iterdir():
             if not entry.is_file():
                 continue
             ext = entry.suffix.lower()
             if ext not in exts:
                 continue
-            name = entry.stem
-            source: str | None = None
-            if needs_source:
-                try:
-                    source = entry.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    source = None  # will become a source_file_error result
-            entries.append((name, str(entry), source))
+            entries.append((entry.stem, entry))
 
         if not entries:
             ext_desc = ", ".join(exts)
@@ -982,11 +1188,18 @@ class TsDevClient:
         entries.sort(key=lambda x: x[0])
 
         broker = self._ensure_broker()
+        batch_id = uuid.uuid4().hex
+        total = len(entries)
         results: list[TsDevResult] = []
-        for name, file_path, source in entries:
-            if needs_source and source is None:
-                results.append(
-                    TsDevResult(
+        for i, (name, file_path) in enumerate(entries):
+            index = i + 1
+            if needs_source:
+                try:
+                    source = file_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    # A local read failure is an actual completed result at
+                    # this position: it invokes the callback and can cancel.
+                    result = TsDevResult(
                         op=op,
                         type=t,
                         name=name,
@@ -997,13 +1210,33 @@ class TsDevClient:
                             message=f'failed to read source file "{file_path}"',
                         ),
                     )
-                )
-                continue
-            request: dict = {"op": op, "type": t, "name": name}
+                    results.append(result)
+                    if _invoke_progress(on_progress, index, total, result):
+                        results.extend(
+                            _cancelled_result(op, t, n)
+                            for n, _p in entries[index:]
+                        )
+                        break
+                    continue
+            else:
+                source = None
+            request: dict = {
+                "op": op,
+                "type": t,
+                "name": name,
+                "batch": {"id": batch_id, "index": index, "total": total},
+            }
             if needs_source:
                 request["source"] = source
             obj = broker.call(request)
-            results.append(TsDevResult.from_json(obj))
+            _validate_serve_progress(obj, batch_id, index, total)
+            result = TsDevResult.from_json(obj)
+            results.append(result)
+            if _invoke_progress(on_progress, index, total, result):
+                results.extend(
+                    _cancelled_result(op, t, n) for n, _p in entries[index:]
+                )
+                break
         return results
 
     def _materialize_source(self, source: str | os.PathLike, cleanup: list[Path]) -> Path:
@@ -1166,6 +1399,398 @@ class TsDevClient:
         if not isinstance(arr, list):
             raise TsDevError(message=f"tsdev_cli batch output is not a JSON array: {stdout!r}")
         return [TsDevResult.from_json(obj, stdout=stdout, stderr=stderr) for obj in arr]
+
+    def _run_batch_controlled(
+        self,
+        cmd: list[str],
+        manifest_bytes: bytes | None,
+        op: str,
+        on_progress: BatchProgressCallback,
+    ) -> list[TsDevResult]:
+        """Drive a direct ``tsdev_cli`` batch over the
+        ``--batch-progress-control`` channel.
+
+        The CLI runs on binary ``Popen`` pipes with ``--json`` +
+        ``--batch-progress-control``.  For manifest batches
+        ``manifest_bytes`` is written first as a ``TSDEV_BATCH_CONTROL/1``
+        framed block and stdin stays open for per-item decisions; for
+        directory batches stdin carries decision lines only.  stderr NDJSON
+        events drive synchronous ``on_progress`` callbacks on this (caller)
+        thread; after each non-final ``batch_item_completed`` a
+        ``continue``/``cancel`` decision line is written back.  The final
+        stdout JSON array is authoritative — close-failure rewrites and
+        exit-12 cancellation markers included.
+        """
+        # Same elevation preflight as _run_cli/_run_batch — before Popen.
+        if not self._use_serve and not self._is_elevated:
+            raise ElevationRequiredError()
+        if not self.cli_path.is_file():
+            raise FileNotFoundError(f"tsdev_cli.exe not found at {self.cli_path!s}")
+
+        deadline = (
+            None if self.timeout is None else time.monotonic() + self.timeout
+        )
+
+        def _remaining() -> float | None:
+            return (
+                None
+                if deadline is None
+                else max(0.0, deadline - time.monotonic())
+            )
+
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Drain both child pipes concurrently so a large final array (or a
+        # chatty stderr) can never deadlock the run; callbacks still execute
+        # synchronously on this caller thread.
+        out_buf = bytearray()
+        line_q: queue.Queue = queue.Queue()
+
+        def _drain_stdout() -> None:
+            try:
+                while True:
+                    chunk = proc.stdout.read(65536)
+                    if not chunk:
+                        return
+                    out_buf.extend(chunk)
+            except Exception:
+                return
+
+        def _drain_stderr() -> None:
+            try:
+                while True:
+                    line = proc.stderr.readline()
+                    if not line:
+                        return
+                    line_q.put(line)
+            except Exception:
+                return
+            finally:
+                line_q.put(None)  # EOF sentinel
+
+        threads = (
+            threading.Thread(target=_drain_stdout, daemon=True),
+            threading.Thread(target=_drain_stderr, daemon=True),
+        )
+        for t in threads:
+            t.start()
+
+        def _write_stdin(data: bytes) -> None:
+            try:
+                proc.stdin.write(data)
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                # A dead channel defers to the final exit/crash
+                # classification below.
+                pass
+
+        def _close_pipes() -> None:
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    pass
+
+        def _reap_after_timeout() -> None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+            for t in threads:
+                t.join(timeout=5)
+            _close_pipes()
+
+        # Manifest batches open the control channel with the framed
+        # TSDEV_BATCH_CONTROL/1 header + exact byte payload; stdin then
+        # stays open for decisions. Directory batches skip the frame —
+        # stdin carries decision lines only.
+        if manifest_bytes is not None:
+            _write_stdin(
+                b"TSDEV_BATCH_CONTROL/1 "
+                + str(len(manifest_bytes)).encode("ascii")
+                + b"\n"
+                + manifest_bytes
+            )
+
+        expected_index = 1
+        stable_total: int | None = None
+        open_started: tuple[str, str] | None = None  # (type, name) in flight
+        summary_seen = False
+        first_error: str | None = None
+        callback_exc: BaseException | None = None
+        stop_events = False
+        stderr_parts: list[bytes] = []
+
+        def _int_field(obj: dict, key: str) -> int | None:
+            v = obj.get(key)
+            if isinstance(v, bool) or not isinstance(v, int):
+                return None
+            return v
+
+        def _cancel_if_pending(event_obj) -> None:
+            # The child awaits a decision exactly after emitting a
+            # batch_item_completed for a non-final item position. The
+            # position is deterministic (expected_index), even when the
+            # event's own fields are malformed; fall back to the event's
+            # claimed total when the stable total is not yet known.
+            tot = stable_total
+            if tot is None and isinstance(event_obj, dict):
+                tot = _int_field(event_obj, "total")
+            if tot is not None and expected_index < tot:
+                _write_stdin(b"cancel\n")
+
+        def _note_error(msg: str, event_obj=None) -> None:
+            nonlocal first_error
+            if first_error is None:
+                first_error = msg
+            _cancel_if_pending(event_obj)
+
+        def _handle_started(obj: dict) -> None:
+            nonlocal stable_total, open_started
+            idx = _int_field(obj, "index")
+            tot = _int_field(obj, "total")
+            typ, nam = obj.get("type"), obj.get("name")
+            if (
+                obj.get("batch_operation") != op
+                or idx is None
+                or idx != expected_index
+                or tot is None
+                or tot < 1
+                or not isinstance(typ, str)
+                or not isinstance(nam, str)
+            ):
+                _note_error(f"malformed batch_item_started event: {obj!r}", obj)
+                return
+            if stable_total is None:
+                stable_total = tot
+            elif tot != stable_total:
+                _note_error(
+                    f"batch_item_started total changed: {obj!r}", obj
+                )
+                return
+            if open_started is not None:
+                _note_error(
+                    "batch_item_started before the previous item completed",
+                    obj,
+                )
+                return
+            open_started = (typ, nam)
+
+        def _handle_completed(obj: dict) -> None:
+            nonlocal expected_index, open_started
+            idx = _int_field(obj, "index")
+            tot = _int_field(obj, "total")
+            if (
+                open_started is None
+                or obj.get("batch_operation") != op
+                or idx is None
+                or idx != expected_index
+                or tot is None
+                or tot != stable_total
+                or obj.get("type") != open_started[0]
+                or obj.get("name") != open_started[1]
+            ):
+                _note_error(
+                    f"malformed batch_item_completed event: {obj!r}", obj
+                )
+                return
+            open_started = None
+            result_obj = obj.get("result")
+            if not isinstance(result_obj, dict):
+                _note_error(
+                    "batch_item_completed event has no result object", obj
+                )
+                return
+            # The nested result must agree with the event envelope.
+            if (
+                result_obj.get("op") != op
+                or result_obj.get("type") != obj["type"]
+                or result_obj.get("name") != obj["name"]
+                or ("success" in obj
+                    and obj["success"] != result_obj.get("success"))
+                or ("exit_code" in obj
+                    and obj["exit_code"] != result_obj.get("exit_code"))
+            ):
+                _note_error(
+                    "batch_item_completed event disagrees with its result "
+                    "object",
+                    obj,
+                )
+                return
+            try:
+                result = TsDevResult.from_json(result_obj)
+            except Exception as e:
+                _note_error(
+                    f"batch_item_completed result could not be parsed: {e!r}",
+                    obj,
+                )
+                return
+            # The callback runs synchronously on this caller thread; only a
+            # `False` return before the final item cancels. A callback
+            # exception propagates to the loop, which still sends cancel
+            # and drains the child to a safe close before re-raising.
+            cancel = _invoke_progress(on_progress, idx, stable_total, result)
+            expected_index = idx + 1
+            if idx < stable_total:
+                _write_stdin(b"cancel\n" if cancel else b"continue\n")
+
+        def _handle_summary(obj: dict) -> None:
+            nonlocal summary_seen
+            if summary_seen:
+                _note_error("duplicate batch_completed event", obj)
+                return
+            summary_seen = True
+            comp = _int_field(obj, "completed")
+            tot = _int_field(obj, "total")
+            not_run = _int_field(obj, "not_run")
+            succ = _int_field(obj, "successes")
+            fail = _int_field(obj, "failures")
+            if (
+                obj.get("batch_operation") != op
+                or tot is None
+                or tot != stable_total
+                or comp is None
+                or comp != expected_index - 1
+                or open_started is not None
+                or not_run is None
+                or comp + not_run != tot
+                or succ is None
+                or fail is None
+                or succ + fail != comp
+                or not isinstance(obj.get("cancelled"), bool)
+                or not isinstance(obj.get("close_failed"), bool)
+                or _int_field(obj, "exit_code") is None
+            ):
+                _note_error(
+                    f"malformed batch_completed summary: {obj!r}", obj
+                )
+
+        timed_out = False
+        while True:
+            try:
+                line = line_q.get(timeout=_remaining())
+            except queue.Empty:
+                timed_out = True
+                break
+            if line is None:
+                break  # stderr EOF
+            stderr_parts.append(line)
+            if stop_events:
+                continue
+            try:
+                obj = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                continue  # non-JSON line -> retained diagnostic
+            if not isinstance(obj, dict):
+                continue  # JSON scalar/array -> retained diagnostic
+            ev = obj.get("event")
+            if ev == "batch_item_started":
+                _handle_started(obj)
+            elif ev == "batch_item_completed":
+                try:
+                    _handle_completed(obj)
+                except BaseException as e:
+                    # Progress-callback exception: send cancel when a
+                    # decision may be pending, keep draining so the CLI
+                    # closes the warehouse and finalizes, then re-raise
+                    # the original exception unchanged.
+                    callback_exc = e
+                    _cancel_if_pending(obj)
+            elif ev == "batch_completed":
+                _handle_summary(obj)
+            # batch_control_error and unrecognized JSON objects are
+            # diagnostics, retained in stderr_parts.
+            if first_error is not None or callback_exc is not None:
+                stop_events = True
+
+        if timed_out:
+            _reap_after_timeout()
+            raise TimeoutError(f"tsdev_cli timed out after {self.timeout}s")
+
+        try:
+            proc.wait(timeout=_remaining())
+        except subprocess.TimeoutExpired:
+            _reap_after_timeout()
+            raise TimeoutError(f"tsdev_cli timed out after {self.timeout}s")
+        for t in threads:
+            t.join(timeout=10)
+        _close_pipes()
+
+        rc = proc.returncode
+        is_crash, crash_type = _is_crash_exit(rc)
+        if is_crash:
+            raise TsDevCrashError(
+                message=f"tsdev_cli.exe crashed ({crash_type}, exit code "
+                        f"0x{rc & 0xFFFFFFFF:08X}). "
+                        "This indicates a bug in the orlib20 integration.",
+                exit_code=rc,
+            )
+        if callback_exc is not None:
+            raise callback_exc
+        stdout_text = bytes(out_buf).decode("utf-8", "replace")
+        stderr_text = b"".join(stderr_parts).decode("utf-8", "replace")
+        if rc == 1:
+            raise TsDevError(
+                message=(
+                    f"tsdev_cli batch failed (exit 1, manifest/usage error). "
+                    f"stdout={stdout_text!r} stderr={stderr_text!r}"
+                )
+            )
+        if first_error is not None:
+            raise TsDevError(
+                message=(
+                    f"tsdev_cli batch progress protocol violation "
+                    f"(exit {rc}): {first_error}. stderr={stderr_text!r}"
+                )
+            )
+        if not summary_seen:
+            raise TsDevError(
+                message=(
+                    f"tsdev_cli batch ended without a batch_completed "
+                    f"summary (exit {rc}). stderr={stderr_text!r}"
+                )
+            )
+        if rc not in (0, 2, 3):
+            raise TsDevError(
+                message=(
+                    f"tsdev_cli batch returned unexpected exit {rc}. "
+                    f"stdout={stdout_text!r} stderr={stderr_text!r}"
+                )
+            )
+        try:
+            arr = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            raise TsDevError(
+                message=(
+                    f"tsdev_cli batch returned non-JSON output (exit {rc}). "
+                    f"stdout={stdout_text!r} stderr={stderr_text!r}"
+                )
+            )
+        if not isinstance(arr, list):
+            raise TsDevError(
+                message=f"tsdev_cli batch output is not a JSON array: {stdout_text!r}"
+            )
+        return [
+            TsDevResult.from_json(obj, stdout=stdout_text, stderr=stderr_text)
+            for obj in arr
+        ]
 
     @staticmethod
     def _cleanup(paths: list[Path]) -> None:

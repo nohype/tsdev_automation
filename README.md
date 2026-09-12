@@ -39,7 +39,7 @@ Positional arguments: `<type>`, `<name>`, `<source_file>`
 ### Flags
 
 - Global:
-  - `--json` - emit a single JSON result object on stdout.
+  - `--json` - emit a single JSON result object on stdout. For batch subcommands stdout is always the same JSON array; `--json` instead selects the stderr progress rendering (one JSON event object per line instead of human-readable `BATCH` lines).
   - `--ts-path <dir>` - override TradeStation install directory.
   - `-v` / `--verbose` - raise the stderr log level. Position-free and repeatable; each occurrence raises the level one step: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals. Additional occurrences clamp at debug. Accepted forms: `-v`, `-vv`, `-vvv` (bundled), `--verbose`, `--verbose=<value>` (value ignored, counts as one occurrence). Log output goes to stderr only; stdout (results and JSON) is unaffected.
 - `exists`:
@@ -87,6 +87,7 @@ Output is always a JSON array (one element per item). Exit codes:
 - `0` - all succeeded
 - `1` - usage error, manifest not found, or manifest empty (batch did not run)
 - `2` - batch ran, but one or more items failed (per-item details in the JSON)
+- `3` - batch cooperatively cancelled via `--batch-progress-control` (the array stays full length; unattempted items are exit-12 `cancelled` markers)
 
 ### Manifest format
 
@@ -102,6 +103,36 @@ Example `manifest.txt`:
 function MyFuncA ./src/MyFuncA.el
 function MyFuncB ./src/MyFuncB.el
 ```
+
+### Batch progress
+
+Every batch that runs emits progress on **stderr** (always on, independent of `-v`), one line per event:
+
+- `BATCH START [i/n] op=<op> type="<type>" name="<name>"` - before each attempted item, in input order (including items rejected at manifest parse/pre-validation and TsDevLib-init failures)
+- `BATCH SUCCESS [i/n] op=<op> type="<type>" name="<name>" exit_code=0` / `BATCH FAILED [i/n] op=<op> type="<type>" name="<name>" exit_code=<n> message="<msg>"` - after each item's result (`message=` is omitted only when the error message is empty; quoted values are JSON-escaped so one event is always one line)
+- `BATCH COMPLETE op=<op> completed=<n> total=<n> successes=<n> failures=<n> not_run=<n> cancelled=<bool> close_failed=<bool> exit_code=<n>` - once, after the end-of-batch warehouse close and any retroactive result rewrite
+
+With `--json`, each stderr line is one compact JSON object instead: `batch_item_started`, `batch_item_completed` (carrying the exact per-item result object), `batch_completed`. `--json` selects the progress rendering only - stdout stays exactly one JSON array in both modes.
+
+stderr gaining progress lines is an intentional compatibility change. The stdout array remains the authoritative result: a failed end-of-batch warehouse close rewrites still-successful items to failures, and `BATCH COMPLETE`/`batch_completed` is emitted after that rewrite (`close_failed=true`).
+
+### Cooperative batch control (`--batch-progress-control`)
+
+`--batch-progress-control` is a batch-only, position-free flag (repeating it is a usage error) that turns **stdin** into a cooperative between-items control channel. After each completed item except the last, the batch synchronously reads exactly one LF-terminated decision line before attempting the next item:
+
+- `continue\n` - proceed to the next item
+- `cancel\n` - stop cooperatively: the batch closes the warehouse once, fills the remaining positions with not-run markers, and exits `3`
+
+Any other input — EOF before the line terminator, a read error, or a malformed token — emits a `batch_control_error` (JSON mode) / `BATCH CONTROL ERROR: <message>; cancelling before next item` (human mode) diagnostic on stderr, then cancels the same way. Cancelling keeps the stdout JSON array **full length**: every unattempted item is a marker result with `success=false`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`. The summary reports `completed` = attempted items, `not_run` = markers, `cancelled=true`, and exit `3` dominates even when items failed or the end-of-batch close failed.
+
+Stdin layout depends on how the manifest is supplied:
+
+- `batch-* --batch-stdin --batch-progress-control`: stdin begins with a framed manifest — the exact ASCII header `TSDEV_BATCH_CONTROL/1 <decimal byte length>\n` (digits only, 64 MiB cap) followed by exactly that many manifest bytes — then decision lines on the same stream. A malformed frame is a pre-run failure (exit 1, no array).
+- `batch-* <manifest_file> --batch-progress-control` and `batch-*-dir ... --batch-progress-control`: the manifest/directory still comes from its normal source; stdin carries decision lines only.
+
+### Batch progress in serve mode
+
+`tsdev_cli serve` accepts an optional `"batch":{"id":"<nonempty string>","index":<1-based>,"total":<n>}` member on `insert`/`modify`/`delete`/`upsert` requests. The object is all-or-none and closed - exactly those three members, `1 <= index <= total`; anything else rejects the request. For tagged requests the broker emits the same started/completed progress lines on its own stderr (human, or JSON under `--json`) and appends `"progress":{"batch_id":"<id>","index":<i>,"total":<t>,"phase":"completed"}` to the ordinary response - still exactly one response frame per request. This also holds when a request with *valid* batch metadata fails later validation or dispatch (unknown type, missing source, item already exists): the started/completed pair is still emitted and the failure response still carries `progress`. Only a request rejected for invalid `batch` metadata itself is an untagged failure with no progress. Untagged requests are byte-identical to before.
 
 ### Examples
 
@@ -163,14 +194,30 @@ Methods:
 
 ### Batch methods
 
-- `batch_insert(items)` / `batch_modify(items)` / `batch_upsert(items)` / `batch_delete(items)`
+- `batch_insert(items, *, on_progress=None)` / `batch_modify(items, *, on_progress=None)` / `batch_upsert(items, *, on_progress=None)` / `batch_delete(items, *, on_progress=None)`
   - `items`: `Sequence[BatchItem]` -> `list[TsDevResult]`
-- `batch_insert_dir(type, dir_path, extensions=None)`
-- `batch_modify_dir(type, dir_path, extensions=None)`
-- `batch_delete_dir(type, dir_path, extensions=None)`
-- `batch_upsert_dir(type, dir_path, extensions=None)`
+- `batch_insert_dir(type, dir_path, extensions=None, *, on_progress=None)`
+- `batch_modify_dir(type, dir_path, extensions=None, *, on_progress=None)`
+- `batch_delete_dir(type, dir_path, extensions=None, *, on_progress=None)`
+- `batch_upsert_dir(type, dir_path, extensions=None, *, on_progress=None)`
 
 Per-item failures are returned in the list. Manifest/directory-level failures raise `TsDevError`.
+
+### `BatchProgress` / `on_progress`
+
+All eight batch methods accept the keyword-only `on_progress: BatchProgressCallback | None` argument, with the same public semantics on the serve path and the direct elevated path:
+
+```python
+from tsdev_automation import BatchProgress, BatchProgressCallback
+# BatchProgress: frozen dataclass with .index (1-based), .total, .result (TsDevResult)
+# BatchProgressCallback = Callable[[BatchProgress], bool | None]
+```
+
+- The callback is invoked synchronously, in input order, once per **attempted** item after its actual `TsDevResult` is available — success or failure. For directory batches the position is the sorted entry-list position; a local source-read failure is an actual result (`.error.code == "source_file_error"`) that also invokes the callback.
+- Only a return value of `False` cancels, and only before the final item (`True`/`None`/`0`/anything else continue; `False` on the last item is ignored). On cancellation the returned list stays **full length**: attempted items keep their results and each unattempted item is a synthetic `TsDevResult` with `success=False`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`. Markers never invoke the callback and cause no broker request or file read.
+- A callback exception aborts the batch: the original exception propagates unchanged, no marker list is returned, and the serve broker stays alive and usable.
+- Serve path (default non-elevated `use_serve=True`): every batch call tags each broker request with `"batch":{"id":<uuid4 hex>,"index":<i>,"total":<n>}` (one id per call) and validates the response's `"progress":{"batch_id","index","total","phase":"completed"}` member before parsing — a missing, malformed, or mismatched `progress` raises `TsDevError` without invoking the callback. This happens with or without a callback.
+- Direct path (elevated session): the batch runs as a single `tsdev_cli` child with `--json` + `--batch-progress-control` on binary pipes — manifest batches stream the manifest as a framed `TSDEV_BATCH_CONTROL/1` block over stdin (no temp manifest file), directory batches keep the native argv with stdin carrying decisions only. The client validates the stderr progress events strictly (started/completed pairing, contiguous indexes, stable total/op/type/name, nested-result consistency, one coherent `batch_completed`), writes `continue`/`cancel` after each non-final item, and returns the authoritative final stdout array — close-rewrite and exit-12 markers included. Malformed/missing events raise `TsDevError` (after a cooperative `cancel` when a decision is pending); exit `1` is a batch-level `TsDevError`, NTSTATUS exits map to `TsDevCrashError`, and a `timeout` terminates the child and raises `TimeoutError`. A non-elevated `use_serve=False` session still raises `ElevationRequiredError` before launch; no-callback direct batches are unchanged.
 
 ### `BatchItem`
 

@@ -10,15 +10,15 @@
 //   tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> [--output <file>]
 //   tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>
 //   tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> <source_file>
-//   tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file>
-//   tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file>
-//   tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file>
-//   tsdev_cli [--ts-path <directory>] batch-upsert  <manifest_file>
-//   tsdev_cli [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
-//   tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
-//   tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
-//   tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
-//   tsdev_cli [--ts-path <directory>] serve [--serve-pipe-file <path>]
+//   tsdev_cli [--json] [--ts-path <directory>] batch-insert  <manifest_file>
+//   tsdev_cli [--json] [--ts-path <directory>] batch-modify  <manifest_file>
+//   tsdev_cli [--json] [--ts-path <directory>] batch-delete  <manifest_file>
+//   tsdev_cli [--json] [--ts-path <directory>] batch-upsert  <manifest_file>
+//   tsdev_cli [--json] [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--json] [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--json] [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
+//   tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]
 //
 //   <type>        "strategy", "function", "indicator", "tradingapp", or "showme" (case-insensitive)
 //   <name>        component name
@@ -33,8 +33,11 @@
 //                 suppress the human-readable stdout messages. Exit codes are
 //                 unchanged in both modes. When absent, output is byte-identical
 //                 to the pre-JSON behavior (backward compatible).
-//                 (batch-* subcommands ALWAYS emit a JSON array on stdout;
-//                 --json is accepted but ignored for batch.)
+//                 Batch subcommands ALWAYS emit the same JSON array on
+//                 stdout; for batch-* (and tagged serve requests) --json
+//                 instead selects the stderr progress rendering — one
+//                 compact JSON event object per line instead of the
+//                 human-readable BATCH lines.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
 //                 raises the runtime log level (tsdev_lib) one step:
 //                 default = warnings + errors only; 1 occurrence (-v) = + info;
@@ -70,6 +73,29 @@
 //   1 = usage error / manifest file not found / manifest empty (batch did not run)
 //   2 = batch ran but one or more items failed (including an explicit close
 //       failure; per-item details are in the JSON array)
+//   3 = batch cooperatively cancelled via --batch-progress-control (the
+//       stdout array stays full length; unattempted items are exit-12
+//       "cancelled" markers)
+//
+// Batch progress is always emitted on stderr (independent of -v): one
+// BATCH START and one BATCH SUCCESS/BATCH FAILED line per attempted item,
+// then a single BATCH COMPLETE line after the end-of-batch warehouse close
+// (+ result rewrite). With --json each event is one compact JSON object per
+// line instead.
+//
+// --batch-progress-control (batch-* subcommands only) turns stdin into a
+// cooperative control channel: after each completed non-final item the
+// batch reads exactly one decision line — "continue\n" or "cancel\n" —
+// before attempting the next item. With --batch-stdin the manifest itself
+// is first read as a framed block
+//   TSDEV_BATCH_CONTROL/1 <decimal byte length>\n<exactly length bytes>
+// and decision lines follow on the same stream; with a manifest path or a
+// batch-*-dir subcommand stdin carries decision lines only. "cancel", EOF,
+// or a malformed token stops the batch before the next item: the remaining
+// items are reported as exit-12 not-run markers in the still-full-length
+// stdout array and the process exits 3. A malformed control input emits a
+// batch_control_error / BATCH CONTROL ERROR diagnostic on stderr before
+// the cancellation.
 //
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
@@ -88,6 +114,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -95,6 +122,7 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <utility>
 #include <filesystem>
 #include <io.h>
 #include <fcntl.h>
@@ -189,15 +217,15 @@ void printUsage() {
         "  tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>\n"
         "  tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> "
         "<source_file>\n"
-        "  tsdev_cli [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin\n"
-        "  tsdev_cli [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin\n"
-        "  tsdev_cli [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin\n"
-        "  tsdev_cli [--ts-path <directory>] batch-upsert  <manifest_file> | --batch-stdin\n"
-        "  tsdev_cli [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]\n"
-        "  tsdev_cli [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]\n"
-        "  tsdev_cli [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]\n"
-        "  tsdev_cli [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
-        "  tsdev_cli [--ts-path <directory>] serve [--serve-pipe-file <path>]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-insert  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-modify  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-delete  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-upsert  <manifest_file> | --batch-stdin\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-insert-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-modify-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]\n"
         "  <type>         strategy | function | indicator | tradingapp | showme (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
@@ -208,8 +236,23 @@ void printUsage() {
         "                  delete:               <type> <name>\n"
         "  --batch-stdin    read the manifest from stdin instead of <manifest_file>\n"
         "                   (same line format; stdin is read in binary mode).\n"
+        "  --batch-progress-control  (batch-* only) cooperative between-items\n"
+        "                   control on stdin: after each completed non-final item\n"
+        "                   the batch waits for exactly \"continue\\n\" or "
+        "\"cancel\\n\".\n"
+        "                   With --batch-stdin the manifest is first read as a\n"
+        "                   framed TSDEV_BATCH_CONTROL/1 <byte length>\\n + "
+        "payload\n"
+        "                   block; with a manifest path or batch-*-dir, stdin\n"
+        "                   carries decision lines only. cancel/EOF/malformed\n"
+        "                   input stops before the next item: remaining items\n"
+        "                   become exit-12 not-run markers (full-length array)\n"
+        "                   and the process exits 3.\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
-        "human-readable stdout)\n"
+        "human-readable stdout).\n"
+        "                 For batch-* (and tagged serve requests) it instead\n"
+        "                 selects the stderr progress rendering: one JSON event\n"
+        "                 object per line instead of human-readable BATCH lines.\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
         "  -v, --verbose  Raise the stderr log level. Position-free global "
@@ -238,7 +281,11 @@ void printUsage() {
         "  --serve-pipe-file <path>  (serve only) Write the named pipe path and PID to\n"
         "                 <path> once the pipe is created (atomic: .tmp + rename).\n"
         "                 If absent, the pipe name is printed to stdout instead.\n"
-        "  batch-* always emit a JSON array on stdout (one element per item).\n");
+        "  batch-* always emit a JSON array on stdout (one element per item)\n"
+        "                 and always emit per-item progress on stderr: BATCH\n"
+        "                 START + BATCH SUCCESS/FAILED lines per item plus a\n"
+        "                 final BATCH COMPLETE line (one JSON event object per\n"
+        "                 line with --json).\n");
 }
 
 // --- TVS-D.2: structured result + output -------------------------------------
@@ -313,6 +360,7 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 9:  return "artifact_missing";
         case 10: return "thread_failure";
         case 11: return "not_elevated";
+        case 12: return "cancelled";
         default: return "unknown_error";
     }
 }
@@ -390,6 +438,129 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
     }
 
     return j;
+}
+
+// --- TVS A: batch progress events -------------------------------------------
+//
+// Batch progress is always on (independent of -v) and goes to stderr only —
+// stdout keeps carrying exactly the final JSON array. One event per physical
+// line: a batch_item_started + batch_item_completed pair for every attempted
+// item (in input order, including pre-validation and init failures), then one
+// batch_completed after the end-of-batch closeWarehouse() + result rewrite.
+// Human rendering by default; --json selects one compact JSON object per
+// line. The same renderers serve tagged broker requests.
+
+// jsonQuote renders a string as a JSON string literal ("..." with escaping),
+// so type/name/message values embedded in a human line can never leak a raw
+// quote, backslash, CR, or LF — one event stays one physical line.
+std::string jsonQuote(const std::string& s) {
+    return ordered_json(s).dump(-1, ' ', false,
+                                nlohmann::json::error_handler_t::replace);
+}
+
+// Render one batch_item_started event. Returns exactly one line (no CR/LF,
+// no trailing newline).
+std::string batchItemStartedLine(const std::string& op, size_t index,
+                                 size_t total, const std::string& type,
+                                 const std::string& name, bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]           = "batch_item_started";
+        j["batch_operation"] = op;
+        j["index"]           = index;
+        j["total"]           = total;
+        j["type"]            = type;
+        j["name"]            = name;
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return "BATCH START [" + std::to_string(index) + "/" +
+           std::to_string(total) + "] op=" + op +
+           " type=" + jsonQuote(type) + " name=" + jsonQuote(name);
+}
+
+// Render one batch_item_completed event. The JSON form embeds the exact
+// cliResultToJson object as "result". The human FAILED line omits message=
+// only when the error message is empty.
+std::string batchItemCompletedLine(const std::string& op, size_t index,
+                                   size_t total, const CliResult& result,
+                                   bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]           = "batch_item_completed";
+        j["batch_operation"] = op;
+        j["index"]           = index;
+        j["total"]           = total;
+        j["type"]            = result.typeStr;
+        j["name"]            = result.name;
+        j["success"]         = result.success;
+        j["exit_code"]       = result.exitCode;
+        j["result"]          = cliResultToJson(result);
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    std::string line =
+        std::string(result.success ? "BATCH SUCCESS [" : "BATCH FAILED [") +
+        std::to_string(index) + "/" + std::to_string(total) + "] op=" + op +
+        " type=" + jsonQuote(result.typeStr) +
+        " name=" + jsonQuote(result.name) +
+        " exit_code=" + std::to_string(result.exitCode);
+    if (!result.success && !result.errorMessage.empty()) {
+        line += " message=" + jsonQuote(result.errorMessage);
+    }
+    return line;
+}
+
+// Render the single batch_completed summary. cancelled inserts the CANCELLED
+// token in the human form.
+std::string batchCompletedLine(const std::string& op, size_t completed,
+                               size_t total, size_t successes,
+                               size_t failures, size_t notRun, bool cancelled,
+                               bool closeFailed, int exitCode,
+                               bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]           = "batch_completed";
+        j["batch_operation"] = op;
+        j["completed"]       = completed;
+        j["total"]           = total;
+        j["successes"]       = successes;
+        j["failures"]        = failures;
+        j["not_run"]         = notRun;
+        j["cancelled"]       = cancelled;
+        j["close_failed"]    = closeFailed;
+        j["exit_code"]       = exitCode;
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return std::string(cancelled ? "BATCH COMPLETE CANCELLED"
+                                 : "BATCH COMPLETE") +
+        " op=" + op +
+        " completed=" + std::to_string(completed) +
+        " total=" + std::to_string(total) +
+        " successes=" + std::to_string(successes) +
+        " failures=" + std::to_string(failures) +
+        " not_run=" + std::to_string(notRun) +
+        " cancelled=" + (cancelled ? "true" : "false") +
+        " close_failed=" + (closeFailed ? "true" : "false") +
+        " exit_code=" + std::to_string(exitCode);
+}
+
+// Aggregate batch exit code: 1 = batch did not run (pre-run failure),
+// 3 = cooperatively cancelled (dominates once set), 2 = ran with failures,
+// 0 = clean.
+int batchAggregateExitCode(bool batchStarted, bool anyFailed,
+                           bool cancelled) {
+    if (!batchStarted) return 1;
+    if (cancelled)     return 3;
+    if (anyFailed)     return 2;
+    return 0;
+}
+
+// emitBatchProgress writes one rendered event line to stderr and flushes —
+// direct writes, no reliance on buffering mode, so each event is visible
+// immediately while stdout still carries only the final JSON array.
+void emitBatchProgress(const std::string& line) {
+    std::fwrite(line.c_str(), 1, line.size(), stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
 }
 
 // emitOutput renders a CliResult in either human-readable or JSON form.
@@ -2409,47 +2580,249 @@ bool parseManifest(const std::string& path, bool needsSource,
     return true;
 }
 
+// --- TVS C: cooperative stdin batch control ---------------------------------
+//
+// --batch-progress-control turns stdin into a control channel while the
+// batch runs. With --batch-stdin the channel opens with a framed manifest:
+//   TSDEV_BATCH_CONTROL/1 <decimal byte length>\n<exactly length bytes>
+// after which the same stream carries one LF-terminated decision line per
+// non-final item ("continue\n" or "cancel\n"). With a manifest path or a
+// batch-*-dir subcommand the manifest comes from its normal source and
+// stdin carries decision lines only. The worker reads exactly one decision
+// synchronously after each completed non-final item; "cancel", EOF, or any
+// malformed token stops the batch cooperatively before the next item and
+// fills the rest of the results array with exit-12 not-run markers.
+
+// One between-items decision read from the control channel.
+enum class BatchControlDecision { Continue, Cancel, Error };
+
+// 64 MiB inclusive cap for the framed manifest payload (the same cap the
+// serve framing layer applies to one frame).
+static constexpr size_t kBatchControlManifestCap = 67108864;
+
+// readBatchControlManifest reads the framed manifest form used when
+// --batch-stdin is combined with --batch-progress-control: the exact ASCII
+// header "TSDEV_BATCH_CONTROL/1 <decimal byte length>\n" followed by
+// exactly <length> manifest bytes. The length token is decimal digits only
+// (no sign, spaces, or trailing junk), parsed overflow-safe, and capped at
+// 64 MiB inclusive. Bytes after the payload (decision lines) are left
+// unread. Returns false with a nonempty diagnostic on EOF, a malformed
+// header, a read failure, or a short payload.
+bool readBatchControlManifest(FILE* input, std::string& manifest,
+                              std::string& error) {
+    static const char kHeaderMagic[] = "TSDEV_BATCH_CONTROL/1 ";
+    const size_t kMagicLen = sizeof(kHeaderMagic) - 1;
+
+    // Read the header one byte at a time up to and including the LF. The
+    // scan is bounded (magic + at most 8 digits for the cap, plus slack) so
+    // a malformed stream cannot grow it unboundedly.
+    std::string header;
+    header.reserve(64);
+    bool gotLf = false;
+    for (size_t i = 0; i < 128; ++i) {
+        int c = std::fgetc(input);
+        if (c == EOF) {
+            error = header.empty()
+                ? "control channel closed before the batch manifest header"
+                : "control channel closed inside the batch manifest header";
+            return false;
+        }
+        if (c == '\n') { gotLf = true; break; }
+        header.push_back(static_cast<char>(c));
+    }
+    if (!gotLf) {
+        error = "batch control manifest header exceeds the maximum length";
+        return false;
+    }
+    if (header.compare(0, kMagicLen, kHeaderMagic) != 0) {
+        error = "malformed batch control manifest header "
+                "(expected \"TSDEV_BATCH_CONTROL/1 <byte length>\")";
+        return false;
+    }
+    const std::string lenTok = header.substr(kMagicLen);
+    if (lenTok.empty() ||
+        lenTok.find_first_not_of("0123456789") != std::string::npos) {
+        error = "batch control manifest length is not a decimal byte count";
+        return false;
+    }
+    // Decimal digits only; bail out above the cap before the value can
+    // overflow (the cap is far below size_t range).
+    size_t declared = 0;
+    for (char ch : lenTok) {
+        declared = declared * 10 + static_cast<size_t>(ch - '0');
+        if (declared > kBatchControlManifestCap) {
+            error = "batch control manifest length exceeds the 64 MiB cap";
+            return false;
+        }
+    }
+    manifest.assign(declared, '\0');
+    if (declared > 0 &&
+        std::fread(&manifest[0], 1, declared, input) != declared) {
+        error = "control channel closed before the declared manifest "
+                "payload was read";
+        return false;
+    }
+    return true;
+}
+
+// readBatchControlDecision reads exactly one decision line from the control
+// channel. Only "continue\n" and "cancel\n" are valid. EOF before the line
+// terminator, a read error, an oversized token, or any other token yields
+// Error with a nonempty diagnostic (the caller treats Error as cancel).
+BatchControlDecision readBatchControlDecision(FILE* input,
+                                              std::string& error) {
+    std::string line;
+    line.reserve(16);
+    // Bound the token: the only legal lines are "continue\n" and
+    // "cancel\n", so anything beyond a small limit is malformed by
+    // definition.
+    for (size_t i = 0; i < 64; ++i) {
+        int c = std::fgetc(input);
+        if (c == EOF) {
+            error = std::ferror(input)
+                ? "error reading the batch control channel"
+                : (line.empty()
+                    ? "control channel closed before a decision was read"
+                    : "control channel closed before the decision line "
+                      "terminator");
+            return BatchControlDecision::Error;
+        }
+        if (c == '\n') {
+            if (line == "continue") return BatchControlDecision::Continue;
+            if (line == "cancel")   return BatchControlDecision::Cancel;
+            error = "invalid batch control decision token \"" + line + "\"";
+            return BatchControlDecision::Error;
+        }
+        line.push_back(static_cast<char>(c));
+    }
+    error = "batch control decision token exceeds the maximum length";
+    return BatchControlDecision::Error;
+}
+
+// Render the batch_control_error diagnostic emitted on stderr before an
+// anomaly-driven cancellation. JSON: exactly {event:"batch_control_error",
+// message, action:"cancel"}. Human:
+//   BATCH CONTROL ERROR: <message>; cancelling before next item
+// where <message> is the JSON one-line escaped form without the
+// surrounding quotes (the same escaping jsonQuote applies).
+std::string batchControlErrorLine(const std::string& message,
+                                  bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]   = "batch_control_error";
+        j["message"] = message;
+        j["action"]  = "cancel";
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    const std::string quoted = jsonQuote(message);
+    return "BATCH CONTROL ERROR: " + quoted.substr(1, quoted.size() - 2) +
+           "; cancelling before next item";
+}
+
+// Synthesize the not-run marker for an item the batch never attempted after
+// a cancellation. Preserves the parsed op/type/name verbatim; exit 12
+// serializes as error.code "cancelled" via errorCodeString.
+CliResult cancelledBatchItemResult(const std::string& op,
+                                   const BatchItem& item) {
+    CliResult r;
+    r.op = op;
+    r.typeStr = item.typeStr;
+    r.name = item.name;
+    r.success = false;
+    r.exitCode = 12;
+    r.errorMessage = "Batch cancelled before this item was attempted";
+    return r;
+}
+
 // Parameters passed to the batch worker thread.
 struct BatchParams {
     std::string             op;  // "insert"/"modify"/"delete"
     std::vector<BatchItem>  items;
     const wchar_t*          tsPathOverride;  // nullptr = auto-discover
+    bool                    jsonProgress = false;  // --json: NDJSON progress
+    bool                    batchControl = false;  // --batch-progress-control
     std::vector<CliResult>  results;  // populated by runBatch
-    int                     exitCode = 0;   // 0/2 (set by worker)
+    int                     exitCode = 0;   // 0/2/3 (set by worker)
 };
 
 // The batch worker: constructs ONE TsDevLib, loops over items IN ORDER using
 // the shared doInsert/doModify/doDelete logic, collects results, calls
 // closeWarehouse() once at the end, then destructs TsDevLib. Continue on
-// failure (never abort) — collect all results.
+// failure (never abort) — collect all results. Progress is always emitted on
+// stderr: one started/completed event pair per attempted item (including
+// pre-validation and init failures) plus one batch_completed after the
+// close + result rewrite.
 DWORD WINAPI runBatch(LPVOID param) {
     BatchParams* p = static_cast<BatchParams*>(param);
     const std::string& op = p->op;
+    const size_t total = p->items.size();
     p->results.clear();
-    p->results.reserve(p->items.size());
+    p->results.reserve(total);
 
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
     try {
         lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
-        // Init failure: every item gets an init_failure result.
+        // Init failure: every attempted item gets an init_failure result —
+        // still an attempted item, so emit the started/completed pair for
+        // each. With batch control the same per-item handshake applies: a
+        // cancel (or a control-channel anomaly) stops before the next item
+        // and the remainder become not-run markers. There is no library to
+        // close on this path.
+        bool cancelled = false;
+        size_t index = 0;
+        size_t attempted = 0;
         for (auto& item : p->items) {
+            ++index;
+            emitBatchProgress(batchItemStartedLine(
+                op, index, total, item.typeStr, item.name, p->jsonProgress));
             CliResult r;
             r.op = op;
             r.typeStr = item.typeStr;
             r.name = item.name;
             r.exitCode = 4;
             r.errorMessage = std::string("init failed: ") + e.what();
+            emitBatchProgress(batchItemCompletedLine(op, index, total, r,
+                                                     p->jsonProgress));
             p->results.push_back(std::move(r));
+            attempted = index;
+            if (p->batchControl && index < total) {
+                std::string controlErr;
+                const BatchControlDecision decision =
+                    readBatchControlDecision(stdin, controlErr);
+                if (decision == BatchControlDecision::Error) {
+                    emitBatchProgress(batchControlErrorLine(controlErr,
+                                                            p->jsonProgress));
+                }
+                if (decision != BatchControlDecision::Continue) {
+                    cancelled = true;
+                    break;
+                }
+            }
         }
-        p->exitCode = 2;  // batch ran (attempted) but all failed
+        for (size_t j = attempted; j < total; ++j) {
+            p->results.push_back(cancelledBatchItemResult(op, p->items[j]));
+        }
+        p->exitCode = batchAggregateExitCode(/*batchStarted=*/true,
+                                             /*anyFailed=*/true,
+                                             cancelled);
+        emitBatchProgress(batchCompletedLine(
+            op, attempted, total, /*successes=*/0, /*failures=*/attempted,
+            /*notRun=*/total - attempted, cancelled, /*closeFailed=*/false,
+            p->exitCode, p->jsonProgress));
         return 0;
     }
 
     bool anyFailed = false;
+    bool cancelled = false;
+    size_t index = 0;
+    size_t attempted = 0;
 
     for (auto& item : p->items) {
+        ++index;
+        emitBatchProgress(batchItemStartedLine(
+            op, index, total, item.typeStr, item.name, p->jsonProgress));
         CliResult r;
         if (!item.preValid) {
             // Pre-validated failure (malformed line / unreadable file) —
@@ -2457,12 +2830,7 @@ DWORD WINAPI runBatch(LPVOID param) {
             // stamp the op.
             r = item.result;
             r.op = op;
-            anyFailed = true;
-            p->results.push_back(std::move(r));
-            continue;
-        }
-
-        if (op == "insert") {
+        } else if (op == "insert") {
             r = doInsert(*lib, item.type, item.typeStr, item.name,
                          item.source, /*flushPerItem=*/false);
         } else if (op == "modify") {
@@ -2476,7 +2844,35 @@ DWORD WINAPI runBatch(LPVOID param) {
         }
 
         if (!r.success) anyFailed = true;
+        emitBatchProgress(batchItemCompletedLine(op, index, total, r,
+                                                 p->jsonProgress));
         p->results.push_back(std::move(r));
+        attempted = index;
+
+        // Cooperative control: after each completed non-final item read
+        // exactly one decision. "cancel" stops before the next item; a
+        // control-channel anomaly emits batch_control_error and also stops.
+        // The last item never requests a decision.
+        if (p->batchControl && index < total) {
+            std::string controlErr;
+            const BatchControlDecision decision =
+                readBatchControlDecision(stdin, controlErr);
+            if (decision == BatchControlDecision::Error) {
+                emitBatchProgress(batchControlErrorLine(controlErr,
+                                                        p->jsonProgress));
+            }
+            if (decision != BatchControlDecision::Continue) {
+                cancelled = true;
+                break;
+            }
+        }
+    }
+
+    // After a cancellation the remaining items are never attempted: append
+    // exit-12 not-run markers so the emitted array stays full length.
+    // Markers get no item events and no decision reads.
+    for (size_t j = attempted; j < total; ++j) {
+        p->results.push_back(cancelledBatchItemResult(op, p->items[j]));
     }
 
     // Flush the warehouse ONCE at the end of the batch (per the TsDevLib
@@ -2484,7 +2880,9 @@ DWORD WINAPI runBatch(LPVOID param) {
     // explicit close makes every otherwise-successful mutation uncertain, so
     // convert those per-item successes to the existing entry-op failure result
     // and return the existing nonzero aggregate batch status.
+    bool closeFailed = false;
     if (!lib->closeWarehouse()) {
+        closeFailed = true;
         std::fprintf(stderr,
             "tsdev_cli: closeWarehouse failed at end of batch\n");
         anyFailed = true;
@@ -2503,7 +2901,23 @@ DWORD WINAPI runBatch(LPVOID param) {
     // thread).
     delete lib;
 
-    p->exitCode = anyFailed ? 2 : 0;
+    p->exitCode = batchAggregateExitCode(/*batchStarted=*/true, anyFailed,
+                                         cancelled);
+
+    // Emit the final summary AFTER the close + retroactive rewrite so its
+    // counters and exit code reflect the authoritative final results.
+    // completed counts attempted items only (markers are reported via
+    // not_run); successes/failures count only attempted final outcomes —
+    // the close rewrite touches attempted successes only, since markers are
+    // already failures.
+    size_t successes = 0, failures = 0;
+    for (size_t i = 0; i < attempted; ++i) {
+        if (p->results[i].success) ++successes; else ++failures;
+    }
+    emitBatchProgress(batchCompletedLine(
+        op, attempted, total, successes, failures,
+        /*notRun=*/total - attempted, cancelled, closeFailed, p->exitCode,
+        p->jsonProgress));
     return 0;
 }
 
@@ -2529,12 +2943,15 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
 // cmdBatchDir() (directory mode) so the batch execution logic is not
 // duplicated.
 int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
-                    const wchar_t* tsPathOverride) {
+                    const wchar_t* tsPathOverride, bool jsonProgress,
+                    bool batchControl) {
     // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
     BatchParams params;
     params.op = op;
     params.items = std::move(items);
     params.tsPathOverride = tsPathOverride;
+    params.jsonProgress = jsonProgress;
+    params.batchControl = batchControl;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runBatch, &params, 0, nullptr);
@@ -2555,20 +2972,35 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
 // Common batch command handler: parses the manifest, launches the worker,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
-             bool useStdin, const wchar_t* tsPathOverride) {
+             bool useStdin, const wchar_t* tsPathOverride, bool jsonProgress,
+             bool batchControl) {
     const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
 
     // Parse the manifest on the main thread (before the worker).
     std::vector<BatchItem> items;
     if (useStdin) {
         // Read the manifest from stdin in BINARY mode (avoids CRLF/newline
-        // translation on Windows). EOF / empty stdin -> empty manifest.
+        // translation on Windows). With --batch-progress-control stdin is
+        // the control channel: the manifest is a framed
+        // TSDEV_BATCH_CONTROL/1 block and the decision lines after it stay
+        // buffered for the worker; without it the whole stream is the
+        // manifest, read byte-for-byte to EOF. EOF / empty stdin -> empty
+        // manifest.
         _setmode(_fileno(stdin), _O_BINARY);
         std::string content;
-        char buf[8192];
-        size_t n = 0;
-        while ((n = std::fread(buf, 1, sizeof(buf), stdin)) > 0) {
-            content.append(buf, n);
+        if (batchControl) {
+            std::string controlErr;
+            if (!readBatchControlManifest(stdin, content, controlErr)) {
+                // Pre-run failure: no JSON array, no progress events.
+                std::fprintf(stderr, "tsdev_cli: %s\n", controlErr.c_str());
+                return 1;
+            }
+        } else {
+            char buf[8192];
+            size_t n = 0;
+            while ((n = std::fread(buf, 1, sizeof(buf), stdin)) > 0) {
+                content.append(buf, n);
+            }
         }
         parseManifestLines(content, needsSource, items);
         if (items.empty()) {
@@ -2577,6 +3009,11 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
             return 1;
         }
     } else {
+        if (batchControl) {
+            // The manifest still comes from the file; stdin carries
+            // decision lines only (read as binary, like --batch-stdin).
+            _setmode(_fileno(stdin), _O_BINARY);
+        }
         if (!parseManifest(manifestFile, needsSource, items)) {
             // Manifest file not found / unreadable -> exit 1 (batch did not run).
             // No JSON array on stdout (the batch did not run); stderr only.
@@ -2593,7 +3030,8 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
         }
     }
 
-    return runBatchAndEmit(op, items, tsPathOverride);
+    return runBatchAndEmit(op, items, tsPathOverride, jsonProgress,
+                           batchControl);
 }
 
 // --- TVS-I.2: directory batch mode -------------------------------------------
@@ -2703,7 +3141,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
 // "no files matching" message and return exit 1 (no JSON array emitted).
 int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
                 const std::string& dirPath, const std::vector<std::string>& extensions,
-                const wchar_t* tsPath) {
+                const wchar_t* tsPath, bool jsonProgress, bool batchControl) {
     // Validate type (unknown -> exit 2, matching existing pattern).
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
@@ -2742,7 +3180,12 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
         return 1;
     }
 
-    return runBatchAndEmit(op, items, tsPath);
+    if (batchControl) {
+        // Directory enumeration is native; stdin carries decision lines
+        // only (read as binary, like --batch-stdin).
+        _setmode(_fileno(stdin), _O_BINARY);
+    }
+    return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl);
 }
 
 // --- TVS-K.3: serve request dispatch -----------------------------------------
@@ -2762,6 +3205,10 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 //                 wrapper reads files client-side and sends the text)
 //   caseInsensitive  exists only (optional, default false)
 //   outputPath    get-source only (optional; broker-local file path)
+//   hasBatch/batchId/batchIndex/batchTotal  optional batch progress tag —
+//                 mutating ops only (insert/modify/delete/upsert); hasBatch
+//                 gates stderr progress emission and the response "progress"
+//                 member (see parseServeRequest/addServeProgress)
 struct ServeRequest {
     std::string op;
     ComponentType type = ComponentType::Strategy;
@@ -2770,6 +3217,10 @@ struct ServeRequest {
     std::string source;
     bool caseInsensitive = false;
     std::string outputPath;
+    bool hasBatch = false;
+    std::string batchId;
+    size_t batchIndex = 0;
+    size_t batchTotal = 0;
 };
 
 // parseServeRequest validates a JSON request and populates `out`. On success
@@ -2807,6 +3258,54 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         r.op = "";
         r.errorMessage = "unknown op '" + op + "'";
         return r;
+    }
+
+    // Optional 'batch' progress metadata — checked before the 'quit'
+    // early-out so quit+batch still rejects. Accepted only on the mutating
+    // ops (insert/modify/delete/upsert). When present the object is
+    // all-or-none and closed: exactly the members id/index/total — any extra
+    // or missing member rejects the whole request. id is a nonempty string;
+    // index/total are positive integral JSON numbers that must fit a 32-bit
+    // size_t (this binary is built Win32) and satisfy index <= total.
+    if (req.contains("batch")) {
+        const bool mutating = (op == "insert" || op == "modify" ||
+                               op == "delete" || op == "upsert");
+        const ordered_json& b = req["batch"];
+        // positiveIndex converts a positive integral JSON number to uint64;
+        // it rejects bool/null/fraction/string/negative/zero/overflow.
+        auto positiveIndex = [](const ordered_json& v, uint64_t& n) -> bool {
+            if (v.is_number_unsigned()) {
+                n = v.get<uint64_t>();
+            } else if (v.is_number_integer()) {
+                const int64_t s = v.get<int64_t>();
+                if (s < 0) return false;
+                n = static_cast<uint64_t>(s);
+            } else {
+                return false;
+            }
+            return n >= 1 && n <= 0xFFFFFFFFull;
+        };
+        uint64_t idx = 0, tot = 0;
+        const bool valid = mutating && b.is_object() && b.size() == 3 &&
+            b.contains("id") && b["id"].is_string() &&
+            !b["id"].get<std::string>().empty() &&
+            b.contains("index") && positiveIndex(b["index"], idx) &&
+            b.contains("total") && positiveIndex(b["total"], tot) &&
+            idx <= tot;
+        if (!valid) {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.errorMessage =
+                "invalid 'batch' metadata (insert/modify/delete/upsert only; "
+                "expected exactly {\"id\":<nonempty string>,"
+                "\"index\":<1..total>,\"total\":<positive int>})";
+            return r;
+        }
+        out.hasBatch = true;
+        out.batchId = b["id"].get<std::string>();
+        out.batchIndex = static_cast<size_t>(idx);
+        out.batchTotal = static_cast<size_t>(tot);
     }
 
     // 3. 'quit' needs no other fields.
@@ -2883,6 +3382,38 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
     r.typeStr = typeStr;
     r.name = name;
     return r;
+}
+
+// addServeProgress enriches the ordinary response frame for a tagged request
+// (req.hasBatch): it appends exactly one top-level member
+//   "progress":{"batch_id":<id>,"index":<i>,"total":<t>,"phase":"completed"}
+// after the existing cliResultToJson members (no envelope, no other top-level
+// change). Untagged requests are a no-op — the response stays byte-identical.
+void addServeProgress(ordered_json& response, const ServeRequest& req) {
+    if (!req.hasBatch) return;
+    ordered_json prog;
+    prog["batch_id"] = req.batchId;
+    prog["index"]    = req.batchIndex;
+    prog["total"]    = req.batchTotal;
+    prog["phase"]    = "completed";
+    response["progress"] = std::move(prog);
+}
+
+// taggedParseFailureLines renders the started/completed progress pair for a
+// tagged request that failed validation AFTER its 'batch' metadata was
+// accepted (e.g. unknown type, missing source): the item still counts as
+// attempted, so it emits the same two events as a dispatched item. The
+// op/type/name come from the failure CliResult — ServeRequest fields are
+// only populated on full parse success. Both strings are empty for untagged
+// requests (hasBatch==false — including requests rejected for invalid
+// 'batch' metadata itself, which get no progress).
+std::pair<std::string, std::string> taggedParseFailureLines(
+    const CliResult& r, const ServeRequest& req, bool jsonOutput) {
+    if (!req.hasBatch) return {};
+    return {batchItemStartedLine(r.op, req.batchIndex, req.batchTotal,
+                                 r.typeStr, r.name, jsonOutput),
+            batchItemCompletedLine(r.op, req.batchIndex, req.batchTotal, r,
+                                   jsonOutput)};
 }
 
 // dispatchServeRequest switches on req.op and calls the corresponding do*
@@ -2990,6 +3521,18 @@ bool writeFramed(HANDLE pipe, const std::string& payload) {
     if (!writeAll(pipe, &len, 4)) return false;
     if (len > 0 && !writeAll(pipe, payload.data(), len)) return false;
     return true;
+}
+
+// writeServeResponse writes the ordinary response frame for one request:
+// the cliResultToJson body plus the tagged "progress" member (a no-op for
+// untagged requests). Exactly one frame per call — used by both the normal
+// dispatch path and the parse-failure path.
+bool writeServeResponse(HANDLE pipe, const CliResult& r,
+                        const ServeRequest& req) {
+    ordered_json response = cliResultToJson(r);
+    addServeProgress(response, req);
+    return writeFramed(pipe, response.dump(-1, ' ', false,
+        nlohmann::json::error_handler_t::replace));
 }
 
 // readFramed reads a 4-byte little-endian length prefix, rejects lengths
@@ -3113,6 +3656,7 @@ int serveConnectExitCode(BOOL connected, DWORD connectError) {
 struct ServeParams {
     HANDLE             pipe = INVALID_HANDLE_VALUE;
     const wchar_t*     tsPathOverride = nullptr;  // nullptr = auto-discover
+    bool               jsonProgress = false;      // --json: NDJSON progress
     std::atomic<bool>  quit{false};               // set by worker on 'quit' op
     int                exitCode = 0;              // set by worker
 };
@@ -3181,7 +3725,19 @@ DWORD WINAPI runServe(LPVOID param) {
             ServeRequest req;
             r = parseServeRequest(reqJson, req);
             if (!r.success) {
-                if (!writeFramed(pipe, cliResultToJson(r).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace))) break;
+                // A request whose 'batch' metadata validated still counts
+                // as an attempted batch item even when a later validation
+                // step fails (unknown type, missing source, ...): emit the
+                // same started/completed pair and enrich the ordinary
+                // failure response — still exactly one frame. Requests
+                // rejected for invalid 'batch' metadata itself keep
+                // hasBatch==false, so the pair is empty (untagged failure,
+                // no progress).
+                const auto lines =
+                    taggedParseFailureLines(r, req, p->jsonProgress);
+                if (!lines.first.empty())  emitBatchProgress(lines.first);
+                if (!lines.second.empty()) emitBatchProgress(lines.second);
+                if (!writeServeResponse(pipe, r, req)) break;
                 continue;
             }
 
@@ -3192,6 +3748,14 @@ DWORD WINAPI runServe(LPVOID param) {
                 writeFramed(pipe, cliResultToJson(qr).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
                 p->quit.store(true);
                 break;
+            }
+
+            // Batch-tagged requests emit the same item progress to the serve
+            // stderr (human or NDJSON per --json), flushed per event.
+            if (req.hasBatch) {
+                emitBatchProgress(batchItemStartedLine(
+                    req.op, req.batchIndex, req.batchTotal, req.typeStr,
+                    req.name, p->jsonProgress));
             }
 
             // Dispatch on THIS thread (TsDevLib is thread-affine to this
@@ -3212,7 +3776,15 @@ DWORD WINAPI runServe(LPVOID param) {
                 r.exitCode = 1;
                 r.errorMessage = std::string("internal error: ") + e.what();
             }
-            if (!writeFramed(pipe, cliResultToJson(r).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace))) break;
+            if (req.hasBatch) {
+                emitBatchProgress(batchItemCompletedLine(
+                    req.op, req.batchIndex, req.batchTotal, r,
+                    p->jsonProgress));
+            }
+            // One request still yields exactly one response frame — the
+            // ordinary cliResultToJson body plus the tagged "progress"
+            // member (a no-op for untagged requests).
+            if (!writeServeResponse(pipe, r, req)) break;
             } catch (...) {
                 // Belt-and-suspenders: if any exception escapes the inner
                 // processing (including dump() serialization), write a JSON
@@ -3319,6 +3891,7 @@ int cmdServe(int argc, char** argv, bool jsonMode,
     ServeParams params;
     params.pipe = hPipe;
     params.tsPathOverride = tsPathOverride;
+    params.jsonProgress = jsonMode;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runServe, &params, 0, nullptr);
@@ -3392,6 +3965,8 @@ int main(int argc, char** argv) {
     const char* tsPathOverride = nullptr;
     std::string tsPathStr;  // holds the value for the equals form
     bool jsonMode = false;
+    bool batchControl = false;  // --batch-progress-control (batch-* only)
+    int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
     int verboseCount = 0;   // accumulated -v/--verbose occurrences
 
     std::vector<char*> reducedArgv;
@@ -3435,6 +4010,15 @@ int main(int argc, char** argv) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
             jsonMode = true;
+        } else if (arg == "--batch-progress-control" ||
+                   arg.rfind("--batch-progress-control=", 0) == 0) {
+            // Batch-only boolean switch (presence counts; a '=' value is
+            // ignored, mirroring --json). Position-free. Occurrences are
+            // counted here, not rejected: a repeat is a usage error but it
+            // must be reported AFTER the elevation guard below so every
+            // non-elevated direct invocation still returns 11 first.
+            ++batchControlCount;
+            batchControl = true;
         } else if (arg == "--verbose" || arg.rfind("--verbose=", 0) == 0) {
             // Boolean switch like --json: presence counts as ONE verbosity
             // occurrence. Any value after '=' is ignored.
@@ -3513,6 +4097,45 @@ int main(int argc, char** argv) {
                                  "Run from an elevated terminal (or let the Python wrapper auto-elevate).\n");
         }
         return 11;
+    }
+
+    // --batch-progress-control is batch-only and non-repeatable: the flag
+    // is recognized, counted, and removed during the global scan, but both
+    // validations live here, AFTER the unchanged elevation guard (a
+    // non-elevated caller still gets exit 11 first).
+    if (batchControlCount > 1) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--batch-progress-control must not be repeated";
+        r.humanStderr = "Error: --batch-progress-control must not be repeated\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
+    if (batchControl) {
+        const bool isBatchSub =
+            iequals(subcommand, "batch-insert") ||
+            iequals(subcommand, "batch-modify") ||
+            iequals(subcommand, "batch-delete") ||
+            iequals(subcommand, "batch-upsert") ||
+            iequals(subcommand, "batch-insert-dir") ||
+            iequals(subcommand, "batch-modify-dir") ||
+            iequals(subcommand, "batch-delete-dir") ||
+            iequals(subcommand, "batch-upsert-dir");
+        if (!isBatchSub) {
+            CliResult r;
+            r.exitCode = 1;
+            r.errorMessage = "--batch-progress-control is only valid with "
+                             "batch-* subcommands";
+            r.humanStderr = "tsdev_cli: --batch-progress-control is only "
+                            "valid with batch-* subcommands\n";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                std::fprintf(stderr, "%s", r.humanStderr.c_str());
+                printUsage();
+            }
+            return 1;
+        }
     }
 
     // --- TVS-K.4: serve subcommand ---
@@ -3712,8 +4335,9 @@ int main(int argc, char** argv) {
     // --- TVS-D.3: batch subcommands ---
     // batch-insert/batch-modify/batch-delete take a single <manifest_file>
     // argument OR --batch-stdin (read the manifest from stdin instead). They
-    // ALWAYS emit a JSON array on stdout (no --json needed). --json is accepted
-    // but ignored (the global pre-scan already handled it).
+    // ALWAYS emit a JSON array on stdout (no --json needed); --json instead
+    // selects the stderr progress rendering (NDJSON events instead of the
+    // human BATCH lines). The global pre-scan already parsed the flag.
     if (iequals(subcommand, "batch-insert") ||
         iequals(subcommand, "batch-modify") ||
         iequals(subcommand, "batch-delete") ||
@@ -3732,16 +4356,19 @@ int main(int argc, char** argv) {
         else                                          op = "delete";
         std::string arg2 = reducedArgvPtr[2];
         if (arg2 == "--batch-stdin") {
-            return cmdBatch(op, std::string(), true, tsPathWidePtr);
+            return cmdBatch(op, std::string(), true, tsPathWidePtr, jsonMode,
+                            batchControl);
         }
-        return cmdBatch(op, arg2, false, tsPathWidePtr);
+        return cmdBatch(op, arg2, false, tsPathWidePtr, jsonMode,
+                        batchControl);
     }
 
     // --- TVS-I.2: directory batch subcommands ---
     // batch-insert-dir/batch-modify-dir/batch-delete-dir/batch-upsert-dir take
     // <type> <dir_path> plus an optional repeatable -t <ext> flag. They ALWAYS
-    // emit a JSON array on stdout (no --json needed). --json is accepted but
-    // ignored (the global pre-scan already handled it). The -t flag is
+    // emit a JSON array on stdout (no --json needed); --json instead selects
+    // the stderr progress rendering (the global pre-scan already parsed it).
+    // The -t flag is
     // directory-batch-specific: it survives the global pre-scan and is parsed
     // here (similar to --case-insensitive in the exists dispatch).
     if (iequals(subcommand, "batch-insert-dir") ||
@@ -3800,7 +4427,7 @@ int main(int argc, char** argv) {
         int typeInt = static_cast<int>(ctype);
 
         return cmdBatchDir(op, typeInt, typeStr, dirPath, extensions,
-                           tsPathWidePtr);
+                           tsPathWidePtr, jsonMode, batchControl);
     }
 
     {
