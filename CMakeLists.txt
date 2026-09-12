@@ -464,6 +464,24 @@ target_include_directories(test_batch_progress PRIVATE third_party)
 target_link_libraries(test_batch_progress tsdev_lib)
 add_dependencies(test_batch_progress siggen)
 
+# --- --pbar progress-bar renderer unit test -----------------------------------
+# Pure unit test for the pbar renderer core in src/tsdev_cli.cpp: pbarLine /
+# pbarEraseSeq / pbarDrawSeq (PURE line/erase/draw byte builders) and the
+# PbarRenderer emitter (start/itemStarted/itemCompleted/noteFailure/
+# eventLine/finish). The helpers live inside the anonymous namespace in
+# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp
+# directly (same TU) and #defines TSDEV_CLI_TEST to exclude its main() — the
+# same mechanism used by test_batch_progress. The test needs the third_party
+# include dir (nlohmann/json) because the included tsdev_cli.cpp uses it, and
+# links tsdev_lib for the TsDevLib symbols referenced by the included CLI
+# code. It is a PURE UNIT TEST (no orlib20 access — the renderer's stderr
+# writes are captured via a dup2'd temp file), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_pbar tests/test_pbar.cpp)
+target_include_directories(test_pbar PRIVATE third_party)
+target_link_libraries(test_pbar tsdev_lib)
+add_dependencies(test_pbar siggen)
+
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
 # Sha256FileStatus (Hashed/Absent/Error) classification. The helper lives inside
@@ -950,7 +968,7 @@ option(TSDEV_REQUIRE_ADMIN
 # analysis, no runtime orlib20 access), test_no_hardcoded_rvas / test_tradingapp_type
 # / test_showme_type / test_orlib_resolver / test_elevation_guard
 # / test_crash_handler / test_json_serialize / test_serve_dispatch
-# / test_serve_framing / test_batch_progress / test_com_apartment_guard
+# / test_serve_framing / test_batch_progress / test_pbar / test_com_apartment_guard
 # / test_tsdev_com_init_seam
 # / test_persistence_integrity / test_create_path_cleanup
 # / test_preop_hash_classification / test_delete_disk_cleanup
@@ -1104,6 +1122,7 @@ add_dependencies(test_regression
     test_serve_dispatch
     test_serve_framing
     test_batch_progress
+    test_pbar
     test_com_apartment_guard
     test_tsdev_com_init_seam
     test_persistence_integrity

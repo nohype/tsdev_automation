@@ -40,6 +40,7 @@ Positional arguments: `<type>`, `<name>`, `<source_file>`
 
 - Global:
   - `--json` - emit a single JSON result object on stdout. For batch subcommands stdout is always the same JSON array; `--json` instead selects the stderr progress rendering (one JSON event object per line instead of human-readable `BATCH` lines).
+  - `--pbar` - render an aesthetic visual progress bar on stderr. Position-free and idempotent; `--pbar=<value>` is accepted and the value ignored. The bar redraws in place on the last stderr line; stdout is completely unaffected. Usage error (exit 1) when combined with `--json` or used with `serve`.
   - `--ts-path <dir>` - override TradeStation install directory.
   - `-v` / `--verbose` - raise the stderr log level. Position-free and repeatable; each occurrence raises the level one step: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals. Additional occurrences clamp at debug. Accepted forms: `-v`, `-vv`, `-vvv` (bundled), `--verbose`, `--verbose=<value>` (value ignored, counts as one occurrence). Log output goes to stderr only; stdout (results and JSON) is unaffected.
 - `exists`:
@@ -115,6 +116,8 @@ Every batch that runs emits progress on **stderr** (always on, independent of `-
 With `--json`, each stderr line is one compact JSON object instead: `batch_item_started`, `batch_item_completed` (carrying the exact per-item result object), `batch_completed`. `--json` selects the progress rendering only - stdout stays exactly one JSON array in both modes.
 
 stderr gaining progress lines is an intentional compatibility change. The stdout array remains the authoritative result: a failed end-of-batch warehouse close rewrites still-successful items to failures, and `BATCH COMPLETE`/`batch_completed` is emitted after that rewrite (`close_failed=true`).
+
+`--pbar` pins a visual progress bar to the last stderr line - redrawn in place via `\r` (no ANSI escapes), `█`/`░` blocks on a real console, UTF-8 bytes when stderr is piped - while the per-item `BATCH` lines scroll above it. The bar fills 0→N as items complete and gains a `— <n> failed` suffix once items have failed; `BATCH COMPLETE` still prints last. For single-item subcommands the bar fills 0→1 when the operation completes (`— 1 failed` on failure). The exact rendering is a visual aid, not a contract; `--pbar` can coexist with `--batch-progress-control`.
 
 ### Cooperative batch control (`--batch-progress-control`)
 

@@ -3,7 +3,7 @@
     Master regression runner for the TSDev Automation project (TVS-B.6.3).
 
 .DESCRIPTION
-    Orchestrates ALL fifteen regression sub-suites in a single command, in the
+    Orchestrates ALL sixteen regression sub-suites in a single command, in the
     order required by the B.6 acceptance criteria:
 
       1. sigtool verify gate   (tests/test_sigtool.ps1)
@@ -80,6 +80,16 @@
         --verbose / --verbose=<value> forms. Inserts+deletes its own unique
         Function fixture per run (setup/teardown uncounted). Requires live TS;
         skipped under -NoTs or -SkipVerboseFlag.
+     16. pbar E2E tests (tests/test_pbar.ps1)
+        8 pbar E2E test cases (PB1-PB8) for the global --pbar progress-bar
+        flag: stderr-only '\r'-redrawn UTF-8 block bar on single ops and
+        batch runs (BATCH lines scroll above, BATCH COMPLETE last),
+        " <U+2014> <n> failed" suffix, --pbar+--json and --pbar+serve usage
+        errors, position-free/--pbar=<value>/repeat forms, non-pbar
+        byte-identical guard, and --batch-progress-control coexistence.
+        Inserts+deletes its own unique Function fixtures per run
+        (setup/teardown uncounted). Requires live TS; skipped under -NoTs
+        or -SkipPbar.
 
     Each sub-suite is launched in its own PowerShell child process via
     `& powershell -ExecutionPolicy Bypass -File <path> [args]` so that a
@@ -117,6 +127,7 @@
       - Skip the serve E2E suite entirely (prints "SKIP: serve E2E tests require live TS").
       - Skip the ShowMe E2E suite entirely (prints "SKIP: showme tests require live TS").
       - Skip the verbose-flag E2E suite entirely (prints "SKIP: verbose-flag tests require live TS").
+      - Skip the pbar E2E suite entirely (prints "SKIP: pbar tests require live TS").
       - Skip the Unknown Link regression suite entirely (prints "SKIP: unknown-link tests require live TS").
       - Skip the Unknown Link stress suite entirely (prints "SKIP: unknown-link stress tests require live TS").
       - Pass -NoTs to run_unit_tests.ps1 (runs only the non-TS unit tests;
@@ -167,6 +178,9 @@
 .PARAMETER SkipVerboseFlag
     Switch. Skip the verbose-flag E2E test suite (tests/test_verbose_flag.ps1).
 
+.PARAMETER SkipPbar
+    Switch. Skip the pbar E2E test suite (tests/test_pbar.ps1).
+
 .PARAMETER ExtendedStress
     Switch. Opt-in for the Unknown Link stress test suite
     (tests/test_unknown_link_stress.ps1). When set, Suite 14 runs after Suite
@@ -179,21 +193,22 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1
-    Processes all 15 suite banners (Suite 14 skipped by default; opt-in via
+    Processes all 16 suite banners (Suite 14 skipped by default; opt-in via
     -ExtendedStress): sigtool + the C++ unit tests (see
     tests/run_unit_tests.ps1 for the inventory) + the E2E CLI tests (see
     docs/E2E_TEST_SPEC.md for the case list) + 5 exists tests + 8 batch-stdin
     tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5
     batch-upsert tests + 9 directory-batch tests + three default serve E2E
     tests (plus one opt-in stress test when TS_SERVE_STRESS=1) + 9 ShowMe
-    tests + the unknown-link regression suite + 7 verbose-flag tests.
+    tests + the unknown-link regression suite + 7 verbose-flag tests + 8
+    pbar tests.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -NoTs
     Runs sigtool + the non-TS C++ unit tests (see tests/run_unit_tests.ps1
     for the authoritative inventory); skips E2E, exists, batch-stdin,
     upsert, get-source, exists-ci, batch-upsert, directory-batch, serve,
-    ShowMe, verbose-flag, and unknown-link E2E suites (regression and
+    ShowMe, verbose-flag, pbar, and unknown-link E2E suites (regression and
     stress).
 
 .EXAMPLE
@@ -202,17 +217,17 @@
     inventory) + 5 exists tests + 8 batch-stdin tests + 9 upsert tests + 7
     get-source tests + 9 exists-ci tests + 5 batch-upsert tests + 9
     directory-batch tests + 9 ShowMe tests + the unknown-link regression
-    suite + 7 verbose-flag tests; skips E2E and the stress suite (opt-in:
-    -ExtendedStress).
+    suite + 7 verbose-flag tests + 8 pbar tests; skips E2E and the stress
+    suite (opt-in: -ExtendedStress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -Verbose
-    Processes all 15 suite banners with full output for every test (Suite 14
+    Processes all 16 suite banners with full output for every test (Suite 14
     skipped by default; opt-in via -ExtendedStress).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_regression.ps1 -ExtendedStress
-    Runs all 15 suites including the Unknown Link stress test (120
+    Runs all 16 suites including the Unknown Link stress test (120
     insert/delete cycles per component type, 600 total).
 
 .NOTES
@@ -225,11 +240,11 @@
         (or: cmake --build build --config Release --target test_regression)
       - TradeStation 9.5 must be installed for the E2E, exists, and
         batch-stdin, upsert, get-source, exists-ci, batch-upsert,
-        directory-batch, serve, ShowMe, verbose-flag, and unknown-link E2E
-        suites (unless -NoTs,
+        directory-batch, serve, ShowMe, verbose-flag, pbar, and
+        unknown-link E2E suites (unless -NoTs,
         -SkipE2e, -SkipExists, -SkipBatchStdin, -SkipUpsert,
         -SkipGetSource, -SkipExistsCi, -SkipBatchUpsert,
-        -SkipDirectoryBatch, -SkipServeE2e, -SkipShowMeE2e, or
+        -SkipDirectoryBatch, -SkipServeE2e, -SkipShowMeE2e, -SkipPbar, or
         -SkipVerboseFlag is used).
         The Unknown Link stress suite additionally requires -ExtendedStress.
       - tests/fixtures/orlib20_baseline.dll must exist for the sigtool
@@ -264,6 +279,7 @@ param(
     [switch]$SkipServeE2e,
     [switch]$SkipShowMeE2e,
     [switch]$SkipVerboseFlag,
+    [switch]$SkipPbar,
     [switch]$ExtendedStress,
     [switch]$Verbose
 )
@@ -291,6 +307,7 @@ $DirectoryBatchScript = Join-Path $PSScriptRoot "test_directory_batch.ps1"
 $ServeE2eScript = Join-Path $PSScriptRoot "run_serve_e2e.ps1"
 $ShowMeE2eScript = Join-Path $PSScriptRoot "test_showme_e2e.ps1"
 $VerboseFlagScript = Join-Path $PSScriptRoot "test_verbose_flag.ps1"
+$PbarScript    = Join-Path $PSScriptRoot "test_pbar.ps1"
 $UnknownLinkScript = Join-Path $PSScriptRoot "test_unknown_link_regression.ps1"
 $UnknownLinkStressScript = Join-Path $PSScriptRoot "test_unknown_link_stress.ps1"
 
@@ -561,6 +578,7 @@ Write-Host "SkipDirectoryBatch : $SkipDirectoryBatch"
 Write-Host "SkipServeE2e : $SkipServeE2e"
 Write-Host "SkipShowMeE2e : $SkipShowMeE2e"
 Write-Host "SkipVerboseFlag : $SkipVerboseFlag"
+Write-Host "SkipPbar     : $SkipPbar"
 Write-Host "ExtendedStress : $ExtendedStress"
 Write-Host "Verbose      : $Verbose"
 if ($TsPath) { Write-Host "TsPath       : $TsPath" }
@@ -717,6 +735,16 @@ if (-not $skipVerboseFlagActual) { $suiteCount++ }
 # If verbose-flag is skipped (e.g. due to -NoTs), still print a SKIP banner
 # so the user sees why. Count it in the total for banner numbering.
 if ($skipVerboseFlagActual) { $suiteCount++ }
+
+# pbar E2E is skipped if -SkipPbar is set OR -NoTs is set
+# (the pbar suite invokes tsdev_cli.exe directly, which requires
+# live TS + an elevated parent shell).
+$skipPbarActual = $SkipPbar -or $NoTs
+if (-not $skipPbarActual) { $suiteCount++ }
+
+# If pbar is skipped (e.g. due to -NoTs), still print a SKIP banner
+# so the user sees why. Count it in the total for banner numbering.
+if ($skipPbarActual) { $suiteCount++ }
 
 # ---------------------------------------------------------------------------
 # Suite 1: sigtool verify gate
@@ -1008,6 +1036,27 @@ else {
     if ($Verbose)  { $verboseFlagArgs += "-Verbose" }
     Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
         -SuiteName "verbose-flag E2E tests" -ScriptPath $VerboseFlagScript -Arguments $verboseFlagArgs | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# Suite 16: pbar E2E tests (global --pbar stderr progress-bar flag).
+# Inserts+deletes its own unique Function fixtures per run; PB1/PB6 are
+# read-only exists queries, PB5/PB7/PB8 are batch-delete runs against a
+# 3-item manifest (1 real + 2 nonexistent).
+# ---------------------------------------------------------------------------
+if ($skipPbarActual) {
+    $idx++
+    $reason = if ($NoTs) { "pbar tests require live TS" } else { "skipped by -SkipPbar" }
+    Skip-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "pbar E2E tests" -Reason $reason | Out-Null
+}
+else {
+    $idx++
+    $pbarArgs = @()
+    if ($TsPath)   { $pbarArgs += @("-TsPath", $TsPath) }
+    if ($Verbose)  { $pbarArgs += "-Verbose" }
+    Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+        -SuiteName "pbar E2E tests" -ScriptPath $PbarScript -Arguments $pbarArgs | Out-Null
 }
 
 # ---------------------------------------------------------------------------

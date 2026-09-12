@@ -38,6 +38,13 @@
 //                 instead selects the stderr progress rendering — one
 //                 compact JSON event object per line instead of the
 //                 human-readable BATCH lines.
+//   --pbar        Global, position-free boolean (bare "--pbar" or
+//                 "--pbar=<value>"; the value is ignored — presence ==
+//                 true — and repeats are harmless). Renders a pinned
+//                 stderr-only progress bar that fills as items complete:
+//                 0->N for batch-*, 0->1 for the single-item subcommands.
+//                 stderr only — stdout (results / JSON) is never touched.
+//                 Cannot be combined with --json; not valid with serve.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
 //                 raises the runtime log level (tsdev_lib) one step:
 //                 default = warnings + errors only; 1 occurrence (-v) = + info;
@@ -253,6 +260,10 @@ void printUsage() {
         "                 For batch-* (and tagged serve requests) it instead\n"
         "                 selects the stderr progress rendering: one JSON event\n"
         "                 object per line instead of human-readable BATCH lines.\n"
+        "  --pbar         Pinned progress bar on stderr, filling as items\n"
+        "                 complete (0->N batch-*, 0->1 single ops). Global,\n"
+        "                 position-free; '--pbar=<v>' accepted (value ignored).\n"
+        "                 Not with --json; not valid with serve.\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
         "  -v, --verbose  Raise the stderr log level. Position-free global "
@@ -562,6 +573,312 @@ void emitBatchProgress(const std::string& line) {
     std::fputc('\n', stderr);
     std::fflush(stderr);
 }
+
+// --- --pbar: pinned progress-bar renderer -----------------------------------
+//
+// Alternative stderr progress rendering for batch runs: a single fixed-width
+// Unicode bar line is pinned at the bottom of the output and redrawn in
+// place while event lines keep scrolling above it (via eventLine()). stderr
+// only — stdout (results / JSON array) is never touched.
+//
+// Mechanics — deliberately ANSI-free, so it works on any Windows console and
+// degrades harmlessly on redirected streams:
+//   - Draw: '\r' returns to column 0, the line text is written, then spaces
+//     pad out to the widest line drawn so far (maxCells), so a shorter
+//     redraw fully overwrites a longer previous line.
+//   - Erase: '\r' + maxCells spaces + '\r' — leaves the cursor at column 0
+//     of a blank line so an event line can be written on it and scroll up.
+//   - Cell width: every emitted glyph (ASCII, U+2588 '█', U+2591 '░',
+//     U+2014 '—') occupies exactly one console cell; width is counted in
+//     display cells as bytes with (b & 0xC0) != 0x80 (UTF-8 continuation
+//     bytes don't count).
+//   - Write path: when stderr is a real console (_isatty(_fileno) AND
+//     GetConsoleMode(STD_ERROR_HANDLE) both succeed), text is converted
+//     UTF-8 -> UTF-16 via MultiByteToWideChar and written via WriteConsoleW
+//     (required for the block/shade/em-dash glyphs to render); stderr is
+//     fflushed FIRST so buffered C-stdio output can never overtake the
+//     direct console writes. Otherwise (pipe/file redirect) the UTF-8 bytes
+//     go through fwrite. stderr is fflushed after every write.
+//
+// pbarLine / pbarEraseSeq / pbarDrawSeq are PURE — no I/O — so
+// tests/test_pbar.cpp can pin their exact bytes; PbarRenderer is the thin
+// emitter glued on top.
+
+// Maximum display width of a bar line and the fixed width of the bracketed
+// bar interior, both in console cells.
+const size_t kPbarMaxCells = 79;
+const size_t kPbarBarCells = 30;
+
+// UTF-8 encodings of the bar/failure glyphs, spelled as \x escapes so the
+// string literals stay ASCII-only regardless of the compiler source charset
+// (no /utf-8 flag); literal glyphs in comments are harmless.
+const char* const kPbarFullGlyph  = "\xE2\x96\x88";  // U+2588 FULL BLOCK
+const char* const kPbarShadeGlyph = "\xE2\x96\x91";  // U+2591 LIGHT SHADE
+const char* const kPbarEmDash     = "\xE2\x80\x94";  // U+2014 EM DASH
+
+// Display-cell width of a UTF-8 string under the pinned rule: count bytes
+// that are not UTF-8 continuation bytes.
+size_t pbarCellWidth(const std::string& s) {
+    size_t cells = 0;
+    for (unsigned char b : s) {
+        if ((b & 0xC0) != 0x80) ++cells;
+    }
+    return cells;
+}
+
+// The longest prefix of `s` occupying at most `maxCells` display cells.
+// Never splits a UTF-8 code point (a byte-naive cut could emit a lone lead
+// byte); the grouping matches pbarCellWidth exactly, so a stray continuation
+// byte counts as 0 cells in both.
+std::string pbarTruncCells(const std::string& s, size_t maxCells) {
+    size_t cells = 0;
+    size_t i = 0;
+    while (i < s.size() && cells < maxCells) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) {
+            ++i;  // continuation byte — 0 cells, same as pbarCellWidth
+            continue;
+        }
+        ++cells;
+        ++i;
+        while (i < s.size() &&
+               (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) {
+            ++i;
+        }
+    }
+    return s.substr(0, i);
+}
+
+// Returns the complete bar line text as UTF-8 (no '\r', no '\n', no ANSI,
+// no trailing spaces). The line NEVER exceeds kPbarMaxCells display cells.
+// Pinned format:
+//   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ — <n> failed]
+// <bar> is exactly kPbarBarCells cells: U+2588 '█' repeated
+// floor(30*done/total) — clamped to a full bar when done > total — then
+// U+2591 '░' fill; total == 0 -> all '░' and pct 0. <pct> is
+// done*100/total integer, right-aligned to width 3 + '%' (the field widens
+// naturally past 999). The label is `<type> "<name>"` with the name through
+// the existing jsonQuote() helper — empty when type and name are both
+// empty, and truncated with a trailing "..." so the whole line stays within
+// kPbarMaxCells. The ` — <n> failed` suffix (U+2014 em dash) appears only
+// when failures > 0 and is part of the width budget.
+std::string pbarLine(const std::string& op, size_t done, size_t total,
+                     const std::string& type, const std::string& name,
+                     size_t failures) {
+    // Bar fill and percentage are computed in 64-bit so absurdly large
+    // counts cannot wrap the (32-bit) size_t intermediate.
+    size_t filled = 0;
+    unsigned long long pct = 0;
+    if (total != 0) {
+        const unsigned long long f =
+            (static_cast<unsigned long long>(done) * kPbarBarCells) / total;
+        filled = static_cast<size_t>(f > kPbarBarCells ? kPbarBarCells : f);
+        pct = (static_cast<unsigned long long>(done) * 100) / total;
+    }
+
+    std::string line = op;
+    line += " [";
+    for (size_t i = 0; i < filled; ++i)             line += kPbarFullGlyph;
+    for (size_t i = filled; i < kPbarBarCells; ++i) line += kPbarShadeGlyph;
+    line += "] ";
+    line += std::to_string(done);
+    line += '/';
+    line += std::to_string(total);
+    line += ' ';
+    char pctBuf[16];
+    std::snprintf(pctBuf, sizeof(pctBuf), "%3llu", pct);
+    line += pctBuf;
+    line += '%';
+
+    // Optional failures suffix — part of the width budget, appended after
+    // the label.
+    std::string suffix;
+    if (failures > 0) {
+        suffix += ' ';
+        suffix += kPbarEmDash;
+        suffix += ' ';
+        suffix += std::to_string(failures);
+        suffix += " failed";
+    }
+
+    // Optional `<type> "<name>"` label — the non-empty pieces are joined so
+    // a type-only or name-only item still renders something sensible.
+    std::string label = type;
+    if (!name.empty()) {
+        if (!label.empty()) label += ' ';
+        label += jsonQuote(name);
+    }
+
+    if (!label.empty()) {
+        const size_t used = pbarCellWidth(line) + pbarCellWidth(suffix);
+        if (used < kPbarMaxCells) {
+            // Cells available for ' ' + label (or ' ' + truncated + "...").
+            const size_t budget = kPbarMaxCells - used;
+            if (budget >= 1 + pbarCellWidth(label)) {
+                line += ' ';
+                line += label;
+            } else if (budget >= 4) {
+                // Minimum useful form: ' ' + "...". The content before the
+                // ellipsis shrinks to whatever fits (possibly nothing).
+                line += ' ';
+                line += pbarTruncCells(label, budget - 4);
+                line += "...";
+            }
+            // else: not even ' ...' fits — the label is dropped entirely.
+        }
+    }
+    line += suffix;
+
+    // Hard guarantee: the pathological case where op + counts + suffix
+    // alone exceed the width budget still cannot emit an over-wide line.
+    // The cut can land on a separator/pad space, so strip trailing spaces
+    // to keep the pinned no-trailing-space invariant (the line is
+    // non-empty here — the clamp only runs on over-wide input).
+    if (pbarCellWidth(line) > kPbarMaxCells) {
+        line = pbarTruncCells(line, kPbarMaxCells);
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+    }
+    return line;
+}
+
+// Returns the erase sequence for a previously drawn bar occupying `cells`
+// display cells: '\r' + <cells spaces> + '\r'.
+std::string pbarEraseSeq(int cells) {
+    std::string out = "\r";
+    if (cells > 0) out.append(static_cast<size_t>(cells), ' ');
+    out += '\r';
+    return out;
+}
+
+// Returns the draw sequence for `line`: '\r' + line + trailing spaces so
+// the total display width equals `cells` (already-wide lines get no pad).
+// The caller passes the running max line width so shorter redraws fully
+// overwrite longer previous ones.
+std::string pbarDrawSeq(const std::string& line, int cells) {
+    std::string out = "\r";
+    out += line;
+    const int pad = cells - static_cast<int>(pbarCellWidth(line));
+    if (pad > 0) out.append(static_cast<size_t>(pad), ' ');
+    return out;
+}
+
+// PbarRenderer — the --pbar emitter. Thin glue over the pure helpers: it
+// tracks the widest line drawn (maxCells) so every erase/overwrite is
+// complete, and routes bytes through WriteConsoleW on a real console or
+// fwrite on a redirected stream. The bar itself never emits event lines —
+// callers route BATCH/other event text through eventLine() so it scrolls
+// above the pinned bar.
+struct PbarRenderer {
+    PbarRenderer(const std::string& op, size_t total)
+        : op_(op), total_(total) {
+        // Console iff stderr is a character device AND still resolves to a
+        // console handle — the pair rejects pipes/files even when a console
+        // is attached elsewhere.
+        const int fd = _fileno(stderr);
+        DWORD mode = 0;
+        isConsole_ = (fd >= 0) && (_isatty(fd) != 0) &&
+                     GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode);
+    }
+
+    // Draw the initial all-empty bar (no newline — the bar stays pinned).
+    void start() {
+        done_ = 0;
+        failures_ = 0;
+        type_.clear();
+        name_.clear();
+        draw();
+    }
+
+    // Point the label at the item now being attempted and redraw. Emits no
+    // event line — callers emit those separately (or via eventLine()).
+    void itemStarted(const std::string& type, const std::string& name) {
+        type_ = type;
+        name_ = name;
+        erase();
+        draw();
+    }
+
+    void itemCompleted() {
+        ++done_;
+        draw();
+    }
+
+    void noteFailure() {
+        ++failures_;
+        draw();
+    }
+
+    // Write `line` on the bar's line so it scrolls up, then redraw the bar
+    // underneath: erase -> event line + '\n' -> redraw.
+    void eventLine(const std::string& line) {
+        erase();
+        writeRaw(line);
+        writeRaw("\n");
+        draw();
+    }
+
+    // Final draw + '\n' — the bar becomes a permanent last-but-summary
+    // line in the scrollback.
+    void finish() {
+        draw();
+        writeRaw("\n");
+    }
+
+private:
+    // Redraw the current bar line, padding out to maxCells so the previous
+    // (possibly wider) line is fully overwritten.
+    void draw() {
+        const std::string line =
+            pbarLine(op_, done_, total_, type_, name_, failures_);
+        const int cells = static_cast<int>(pbarCellWidth(line));
+        if (cells > maxCells_) maxCells_ = cells;
+        writeRaw(pbarDrawSeq(line, maxCells_));
+    }
+
+    // Clear the whole bar line and leave the cursor at column 0.
+    void erase() {
+        if (maxCells_ > 0) writeRaw(pbarEraseSeq(maxCells_));
+    }
+
+    // Raw stderr write. On a real console the text is widened and written
+    // through WriteConsoleW (fflush first so C-stdio and console writes
+    // stay ordered); on a redirected stream the UTF-8 bytes go through
+    // fwrite. stderr is always fflushed afterwards — even for an empty
+    // write. Both API calls are best-effort: conversion/write failures
+    // simply drop the piece (progress cosmetics must never take down the
+    // run).
+    void writeRaw(const std::string& utf8) {
+        if (!utf8.empty()) {
+            if (isConsole_) {
+                std::fflush(stderr);
+                const int wlen = MultiByteToWideChar(
+                    CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
+                    nullptr, 0);
+                if (wlen > 0) {
+                    std::wstring w(static_cast<size_t>(wlen), L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                        static_cast<int>(utf8.size()),
+                                        w.data(), wlen);
+                    DWORD written = 0;
+                    WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), w.data(),
+                                  static_cast<DWORD>(w.size()), &written,
+                                  nullptr);
+                }
+            } else {
+                std::fwrite(utf8.data(), 1, utf8.size(), stderr);
+            }
+        }
+        std::fflush(stderr);
+    }
+
+    std::string op_;
+    size_t total_ = 0;
+    size_t done_ = 0;
+    size_t failures_ = 0;
+    std::string type_;   // current item label pieces
+    std::string name_;
+    int  maxCells_ = 0;      // widest line drawn so far (display cells)
+    bool isConsole_ = false; // stderr resolves to a real console
+};
 
 // emitOutput renders a CliResult in either human-readable or JSON form.
 //
@@ -1653,7 +1970,7 @@ int cmdInsert(const std::string& typeStr,
               const std::string& name,
               const std::string& sourceFile,
               const wchar_t* tsPathOverride,
-              bool jsonMode) {
+              bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "insert";
     r.typeStr = typeStr;
@@ -1719,6 +2036,18 @@ int cmdInsert(const std::string& typeStr,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("insert", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
+
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
 }
@@ -1766,7 +2095,7 @@ int cmdModify(const std::string& typeStr,
               const std::string& name,
               const std::string& sourceFile,
               const wchar_t* tsPathOverride,
-              bool jsonMode) {
+              bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "modify";
     r.typeStr = typeStr;
@@ -1832,6 +2161,18 @@ int cmdModify(const std::string& typeStr,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("modify", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
+
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
 }
@@ -1875,7 +2216,7 @@ DWORD WINAPI runDelete(LPVOID param) {
 }
 
 int cmdDelete(const std::string& typeStr, const std::string& name,
-              const wchar_t* tsPathOverride, bool jsonMode) {
+              const wchar_t* tsPathOverride, bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "delete";
     r.typeStr = typeStr;
@@ -1920,6 +2261,18 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     }
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
+
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("delete", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
 
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
@@ -1966,7 +2319,7 @@ DWORD WINAPI runExists(LPVOID param) {
 
 int cmdExists(const std::string& typeStr, const std::string& name,
               bool caseInsensitive,
-              const wchar_t* tsPathOverride, bool jsonMode) {
+              const wchar_t* tsPathOverride, bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "exists";
     r.typeStr = typeStr;
@@ -2012,6 +2365,18 @@ int cmdExists(const std::string& typeStr, const std::string& name,
     }
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
+
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("exists", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
 
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
@@ -2111,7 +2476,7 @@ DWORD WINAPI runDependents(LPVOID param) {
 }
 
 int cmdDependents(const std::string& typeStr, const std::string& name,
-                  const wchar_t* tsPathOverride, bool jsonMode) {
+                  const wchar_t* tsPathOverride, bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "dependents";
     r.typeStr = typeStr;
@@ -2156,6 +2521,18 @@ int cmdDependents(const std::string& typeStr, const std::string& name,
     }
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
+
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("dependents", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
 
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
@@ -2204,7 +2581,7 @@ int cmdUpsert(const std::string& typeStr,
               const std::string& name,
               const std::string& sourceFile,
               const wchar_t* tsPathOverride,
-              bool jsonMode) {
+              bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "upsert";
     r.typeStr = typeStr;
@@ -2269,6 +2646,18 @@ int cmdUpsert(const std::string& typeStr,
     }
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
+
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("upsert", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
 
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
@@ -2367,7 +2756,7 @@ DWORD WINAPI runGetSource(LPVOID param) {
 
 int cmdGetSource(const std::string& typeStr, const std::string& name,
                  const std::string& outputPath,
-                 const wchar_t* tsPathOverride, bool jsonMode) {
+                 const wchar_t* tsPathOverride, bool jsonMode, bool pbar) {
     CliResult r;
     r.op = "get-source";
     r.typeStr = typeStr;
@@ -2413,6 +2802,18 @@ int cmdGetSource(const std::string& typeStr, const std::string& name,
     }
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
+
+    // --pbar: the op ran to completion — emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
+    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // stdout and the result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("get-source", 1);
+        bar.itemStarted(typeStr, name);
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
 
     emitOutput(params.result, jsonMode);
     return params.result.exitCode;
@@ -2741,6 +3142,7 @@ struct BatchParams {
     const wchar_t*          tsPathOverride;  // nullptr = auto-discover
     bool                    jsonProgress = false;  // --json: NDJSON progress
     bool                    batchControl = false;  // --batch-progress-control
+    bool                    pbar = false;   // --pbar: pinned stderr bar
     std::vector<CliResult>  results;  // populated by runBatch
     int                     exitCode = 0;   // 0/2/3 (set by worker)
 };
@@ -2759,6 +3161,21 @@ DWORD WINAPI runBatch(LPVOID param) {
     p->results.clear();
     p->results.reserve(total);
 
+    // --pbar: pin the bar at the bottom of stderr BEFORE anything else can
+    // write there (the total is known up front, so 0/total draws even when
+    // the lib ctor throws). Every progress event then routes through
+    // emitLine: under --pbar it scrolls above the pinned bar via
+    // eventLine(); otherwise it is byte-identical to the old direct
+    // emitBatchProgress calls. --pbar + --json is rejected in main(), so
+    // p->jsonProgress is always false on the pbar path and the human event
+    // lines render.
+    PbarRenderer bar(op, total);
+    auto emitLine = [&](const std::string& line) {
+        if (p->pbar) bar.eventLine(line);
+        else         emitBatchProgress(line);
+    };
+    if (p->pbar) bar.start();
+
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
     try {
@@ -2775,7 +3192,8 @@ DWORD WINAPI runBatch(LPVOID param) {
         size_t attempted = 0;
         for (auto& item : p->items) {
             ++index;
-            emitBatchProgress(batchItemStartedLine(
+            if (p->pbar) bar.itemStarted(item.typeStr, item.name);
+            emitLine(batchItemStartedLine(
                 op, index, total, item.typeStr, item.name, p->jsonProgress));
             CliResult r;
             r.op = op;
@@ -2783,8 +3201,12 @@ DWORD WINAPI runBatch(LPVOID param) {
             r.name = item.name;
             r.exitCode = 4;
             r.errorMessage = std::string("init failed: ") + e.what();
-            emitBatchProgress(batchItemCompletedLine(op, index, total, r,
-                                                     p->jsonProgress));
+            if (p->pbar) {
+                if (!r.success) bar.noteFailure();
+                bar.itemCompleted();
+            }
+            emitLine(batchItemCompletedLine(op, index, total, r,
+                                            p->jsonProgress));
             p->results.push_back(std::move(r));
             attempted = index;
             if (p->batchControl && index < total) {
@@ -2792,8 +3214,8 @@ DWORD WINAPI runBatch(LPVOID param) {
                 const BatchControlDecision decision =
                     readBatchControlDecision(stdin, controlErr);
                 if (decision == BatchControlDecision::Error) {
-                    emitBatchProgress(batchControlErrorLine(controlErr,
-                                                            p->jsonProgress));
+                    emitLine(batchControlErrorLine(controlErr,
+                                                   p->jsonProgress));
                 }
                 if (decision != BatchControlDecision::Continue) {
                     cancelled = true;
@@ -2807,6 +3229,9 @@ DWORD WINAPI runBatch(LPVOID param) {
         p->exitCode = batchAggregateExitCode(/*batchStarted=*/true,
                                              /*anyFailed=*/true,
                                              cancelled);
+        // --pbar: commit the bar as a permanent line first; the summary is
+        // the last stderr line underneath it.
+        if (p->pbar) bar.finish();
         emitBatchProgress(batchCompletedLine(
             op, attempted, total, /*successes=*/0, /*failures=*/attempted,
             /*notRun=*/total - attempted, cancelled, /*closeFailed=*/false,
@@ -2821,7 +3246,8 @@ DWORD WINAPI runBatch(LPVOID param) {
 
     for (auto& item : p->items) {
         ++index;
-        emitBatchProgress(batchItemStartedLine(
+        if (p->pbar) bar.itemStarted(item.typeStr, item.name);
+        emitLine(batchItemStartedLine(
             op, index, total, item.typeStr, item.name, p->jsonProgress));
         CliResult r;
         if (!item.preValid) {
@@ -2844,8 +3270,12 @@ DWORD WINAPI runBatch(LPVOID param) {
         }
 
         if (!r.success) anyFailed = true;
-        emitBatchProgress(batchItemCompletedLine(op, index, total, r,
-                                                 p->jsonProgress));
+        if (p->pbar) {
+            if (!r.success) bar.noteFailure();
+            bar.itemCompleted();
+        }
+        emitLine(batchItemCompletedLine(op, index, total, r,
+                                        p->jsonProgress));
         p->results.push_back(std::move(r));
         attempted = index;
 
@@ -2858,8 +3288,8 @@ DWORD WINAPI runBatch(LPVOID param) {
             const BatchControlDecision decision =
                 readBatchControlDecision(stdin, controlErr);
             if (decision == BatchControlDecision::Error) {
-                emitBatchProgress(batchControlErrorLine(controlErr,
-                                                        p->jsonProgress));
+                emitLine(batchControlErrorLine(controlErr,
+                                               p->jsonProgress));
             }
             if (decision != BatchControlDecision::Continue) {
                 cancelled = true;
@@ -2883,8 +3313,9 @@ DWORD WINAPI runBatch(LPVOID param) {
     bool closeFailed = false;
     if (!lib->closeWarehouse()) {
         closeFailed = true;
-        std::fprintf(stderr,
-            "tsdev_cli: closeWarehouse failed at end of batch\n");
+        // emitLine keeps this diagnostic off the pinned bar line under
+        // --pbar; without --pbar it writes the identical bytes fprintf did.
+        emitLine("tsdev_cli: closeWarehouse failed at end of batch");
         anyFailed = true;
         for (auto& result : p->results) {
             if (!result.success) continue;
@@ -2894,6 +3325,9 @@ DWORD WINAPI runBatch(LPVOID param) {
             result.humanStdout.clear();
             result.humanStderr =
                 "tsdev_cli: closeWarehouse failed at end of batch\n";
+            // --pbar: the rewrite turned an already-counted success into a
+            // failure — keep the bar's "— <n> failed" suffix in sync.
+            if (p->pbar) bar.noteFailure();
         }
     }
 
@@ -2914,6 +3348,9 @@ DWORD WINAPI runBatch(LPVOID param) {
     for (size_t i = 0; i < attempted; ++i) {
         if (p->results[i].success) ++successes; else ++failures;
     }
+    // --pbar: commit the bar as a permanent line first; the summary is the
+    // last stderr line underneath it.
+    if (p->pbar) bar.finish();
     emitBatchProgress(batchCompletedLine(
         op, attempted, total, successes, failures,
         /*notRun=*/total - attempted, cancelled, closeFailed, p->exitCode,
@@ -2944,7 +3381,7 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
 // duplicated.
 int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
                     const wchar_t* tsPathOverride, bool jsonProgress,
-                    bool batchControl) {
+                    bool batchControl, bool pbar) {
     // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
     BatchParams params;
     params.op = op;
@@ -2952,6 +3389,7 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     params.tsPathOverride = tsPathOverride;
     params.jsonProgress = jsonProgress;
     params.batchControl = batchControl;
+    params.pbar = pbar;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runBatch, &params, 0, nullptr);
@@ -2973,7 +3411,7 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
              bool useStdin, const wchar_t* tsPathOverride, bool jsonProgress,
-             bool batchControl) {
+             bool batchControl, bool pbar) {
     const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
 
     // Parse the manifest on the main thread (before the worker).
@@ -3031,7 +3469,7 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
     }
 
     return runBatchAndEmit(op, items, tsPathOverride, jsonProgress,
-                           batchControl);
+                           batchControl, pbar);
 }
 
 // --- TVS-I.2: directory batch mode -------------------------------------------
@@ -3141,7 +3579,8 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
 // "no files matching" message and return exit 1 (no JSON array emitted).
 int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
                 const std::string& dirPath, const std::vector<std::string>& extensions,
-                const wchar_t* tsPath, bool jsonProgress, bool batchControl) {
+                const wchar_t* tsPath, bool jsonProgress, bool batchControl,
+                bool pbar) {
     // Validate type (unknown -> exit 2, matching existing pattern).
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
@@ -3185,7 +3624,8 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
         // only (read as binary, like --batch-stdin).
         _setmode(_fileno(stdin), _O_BINARY);
     }
-    return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl);
+    return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl,
+                           pbar);
 }
 
 // --- TVS-K.3: serve request dispatch -----------------------------------------
@@ -3941,7 +4381,7 @@ int main(int argc, char** argv) {
     // but prevents the standard Windows crash dialog too).
     SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
 
-    // --- Global flag pre-scan: --ts-path, --json and -v/--verbose ---
+    // --- Global flag pre-scan: --ts-path, --json, --pbar and -v/--verbose ---
     // Scan argv[1..argc-1] for the optional global flags and remove them
     // (and, for --ts-path, their value) from the argv array. The resulting
     // reduced argv contains only the subcommand and its positional args, so
@@ -3952,6 +4392,9 @@ int main(int argc, char** argv) {
     //            LAST occurrence wins.
     // --json:    boolean switch. Presence (bare "--json" or "--json=...")
     //            enables JSON output. Takes no value.
+    // --pbar:    boolean switch exactly like --json. Presence (bare
+    //            "--pbar" or "--pbar=...") selects the pinned stderr
+    //            progress-bar rendering; repeats stay true.
     // -v/--verbose: position-free, repeatable boolean switch. Each occurrence
     //            raises the runtime log level one step (0 -> Warning,
     //            1 -> Info, >=2 -> Debug, clamped). Accepted forms: "-v",
@@ -3965,6 +4408,7 @@ int main(int argc, char** argv) {
     const char* tsPathOverride = nullptr;
     std::string tsPathStr;  // holds the value for the equals form
     bool jsonMode = false;
+    bool pbar = false;        // --pbar (stderr progress bar)
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
     int verboseCount = 0;   // accumulated -v/--verbose occurrences
@@ -4010,6 +4454,11 @@ int main(int argc, char** argv) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
             jsonMode = true;
+        } else if (arg == "--pbar" || arg.rfind("--pbar=", 0) == 0) {
+            // Boolean switch like --json: presence enables the stderr
+            // progress bar; any value after '=' is ignored. Repeats are
+            // harmless (idempotent — the flag simply stays true).
+            pbar = true;
         } else if (arg == "--batch-progress-control" ||
                    arg.rfind("--batch-progress-control=", 0) == 0) {
             // Batch-only boolean switch (presence counts; a '=' value is
@@ -4099,6 +4548,27 @@ int main(int argc, char** argv) {
         return 11;
     }
 
+    // --pbar validations live here, AFTER the unchanged elevation guard (a
+    // non-elevated caller still gets exit 11 first). The --json conflict is
+    // checked first (it is mode-defining), then the serve restriction.
+    // --pbar + --batch-progress-control is permitted — no interaction.
+    if (pbar && jsonMode) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--pbar cannot be combined with --json";
+        r.humanStderr = "Error: --pbar cannot be combined with --json\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
+    if (pbar && iequals(subcommand, "serve")) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--pbar is not valid with serve";
+        r.humanStderr = "tsdev_cli: --pbar is not valid with serve\n";
+        emitOutput(r, jsonMode);  // jsonMode is false here; kept uniform
+        return 1;
+    }
+
     // --batch-progress-control is batch-only and non-repeatable: the flag
     // is recognized, counted, and removed during the global scan, but both
     // validations live here, AFTER the unchanged elevation guard (a
@@ -4161,7 +4631,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdInsert(reducedArgvPtr[2], reducedArgvPtr[3],
-                         reducedArgvPtr[4], tsPathWidePtr, jsonMode);
+                         reducedArgvPtr[4], tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "modify")) {
@@ -4178,7 +4648,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdModify(reducedArgvPtr[2], reducedArgvPtr[3],
-                         reducedArgvPtr[4], tsPathWidePtr, jsonMode);
+                         reducedArgvPtr[4], tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "delete")) {
@@ -4195,7 +4665,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdDelete(reducedArgvPtr[2], reducedArgvPtr[3],
-                         tsPathWidePtr, jsonMode);
+                         tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "exists")) {
@@ -4228,7 +4698,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdExists(exArgs[0], exArgs[1], caseInsensitive,
-                         tsPathWidePtr, jsonMode);
+                         tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "dependents")) {
@@ -4247,7 +4717,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdDependents(reducedArgvPtr[2], reducedArgvPtr[3],
-                             tsPathWidePtr, jsonMode);
+                             tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "upsert")) {
@@ -4264,7 +4734,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdUpsert(reducedArgvPtr[2], reducedArgvPtr[3],
-                         reducedArgvPtr[4], tsPathWidePtr, jsonMode);
+                         reducedArgvPtr[4], tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "get-source")) {
@@ -4329,7 +4799,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         return cmdGetSource(gsArgs[0], gsArgs[1], outputPath,
-                            tsPathWidePtr, jsonMode);
+                            tsPathWidePtr, jsonMode, pbar);
     }
 
     // --- TVS-D.3: batch subcommands ---
@@ -4357,10 +4827,10 @@ int main(int argc, char** argv) {
         std::string arg2 = reducedArgvPtr[2];
         if (arg2 == "--batch-stdin") {
             return cmdBatch(op, std::string(), true, tsPathWidePtr, jsonMode,
-                            batchControl);
+                            batchControl, pbar);
         }
         return cmdBatch(op, arg2, false, tsPathWidePtr, jsonMode,
-                        batchControl);
+                        batchControl, pbar);
     }
 
     // --- TVS-I.2: directory batch subcommands ---
@@ -4427,7 +4897,7 @@ int main(int argc, char** argv) {
         int typeInt = static_cast<int>(ctype);
 
         return cmdBatchDir(op, typeInt, typeStr, dirPath, extensions,
-                           tsPathWidePtr, jsonMode, batchControl);
+                           tsPathWidePtr, jsonMode, batchControl, pbar);
     }
 
     {

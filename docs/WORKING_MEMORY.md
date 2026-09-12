@@ -5,7 +5,22 @@ Do not restate what the code itself documents.
 
 ## Current state (not derivable from code)
 
-- **No active TVS.** The requested batch-progress observability and
+- **No active TVS.** `--pbar` shipped: global position-free boolean,
+  stderr-only in-place `\r` bar (WriteConsoleW on console / UTF-8 on pipe),
+  0->N batch + 0->1 single ops, `— N failed` suffix, `--json`/`serve` =
+  usage error. All slices adversarially approved; E2E suite 16
+  (`tests/test_pbar.ps1`, `-SkipPbar`) wired into run_regression.ps1;
+  elevated production gate (insert/modify/delete + batch) green incl.
+  real-console ConPTY verification. Uncommitted — no commit requested.
+- **Console-path verification recipe** (for future UI work): PowerShell
+  `Add-Type` C# ConPTY harness — CreatePipe pair + CreatePseudoConsole +
+  STARTUPINFOEX with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016`
+  (attribute NUMBER=22 | THREAD flag 0x00020000; the INPUT flag is
+  0x00040000 and does NOT work here); `CreateProcessW` needs
+  `CharSet.Unicode` + `lpApplicationName` set; ConPTY holds the output
+  pipe open — WaitForSingleObject child exit THEN ClosePseudoConsole,
+  then drain. Script was throwaway `tmp\conpty_run.ps1` (deleted).
+- The requested batch-progress observability and
   cooperative cancellation work (C++ direct CLI, serve broker, Python
   client) is implemented and verified: the final full regression is green
   and there is no pending acceptance blocker.
