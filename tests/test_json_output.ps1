@@ -17,9 +17,10 @@
       5. insert compile-error (strategy)  -> success=false, exit_code=8, error.code=compile_error, compile_errors
       6. backward compat: insert WITHOUT --json -> human-readable "SUCCESS:" line on stdout, NOT valid JSON
       7. insert already-exists (strategy) -> success=false, exit_code=5, error.code=already_exists, error.existing_prog_id>0
-      8. batch-insert: default -> human BATCH progress on stderr; with --json
-         -> stdout stays exactly one JSON array while stderr carries one JSON
-         progress event object per line
+      8. batch-insert: default -> EMPTY stdout + human BATCH completion lines
+         on stderr (no BATCH START lines); with --json
+         -> stdout carries exactly one JSON array while stderr carries one
+         JSON progress event object per line
 
     This suite is standalone: it is not wired into tests/run_regression.ps1.
 
@@ -463,9 +464,11 @@ try {
 
     # -------------------------------------------------------------------
     # Test 8: batch mode — stderr progress rendering
-    #         Default: human BATCH event lines on stderr; stdout unchanged.
+    #         Default: EMPTY stdout (the results array is emitted only
+    #         under --json); human per-item BATCH completion lines on
+    #         stderr (no BATCH START lines) ending at BATCH COMPLETE.
     #         --json: one JSON progress event object per stderr line while
-    #         stdout stays exactly one JSON array. The --json run re-inserts
+    #         stdout carries exactly one JSON array. The --json run re-inserts
     #         the same manifest so both items fail with already_exists —
     #         failed items still produce ordered progress events.
     # -------------------------------------------------------------------
@@ -479,12 +482,16 @@ try {
     )
 
     Run-TestCase -TestId "J8-batch-stderr-progress" -Body {
-        # Default (no --json): human progress lines on stderr.
+        # Default (no --json): human progress lines on stderr, EMPTY stdout.
+        # Hand-built expected results stand in for the absent stdout array.
         $cliHuman = Invoke-CliRaw -Arguments @("batch-insert", $manifestJ8)
         Assert-True ($cliHuman.ExitCode -eq 0) "human exit_code: expected 0, got $($cliHuman.ExitCode)"
-        $arrHuman = [array]($cliHuman.Stdout | ConvertFrom-Json)
-        Assert-True ($arrHuman.Count -eq 2) "human array length: expected 2, got $($arrHuman.Count)"
-        Assert-BatchStderrProgress -Stderr $cliHuman.Stderr -Results $arrHuman -ExpectedExitCode 0
+        Assert-True ($cliHuman.Stdout.Trim() -eq '') "human stdout must be EMPTY without --json; got: $($cliHuman.Stdout)"
+        $expected = @(
+            [pscustomobject]@{ op='insert'; type='strategy'; name=$nJ8a; success=$true; exit_code=0; error=$null },
+            [pscustomobject]@{ op='insert'; type='strategy'; name=$nJ8b; success=$true; exit_code=0; error=$null }
+        )
+        Assert-BatchStderrProgress -Stderr $cliHuman.Stderr -Results $expected -ExpectedExitCode 0
 
         # --json: stdout is still exactly one JSON array; stderr carries one
         # JSON event object per line (no human BATCH lines).

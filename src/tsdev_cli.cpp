@@ -33,9 +33,9 @@
 //                 suppress the human-readable stdout messages. Exit codes are
 //                 unchanged in both modes. When absent, output is byte-identical
 //                 to the pre-JSON behavior (backward compatible).
-//                 Batch subcommands ALWAYS emit the same JSON array on
-//                 stdout; for batch-* (and tagged serve requests) --json
-//                 instead selects the stderr progress rendering — one
+//                 Batch subcommands emit the JSON results array on stdout
+//                 ONLY under --json; for batch-* (and tagged serve requests)
+//                 --json also selects the stderr progress rendering — one
 //                 compact JSON event object per line instead of the
 //                 human-readable BATCH lines.
 //   --pbar        Global, position-free boolean (bare "--pbar" or
@@ -43,6 +43,9 @@
 //                 true — and repeats are harmless). Renders a pinned
 //                 stderr-only progress bar that fills as items complete:
 //                 0->N for batch-*, 0->1 for the single-item subcommands.
+//                 Quiet on success: successful items and a fully clean
+//                 batch emit nothing but the bar itself; failures,
+//                 warnings, and a non-clean BATCH COMPLETE scroll above it.
 //                 stderr only — stdout (results / JSON) is never touched.
 //                 Cannot be combined with --json; not valid with serve.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
@@ -79,16 +82,19 @@
 //   0 = all items succeeded
 //   1 = usage error / manifest file not found / manifest empty (batch did not run)
 //   2 = batch ran but one or more items failed (including an explicit close
-//       failure; per-item details are in the JSON array)
+//       failure; per-item details are in the JSON array under --json, else
+//       on stderr)
 //   3 = batch cooperatively cancelled via --batch-progress-control (the
 //       stdout array stays full length; unattempted items are exit-12
 //       "cancelled" markers)
 //
 // Batch progress is always emitted on stderr (independent of -v): one
-// BATCH START and one BATCH SUCCESS/BATCH FAILED line per attempted item,
+// BATCH SUCCESS/BATCH FAILED completion line per attempted item (a FAILED
+// line is followed by the item's full human detail block when present),
 // then a single BATCH COMPLETE line after the end-of-batch warehouse close
 // (+ result rewrite). With --json each event is one compact JSON object per
-// line instead.
+// line instead, and a batch_item_started event additionally precedes each
+// attempted item's completion (the client pairs them).
 //
 // --batch-progress-control (batch-* subcommands only) turns stdin into a
 // cooperative control channel: after each completed non-final item the
@@ -257,12 +263,17 @@ void printUsage() {
         "                   and the process exits 3.\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
         "human-readable stdout).\n"
-        "                 For batch-* (and tagged serve requests) it instead\n"
-        "                 selects the stderr progress rendering: one JSON event\n"
-        "                 object per line instead of human-readable BATCH lines.\n"
+        "                 For batch-* (and tagged serve requests) it also\n"
+        "                 selects the stderr progress rendering: one JSON\n"
+        "                 event object per line instead of human-readable\n"
+        "                 BATCH lines. batch-* emit the JSON results array\n"
+        "                 on stdout only under --json.\n"
         "  --pbar         Pinned progress bar on stderr, filling as items\n"
         "                 complete (0->N batch-*, 0->1 single ops). Global,\n"
         "                 position-free; '--pbar=<v>' accepted (value ignored).\n"
+        "                 Silent while items succeed; failures and warnings\n"
+        "                 scroll above the bar, and BATCH COMPLETE prints\n"
+        "                 only when the batch was not fully clean.\n"
         "                 Not with --json; not valid with serve.\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
@@ -292,11 +303,14 @@ void printUsage() {
         "  --serve-pipe-file <path>  (serve only) Write the named pipe path and PID to\n"
         "                 <path> once the pipe is created (atomic: .tmp + rename).\n"
         "                 If absent, the pipe name is printed to stdout instead.\n"
-        "  batch-* always emit a JSON array on stdout (one element per item)\n"
-        "                 and always emit per-item progress on stderr: BATCH\n"
-        "                 START + BATCH SUCCESS/FAILED lines per item plus a\n"
-        "                 final BATCH COMPLETE line (one JSON event object per\n"
-        "                 line with --json).\n");
+        "  batch-* emit a JSON array on stdout (one element per item) only\n"
+        "                 under --json, and always emit per-item progress on\n"
+        "                 stderr: a BATCH SUCCESS/FAILED completion line per\n"
+        "                 attempted item (failures followed by the item's full\n"
+        "                 detail) plus a final BATCH COMPLETE line. --json\n"
+        "                 renders one JSON event object per line and adds a\n"
+        "                 batch_item_started event before each completion;\n"
+        "                 --pbar replaces the lines with a pinned bar.\n");
 }
 
 // --- TVS-D.2: structured result + output -------------------------------------
@@ -454,12 +468,13 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
 // --- TVS A: batch progress events -------------------------------------------
 //
 // Batch progress is always on (independent of -v) and goes to stderr only —
-// stdout keeps carrying exactly the final JSON array. One event per physical
-// line: a batch_item_started + batch_item_completed pair for every attempted
-// item (in input order, including pre-validation and init failures), then one
-// batch_completed after the end-of-batch closeWarehouse() + result rewrite.
-// Human rendering by default; --json selects one compact JSON object per
-// line. The same renderers serve tagged broker requests.
+// stdout carries the JSON array only under --json. One event per physical
+// line: a batch_item_completed for every attempted item (in input order,
+// including pre-validation and init failures), then one batch_completed
+// after the end-of-batch closeWarehouse() + result rewrite. Human rendering
+// by default; --json selects one compact JSON object per line and adds a
+// batch_item_started before each completion (the client pairs them). The
+// same renderers serve tagged broker requests.
 
 // jsonQuote renders a string as a JSON string literal ("..." with escaping),
 // so type/name/message values embedded in a human line can never leak a raw
@@ -567,7 +582,7 @@ int batchAggregateExitCode(bool batchStarted, bool anyFailed,
 
 // emitBatchProgress writes one rendered event line to stderr and flushes —
 // direct writes, no reliance on buffering mode, so each event is visible
-// immediately while stdout still carries only the final JSON array.
+// immediately while stdout carries only the final JSON array (--json only).
 void emitBatchProgress(const std::string& line) {
     std::fwrite(line.c_str(), 1, line.size(), stderr);
     std::fputc('\n', stderr);
@@ -879,6 +894,24 @@ private:
     int  maxCells_ = 0;      // widest line drawn so far (display cells)
     bool isConsole_ = false; // stderr resolves to a real console
 };
+
+// --pbar log routing: while a batch runs under --pbar, tsdev_lib's
+// level-gated diagnostics are redirected through pbarLogSink so each
+// message scrolls above the pinned bar as an event line instead of
+// corrupting the redraw. g_pbarLogTarget points at the worker's live
+// PbarRenderer; both are installed where bar.start() runs and cleared
+// before the worker exits (single-op bars are drawn post-hoc and need no
+// sink).
+PbarRenderer* g_pbarLogTarget = nullptr;
+void pbarLogSink(const char* s) {
+    std::string line = (s != nullptr) ? s : "";
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+    }
+    if (!line.empty() && g_pbarLogTarget) {
+        g_pbarLogTarget->eventLine(line);
+    }
+}
 
 // emitOutput renders a CliResult in either human-readable or JSON form.
 //
@@ -2048,7 +2081,11 @@ int cmdInsert(const std::string& typeStr,
         bar.finish();
     }
 
-    emitOutput(params.result, jsonMode);
+    // --pbar: a clean success needs no further output — the committed bar
+    // line is the whole report. Failures still emit their detail below.
+    if (!(pbar && params.result.success)) {
+        emitOutput(params.result, jsonMode);
+    }
     return params.result.exitCode;
 }
 
@@ -2173,7 +2210,11 @@ int cmdModify(const std::string& typeStr,
         bar.finish();
     }
 
-    emitOutput(params.result, jsonMode);
+    // --pbar: a clean success needs no further output — the committed bar
+    // line is the whole report. Failures still emit their detail below.
+    if (!(pbar && params.result.success)) {
+        emitOutput(params.result, jsonMode);
+    }
     return params.result.exitCode;
 }
 
@@ -2274,7 +2315,11 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
         bar.finish();
     }
 
-    emitOutput(params.result, jsonMode);
+    // --pbar: a clean success needs no further output — the committed bar
+    // line is the whole report. Failures still emit their detail below.
+    if (!(pbar && params.result.success)) {
+        emitOutput(params.result, jsonMode);
+    }
     return params.result.exitCode;
 }
 
@@ -2659,7 +2704,11 @@ int cmdUpsert(const std::string& typeStr,
         bar.finish();
     }
 
-    emitOutput(params.result, jsonMode);
+    // --pbar: a clean success needs no further output — the committed bar
+    // line is the whole report. Failures still emit their detail below.
+    if (!(pbar && params.result.success)) {
+        emitOutput(params.result, jsonMode);
+    }
     return params.result.exitCode;
 }
 
@@ -3151,9 +3200,9 @@ struct BatchParams {
 // the shared doInsert/doModify/doDelete logic, collects results, calls
 // closeWarehouse() once at the end, then destructs TsDevLib. Continue on
 // failure (never abort) — collect all results. Progress is always emitted on
-// stderr: one started/completed event pair per attempted item (including
-// pre-validation and init failures) plus one batch_completed after the
-// close + result rewrite.
+// stderr: one completion line per attempted item (including pre-validation
+// and init failures; --json additionally precedes it with a started event)
+// plus one batch_completed after the close + result rewrite.
 DWORD WINAPI runBatch(LPVOID param) {
     BatchParams* p = static_cast<BatchParams*>(param);
     const std::string& op = p->op;
@@ -3174,7 +3223,28 @@ DWORD WINAPI runBatch(LPVOID param) {
         if (p->pbar) bar.eventLine(line);
         else         emitBatchProgress(line);
     };
-    if (p->pbar) bar.start();
+    if (p->pbar) {
+        bar.start();
+        // Route tsdev_lib's gated diagnostics through the bar (installed
+        // BEFORE `new TsDevLib` so init-path warnings scroll above it too).
+        g_pbarLogTarget = &bar;
+        tsdev_log_set_sink(&pbarLogSink);
+    }
+
+    // Per-item failure detail: under a FAILED marker emit the result's full
+    // humanStderr block (compiler errors etc.), minus its trailing CR/LF so
+    // the emitter doesn't add a blank line. Empty humanStderr emits nothing
+    // — the marker's message= already carries the concise error. Human
+    // modes only; --json keeps the strict NDJSON event stream.
+    auto emitFailureDetail = [&](const CliResult& r) {
+        if (p->jsonProgress || r.success || r.humanStderr.empty()) return;
+        std::string detail = r.humanStderr;
+        while (!detail.empty() &&
+               (detail.back() == '\n' || detail.back() == '\r')) {
+            detail.pop_back();
+        }
+        if (!detail.empty()) emitLine(detail);
+    };
 
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
@@ -3182,8 +3252,9 @@ DWORD WINAPI runBatch(LPVOID param) {
         lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
         // Init failure: every attempted item gets an init_failure result —
-        // still an attempted item, so emit the started/completed pair for
-        // each. With batch control the same per-item handshake applies: a
+        // still an attempted item, so emit the completion line for each
+        // (with its started event under --json). With batch control the
+        // same per-item handshake applies: a
         // cancel (or a control-channel anomaly) stops before the next item
         // and the remainder become not-run markers. There is no library to
         // close on this path.
@@ -3193,8 +3264,13 @@ DWORD WINAPI runBatch(LPVOID param) {
         for (auto& item : p->items) {
             ++index;
             if (p->pbar) bar.itemStarted(item.typeStr, item.name);
-            emitLine(batchItemStartedLine(
-                op, index, total, item.typeStr, item.name, p->jsonProgress));
+            // Started events exist only in the --json NDJSON protocol (the
+            // client pairs each batch_item_completed with a started).
+            if (p->jsonProgress) {
+                emitLine(batchItemStartedLine(
+                    op, index, total, item.typeStr, item.name,
+                    p->jsonProgress));
+            }
             CliResult r;
             r.op = op;
             r.typeStr = item.typeStr;
@@ -3207,6 +3283,7 @@ DWORD WINAPI runBatch(LPVOID param) {
             }
             emitLine(batchItemCompletedLine(op, index, total, r,
                                             p->jsonProgress));
+            emitFailureDetail(r);
             p->results.push_back(std::move(r));
             attempted = index;
             if (p->batchControl && index < total) {
@@ -3230,12 +3307,15 @@ DWORD WINAPI runBatch(LPVOID param) {
                                              /*anyFailed=*/true,
                                              cancelled);
         // --pbar: commit the bar as a permanent line first; the summary is
-        // the last stderr line underneath it.
+        // the last stderr line underneath it. An init failure is never
+        // clean, so the summary always prints.
         if (p->pbar) bar.finish();
         emitBatchProgress(batchCompletedLine(
             op, attempted, total, /*successes=*/0, /*failures=*/attempted,
             /*notRun=*/total - attempted, cancelled, /*closeFailed=*/false,
             p->exitCode, p->jsonProgress));
+        tsdev_log_set_sink(nullptr);
+        g_pbarLogTarget = nullptr;
         return 0;
     }
 
@@ -3247,8 +3327,13 @@ DWORD WINAPI runBatch(LPVOID param) {
     for (auto& item : p->items) {
         ++index;
         if (p->pbar) bar.itemStarted(item.typeStr, item.name);
-        emitLine(batchItemStartedLine(
-            op, index, total, item.typeStr, item.name, p->jsonProgress));
+        // Started events exist only in the --json NDJSON protocol (the
+        // client pairs each batch_item_completed with a started).
+        if (p->jsonProgress) {
+            emitLine(batchItemStartedLine(
+                op, index, total, item.typeStr, item.name,
+                p->jsonProgress));
+        }
         CliResult r;
         if (!item.preValid) {
             // Pre-validated failure (malformed line / unreadable file) —
@@ -3274,8 +3359,14 @@ DWORD WINAPI runBatch(LPVOID param) {
             if (!r.success) bar.noteFailure();
             bar.itemCompleted();
         }
-        emitLine(batchItemCompletedLine(op, index, total, r,
-                                        p->jsonProgress));
+        // Completion line: under --pbar a successful item emits nothing
+        // (the pinned bar is the only output); failures still emit the
+        // BATCH FAILED marker plus the full humanStderr detail block.
+        if (!p->pbar || !r.success) {
+            emitLine(batchItemCompletedLine(op, index, total, r,
+                                            p->jsonProgress));
+        }
+        emitFailureDetail(r);
         p->results.push_back(std::move(r));
         attempted = index;
 
@@ -3349,12 +3440,20 @@ DWORD WINAPI runBatch(LPVOID param) {
         if (p->results[i].success) ++successes; else ++failures;
     }
     // --pbar: commit the bar as a permanent line first; the summary is the
-    // last stderr line underneath it.
+    // last stderr line underneath it. Under --pbar the summary prints only
+    // when the batch was NOT fully clean — a clean run's committed bar is
+    // the whole report. In the non-pbar modes it always prints.
     if (p->pbar) bar.finish();
-    emitBatchProgress(batchCompletedLine(
-        op, attempted, total, successes, failures,
-        /*notRun=*/total - attempted, cancelled, closeFailed, p->exitCode,
-        p->jsonProgress));
+    const bool notClean = failures > 0 || cancelled || closeFailed ||
+                          (total - attempted) > 0;
+    if (!p->pbar || notClean) {
+        emitBatchProgress(batchCompletedLine(
+            op, attempted, total, successes, failures,
+            /*notRun=*/total - attempted, cancelled, closeFailed,
+            p->exitCode, p->jsonProgress));
+    }
+    tsdev_log_set_sink(nullptr);
+    g_pbarLogTarget = nullptr;
     return 0;
 }
 
@@ -3402,8 +3501,11 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // Emit the JSON array (always, for batch mode that ran).
-    emitBatchOutput(params.results);
+    // Emit the JSON results array on stdout — only under --json; human and
+    // --pbar modes emit no stdout array.
+    if (jsonProgress) {
+        emitBatchOutput(params.results);
+    }
     return params.exitCode;
 }
 

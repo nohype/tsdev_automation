@@ -81,12 +81,15 @@
         Function fixture per run (setup/teardown uncounted). Requires live TS;
         skipped under -NoTs or -SkipVerboseFlag.
      16. pbar E2E tests (tests/test_pbar.ps1)
-        8 pbar E2E test cases (PB1-PB8) for the global --pbar progress-bar
+        10 pbar E2E test cases (PB1-PB10) for the global --pbar progress-bar
         flag: stderr-only '\r'-redrawn UTF-8 block bar on single ops and
-        batch runs (BATCH lines scroll above, BATCH COMPLETE last),
+        batch runs (BATCH FAILED lines + detail blocks scroll above for
+        failed items; BATCH COMPLETE last when the run is not clean),
         " <U+2014> <n> failed" suffix, --pbar+--json and --pbar+serve usage
         errors, position-free/--pbar=<value>/repeat forms, non-pbar
-        byte-identical guard, and --batch-progress-control coexistence.
+        byte-identical guard, and --batch-progress-control coexistence,
+        plus suppressed mutation SUCCESS stdout and a fully clean batch
+        ending on the committed bar frame.
         Inserts+deletes its own unique Function fixtures per run
         (setup/teardown uncounted). Requires live TS; skipped under -NoTs
         or -SkipPbar.
@@ -200,7 +203,7 @@
     tests + 9 upsert tests + 7 get-source tests + 9 exists-ci tests + 5
     batch-upsert tests + 9 directory-batch tests + three default serve E2E
     tests (plus one opt-in stress test when TS_SERVE_STRESS=1) + 9 ShowMe
-    tests + the unknown-link regression suite + 7 verbose-flag tests + 8
+    tests + the unknown-link regression suite + 7 verbose-flag tests + 10
     pbar tests.
 
 .EXAMPLE
@@ -217,7 +220,7 @@
     inventory) + 5 exists tests + 8 batch-stdin tests + 9 upsert tests + 7
     get-source tests + 9 exists-ci tests + 5 batch-upsert tests + 9
     directory-batch tests + 9 ShowMe tests + the unknown-link regression
-    suite + 7 verbose-flag tests + 8 pbar tests; skips E2E and the stress
+    suite + 7 verbose-flag tests + 10 pbar tests; skips E2E and the stress
     suite (opt-in: -ExtendedStress).
 
 .EXAMPLE
@@ -1042,7 +1045,8 @@ else {
 # Suite 16: pbar E2E tests (global --pbar stderr progress-bar flag).
 # Inserts+deletes its own unique Function fixtures per run; PB1/PB6 are
 # read-only exists queries, PB5/PB7/PB8 are batch-delete runs against a
-# 3-item manifest (1 real + 2 nonexistent).
+# 3-item manifest (1 real + 2 nonexistent), PB9 is a --pbar insert, and
+# PB10 is a batch-delete against a 2-item all-existing manifest.
 # ---------------------------------------------------------------------------
 if ($skipPbarActual) {
     $idx++

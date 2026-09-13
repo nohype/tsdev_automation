@@ -18,7 +18,7 @@
                               when this returns $false.
       * Assert-BatchStderrProgress - asserts the default (human) batch
                               progress event lines on stderr against the
-                              authoritative final stdout result array.
+                              expected per-item results.
       * Assert-BatchJsonProgress  - asserts the --json batch progress event
                               objects on stderr against the authoritative
                               final stdout result array.
@@ -180,19 +180,27 @@ function Ensure-BaselineDll {
 # ---------------------------------------------------------------------------
 # Assert-BatchStderrProgress
 #
-# Asserts the default (human) batch progress events on stderr: exactly one
-# BATCH START + one BATCH SUCCESS/FAILED per attempted item in order
-# (op/type/name/index/total matching the authoritative final stdout result
-# array), then exactly one BATCH COMPLETE whose counters/exit match the final
-# results. stderr lines not starting with "BATCH " are diagnostics and are
-# ignored. Requires a non-empty $Results array. Throws on the first mismatch.
+# Asserts the default (human) batch progress events on stderr under the new
+# output contract: NO BATCH START lines at all — exactly one BATCH
+# SUCCESS/FAILED completion line per attempted item in order (op/type/name/
+# index/total matching the expected results), then exactly one BATCH
+# COMPLETE whose counters/exit match the final results. A FAILED line may be
+# followed by the item's full human detail block (e.g. "tsdev_cli: ERROR —
+# ..." plus compiler error text); detail lines do not start with "BATCH "
+# and are ignored by the line filter, like other diagnostics. Requires a
+# non-empty $Results array. Throws on the first mismatch.
+#
+# $Results objects need only op/type/name/success/exit_code (+ error.message
+# for failures): pass the parsed --json stdout array, or hand-built
+# [pscustomobject]s when the run was human-mode (which emits no stdout
+# array).
 #
 # PRECONDITION: this helper is for healthy-path suites where the batch
 # closed cleanly — the BATCH COMPLETE line is validated FIRST and must show
 # close_failed=false (plus cancelled=false, not_run=0). Only under a clean
-# close do the per-item event results equal the final stdout results; a
-# failed end-of-batch closeWarehouse rewrites still-successful final
-# results, so this helper must NOT be used for close-failure scenarios.
+# close do the per-item event results equal the final results; a failed
+# end-of-batch closeWarehouse rewrites still-successful final results, so
+# this helper must NOT be used for close-failure scenarios.
 # ---------------------------------------------------------------------------
 function Assert-BatchStderrProgress {
     param(
@@ -203,42 +211,38 @@ function Assert-BatchStderrProgress {
     $items = @($Results)
     $total = $items.Count
     if ($total -eq 0) {
-        throw "Assert-BatchStderrProgress: -Results must contain at least one final stdout result object"
+        throw "Assert-BatchStderrProgress: -Results must contain at least one result object"
     }
     $lines = @($Stderr -split "`r?`n" | Where-Object { $_ -cmatch '^BATCH ' })
-    if ($lines.Count -ne (2 * $total + 1)) {
-        throw "stderr progress lines: expected $(2 * $total + 1), got $($lines.Count) [stderr: $Stderr]"
+    if ($lines.Count -ne ($total + 1)) {
+        throw "stderr progress lines: expected $($total + 1) (one completion line per item + COMPLETE; no BATCH START lines in human mode), got $($lines.Count) [stderr: $Stderr]"
     }
     # Validate the final summary FIRST: these suites require a cleanly closed
     # batch (close_failed=false) before per-item events may be compared to
-    # the final stdout results.
+    # the expected results.
     $successes = @($items | Where-Object { $_.success -eq $true }).Count
     $expComplete = 'BATCH COMPLETE op={0} completed={1} total={1} successes={2} failures={3} not_run=0 cancelled=false close_failed=false exit_code={4}' -f $items[0].op, $total, $successes, ($total - $successes), $ExpectedExitCode
-    if ($lines[2 * $total] -cne $expComplete) {
-        throw "stderr last progress line: expected '$expComplete', got: $($lines[2 * $total])"
+    if ($lines[$total] -cne $expComplete) {
+        throw "stderr last progress line: expected '$expComplete', got: $($lines[$total])"
     }
     for ($i = 0; $i -lt $total; $i++) {
         $r = $items[$i]
         $n = $i + 1
-        $expStart = 'BATCH START [{0}/{1}] op={2} type="{3}" name="{4}"' -f $n, $total, $r.op, $r.type, $r.name
-        if ($lines[2 * $i] -cne $expStart) {
-            throw "stderr progress[$($i * 2)]: expected '$expStart', got: $($lines[2 * $i])"
-        }
         if ($r.success -eq $true) {
             $expOk = 'BATCH SUCCESS [{0}/{1}] op={2} type="{3}" name="{4}" exit_code=0' -f $n, $total, $r.op, $r.type, $r.name
-            if ($lines[2 * $i + 1] -cne $expOk) {
-                throw "stderr progress[$($i * 2 + 1)]: expected '$expOk', got: $($lines[2 * $i + 1])"
+            if ($lines[$i] -cne $expOk) {
+                throw "stderr progress[$i]: expected '$expOk', got: $($lines[$i])"
             }
         } else {
             $expFail = 'BATCH FAILED [{0}/{1}] op={2} type="{3}" name="{4}" exit_code={5}' -f $n, $total, $r.op, $r.type, $r.name, $r.exit_code
-            $failLine = $lines[2 * $i + 1]
+            $failLine = $lines[$i]
             if ($null -ne $r.error -and $r.error.message) {
                 if (-not ($failLine.StartsWith($expFail + ' message="') -and $failLine.EndsWith('"'))) {
-                    throw "stderr progress[$($i * 2 + 1)]: expected '$expFail message=`"<msg>`"', got: $failLine"
+                    throw "stderr progress[$i]: expected '$expFail message=`"<msg>`"', got: $failLine"
                 }
             } else {
                 if ($failLine -cne $expFail) {
-                    throw "stderr progress[$($i * 2 + 1)]: expected '$expFail', got: $failLine"
+                    throw "stderr progress[$i]: expected '$expFail', got: $failLine"
                 }
             }
         }

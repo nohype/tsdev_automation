@@ -16,25 +16,36 @@
       * Global, position-free, idempotent boolean: bare "--pbar" or
         "--pbar=<value>" (value ignored; repeats harmless).
       * Batch runs pin the bar at the bottom of stderr from the start
-        (0/total); BATCH START / BATCH SUCCESS / BATCH FAILED event lines
-        scroll above it; the bar's final frame is committed as a permanent
-        line and BATCH COMPLETE is printed underneath it (last stderr line).
+        (0/total); successful items emit NO BATCH line - each failed item
+        scrolls a BATCH FAILED marker plus its full human detail block
+        above the bar; the bar's final frame is committed as a permanent
+        line. BATCH COMPLETE is printed underneath it (last stderr line)
+        only when the run was not clean (failure/cancel/not-run/close
+        failure) - a fully clean run ends with the committed bar itself.
+      * Batch stdout is EMPTY under --pbar: the JSON results array is
+        emitted only with --json, and --pbar + --json is a usage error.
       * Single-item subcommands (exists/delete/...) emit the whole bar in
         one draw sequence after the op: 0/1 labelled, then filled to 1/1
         (with " <U+2014> 1 failed" on failure), pinned by a newline.
+        Mutation success stdout ("SUCCESS: ...") is suppressed under
+        --pbar; query answers and failure detail are unchanged.
       * --pbar + --json is a usage error (exit 1, JSON error object on
         stdout, stderr empty). --pbar + serve is a usage error (exit 1).
       * --pbar + --batch-progress-control is permitted - no interaction.
-      * Non-pbar paths are byte-identical to before (no '\r' bar frames, no
-        block glyphs).
+      * Non-pbar paths emit no bar bytes (no '\r' bar frames, no block
+        glyphs). Plain human batch stderr carries one BATCH SUCCESS/FAILED
+        line per attempted item (failed items also print their detail
+        block; there are NO BATCH START lines), BATCH COMPLETE last; batch
+        stdout is empty without --json.
 
     The suite is SELF-SUFFICIENT: it creates two fixture Functions with
     unique per-run names (`--json insert function <name> <srcfile>`,
-    expecting exit 0 / success=true / prog_id>0), runs PB1-PB8 against
-    them, and deletes them in the finally cleanup (verified exists=0).
+    expecting exit 0 / success=true / prog_id>0), runs PB1-PB10 (PB9 and
+    PB10 create their own additional throwaway items inside the case),
+    and deletes them in the finally cleanup (verified exists=0).
     The fixture setup is an uncounted prerequisite, not a numbered case:
-    on success the summary lists exactly the 8 PB-cases (PB1-PB8); if
-    fixture creation fails, a SETUP row is recorded, PB1-PB8 are SKIPPED
+    on success the summary lists exactly the 10 PB-cases (PB1-PB10); if
+    fixture creation fails, a SETUP row is recorded, PB1-PB10 are SKIPPED
     (they must not run against missing items), and the suite exits 1.
 
     Test cases:
@@ -52,10 +63,10 @@
       PB4  --pbar serve: exit 1; stderr mentions "not valid with serve".
       PB5  --pbar batch-delete <manifest of 3: 1 real probe + 2
            nonexistent>: exit 2; stderr contains '\r' bar frames ending at
-           3/3 with " <U+2014> 2 failed", the BATCH START / SUCCESS / FAILED event
-           lines still scroll above the bar, and the last stderr line is
-           BATCH COMPLETE; stdout parses as a JSON array of exactly 3
-           objects.
+           3/3 with " <U+2014> 2 failed", the successful item emits no
+           BATCH line, each failed item scrolls a BATCH FAILED marker plus
+           its detail block above the bar, and the last stderr line is
+           BATCH COMPLETE (the run is not clean); stdout is EMPTY.
       PB6  Flag forms: `exists function <probe> --pbar` (position-free,
            flag after the subcommand), `--pbar=1` and `--pbar=0` (equals
            form, value ignored - presence selects), `--pbar --pbar`
@@ -63,12 +74,25 @@
       PB7  Non-pbar guard: plain `batch-delete <same manifest>` - exit 2;
            stderr byte check: NO bare '\r' (every 0x0D belongs to a CRLF
            pair - there are no bar redraw frames) and NO block-glyph UTF-8
-           sequences.
+           sequences. stderr carries the human per-item BATCH completion
+           lines (no BATCH START) ending at BATCH COMPLETE; stdout is
+           EMPTY without --json.
       PB8  --pbar --batch-progress-control batch-delete <manifest> with
            "continue\n" decision lines piped on stdin: completes (exit 2
            here - the manifest items are already gone after PB5), the bar
-           and the control channel coexist, stdout array intact (3
-           objects), not cancelled.
+           and the control channel coexist, stdout stays EMPTY (no --json),
+           not cancelled.
+      PB9  --pbar insert function <new item> <srcfile>: exit 0; stdout is
+           EMPTY (the human "SUCCESS: ..." line is suppressed under
+           --pbar - the post-hoc bar is the only output); stderr carries
+           the '\r'-redrawn bar reaching 1/1 100% and contains no
+           "SUCCESS:" text.
+      PB10 --pbar batch-delete <manifest of 2, all existing> created
+           inside the case: a fully clean run - exit 0; stdout is EMPTY;
+           stderr is ONLY the pinned bar ('\r' frames ending at 2/2 100%,
+           no " <U+2014> <n> failed" suffix, no BATCH lines at all) and
+           the last stderr line is the committed bar frame itself (no
+           BATCH COMPLETE on a clean run).
 
     After EVERY TS-touching CLI invocation the suite checks for crash /
     error popup surfaces (TSCrashReport / WerFault processes and
@@ -157,6 +181,9 @@ $BatchProbeName = "PbarE2E_${runId}_B"    # the 1 real item of the manifest (PB5
 $GhostName1     = "PbarE2E_${runId}_X1"   # nonexistent manifest item
 $GhostName2     = "PbarE2E_${runId}_X2"   # nonexistent manifest item
 $DeleteGhost    = "PbarE2E_${runId}_NoDel" # PB2's nonexistent delete target
+$InsertName     = "PbarE2E_${runId}_I"     # PB9's --pbar insert target (created inside the case)
+$CleanDelName1  = "PbarE2E_${runId}_D1"    # PB10 all-success manifest item (created inside the case)
+$CleanDelName2  = "PbarE2E_${runId}_D2"    # PB10 all-success manifest item (created inside the case)
 
 # Bar byte markers (UTF-8). The script file stays ASCII-only, so the glyphs
 # are matched on raw bytes, and the em dash is composed as a char for the
@@ -562,13 +589,13 @@ New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 
 try {
     # =====================================================================
-    # SETUP (uncounted prerequisite for PB1-PB8): create the two fixture
+    # SETUP (uncounted prerequisite for PB1-PB10): create the two fixture
     # Functions.
     #
     # Not a numbered PB-case: the fixtures are scaffolding, not the behavior
-    # under test. On success the summary lists exactly the 8 PB-cases
-    # (PB1-PB8); if fixture creation fails, a SETUP row is recorded below,
-    # PB1-PB8 are SKIPPED (they must not run against missing items), and the
+    # under test. On success the summary lists exactly the 10 PB-cases
+    # (PB1-PB10); if fixture creation fails, a SETUP row is recorded below,
+    # PB1-PB10 are SKIPPED (they must not run against missing items), and the
     # suite exits 1 via the summary count.
     # =====================================================================
     Write-Host "--- SETUP: insert fixture Functions ---" -ForegroundColor Cyan
@@ -583,12 +610,16 @@ try {
         # block then attempts the deletes even if success cannot be confirmed
         # (delete exit 5 = never created / already gone - handled gracefully).
         # The never-created manifest ghost names are tracked too so a partial
-        # batch can never leak them.
+        # batch can never leak them. The names created inside PB9/PB10 are
+        # tracked up-front for the same reason (a partial insert cannot leak).
         $CreatedItems.Add(@{ Name = $ProbeName;      Type = "function" }) | Out-Null
         $CreatedItems.Add(@{ Name = $BatchProbeName; Type = "function" }) | Out-Null
         $CreatedItems.Add(@{ Name = $GhostName1;     Type = "function" }) | Out-Null
         $CreatedItems.Add(@{ Name = $GhostName2;     Type = "function" }) | Out-Null
         $CreatedItems.Add(@{ Name = $DeleteGhost;    Type = "function" }) | Out-Null
+        $CreatedItems.Add(@{ Name = $InsertName;     Type = "function" }) | Out-Null
+        $CreatedItems.Add(@{ Name = $CleanDelName1;  Type = "function" }) | Out-Null
+        $CreatedItems.Add(@{ Name = $CleanDelName2;  Type = "function" }) | Out-Null
 
         $okCount = 0
         foreach ($fx in @(@{ Name = $ProbeName; File = $probeSrcFile },
@@ -629,7 +660,7 @@ try {
     }
 
     if (-not $fixtureReady) {
-        Write-Host "ERROR: fixture Functions could not be created - PB1-PB8 NOT run." -ForegroundColor Red
+        Write-Host "ERROR: fixture Functions could not be created - PB1-PB10 NOT run." -ForegroundColor Red
         Write-Host "       $setupDetail" -ForegroundColor Red
         $Results.Add([pscustomobject]@{
             TestId   = 'SETUP'
@@ -732,47 +763,56 @@ try {
 
     # =====================================================================
     # PB5: --pbar batch-delete <manifest of 3: 1 real + 2 nonexistent> -
-    # exit 2; '\r' bar frames end at 3/3 with " <U+2014> 2 failed"; the BATCH
-    # START/SUCCESS/FAILED event lines still scroll above the bar; the last
-    # stderr line is BATCH COMPLETE; stdout is a JSON array of exactly 3.
+    # exit 2; '\r' bar frames end at 3/3 with " <U+2014> 2 failed"; under
+    # --pbar the successful item emits no BATCH line while each failed item
+    # scrolls a BATCH FAILED marker + its full detail block above the bar;
+    # the last stderr line is BATCH COMPLETE (the run is not clean); stdout
+    # is EMPTY (the results array is emitted only with --json, which --pbar
+    # rejects as a usage error).
     # =====================================================================
     Write-Host "--- PB5: --pbar batch-delete <manifest of 3> ---" -ForegroundColor Cyan
-    Run-TestCase -TestId "PB5" -Step "pbar batch-delete: bar to 3/3 + BATCH lines + COMPLETE last" -Body {
+    Run-TestCase -TestId "PB5" -Step "pbar batch-delete: bar to 3/3 + FAILED lines + COMPLETE last" -Body {
         $cli = Invoke-Cli -Arguments @("--pbar", "batch-delete", $script:manifestFile)
         Assert-NoPopup $cli
         Assert-True ($cli.ExitCode -eq 2) "exit code: expected 2, got $($cli.ExitCode); stderr: $($cli.Stderr)"
 
-        # stdout: the batch result is ALWAYS a JSON array (no --json needed);
-        # exactly 3 objects in manifest order: real probe success, then two
-        # not-found failures. Assign the parse directly (no @() wrap): under
-        # PS 5.1 @($json | ConvertFrom-Json) nests the deserialized array as a
-        # single element; the unwrapped pipeline assignment unrolls it.
-        $arr = $null
-        try { $arr = $cli.Stdout | ConvertFrom-Json -ErrorAction Stop } catch {}
-        Assert-True ($null -ne $arr) "stdout must parse as a JSON array; got: $($cli.Stdout)"
-        Assert-True (@($arr).Count -eq 3) "stdout JSON array must have exactly 3 objects; got $(@($arr).Count): $($cli.Stdout)"
-        Assert-True ($arr[0].name -eq $script:BatchProbeName -and $arr[0].success -eq $true) `
-            "item[0] must be the real probe delete success; got: $($arr[0] | ConvertTo-Json -Compress)"
-        Assert-True ($arr[1].name -eq $script:GhostName1 -and $arr[1].success -eq $false -and $arr[1].exit_code -eq 5) `
-            "item[1] must be the not-found failure; got: $($arr[1] | ConvertTo-Json -Compress)"
-        Assert-True ($arr[2].name -eq $script:GhostName2 -and $arr[2].success -eq $false -and $arr[2].exit_code -eq 5) `
-            "item[2] must be the not-found failure; got: $($arr[2] | ConvertTo-Json -Compress)"
+        # stdout: EMPTY without --json. The batch results array is emitted
+        # only with --json, and --pbar + --json is a usage error - no array
+        # can appear here.
+        Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be EMPTY without --json; got: $($cli.Stdout)"
 
         # stderr: '\r'-redrawn bar frames ending at 3/3 with the failure
-        # suffix, while the human BATCH event lines still scroll above it.
+        # suffix. Under --pbar the one successful item emits NO BATCH line;
+        # each failed item scrolls a BATCH FAILED marker plus its full
+        # human detail block above the bar.
         Assert-BarBytes $cli "PB5"
         # "] 3/3" pins the BAR frame itself: the bar's ']' immediately
         # precedes the count, whereas a bare "3/3" would also match a
-        # "BATCH START [3/3]" event line and pass without a full bar.
+        # "BATCH FAILED [3/3]" event line and pass without a full bar.
         Assert-True ($cli.Stderr.Contains("] 3/3")) "stderr bar frame must reach '] 3/3'; got: $($cli.Stderr)"
         Assert-True ($cli.Stderr.Contains("$($script:EmDash) 2 failed")) `
             "stderr bar must carry the ' <U+2014> 2 failed' suffix; got: $($cli.Stderr)"
-        Assert-True ($cli.Stderr.Contains("BATCH START")) "stderr must still contain BATCH START event lines; got: $($cli.Stderr)"
-        Assert-True ($cli.Stderr.Contains("BATCH SUCCESS")) "stderr must still contain a BATCH SUCCESS event line; got: $($cli.Stderr)"
-        Assert-True ($cli.Stderr.Contains("BATCH FAILED")) "stderr must still contain BATCH FAILED event lines; got: $($cli.Stderr)"
-        # The bar's final frame is committed as a permanent line and the
-        # summary prints underneath it: the last stderr line is BATCH
-        # COMPLETE.
+        Assert-True (-not $cli.Stderr.Contains("BATCH START")) `
+            "stderr must contain no BATCH START lines (removed from human batch output); got: $($cli.Stderr)"
+        Assert-True (-not $cli.Stderr.Contains("BATCH SUCCESS")) `
+            "stderr must contain no BATCH SUCCESS line (suppressed under --pbar); got: $($cli.Stderr)"
+        $failMarkers = @($cli.Stderr -split "`n" | Where-Object { $_.Contains('BATCH FAILED') })
+        Assert-True ($failMarkers.Count -eq 2) `
+            "stderr must contain exactly 2 BATCH FAILED markers (one per failed item); got: $($cli.Stderr)"
+        Assert-True ($failMarkers[0].Contains("[2/3]") -and $failMarkers[0].Contains("name=`"$($script:GhostName1)`"") -and $failMarkers[0].Contains("exit_code=5")) `
+            "first BATCH FAILED must be [2/3] $GhostName1 exit_code=5; got: $($failMarkers[0])"
+        Assert-True ($failMarkers[1].Contains("[3/3]") -and $failMarkers[1].Contains("name=`"$($script:GhostName2)`"") -and $failMarkers[1].Contains("exit_code=5")) `
+            "second BATCH FAILED must be [3/3] $GhostName2 exit_code=5; got: $($failMarkers[1])"
+        # Each failed item's full human detail block scrolls above the bar
+        # too: 'tsdev_cli: ERROR <U+2014> function "X" not found in the
+        # warehouse.'
+        $detail1 = "tsdev_cli: ERROR $($script:EmDash) function `"$($script:GhostName1)`" not found in the warehouse."
+        $detail2 = "tsdev_cli: ERROR $($script:EmDash) function `"$($script:GhostName2)`" not found in the warehouse."
+        Assert-True ($cli.Stderr.Contains($detail1)) "stderr must contain GhostName1's failure detail block; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains($detail2)) "stderr must contain GhostName2's failure detail block; got: $($cli.Stderr)"
+        # The bar's final frame is committed as a permanent line; the run
+        # was not clean (2 failures), so the summary prints underneath it:
+        # the last stderr line is BATCH COMPLETE.
         $lines = @($cli.Stderr -split "`n" | Where-Object { $_.Trim() -ne '' })
         $lastLine = $lines[$lines.Count - 1]
         Assert-True ($lastLine.StartsWith("BATCH COMPLETE")) `
@@ -817,29 +857,46 @@ try {
     # =====================================================================
     # PB7: non-pbar guard - plain `batch-delete <same manifest>` must emit
     # NO bar bytes: no bare '\r' (every CR belongs to a CRLF line ending)
-    # and no block-glyph UTF-8 sequences. The non-pbar path stays
-    # byte-identical to the pre-flag behavior.
+    # and no block-glyph UTF-8 sequences. Under the new human batch
+    # contract stdout is EMPTY (no results array without --json) and stderr
+    # carries one BATCH completion line per attempted item (failures also
+    # print their detail block) - no BATCH START lines - ending at BATCH
+    # COMPLETE.
     # =====================================================================
     Write-Host "--- PB7: non-pbar batch-delete has no bar bytes ---" -ForegroundColor Cyan
     Run-TestCase -TestId "PB7" -Step "plain batch-delete: no bare CR, no glyphs" -Body {
         $cli = Invoke-Cli -Arguments @("batch-delete", $script:manifestFile)
         Assert-NoPopup $cli
         Assert-True ($cli.ExitCode -eq 2) "exit code: expected 2, got $($cli.ExitCode); stderr: $($cli.Stderr)"
+        # stdout: EMPTY without --json (the results array is emitted only
+        # with --json).
+        Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be EMPTY without --json; got: $($cli.Stdout)"
         Assert-True (-not (Test-HasBareCR -Bytes $cli.StderrBytes)) `
             "non-pbar stderr must contain NO bare '\r' bar-redraw bytes (only CRLF line endings); stderr bytes length=$($cli.StderrBytes.Length)"
         Assert-True (-not (Test-BytesContain -Haystack $cli.StderrBytes -Needle $script:FullGlyphBytes)) `
             "non-pbar stderr must contain NO U+2588 bytes (E2 96 88)"
         Assert-True (-not (Test-BytesContain -Haystack $cli.StderrBytes -Needle $script:ShadeGlyphBytes)) `
             "non-pbar stderr must contain NO U+2591 bytes (E2 96 91)"
-        # The human progress lines are still emitted.
-        Assert-True ($cli.Stderr.Contains("BATCH COMPLETE")) "stderr must still contain BATCH COMPLETE; got: $($cli.Stderr)"
+        # The human per-item completion lines are still emitted - one per
+        # attempted item (the manifest items are already gone after PB5, so
+        # they are BATCH FAILED markers followed by their detail blocks) -
+        # with NO BATCH START lines, and BATCH COMPLETE still last.
+        Assert-True ($cli.Stderr.Contains("BATCH FAILED")) "stderr must contain per-item BATCH FAILED lines; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains("not found in the warehouse")) `
+            "stderr must contain the failed items' detail blocks; got: $($cli.Stderr)"
+        Assert-True (-not $cli.Stderr.Contains("BATCH START")) `
+            "stderr must contain no BATCH START lines (removed from human batch output); got: $($cli.Stderr)"
+        $lines = @($cli.Stderr -split "`n" | Where-Object { $_.Trim() -ne '' })
+        Assert-True ($lines[$lines.Count - 1].StartsWith("BATCH COMPLETE")) `
+            "last stderr line must be BATCH COMPLETE; got: $($lines[$lines.Count - 1])"
     }
 
     # =====================================================================
     # PB8: --pbar --batch-progress-control batch-delete <manifest> with
     # "continue\n" decision lines piped on stdin - the bar and the control
     # channel coexist (no interaction); the run completes all items
-    # (cancelled=false) and the stdout array stays intact.
+    # (cancelled=false) and stdout stays EMPTY (the results array is
+    # emitted only with --json, which --pbar rejects).
     #
     # The decision stream carries ONLY LF-terminated "continue" lines: the
     # control channel reads exactly one "continue\n"/"cancel\n" token per
@@ -861,13 +918,16 @@ try {
         Assert-True ($cli.ExitCode -eq 2 -or $cli.ExitCode -eq 0) `
             "exit code: expected 2 (or 0) for a completed batch, got $($cli.ExitCode); stderr: $($cli.Stderr)"
 
-        $arr = $null
-        try { $arr = $cli.Stdout | ConvertFrom-Json -ErrorAction Stop } catch {}
-        Assert-True ($null -ne $arr) "stdout must parse as a JSON array; got: $($cli.Stdout)"
-        Assert-True (@($arr).Count -eq 3) "stdout JSON array must have exactly 3 objects; got $(@($arr).Count)"
+        # stdout: EMPTY without --json (the results array is emitted only
+        # with --json, and --pbar + --json is a usage error).
+        Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be EMPTY without --json; got: $($cli.Stdout)"
 
         Assert-BarBytes $cli "PB8"
         Assert-True ($cli.Stderr.Contains("] 3/3")) "stderr bar frame must reach '] 3/3'; got: $($cli.Stderr)"
+        # All items fail not-found, so BATCH FAILED markers scroll above
+        # the bar and the non-clean run ends with BATCH COMPLETE.
+        Assert-True ($cli.Stderr.Contains("BATCH FAILED")) `
+            "stderr must contain BATCH FAILED markers above the bar; got: $($cli.Stderr)"
         $lines = @($cli.Stderr -split "`n" | Where-Object { $_.Trim() -ne '' })
         $lastLine = $lines[$lines.Count - 1]
         Assert-True ($lastLine.StartsWith("BATCH COMPLETE")) `
@@ -876,7 +936,100 @@ try {
             "BATCH COMPLETE must show cancelled=false (all 'continue' decisions honored); got: $lastLine"
     }
 
-    }  # end: fixture-ready branch (PB1-PB8 run only against existing fixtures)
+    # =====================================================================
+    # PB9: --pbar insert function <new item> <srcfile> - exit 0; the human
+    # "SUCCESS: ..." stdout line is suppressed under --pbar, so stdout is
+    # EMPTY (not merely lacking the line); the post-hoc 0->1 bar on stderr
+    # is the only output - '\r'-redrawn frames reaching 1/1 100%, with no
+    # "SUCCESS:" text anywhere on stderr.
+    # =====================================================================
+    Write-Host "--- PB9: --pbar insert suppresses the SUCCESS line ---" -ForegroundColor Cyan
+    Run-TestCase -TestId "PB9" -Step "pbar insert: exit 0, stdout EMPTY, bar to 1/1 100%" -Body {
+        $insertSrc = Write-SourceFile "pbar_insert_src" "$($script:InsertName) = 1;"
+        $cli = Invoke-Cli -Arguments @("--pbar", "insert", "function", $script:InsertName, $insertSrc)
+        Assert-NoPopup $cli
+        Assert-True ($cli.ExitCode -eq 0) "exit code: expected 0, got $($cli.ExitCode); stderr: $($cli.Stderr)"
+        # The key assertion: mutation success stdout ("SUCCESS: ...") is
+        # suppressed under --pbar - stdout must be EMPTY.
+        Assert-True ($cli.Stdout.Trim() -eq '') `
+            "stdout must be EMPTY (SUCCESS line suppressed under --pbar); got: $($cli.Stdout)"
+        Assert-BarBytes $cli "PB9"
+        Assert-True ($cli.Stderr.Contains("1/1")) "stderr bar must reach '1/1'; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains("100%")) "stderr bar must reach '100%'; got: $($cli.Stderr)"
+        Assert-True (-not $cli.Stderr.Contains("SUCCESS:")) `
+            "stderr must contain no 'SUCCESS:' text (the line is suppressed, not redirected); got: $($cli.Stderr)"
+    }
+
+    # =====================================================================
+    # PB10: --pbar batch-delete <manifest of 2, all existing> - a fully
+    # clean run: exit 0; stdout is EMPTY (no results array without --json);
+    # stderr is ONLY the pinned bar - '\r' frames ending at ] 2/2 100%,
+    # no " <U+2014> <n> failed" suffix, and no BATCH lines at all (no
+    # START/SUCCESS/FAILED/COMPLETE). A fully clean run ends with the
+    # committed bar frame as the last stderr line - BATCH COMPLETE prints
+    # only when the run was not clean.
+    #
+    # The two real manifest items are throwaway fixtures created inside
+    # this case via --json insert (validated success/prog_id, same as
+    # SETUP) and removed by the batch-delete under test; their names are
+    # tracked in $CreatedItems from SETUP so a partial insert cannot leak.
+    # =====================================================================
+    Write-Host "--- PB10: --pbar batch-delete all-success manifest ---" -ForegroundColor Cyan
+    Run-TestCase -TestId "PB10" -Step "pbar batch-delete clean: bar only, ends on committed frame" -Body {
+        $src1 = Write-SourceFile "pbar_clean_src1" "$($script:CleanDelName1) = 1;"
+        $src2 = Write-SourceFile "pbar_clean_src2" "$($script:CleanDelName2) = 1;"
+        foreach ($fx in @(@{ Name = $script:CleanDelName1; File = $src1 },
+                          @{ Name = $script:CleanDelName2; File = $src2 })) {
+            $ins = Invoke-Cli -Arguments @("--json", "insert", "function", $fx.Name, $fx.File)
+            Assert-NoPopup $ins
+            Assert-True ($ins.ExitCode -eq 0) `
+                "fixture insert $($fx.Name): expected exit 0, got $($ins.ExitCode); stderr: $($ins.Stderr)"
+            $jIns = $null
+            try { $jIns = $ins.Stdout | ConvertFrom-Json -ErrorAction Stop } catch {}
+            Assert-True ($null -ne $jIns) "fixture insert $($fx.Name) stdout must be JSON; got: $($ins.Stdout)"
+            Assert-True ($jIns.success -eq $true -and $jIns.prog_id -gt 0) `
+                "fixture insert $($fx.Name) must report success=true and prog_id>0; stdout: $($ins.Stdout)"
+        }
+        $cleanManifest = Write-ManifestFile "pbar_clean_manifest" @(
+            "function $($script:CleanDelName1)",
+            "function $($script:CleanDelName2)"
+        )
+
+        $cli = Invoke-Cli -Arguments @("--pbar", "batch-delete", $cleanManifest)
+        Assert-NoPopup $cli
+        Assert-True ($cli.ExitCode -eq 0) "exit code: expected 0 for a fully clean batch, got $($cli.ExitCode); stderr: $($cli.Stderr)"
+
+        # stdout: EMPTY without --json (the results array is emitted only
+        # with --json, and --pbar + --json is a usage error).
+        Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be EMPTY without --json; got: $($cli.Stdout)"
+
+        # stderr: ONLY the pinned bar - '\r'-redrawn frames ending at
+        # ] 2/2 100%, no failure suffix, no BATCH lines whatsoever.
+        Assert-BarBytes $cli "PB10"
+        Assert-True ($cli.Stderr.Contains("] 2/2")) "stderr bar frame must reach '] 2/2'; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains("100%")) "stderr bar frame must reach '100%'; got: $($cli.Stderr)"
+        Assert-True (-not ($cli.Stderr -match "$($script:EmDash) \d+ failed")) `
+            "stderr bar must carry no ' <U+2014> <n> failed' suffix on a clean run; got: $($cli.Stderr)"
+        $batchLines = @($cli.Stderr -split "`n" | Where-Object { $_ -match 'BATCH' })
+        Assert-True ($batchLines.Count -eq 0) `
+            "stderr must contain no BATCH lines at all (no START/SUCCESS/FAILED/COMPLETE) under --pbar; got: $($batchLines -join ' | ')"
+
+        # The last stderr line is the committed bar frame itself - no
+        # BATCH COMPLETE on a clean run. The final '\n' may pin a chunk
+        # that still holds earlier '\r'-redrawn frames, so the committed
+        # frame is the last '\r'-separated segment of that line.
+        $lines = @($cli.Stderr -split "`n" | Where-Object { $_.Trim() -ne '' })
+        $segments = @($lines[$lines.Count - 1] -split "`r" | Where-Object { $_.Trim() -ne '' })
+        $committed = $segments[$segments.Count - 1]
+        Assert-True (-not $committed.StartsWith("BATCH")) `
+            "last stderr line must be the committed bar frame, not BATCH COMPLETE; got: $committed"
+        Assert-True ($committed.StartsWith("delete")) `
+            "committed bar line must start with the 'delete' op label; got: $committed"
+        Assert-True ($committed.Contains("[") -and $committed.Contains("] 2/2")) `
+            "committed bar line must contain '[' + '] 2/2'; got: $committed"
+    }
+
+    }  # end: fixture-ready branch (PB1-PB10 run only against existing fixtures)
 }
 finally {
     # =====================================================================

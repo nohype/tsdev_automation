@@ -16,8 +16,10 @@
     ignored for delete). The directory batch reuses the same runBatch() /
     emitBatchOutput() machinery as the manifest batch ops.
 
-    Directory batch mode ALWAYS emits a JSON ARRAY on stdout (one element
-    per processed file, in enumeration order) and uses exit codes:
+    Directory batch mode emits a JSON ARRAY on stdout (one element per
+    processed file, in enumeration order) ONLY under --json; without it
+    stdout is empty and stderr carries the human per-item BATCH completion
+    lines (no BATCH START lines). Exit codes:
       0 = all items succeeded
       1 = usage error / empty dir (no matching files) / missing args /
           non-existent directory (batch did not run)
@@ -365,7 +367,7 @@ try {
     Write-DirFile -Directory $dirDb1 -FileName "$db1c.el" -Content $validSrc | Out-Null
 
     Run-TestCase -TestId "DB1-batch-insert-dir-el-files" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert-dir", "strategy", $dirDb1)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert-dir", "strategy", $dirDb1)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -382,7 +384,7 @@ try {
             Assert-True ($j.exists -eq $true) "exists ${nm}: expected true"
             Assert-True ($j.prog_id -gt 0) "exists ${nm} prog_id: expected >0, got $($j.prog_id)"
         }
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -410,7 +412,7 @@ try {
     Write-DirFile -Directory $dirDb2 -FileName "$db2b.el" -Content $modSrc | Out-Null
 
     Run-TestCase -TestId "DB2-batch-modify-dir-progid-preserved" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-modify-dir", "strategy", $dirDb2)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-modify-dir", "strategy", $dirDb2)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -429,7 +431,7 @@ try {
         $jAfterB = $exAfterB.Stdout | ConvertFrom-Json
         Assert-True ($jAfterB.exists -eq $true) "exists $db2b after modify: expected true"
         Assert-True ($jAfterB.prog_id -eq $progIdBeforeDb2b) "exists $db2b prog_id: expected $progIdBeforeDb2b (preserved), got $($jAfterB.prog_id)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -456,7 +458,7 @@ try {
     Write-DirFile -Directory $dirDb3 -FileName "$db3c.el" -Content "placeholder" | Out-Null
 
     Run-TestCase -TestId "DB3-batch-delete-dir" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-delete-dir", "strategy", $dirDb3)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-delete-dir", "strategy", $dirDb3)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -472,7 +474,7 @@ try {
             $j = $ex.Stdout | ConvertFrom-Json
             Assert-True ($j.exists -eq $false) "exists $nm after delete: expected false"
         }
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -494,7 +496,7 @@ try {
     Write-DirFile -Directory $dirDb4 -FileName "$db4ins.el" -Content $validSrc | Out-Null
 
     Run-TestCase -TestId "DB4-batch-upsert-dir-mixed" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-upsert-dir", "strategy", $dirDb4)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-upsert-dir", "strategy", $dirDb4)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -522,10 +524,11 @@ try {
         $jIns = $exIns.Stdout | ConvertFrom-Json
         Assert-True ($jIns.exists -eq $true) "exists ${db4ins}: expected true"
         Assert-True ($jIns.prog_id -eq $insEl.prog_id) "exists ${db4ins} prog_id: expected $($insEl.prog_id), got $($jIns.prog_id)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
 
-        # --json selects JSON progress rendering on stderr; stdout unchanged.
-        # Re-running upsert-dir exercises the modify-path for both files.
+        # --json selects the stdout results array plus NDJSON progress
+        # events on stderr. Re-running upsert-dir exercises the modify-path
+        # for both files.
         $cliJson = Invoke-CliRaw -Arguments @("--json", "batch-upsert-dir", "strategy", $dirDb4)
         Assert-True ($cliJson.ExitCode -eq 0) "json exit_code: expected 0, got $($cliJson.ExitCode)"
         $arrJson = [array]($cliJson.Stdout | ConvertFrom-Json)
@@ -548,7 +551,7 @@ try {
     Write-DirFile -Directory $dirDb5 -FileName "$db5txt.txt" -Content $validSrc | Out-Null
 
     Run-TestCase -TestId "DB5-batch-insert-dir-t-flag-override" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert-dir", "strategy", $dirDb5, "-t", "el", "-t", "abc")
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert-dir", "strategy", $dirDb5, "-t", "el", "-t", "abc")
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -567,7 +570,7 @@ try {
         $exTxt = Invoke-CliRaw -Arguments @("--json", "exists", "strategy", $db5txt)
         $jTxt = $exTxt.Stdout | ConvertFrom-Json
         Assert-True ($jTxt.exists -eq $false) "exists $db5txt (.txt excluded): expected false"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------

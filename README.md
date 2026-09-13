@@ -39,8 +39,8 @@ Positional arguments: `<type>`, `<name>`, `<source_file>`
 ### Flags
 
 - Global:
-  - `--json` - emit a single JSON result object on stdout. For batch subcommands stdout is always the same JSON array; `--json` instead selects the stderr progress rendering (one JSON event object per line instead of human-readable `BATCH` lines).
-  - `--pbar` - render an aesthetic visual progress bar on stderr. Position-free and idempotent; `--pbar=<value>` is accepted and the value ignored. The bar redraws in place on the last stderr line; stdout is completely unaffected. Usage error (exit 1) when combined with `--json` or used with `serve`.
+  - `--json` - emit a single JSON result object on stdout. For batch subcommands it emits the JSON results array on stdout (the only mode that produces one - without `--json` batch stdout is empty) and selects the stderr progress rendering: one JSON event object per line instead of human-readable `BATCH` lines.
+  - `--pbar` - render an aesthetic visual progress bar on stderr. Position-free and idempotent; `--pbar=<value>` is accepted and the value ignored. The bar redraws in place on the last stderr line and is quiet on success: successful items emit nothing else, and a successful single mutation op's `SUCCESS:` stdout line is suppressed (query ops still print their stdout answer); failures and library warnings scroll above the bar. Usage error (exit 1) when combined with `--json` or used with `serve`.
   - `--ts-path <dir>` - override TradeStation install directory.
   - `-v` / `--verbose` - raise the stderr log level. Position-free and repeatable; each occurrence raises the level one step: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals. Additional occurrences clamp at debug. Accepted forms: `-v`, `-vv`, `-vvv` (bundled), `--verbose`, `--verbose=<value>` (value ignored, counts as one occurrence). Log output goes to stderr only; stdout (results and JSON) is unaffected.
 - `exists`:
@@ -83,12 +83,12 @@ Directory batch subcommands operate on a directory of `.el`/`.txt` files:
 
 Use `-t <ext>` (repeatable) to filter extensions. File stem (without the last extension) = item name.
 
-Output is always a JSON array (one element per item). Exit codes:
+With `--json`, stdout is a JSON array (one element per item); without it stdout is empty. Exit codes:
 
 - `0` - all succeeded
 - `1` - usage error, manifest not found, or manifest empty (batch did not run)
-- `2` - batch ran, but one or more items failed (per-item details in the JSON)
-- `3` - batch cooperatively cancelled via `--batch-progress-control` (the array stays full length; unattempted items are exit-12 `cancelled` markers)
+- `2` - batch ran, but one or more items failed (per-item details in the JSON array under `--json`, else on stderr)
+- `3` - batch cooperatively cancelled via `--batch-progress-control` (under `--json` the array stays full length; unattempted items are exit-12 `cancelled` markers)
 
 ### Manifest format
 
@@ -109,15 +109,14 @@ function MyFuncB ./src/MyFuncB.el
 
 Every batch that runs emits progress on **stderr** (always on, independent of `-v`), one line per event:
 
-- `BATCH START [i/n] op=<op> type="<type>" name="<name>"` - before each attempted item, in input order (including items rejected at manifest parse/pre-validation and TsDevLib-init failures)
-- `BATCH SUCCESS [i/n] op=<op> type="<type>" name="<name>" exit_code=0` / `BATCH FAILED [i/n] op=<op> type="<type>" name="<name>" exit_code=<n> message="<msg>"` - after each item's result (`message=` is omitted only when the error message is empty; quoted values are JSON-escaped so one event is always one line)
-- `BATCH COMPLETE op=<op> completed=<n> total=<n> successes=<n> failures=<n> not_run=<n> cancelled=<bool> close_failed=<bool> exit_code=<n>` - once, after the end-of-batch warehouse close and any retroactive result rewrite
+- `BATCH SUCCESS [i/n] op=<op> type="<type>" name="<name>" exit_code=0` / `BATCH FAILED [i/n] op=<op> type="<type>" name="<name>" exit_code=<n> message="<msg>"` - after each attempted item's result, in input order (including items rejected at manifest parse/pre-validation and TsDevLib-init failures; `message=` is omitted only when the error message is empty; quoted values are JSON-escaped so one event is always one line). A `BATCH FAILED` line is followed by the item's full detail block - compiler errors etc., the same text a single-op failure prints.
+- `BATCH COMPLETE op=<op> completed=<n> total=<n> successes=<n> failures=<n> not_run=<n> cancelled=<bool> close_failed=<bool> exit_code=<n>` - once, always last, after the end-of-batch warehouse close and any retroactive result rewrite
 
-With `--json`, each stderr line is one compact JSON object instead: `batch_item_started`, `batch_item_completed` (carrying the exact per-item result object), `batch_completed`. `--json` selects the progress rendering only - stdout stays exactly one JSON array in both modes.
+With `--json`, each stderr line is one compact JSON object instead: `batch_item_started` before each attempted item, `batch_item_completed` (carrying the exact per-item result object), then `batch_completed`. Started events exist only in this NDJSON protocol and on tagged serve requests - human mode has no `BATCH START` lines. `--json` is also what produces the stdout JSON results array; without it batch stdout is empty.
 
-stderr gaining progress lines is an intentional compatibility change. The stdout array remains the authoritative result: a failed end-of-batch warehouse close rewrites still-successful items to failures, and `BATCH COMPLETE`/`batch_completed` is emitted after that rewrite (`close_failed=true`).
+Under `--json` the stdout array remains the authoritative result: a failed end-of-batch warehouse close rewrites still-successful items to failures, and `BATCH COMPLETE`/`batch_completed` is emitted after that rewrite (`close_failed=true`).
 
-`--pbar` pins a visual progress bar to the last stderr line - redrawn in place via `\r` (no ANSI escapes), `█`/`░` blocks on a real console, UTF-8 bytes when stderr is piped - while the per-item `BATCH` lines scroll above it. The bar fills 0→N as items complete and gains a `— <n> failed` suffix once items have failed; `BATCH COMPLETE` still prints last. For single-item subcommands the bar fills 0→1 when the operation completes (`— 1 failed` on failure). The exact rendering is a visual aid, not a contract; `--pbar` can coexist with `--batch-progress-control`.
+`--pbar` pins a visual progress bar to the last stderr line - redrawn in place via `\r` (no ANSI escapes), `█`/`░` blocks on a real console, UTF-8 bytes when stderr is piped. The bar fills 0→N as items complete and gains a `— <n> failed` suffix once items have failed; while items succeed the bar is the only output - a failed item's `BATCH FAILED` marker and full detail block scroll above it, as do library warnings/errors as event lines. `BATCH COMPLETE` prints only when the run was not fully clean (failures, not-run items, cancellation, or a close failure). For single-item mutation subcommands the bar fills 0→1 (`— 1 failed` on failure) and a success prints only the bar - the `SUCCESS: ... ProgId=N` stdout line is suppressed while failures still print their stderr detail. Query ops (`exists`/`get-source`/`dependents`) are unchanged: the stdout answer always prints. The exact rendering is a visual aid, not a contract; `--pbar` can coexist with `--batch-progress-control`.
 
 ### Cooperative batch control (`--batch-progress-control`)
 
@@ -126,7 +125,7 @@ stderr gaining progress lines is an intentional compatibility change. The stdout
 - `continue\n` - proceed to the next item
 - `cancel\n` - stop cooperatively: the batch closes the warehouse once, fills the remaining positions with not-run markers, and exits `3`
 
-Any other input — EOF before the line terminator, a read error, or a malformed token — emits a `batch_control_error` (JSON mode) / `BATCH CONTROL ERROR: <message>; cancelling before next item` (human mode) diagnostic on stderr, then cancels the same way. Cancelling keeps the stdout JSON array **full length**: every unattempted item is a marker result with `success=false`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`. The summary reports `completed` = attempted items, `not_run` = markers, `cancelled=true`, and exit `3` dominates even when items failed or the end-of-batch close failed.
+Any other input — EOF before the line terminator, a read error, or a malformed token — emits a `batch_control_error` (JSON mode) / `BATCH CONTROL ERROR: <message>; cancelling before next item` (human mode) diagnostic on stderr, then cancels the same way. Cancelling fills every unattempted position with a marker result (`success=false`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`), so under `--json` the stdout array stays **full length**. The summary reports `completed` = attempted items, `not_run` = markers, `cancelled=true`, and exit `3` dominates even when items failed or the end-of-batch close failed.
 
 Stdin layout depends on how the manifest is supplied:
 

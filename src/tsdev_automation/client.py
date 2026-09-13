@@ -4,7 +4,8 @@
 ``tsdev_cli.exe`` is a 32-bit C++ binary that loads ``orlib20.dll`` from the
 TradeStation 9.5 install.  It cannot be loaded in-process from 64-bit Python,
 so this wrapper drives it as a subprocess using the ``--json`` structured
-output flag (single-item) and the batch subcommands (JSON array output).
+output flag (single-item) and the batch subcommands (``--json`` emits the
+results array on stdout plus NDJSON progress on stderr).
 
 The wrapper is **stdlib-only** (subprocess, tempfile, json, pathlib, ...).
 
@@ -1005,9 +1006,9 @@ class TsDevClient:
         try:
             manifest = self._build_manifest_string(items, needs_source, cleanup)
             sub = _BATCH_SUBCMD[op]
-            # --json selects NDJSON progress on stderr (stdout stays the
-            # final JSON array either way), so captured stderr is
-            # machine-readable.
+            # --json selects NDJSON progress on stderr AND the stdout
+            # results array (batch stdout is empty without it), so
+            # captured stderr is machine-readable.
             if on_progress is None:
                 cmd = self._base_cmd() + ["--json", sub, "--batch-stdin"]
                 results = self._run_batch(cmd, input=manifest)

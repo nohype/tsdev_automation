@@ -14,8 +14,10 @@
     Each manifest line is `<type> <name> <source_file>` (upsert needs source,
     like insert/modify). Per-item `op` in JSON output is `"upsert"`.
 
-    Batch mode ALWAYS emits a JSON ARRAY on stdout (one element per manifest
-    item, in manifest order) and uses exit codes:
+    Batch mode emits a JSON ARRAY on stdout (one element per manifest item,
+    in manifest order) ONLY under --json; without it stdout is empty and
+    stderr carries the human per-item BATCH completion lines (no BATCH
+    START lines). Exit codes:
       0 = all items succeeded
       1 = usage error / manifest empty / missing args (batch did not run)
       2 = batch ran but one or more items failed
@@ -429,7 +431,7 @@ try {
     $manifestPathBu1 = Write-ManifestFile "bu1_manifest" $manifestBu1
 
     Run-TestCase -TestId "BU1-batch-upsert-file-mixed" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-upsert", $manifestPathBu1)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-upsert", $manifestPathBu1)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -454,7 +456,7 @@ try {
         $j1 = $exists1.Stdout | ConvertFrom-Json
         Assert-True ($j1.exists -eq $true) "exists item1: expected true"
         Assert-True ($j1.prog_id -eq $arr[1].prog_id) "exists item1 prog_id: expected $($arr[1].prog_id), got $($j1.prog_id)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -483,7 +485,7 @@ try {
     $manifestPathBu2 = Write-ManifestFile "bu2_manifest" $manifestBu2
 
     Run-TestCase -TestId "BU2-batch-upsert-stdin-mixed" -Body {
-        $cli = Invoke-CliStdin -ManifestFile $manifestPathBu2 -Arguments @("batch-upsert", "--batch-stdin")
+        $cli = Invoke-CliStdin -ManifestFile $manifestPathBu2 -Arguments @("--json", "batch-upsert", "--batch-stdin")
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -508,10 +510,11 @@ try {
         $j1 = $exists1.Stdout | ConvertFrom-Json
         Assert-True ($j1.exists -eq $true) "exists item1: expected true"
         Assert-True ($j1.prog_id -eq $arr[1].prog_id) "exists item1 prog_id: expected $($arr[1].prog_id), got $($j1.prog_id)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
 
-        # --json selects JSON progress rendering on stderr; stdout unchanged.
-        # Re-running the same manifest exercises the modify-path for both.
+        # --json selects the stdout results array plus NDJSON progress
+        # events on stderr. Re-running the same manifest exercises the
+        # modify-path for both.
         $cliJson = Invoke-CliStdin -ManifestFile $manifestPathBu2 -Arguments @("--json", "batch-upsert", "--batch-stdin")
         Assert-True ($cliJson.ExitCode -eq 0) "json exit_code: expected 0, got $($cliJson.ExitCode)"
         $arrJson = [array]($cliJson.Stdout | ConvertFrom-Json)
@@ -535,7 +538,7 @@ try {
     $manifestPathBu3 = Write-ManifestFile "bu3_manifest" $manifestBu3
 
     Run-TestCase -TestId "BU3-batch-upsert-compile-error" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-upsert", $manifestPathBu3)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-upsert", $manifestPathBu3)
         Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (mixed), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -545,7 +548,7 @@ try {
         Assert-True ($arr[1].success -eq $false) "item1 success: expected false"
         Assert-True ($null -ne $arr[1].error -and $null -ne $arr[1].error.code) "item1 error.code: expected non-null"
         Assert-True ($arr[1].error.code -eq 'compile_error') "item1 error.code: expected compile_error, got $($arr[1].error.code)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
     # -------------------------------------------------------------------

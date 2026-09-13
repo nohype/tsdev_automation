@@ -5,13 +5,22 @@ Do not restate what the code itself documents.
 
 ## Current state (not derivable from code)
 
-- **No active TVS.** `--pbar` shipped: global position-free boolean,
+- **Quiet-output TVS done (uncommitted — no commit requested).** New batch
+  console contract: human mode = per-item `BATCH SUCCESS/FAILED` completion
+  line only (no `BATCH START`; FAILED followed by the item's `humanStderr`
+  detail block) + `BATCH COMPLETE`; stdout JSON array ONLY under `--json`;
+  `--json` keeps full NDJSON incl. `batch_item_started` (client's
+  `_run_batch_controlled` requires the pairing). `--pbar`: bar-only while
+  items succeed, `BATCH COMPLETE` only when not clean, single mutation-op
+  `SUCCESS:` stdout suppressed (query ops keep answers), lib log lines
+  routed above the bar via new `tsdev_log_set_sink` hook. Elevated gate
+  36/37 green (1 fail = gate-script cleanup double-delete, items verified
+  gone). Adversarially reviewed (2 rounds: code + tests/docs).
+- **`--pbar` shipped earlier:** global position-free boolean,
   stderr-only in-place `\r` bar (WriteConsoleW on console / UTF-8 on pipe),
   0->N batch + 0->1 single ops, `— N failed` suffix, `--json`/`serve` =
-  usage error. All slices adversarially approved; E2E suite 16
-  (`tests/test_pbar.ps1`, `-SkipPbar`) wired into run_regression.ps1;
-  elevated production gate (insert/modify/delete + batch) green incl.
-  real-console ConPTY verification. Uncommitted — no commit requested.
+  usage error. E2E suite 16 (`tests/test_pbar.ps1`, `-SkipPbar`, now
+  PB1–PB10) wired into run_regression.ps1.
 - **Console-path verification recipe** (for future UI work): PowerShell
   `Add-Type` C# ConPTY harness — CreatePipe pair + CreatePseudoConsole +
   STARTUPINFOEX with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016`

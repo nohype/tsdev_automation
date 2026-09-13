@@ -73,6 +73,13 @@ TsDevLogLevel tsdev_log_get_level();
 // and JSON. Message text is passed through verbatim (no prefixes added).
 void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...);
 
+// Process-global log sink hook (set-once, like the level). When set, gated
+// messages are formatted and passed to the sink INSTEAD of stderr;
+// nullptr restores the default stderr write. The sink receives the complete
+// formatted message (which may contain embedded newlines).
+typedef void (*TsDevLogSink)(const char* formattedUtf8);
+void tsdev_log_set_sink(TsDevLogSink sink);
+
 // Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md §Mapping to
 // orlib20 warehouse types and §Encoding formula). The enum value is the
 // EXPANDED whType (= (subType << 8) | category). For types with sub-type 0

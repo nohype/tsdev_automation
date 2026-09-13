@@ -521,7 +521,7 @@ function Step-BatchInsert {
         }
         $manifest = Write-ManifestFile 'insert_v1.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-insert', '--batch-stdin')
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-insert', '--batch-stdin')
         Write-Log "  batch-insert exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 0) {
             throw "batch-insert exit code $($res.ExitCode); stderr: $($res.Stderr)"
@@ -541,7 +541,7 @@ function Step-BatchInsert {
             Assert-True ($arr[$i].prog_id -gt 0) "item $i ($($item.Type) $($item.Name)) prog_id expected >0"
             $script:ProgIds[$item.Name] = $arr[$i].prog_id
         }
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
         Write-Log '  All 3 batch-insert results: success=true' 'Green'
         Record-Step '2.batch-insert' 'PASS'
     } catch {
@@ -646,7 +646,7 @@ function Step-BatchModify {
         }
         $manifest = Write-ManifestFile 'modify_v2.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-modify', '--batch-stdin')
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-modify', '--batch-stdin')
         Write-Log "  batch-modify exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 0) {
             throw "batch-modify exit code $($res.ExitCode); stderr: $($res.Stderr)"
@@ -666,7 +666,7 @@ function Step-BatchModify {
             Assert-True ($arr[$i].prog_id -gt 0) "item $i ($($item.Type) $($item.Name)) prog_id expected >0"
             Assert-True ($arr[$i].prog_id -eq $script:ProgIds[$item.Name]) "item $i ($($item.Type) $($item.Name)) prog_id not preserved (expected $($script:ProgIds[$item.Name]), got $($arr[$i].prog_id))"
         }
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
         Write-Log '  All 3 batch-modify results: success=true, ProgIds preserved' 'Green'
         Record-Step '5.batch-modify' 'PASS'
     } catch {
@@ -685,7 +685,7 @@ function Step-BatchDelete {
         }
         $manifest = Write-ManifestFile 'delete.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-delete', '--batch-stdin')
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-delete', '--batch-stdin')
         Write-Log "  batch-delete exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 0) {
             throw "batch-delete exit code $($res.ExitCode); stderr: $($res.Stderr)"
@@ -703,7 +703,7 @@ function Step-BatchDelete {
             $item = $script:Items[$i]
             Assert-True ($arr[$i].success -eq $true) "item $i ($($item.Type) $($item.Name)) success expected true"
         }
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
         Write-Log '  All 3 batch-delete results: success=true' 'Green'
         Record-Step '8.batch-delete' 'PASS'
     } catch {
@@ -734,7 +734,7 @@ function Step-BatchUpsert {
         )
         $manifest = Write-ManifestFile 'upsert_v3.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-upsert', '--batch-stdin')
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-upsert', '--batch-stdin')
         Write-Log "  batch-upsert exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 0) {
             throw "batch-upsert exit code $($res.ExitCode); stderr: $($res.Stderr)"
@@ -810,10 +810,11 @@ function Step-BatchUpsert {
             Write-Log "  get-source (upsert): $($n.Type) '$($n.Name)' snippet: $snippet" 'Green'
         }
 
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
 
-        # --json selects JSON progress rendering on stderr; stdout unchanged.
-        # Re-running the same manifest exercises the modify-path for both.
+        # --json selects the stdout results array plus NDJSON progress
+        # events on stderr. Re-running the same manifest exercises the
+        # modify-path for both.
         $resJson = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-upsert', '--batch-stdin')
         Write-Log "  batch-upsert --json exit code: $($resJson.ExitCode)"
         if ($resJson.ExitCode -ne 0) {
@@ -845,7 +846,7 @@ function Step-BatchFile {
         $lines = @("$($item.Type) $($item.Name) $fileInd")
         $manifest = Write-ManifestFile 'insert_file_mode.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-insert') -UseFileMode
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-insert') -UseFileMode
         Write-Log "  batch-insert (file mode) exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 0) {
             throw "batch-insert (file mode) exit code $($res.ExitCode); stderr: $($res.Stderr)"
@@ -900,7 +901,7 @@ function Step-BatchFile {
         if ($snippet.Length -gt 80) { $snippet = $snippet.Substring(0, 80) + '...' }
         Write-Log "  get-source (file mode): $($item.Type) '$($item.Name)' snippet: $snippet" 'Green'
 
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 0
 
         Record-Step '12.batch-insert-file-mode' 'PASS'
     } catch {
@@ -967,7 +968,7 @@ function Step-MixedOutcome {
         )
         $manifest = Write-ManifestFile 'mixed_outcome.manifest' $lines
         Write-Log "  Manifest file: $manifest"
-        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('batch-insert', '--batch-stdin')
+        $res = Invoke-TsBatch -ManifestFile $manifest -Arguments @('--json', 'batch-insert', '--batch-stdin')
         Write-Log "  mixed batch-insert exit code: $($res.ExitCode)"
         if ($res.ExitCode -ne 2) {
             throw "expected mixed batch exit code 2, got $($res.ExitCode); stderr: $($res.Stderr)"
@@ -1045,7 +1046,7 @@ function Step-MixedOutcome {
         }
         Write-Log "  item B get-source contains expected marker '= 1'" 'Green'
 
-        Assert-BatchStderrProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $res.Stderr -Results $arr -ExpectedExitCode 2
 
         Record-Step '13.mixed-outcome' 'PASS'
     } catch {
@@ -1459,8 +1460,12 @@ function Step-TaggedServe {
 
 function Step-BatchControl {
     # TVS C: live --batch-progress-control coverage (steps 17-19).
-    #   17: manifest-path control, human stderr — continue then cancel ->
-    #       exit 3, full-length array with an exact exit-12 marker.
+    #   17: manifest-path control — continue then cancel -> exit 3.
+    #       A --json run produces the full-length stdout array with an
+    #       exact exit-12 marker plus NDJSON events; a second human run
+    #       (items now already present -> already_exists failures) pins
+    #       EMPTY stdout, BATCH FAILED markers + detail blocks, no BATCH
+    #       START lines, and the CANCELLED summary.
     #   18: framed-stdin control, --json — TSDEV_BATCH_CONTROL/1 frame +
     #       delete manifest + decisions on one stream -> exit 2 with a real
     #       not_found item failure (no marker, no control error).
@@ -1490,7 +1495,7 @@ function Step-BatchControl {
     $emptyStdin = Join-Path $script:SourceDir 'control_empty_stdin.txt'
     [System.IO.File]::WriteAllText($emptyStdin, '', [System.Text.Encoding]::ASCII)
 
-    Write-Log '--- Step 17: batch-control manifest path (human, cancel) ---' 'Cyan'
+    Write-Log '--- Step 17: batch-control manifest path (json + human, cancel) ---' 'Cyan'
     try {
         # Precheck: exact unique names must be absent (delete stale
         # leftovers, like Step-PreClean), with a dialog check per action.
@@ -1514,9 +1519,14 @@ function Step-BatchControl {
         # stdin carries exactly "continue\ncancel\n" (LF only); the manifest
         # still comes from its path argument.
         [System.IO.File]::WriteAllText($decisionsFile, "continue`ncancel`n", [System.Text.Encoding]::ASCII)
-        $res = Invoke-TsControlBatch -Arguments @('batch-insert', $manifest, '--batch-progress-control') -StdinFile $decisionsFile
+
+        # Run 1 (--json): the stdout results array is emitted ONLY under
+        # --json; the cancelled run still produces the full-length array
+        # with the exact exit-12 marker for the unattempted item. stderr
+        # carries the NDJSON started/completed events + batch_completed.
+        $res = Invoke-TsControlBatch -Arguments @('--json', 'batch-insert', $manifest, '--batch-progress-control') -StdinFile $decisionsFile
         if ($res.TimedOut) { throw 'controlled batch-insert timed out waiting for the child' }
-        Write-Log "  batch-insert --batch-progress-control exit code: $($res.ExitCode)"
+        Write-Log "  --json batch-insert --batch-progress-control exit code: $($res.ExitCode)"
         Assert-True ($res.ExitCode -eq 3) "expected exit 3 (cooperative cancel), got $($res.ExitCode); stderr: $($res.Stderr)"
         # PS5.1 ConvertFrom-Json emits a top-level JSON array as ONE
         # unenumerated Object[] — wrapping the pipeline in @() nests it
@@ -1532,17 +1542,51 @@ function Step-BatchControl {
                      $m.error.code -eq 'cancelled' -and
                      $m.error.message -eq 'Batch cancelled before this item was attempted') `
             "item3 must be the exact exit-12 cancelled marker, got: $($m | ConvertTo-Json -Compress)"
-        # stderr: exactly the started/completed pairs for items 1-2, then
-        # the CANCELLED summary — no item-3 events, no control error.
-        $lines = @($res.Stderr -split "`r?`n" | Where-Object { $_ -cmatch '^BATCH ' })
-        Assert-True ($lines.Count -eq 5) "expected 5 progress lines (2 pairs + COMPLETE), got $($lines.Count) [stderr: $($res.Stderr)]"
-        Assert-True ($lines[0] -ceq "BATCH START [1/3] op=insert type=`"function`" name=`"$bcA`"") "progress[0]: $($lines[0])"
-        Assert-True ($lines[1] -ceq "BATCH SUCCESS [1/3] op=insert type=`"function`" name=`"$bcA`" exit_code=0") "progress[1]: $($lines[1])"
-        Assert-True ($lines[2] -ceq "BATCH START [2/3] op=insert type=`"function`" name=`"$bcB`"") "progress[2]: $($lines[2])"
-        Assert-True ($lines[3] -ceq "BATCH SUCCESS [2/3] op=insert type=`"function`" name=`"$bcB`" exit_code=0") "progress[3]: $($lines[3])"
-        $expComplete = 'BATCH COMPLETE CANCELLED op=insert completed=2 total=3 successes=2 failures=0 not_run=1 cancelled=true close_failed=false exit_code=3'
-        Assert-True ($lines[4] -ceq $expComplete) "summary line: expected '$expComplete', got: $($lines[4])"
-        Assert-True ($res.Stderr -notmatch 'BATCH CONTROL ERROR') "no control-error diagnostic expected [stderr: $($res.Stderr)]"
+        # stderr: NDJSON started/completed events for items 1-2, then the
+        # cancelled batch_completed — no item-3 events, no control error.
+        Assert-True ($res.Stderr -cnotmatch '(?m)^BATCH ') "--json stderr must not contain human BATCH lines [stderr: $($res.Stderr)]"
+        $events = @()
+        foreach ($line in ($res.Stderr -split "`r?`n")) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $o = $null
+            try { $o = $line | ConvertFrom-Json } catch {}
+            if ($null -ne $o -and ($o.PSObject.Properties.Name -contains 'event')) { $events += $o }
+        }
+        Assert-True ($events.Count -eq 5) "expected 5 NDJSON progress events (2 pairs + batch_completed), got $($events.Count) [stderr: $($res.Stderr)]"
+        Assert-True ($events[0].event -eq 'batch_item_started' -and $events[0].index -eq 1 -and $events[0].name -eq $bcA) "event[0] must be started item1, got: $($events[0] | ConvertTo-Json -Compress)"
+        Assert-True ($events[1].event -eq 'batch_item_completed' -and $events[1].index -eq 1 -and $events[1].success -eq $true) "event[1] must be completed item1 success, got: $($events[1] | ConvertTo-Json -Compress)"
+        Assert-True ($events[2].event -eq 'batch_item_started' -and $events[2].index -eq 2 -and $events[2].name -eq $bcB) "event[2] must be started item2, got: $($events[2] | ConvertTo-Json -Compress)"
+        Assert-True ($events[3].event -eq 'batch_item_completed' -and $events[3].index -eq 2 -and $events[3].success -eq $true) "event[3] must be completed item2 success, got: $($events[3] | ConvertTo-Json -Compress)"
+        $bcEv = $events[4]
+        Assert-True ($bcEv.event -eq 'batch_completed' -and $bcEv.cancelled -eq $true -and
+                     $bcEv.completed -eq 2 -and $bcEv.total -eq 3 -and $bcEv.successes -eq 2 -and
+                     $bcEv.failures -eq 0 -and $bcEv.not_run -eq 1 -and $bcEv.exit_code -eq 3) `
+            "batch_completed must carry the cancelled run counters, got: $($bcEv | ConvertTo-Json -Compress)"
+        Assert-True (@($res.Stderr -split "`r?`n" | Where-Object { $_ -match 'batch_control_error' }).Count -eq 0) `
+            "no batch_control_error event expected [stderr: $($res.Stderr)]"
+
+        # Run 2 (human, no --json): items A/B now exist so both inserts fail
+        # already_exists; stdout is EMPTY (the results array is emitted only
+        # under --json) and stderr carries the new human contract — a BATCH
+        # FAILED marker plus the item's full detail block per attempted
+        # item, NO BATCH START lines, then the CANCELLED summary.
+        $res2 = Invoke-TsControlBatch -Arguments @('batch-insert', $manifest, '--batch-progress-control') -StdinFile $decisionsFile
+        if ($res2.TimedOut) { throw 'controlled human batch-insert timed out waiting for the child' }
+        Write-Log "  human batch-insert --batch-progress-control exit code: $($res2.ExitCode)"
+        Assert-True ($res2.ExitCode -eq 3) "expected exit 3 (cooperative cancel), got $($res2.ExitCode); stderr: $($res2.Stderr)"
+        Assert-True ([string]::IsNullOrWhiteSpace($res2.Stdout)) "human batch stdout must be EMPTY without --json, got: $($res2.Stdout)"
+        $lines = @($res2.Stderr -split "`r?`n" | Where-Object { $_ -cmatch '^BATCH ' })
+        Assert-True ($lines.Count -eq 3) "expected 3 progress lines (2 FAILED + COMPLETE; no START lines), got $($lines.Count) [stderr: $($res2.Stderr)]"
+        Assert-True ($lines[0].StartsWith("BATCH FAILED [1/3] op=insert type=`"function`" name=`"$bcA`" exit_code=5 message=`"")) "progress[0]: $($lines[0])"
+        Assert-True ($lines[1].StartsWith("BATCH FAILED [2/3] op=insert type=`"function`" name=`"$bcB`" exit_code=5 message=`"")) "progress[1]: $($lines[1])"
+        $expComplete = 'BATCH COMPLETE CANCELLED op=insert completed=2 total=3 successes=0 failures=2 not_run=1 cancelled=true close_failed=false exit_code=3'
+        Assert-True ($lines[2] -ceq $expComplete) "summary line: expected '$expComplete', got: $($lines[2])"
+        # Each failed item also printed its full human detail block
+        # ("tsdev_cli: ERROR — function \"X\" already exists ...").
+        Assert-True ($res2.Stderr.Contains('tsdev_cli: ERROR')) "stderr must contain the failed items' detail blocks [stderr: $($res2.Stderr)]"
+        Assert-True ($res2.Stderr.Contains('already exists')) "detail blocks must report already_exists [stderr: $($res2.Stderr)]"
+        Assert-True ($res2.Stderr -cnotmatch 'BATCH START') "human stderr must contain no BATCH START lines [stderr: $($res2.Stderr)]"
+        Assert-True ($res2.Stderr -notmatch 'BATCH CONTROL ERROR') "no control-error diagnostic expected [stderr: $($res2.Stderr)]"
         if (Check-TsDialogs 'after batch-control human insert') { throw 'TS dialog/crash during controlled batch-insert' }
         Record-Step '17.batch-control-human' 'PASS'
     } catch {

@@ -5,8 +5,10 @@
 
 .DESCRIPTION
     Validates the batch-insert / batch-modify / batch-delete subcommands of
-    tsdev_cli.exe. Batch mode ALWAYS emits a JSON ARRAY on stdout (one
-    element per manifest item, in manifest order) and uses exit codes:
+    tsdev_cli.exe. Batch mode emits a JSON ARRAY on stdout (one element per
+    manifest item, in manifest order) ONLY under --json; without it stdout
+    is empty and stderr carries the human per-item BATCH completion lines
+    (no BATCH START lines). Exit codes:
       0 = all items succeeded
       1 = usage error / manifest not found / manifest empty
       2 = batch ran but one or more items failed
@@ -318,7 +320,7 @@ try {
     $manifestPath1 = Write-ManifestFile "insert1" $manifest1
 
     Run-TestCase -TestId "B1-batch-insert-mixed" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath1)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath1)
         Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (mixed), got $($cli.ExitCode)"
         # stdout must be a valid JSON array.
         $arr = $cli.Stdout | ConvertFrom-Json
@@ -343,7 +345,7 @@ try {
         Assert-True ($arr[3].success -eq $false) "item3 success: expected false"
         Assert-True ($arr[3].exit_code -eq 3) "item3 exit_code: expected 3, got $($arr[3].exit_code)"
         Assert-True ($arr[3].error.code -eq 'source_file_error') "item3 error.code: expected source_file_error, got $($arr[3].error.code)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
     # -------------------------------------------------------------------
@@ -358,7 +360,7 @@ try {
     $manifestPath2 = Write-ManifestFile "delete1" $manifest2
 
     Run-TestCase -TestId "B2-batch-delete-mixed" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-delete", $manifestPath2)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-delete", $manifestPath2)
         Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (mixed), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -370,7 +372,7 @@ try {
         Assert-True ($arr[1].success -eq $false) "item1 success: expected false"
         Assert-True ($arr[1].exit_code -eq 5) "item1 exit_code: expected 5, got $($arr[1].exit_code)"
         Assert-True ($arr[1].error.code -eq 'not_found') "item1 error.code: expected not_found, got $($arr[1].error.code)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
     # -------------------------------------------------------------------
@@ -393,7 +395,7 @@ try {
     $manifestPath3 = Write-ManifestFile "modify1" $manifest3
 
     Run-TestCase -TestId "B3-batch-modify-mixed" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-modify", $manifestPath3)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-modify", $manifestPath3)
         Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (mixed), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -408,7 +410,7 @@ try {
         Assert-True ($arr[1].success -eq $false) "item1 success: expected false"
         Assert-True ($arr[1].exit_code -eq 5) "item1 exit_code: expected 5, got $($arr[1].exit_code)"
         Assert-True ($arr[1].error.code -eq 'not_found') "item1 error.code: expected not_found, got $($arr[1].error.code)"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
     # -------------------------------------------------------------------
@@ -429,7 +431,7 @@ try {
     $manifestPath4 = Write-ManifestFile "comments" $manifest4
 
     Run-TestCase -TestId "B4-comments-blanks-skipped" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath4)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath4)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -438,7 +440,7 @@ try {
         Assert-True ($arr[1].name -eq $n4b) "item1 name: expected $n4b, got $($arr[1].name)"
         Assert-True ($arr[0].success -eq $true) "item0 success: expected true"
         Assert-True ($arr[1].success -eq $true) "item1 success: expected true"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -454,14 +456,18 @@ try {
     $manifestPath5Json = Write-ManifestFile "allok_json" @("strategy $n5j $f5j")
 
     Run-TestCase -TestId "B5a-all-success-exit0" -Body {
+        # Human mode (no --json): stdout is EMPTY (the results array is
+        # emitted only under --json) and stderr carries the human per-item
+        # completion lines — the hand-built expected result object stands
+        # in for the absent stdout array.
         $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath5)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
-        $arr = $cli.Stdout | ConvertFrom-Json
-        Assert-True ($arr.Count -eq 1) "array length: expected 1, got $($arr.Count)"
-        Assert-True ($arr[0].success -eq $true) "item0 success: expected true"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be EMPTY without --json; got: $($cli.Stdout)"
+        $expected = @([pscustomobject]@{ op='insert'; type='strategy'; name=$n5; success=$true; exit_code=0; error=$null })
+        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $expected -ExpectedExitCode 0
 
-        # --json selects JSON progress rendering on stderr; stdout unchanged.
+        # --json selects the JSON results array on stdout plus the NDJSON
+        # progress events on stderr.
         $cliJson = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath5Json)
         Assert-True ($cliJson.ExitCode -eq 0) "json exit_code: expected 0, got $($cliJson.ExitCode)"
         $arrJson = [array]($cliJson.Stdout | ConvertFrom-Json)
@@ -498,7 +504,7 @@ try {
 
     Run-TestCase -TestId "B6-large-batch-20" -Body {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath6)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath6)
         $sw.Stop()
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all 20 success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
@@ -511,7 +517,7 @@ try {
         $totalSec = $sw.Elapsed.TotalSeconds
         Write-Host "  20-item batch took $("{0:0.00}" -f $totalSec)s" -ForegroundColor DarkGray
         Assert-True ($totalSec -lt 120) "20-item batch should complete in < 120s, took $totalSec s"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -542,7 +548,7 @@ try {
     $manifestPath7 = Write-ManifestFile "mixedtypes" $manifest7
 
     Run-TestCase -TestId "B7-batch-insert-mixed-types" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath7)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath7)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
         Assert-True ($arr -is [array]) "stdout must be a JSON array"
@@ -559,7 +565,7 @@ try {
         Assert-True ($arr[2].type -eq 'indicator') "item2 type: expected indicator, got $($arr[2].type)"
         Assert-True ($arr[2].success -eq $true) "item2 success: expected true"
         Assert-True ($arr[2].prog_id -gt 0) "item2 prog_id: expected >0"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 0
     }
 
     # -------------------------------------------------------------------
@@ -608,7 +614,7 @@ try {
     $manifestPath9 = Write-ManifestFile "alreadyexists" $manifest9
 
     Run-TestCase -TestId "B9-batch-insert-already-exists" -Body {
-        $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath9)
+        $cli = Invoke-CliRaw -Arguments @("--json", "batch-insert", $manifestPath9)
         # Mixed: one failure (already_exists) + one success -> exit 2.
         Assert-True ($cli.ExitCode -eq 2) "exit_code: expected 2 (mixed), got $($cli.ExitCode)"
         $arr = $cli.Stdout | ConvertFrom-Json
@@ -624,7 +630,7 @@ try {
         # Item 1: the new component -> success (batch continued).
         Assert-True ($arr[1].success -eq $true) "item1 success: expected true (batch continued)"
         Assert-True ($arr[1].prog_id -gt 0) "item1 prog_id: expected >0"
-        Assert-BatchStderrProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
+        Assert-BatchJsonProgress -Stderr $cli.Stderr -Results $arr -ExpectedExitCode 2
     }
 
 }

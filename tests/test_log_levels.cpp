@@ -16,6 +16,10 @@
 //     suppressed at the default (Warning) level and present after
 //     tsdev_log_set_level(Debug); an Info-level message is suppressed at
 //     Warning and shown at Info; an Error-level message is always shown.
+//   - tsdev_log_set_sink(TsDevLogSink) (exported by src/tsdev_lib.h,
+//     implemented in src/tsdev_lib.cpp): an installed sink receives the
+//     fully formatted message INSTEAD of stderr (gated-out messages stay
+//     suppressed); tsdev_log_set_sink(nullptr) restores stderr output.
 //
 // It runs on a worker thread with a 64 MB stack only to match the project's
 // test harness convention (all tests run on a large-stack worker thread); the
@@ -51,6 +55,10 @@
 //   5. Runtime gating at Debug: all three levels present (captured stderr is
 //      exactly Error + Info + Debug markers).
 //   6. Level restored to Warning afterwards (getter check).
+//   7. tsdev_log_set_sink(): with a sink installed, a Warning-level marker
+//      reaches ONLY the sink (captured stderr is empty) and a gated-out
+//      Debug marker is not delivered at all; after
+//      tsdev_log_set_sink(nullptr) the marker reaches stderr again.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -74,6 +82,17 @@ namespace {
 const char kErrMarker[]  = "TSLL-ERR-MARKER\n";
 const char kInfoMarker[] = "TSLL-INFO-MARKER\n";
 const char kDbgMarker[]  = "TSLL-DBG-MARKER\n";
+const char kWarnMarker[] = "TSLL-WARN-MARKER\n";
+
+// Capture state for the tsdev_log_set_sink() check (check 7): TsDevLogSink
+// is a plain function pointer (no userdata), so the captured text lives in
+// these globals.
+std::string g_sinkCapture;
+int         g_sinkCalls = 0;
+void testLogSink(const char* formattedUtf8) {
+    ++g_sinkCalls;
+    if (formattedUtf8) g_sinkCapture += formattedUtf8;
+}
 
 int fail(const char* msg, int code) {
     std::fprintf(stderr, "\n[FAIL] %s (code=%d)\n", msg, code);
@@ -318,6 +337,65 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         std::fprintf(stdout, "    PASS: level setter/getter round-trip\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 7: tsdev_log_set_sink() routes a gated message to the sink
+    //   INSTEAD of stderr; tsdev_log_set_sink(nullptr) restores stderr.
+    //   The level is Warning (restored in check 6): a Warning-level marker
+    //   passes the gate and must reach ONLY the sink while installed; a
+    //   Debug-level marker is gated out and must not reach the sink.
+    // ------------------------------------------------------------------
+    {
+        g_sinkCapture.clear();
+        g_sinkCalls = 0;
+        tsdev_log_set_sink(&testLogSink);
+        std::string captured;
+        if (!captureStderr([](void*) {
+                tsdev_log_message(TsDevLogLevel::Warning, kWarnMarker);
+                tsdev_log_message(TsDevLogLevel::Debug, kDbgMarker);
+            }, nullptr, captured)) {
+            tsdev_log_set_sink(nullptr);
+            ec = fail("check7: stderr capture setup failed", 70);
+            return 0;
+        }
+        if (g_sinkCalls != 1 ||
+            g_sinkCapture != std::string(kWarnMarker)) {
+            tsdev_log_set_sink(nullptr);
+            ec = fail("check7: sink did not receive exactly the formatted "
+                      "Warning message (Debug must stay gated out)", 71);
+            return 0;
+        }
+        if (!captured.empty()) {
+            tsdev_log_set_sink(nullptr);
+            ec = fail("check7: message reached stderr while a sink was "
+                      "installed", 72);
+            return 0;
+        }
+        // nullptr restores the default stderr routing.
+        tsdev_log_set_sink(nullptr);
+        g_sinkCapture.clear();
+        g_sinkCalls = 0;
+        if (!captureStderr([](void*) {
+                tsdev_log_message(TsDevLogLevel::Warning, kWarnMarker);
+            }, nullptr, captured)) {
+            ec = fail("check7: stderr capture setup failed after sink "
+                      "reset", 73);
+            return 0;
+        }
+        if (captured != std::string(kWarnMarker)) {
+            ec = fail("check7: message did not reach stderr after sink "
+                      "reset to nullptr", 74);
+            return 0;
+        }
+        if (g_sinkCalls != 0) {
+            ec = fail("check7: sink still invoked after reset to nullptr",
+                      75);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: log sink replaces stderr; nullptr "
+                     "restores it\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

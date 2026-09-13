@@ -60,6 +60,7 @@ namespace tsdev {
 // plain global is sufficient (set-once at startup, not per-request).
 namespace {
 TsDevLogLevel g_logLevel = TsDevLogLevel::Warning;
+TsDevLogSink  g_logSink  = nullptr;  // when set, gated messages go here
 } // namespace
 
 void tsdev_log_set_level(TsDevLogLevel level) {
@@ -70,12 +71,35 @@ TsDevLogLevel tsdev_log_get_level() {
     return g_logLevel;
 }
 
+void tsdev_log_set_sink(TsDevLogSink sink) {
+    g_logSink = sink;
+}
+
 void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...) {
     if (static_cast<int>(level) > static_cast<int>(g_logLevel)) {
         return;  // gated: message is more verbose than the current level
     }
     va_list args;
     va_start(args, fmt);
+    if (g_logSink) {
+        // Sink installed: format into a std::string and hand the complete
+        // message to the sink INSTEAD of stderr. Two-pass — probe the
+        // required size on a va_copy (the original va_list is consumed by
+        // the render below), then vsnprintf into an exactly sized buffer.
+        va_list probe;
+        va_copy(probe, args);
+        const int needed = std::vsnprintf(nullptr, 0, fmt, probe);
+        va_end(probe);
+        std::string buf;
+        if (needed > 0) {
+            buf.resize(static_cast<size_t>(needed) + 1);
+            std::vsnprintf(&buf[0], buf.size(), fmt, args);
+            buf.resize(static_cast<size_t>(needed));
+        }
+        va_end(args);
+        g_logSink(buf.c_str());
+        return;
+    }
     std::vfprintf(stderr, fmt, args);
     va_end(args);
     std::fflush(stderr);
