@@ -5,7 +5,7 @@ Do not restate what the code itself documents.
 
 ## Current state (not derivable from code)
 
-- **Quiet-output TVS done (uncommitted — no commit requested).** New batch
+- **Quiet-output TVS done — committed + released as v0.1.3.** New batch
   console contract: human mode = per-item `BATCH SUCCESS/FAILED` completion
   line only (no `BATCH START`; FAILED followed by the item's `humanStderr`
   detail block) + `BATCH COMPLETE`; stdout JSON array ONLY under `--json`;
