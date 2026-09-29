@@ -52,6 +52,68 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
 - Destructive/long experiments must be polled to completion and reported;
   continuous watcher (`tmp\exp\watcher.ps1` pattern) for TS-touching work.
 
+## Active investigation: user-machine crashes (dist_logs/)
+
+- Analyzing `dist_logs/` — 21 `tsdev_cli_diag` logs + one 1.4 GB MDMP
+  minidump harvested from the user's machine (exe runs from
+  `C:\Users\user\protege_strategy_dev\tsdev_automation_dist_diag\`).
+  All runs = batch ops on strategies (`batch-delete-dir` /
+  `batch-upsert-dir` / `batch-insert-dir`).
+- Prior RCA: `reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md`
+  — PROVEN structural cause: INFINITE waits on orlib20 dispatch →
+  WHServer.exe COM; stall=silent hang, server death=worker exception
+  (0xE06D7363) + TSCrashReport. Diag build (TSDEV_DIAG) shipped per §7.1.
+- Recon so far: run 39964 (upsert, 09-24 08:04) watchdog-fired ~82s,
+  `watchdog.warehouse` cmd(+0x04)=53 in flight, evDone not-signaled,
+  minidump written, exit 13. Run 5528 (upsert, 09-24 10:08) truncated
+  inside `dispatch.Linker.enter cat=4 progId=518 when=reverse-enum`
+  (37.86s, no .leave); whserver.sample present=1 pid=10436 windowless
+  until log ends 55.5s. Run 3104 (delete, 10:08) finished batch.end
+  exit=2 in 2.5s (8/9 items absent).
+- cdb.exe available (`Windows Kits\10\Debuggers\x86\cdb.exe`) for dump.
+- USER CONFIRMED: crash symptom = TSCrashReport dialog for TSDev and/or
+  TS Desktop; TSDev/desktop is USUALLY OPEN during batch runs; some
+  dead runs died on their own, some were user-killed (unknown which).
+- CENSUS (subagent): 13 clean batch runs, 3 real failures ALL on
+  09-24, all inside post-verify reverse-enum/link traversal:
+  45356 @08:00 hung in `phase.link.enter pre-verify` (modify,
+  progId=11798); 39964 @08:04 hung in `dispatch.LoadMasterRecsEX
+  cat=4 when=reverse-enum` during traverse of NEW progId=11882;
+  5528 @10:08 hung in `dispatch.Linker cat=4 progId=518
+  when=reverse-enum` during traverse of NEW progId=11883. WHServer
+  pids: 9012 (09-03..05), 27636 (09-11), 9928 (09-18..19), 19532
+  (09-20..24 08:00 incl. clean 728MB run), 48560 (08:04 run),
+  10436 (10:08 run) — server restarted between the failed runs;
+  39964 hung in 22s on a FRESH WHServer (rules out
+  leftover-wedged-server as sole cause).
+- DUMP (subagent, full chain proven): batch worker 43460 →
+  WFSO(evDone,∞) at orlib20+0x1CF5EC ← submit wrapper +0x1C5B8A
+  (arg0=0x35=cmd 53) ← +0x1C3C81; orlib20 WORKER thread 47936 in
+  combase!CCliModalLoop::BlockFn → ObjectStublessClient(method 9) →
+  NdrClientCall2 — infinite STA wait for WHServer pid 48560 COM reply
+  that never came. wh+0x76 workerTid field = SUBMITTER tid (43460),
+  not the worker. orlib20 = 9.50.1.3344 confirmed on user machine.
+  No AV/EDR DLLs in-proc. WHServer-side state invisible in this dump
+  → next diag step: dump WHServer.exe itself on watchdog fire.
+- User-visible crash = TS-side: WHServer stall/death shared by our
+  proc + open desktop → RPC exception → TSCrashReport on both.
+- cmd 0x35 = internal worker cmd (IProgram vtbl+0x24 record fetch)
+  behind `_LoadMasterRecsEX` — not dispatched by our code directly.
+- `batch.end` is the designed last record (nothing logged in teardown);
+  VEH crash path writes NO diag record → truncation can't distinguish
+  external kill vs silent fatal exception.
+- whserver.sample: presence-only (WHServer always windowless in field),
+  does NOT feed watchdog; pid changes only inferable from pids= field.
+- CONCLUSION: all 3 failures = proven stall flavor; WHServer-side
+  wedge reason still OPEN — needs WHServer dump at hang time.
+  Full report: `reports/2026-09-29_dist_logs_crash_analysis.md`
+  (adversarially reviewed → APPROVED after KB-§9 correction).
+- LEADING FIX CANDIDATES (in report §5): extend diag to dump
+  WHServer/TSDev/orchart on watchdog fire; collect user .tsc crash
+  artifacts; replace brute-force reverse-enum with cmd 0x3B Callers;
+  coalesce per-item 0x0D/0x40A notifications; production bounded-wait
+  loud-abort; dev repro = TSDev.exe open + big batch.
+
 ## Current state (not derivable from code)
 
 - **Quiet-output TVS done — committed + released as v0.1.3.** New batch
