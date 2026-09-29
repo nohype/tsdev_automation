@@ -41,8 +41,9 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
   mid-write termination is untested [OPEN]; next teams must run the §7.3
   forced-crash-during-save experiments and implement pre-flight integrity
   checks + partial-batch reporting.
-- No code was changed (user constraint); all experiments under `tmp\exp\`
-  (reports, frida stacks, dumps, crash artifacts, watcher log).
+- Investigation-phase experiments ran under `tmp\exp\` (reports, frida
+  stacks, dumps, crash artifacts, watcher log); the §7.1 diagnostic build
+  itself is committed (see above).
 
 ## Process lessons (standing)
 
@@ -93,10 +94,9 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
   directly, 2026-09-02).
 - Probe items from the hang investigation were all deleted (45/45 verified
   absent 2026-09-02); no TS processes left behind.
-- **Current shell IS elevated** — verified this session via
-  `net session`; direct `tsdev_cli` runs work without
-  `Start-Process -Verb RunAs`. From a non-elevated shell each elevated
-  launch still costs ONE interactive UAC prompt
+- **Current shell is NOT elevated** (verified 2026-09-29 via `net
+  session`); direct `tsdev_cli` runs from it need `Start-Process -Verb
+  RunAs`, and each elevated launch costs ONE interactive UAC prompt
   (ConsentPromptBehaviorAdmin=5); batch elevated steps into one launcher
   script.
 - PS 5.1 gotchas hit live: `native.exe 1>file` writes UTF-16LE (BOM FF FE)
