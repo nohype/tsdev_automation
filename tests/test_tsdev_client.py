@@ -37,6 +37,7 @@ from tsdev_automation import (
     TsDevCrashError,
     TsDevError,
     TsDevResult,
+    TsDevWatchdogAbortError,
 )
 from tsdev_automation import exceptions as exc
 from tsdev_automation import _pipe
@@ -1371,6 +1372,38 @@ class TestVerboseForwarding:
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
 
+    def test_build_serve_parameters_dispatch_timeout_env_forwarding(self, monkeypatch) -> None:
+        """TSDEV_DISPATCH_TIMEOUT_SECS is forwarded to the broker as
+        --dispatch-timeout-secs (ShellExecuteExW runas does not inherit
+        the caller's environment block)."""
+        monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
+        # Unset -> byte-identical default command line.
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        # Valid values forward verbatim, including "0" (disable).
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "120")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--dispatch-timeout-secs", "120"]
+        )
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "0")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--dispatch-timeout-secs", "0"]
+        )
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "86400")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--dispatch-timeout-secs", "86400"]
+        )
+        # Garbage/out-of-range values are dropped (env semantics: keep default).
+        for bad in ("bogus", "86401", "-5", "12.5", "", "²"):
+            monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", bad)
+            assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+                ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+            ), f"value {bad!r} should not be forwarded"
+
     def test_build_serve_parameters_traverse_strategy_env_forwarding(self, monkeypatch) -> None:
         """TSDEV_TRAVERSE_STRATEGY_DEPENDENTS is forwarded to the broker as
         --traverse-strategy-dependents (ShellExecuteExW runas does not
@@ -1898,6 +1931,7 @@ class TestExceptionHierarchy:
             "EllMissingError",
             "ThreadFailure",
             "TsDevCrashError",
+            "TsDevWatchdogAbortError",
             "ElevationRequiredError",
         ]:
             cls = getattr(exc, name)
@@ -2376,6 +2410,68 @@ class TestServeBrokerTermination:
         assert broker._pipe_handle is None
         assert broker._process_handle == 222
         assert broker._started is False
+
+
+class TestServeBrokerWatchdogAbort:
+    """A broker killed by the dispatch watchdog (exit 15) must NOT be
+    reconnected/retried — a fresh elevated broker would retry the same
+    request into the same wedged WHServer."""
+
+    def test_exit_15_raises_watchdog_abort_without_reconnect(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+
+        def fail_send(handle, obj):
+            raise _pipe.PipeError("broker died mid-call")
+
+        monkeypatch.setattr(_pipe, "send_request", fail_send)
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        # The broker process object exited 15 (watchdog abort), not a crash.
+        monkeypatch.setattr(broker, "_get_exit_code", lambda: 15)
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", lambda *a, **kw: True
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda h: True
+        )
+        # Any reconnect attempt would go through start() — record it.
+        start_calls: list = []
+        monkeypatch.setattr(broker, "start", lambda: start_calls.append(1))
+
+        with pytest.raises(TsDevWatchdogAbortError, match="exit 15"):
+            broker.call({"op": "exists", "type": "strategy", "name": "X"})
+
+        assert start_calls == [], "watchdog abort must not reconnect/retry"
+        assert broker._started is False
+        assert broker._process_handle is None  # dead broker reaped
+
+    def test_exit_15_is_not_a_crash_exit(self) -> None:
+        """``_is_crash_exit`` must not classify the watchdog abort code."""
+        is_crash, crash_type = _is_crash_exit(15)
+        assert is_crash is False
+        assert crash_type is None
+
+    def test_watchdog_abort_error_maps_from_error_code(self) -> None:
+        """``exception_for`` maps ``whserver_dispatch_watchdog_abort``."""
+        r = TsDevResult.from_json(
+            {
+                "op": "insert",
+                "type": "strategy",
+                "name": "X",
+                "success": False,
+                "exit_code": 15,
+                "error": {
+                    "code": "whserver_dispatch_watchdog_abort",
+                    "message": "w",
+                },
+            }
+        )
+        e = exc.exception_for(r)
+        assert isinstance(e, TsDevWatchdogAbortError)
 
 
 class TestServeRouting:

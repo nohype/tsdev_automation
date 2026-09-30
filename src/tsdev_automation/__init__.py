@@ -42,6 +42,7 @@ from .exceptions import (
     ThreadFailure,
     TsDevCrashError,
     TsDevError,
+    TsDevWatchdogAbortError,
     UnknownTypeError,
     UsageError,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "EllMissingError",
     "ThreadFailure",
     "TsDevCrashError",
+    "TsDevWatchdogAbortError",
     "main",
 ]
 

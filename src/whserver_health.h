@@ -18,8 +18,9 @@
 // _wcsicmp pid-discovery loop instead of calling findWhServerPids():
 // that path must log `process-snapshot-failed err=…` on snapshot failure,
 // which findWhServerPids() cannot distinguish from "no WHServer running".
-// findWhServerPids() is used by the unit test today and is reserved for the
-// upcoming production guard TVS.
+// findWhServerPids()' production consumers are the VAS-headroom guard
+// (tsdev_cli.cpp) and the dispatch watchdog (dispatch_watchdog.cpp); it is
+// also used by the unit test.
 
 #ifndef TSDEV_WHSERVER_HEALTH_H
 #define TSDEV_WHSERVER_HEALTH_H

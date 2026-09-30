@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import _pipe
-from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, exception_for
+from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, TsDevWatchdogAbortError, exception_for
 from .results import BatchProgress, BatchProgressCallback, TsDevErrorInfo, TsDevResult
 
 # The component types confirmed in tsdev_cli.cpp (parseType).
@@ -54,6 +54,13 @@ _NT_CRASH_CODES: dict[int, str] = {
     0xC0000409: "STACK_BUFFER_OVERRUN",
     0xC0000374: "HEAP_CORRUPTION",
 }
+
+# Exit code 15: the CLI's dispatch watchdog fired TerminateProcess(15) after
+# a warehouse dispatch exceeded its bound or WHServer.exe crashed/vanished
+# mid-flight (src/dispatch_watchdog.cpp).  This is NOT a crash —
+# _is_crash_exit deliberately does not cover it — and the request must never
+# be retried into the same wedged WHServer.
+_WATCHDOG_ABORT_EXIT_CODE = 15
 
 
 def _is_crash_exit(returncode: int) -> tuple[bool, str | None]:
@@ -359,6 +366,14 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     # Any value other than "0" disables the guard (C++ env semantics).
     if os.environ.get("TSDEV_NO_WHSERVER_VAS_GUARD") not in (None, "", "0"):
         args.append("--no-whserver-vas-guard")
+    # Same env->flag forwarding for the dispatch-watchdog bound:
+    # TSDEV_DISPATCH_TIMEOUT_SECS does not reach the elevated broker either.
+    # Valid range mirrors the C++ parseDispatchTimeoutSecs rule: strict
+    # decimal "0".."86400" (0 disables); anything else is dropped
+    # client-side so the broker keeps its default bound.
+    v = os.environ.get("TSDEV_DISPATCH_TIMEOUT_SECS")
+    if v and v.isascii() and v.isdigit() and int(v) <= 86400:
+        args.extend(("--dispatch-timeout-secs", v))
     # Same forwarding for the strategy-root traversal switch: any value
     # other than "0" restores the legacy traversal in the broker.
     if os.environ.get("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS") not in (None, "", "0"):
@@ -524,7 +539,10 @@ class _ServeBroker:
         If the pipe handle breaks mid-session (broker restarted), the broker
         is re-started and the request retried once — unless the broker has
         crashed (detected via its NT-status exit code), in which case a
-        :class:`TsDevCrashError` is raised immediately.
+        :class:`TsDevCrashError` is raised immediately, or the broker's
+        dispatch watchdog fired (exit code 15), in which case a
+        :class:`TsDevWatchdogAbortError` is raised and the request is NOT
+        retried.
         """
         if not self._started:
             self.start()
@@ -533,9 +551,30 @@ class _ServeBroker:
             _pipe.send_request(self._pipe_handle, request)
             return _pipe.recv_response(self._pipe_handle)
         except (_pipe.PipeError, OSError):
-            # Check if the broker crashed (VEH exits with the NT status code).
+            # Check how the broker died (crash -> NT status; watchdog abort
+            # -> 15) before considering a reconnect.
             if self._process_handle:
                 exit_code = self._get_exit_code()
+                if exit_code == _WATCHDOG_ABORT_EXIT_CODE:
+                    # The broker's dispatch watchdog fired
+                    # TerminateProcess(15): a warehouse dispatch exceeded its
+                    # bound or WHServer.exe crashed/vanished mid-flight.  Do
+                    # NOT reconnect/retry — a fresh elevated broker would
+                    # spawn a new UAC prompt and retry the same request into
+                    # the same wedged WHServer.  The abort detail (the
+                    # "WATCHDOG ABORT: ..." line) goes to the broker's own
+                    # stderr, which is not captured over the pipe; the exit
+                    # code is the only machine-readable signal here.
+                    self._reset_pipe()
+                    raise TsDevWatchdogAbortError(
+                        message=(
+                            "serve broker aborted via dispatch watchdog "
+                            "(exit 15): a warehouse dispatch exceeded its "
+                            "bound or WHServer.exe crashed/vanished "
+                            "mid-flight; the request's outcome is uncertain"
+                        ),
+                        exit_code=exit_code,
+                    )
                 if exit_code is not None:
                     is_crash, crash_type = _is_crash_exit(exit_code)
                     if is_crash:
@@ -1427,6 +1466,16 @@ class TsDevClient:
             )
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
+        if cp.returncode == _WATCHDOG_ABORT_EXIT_CODE:
+            # Watchdog abort emits no JSON frame — the item's outcome is
+            # uncertain; the WATCHDOG ABORT line is on the child's stderr.
+            raise TsDevWatchdogAbortError(
+                message=(
+                    "tsdev_cli aborted via dispatch watchdog (exit 15). "
+                    f"stderr={stderr!r}"
+                ),
+                exit_code=cp.returncode,
+            )
         try:
             obj = json.loads(stdout)
         except json.JSONDecodeError:
@@ -1476,6 +1525,17 @@ class TsDevClient:
             )
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
+        if cp.returncode == _WATCHDOG_ABORT_EXIT_CODE:
+            # Watchdog abort mid-batch: no final JSON array for the
+            # in-flight/remaining items; completed items' results are lost
+            # with the process. The WATCHDOG ABORT line is on stderr.
+            raise TsDevWatchdogAbortError(
+                message=(
+                    "tsdev_cli batch aborted via dispatch watchdog "
+                    f"(exit 15). stderr={stderr!r}"
+                ),
+                exit_code=cp.returncode,
+            )
         # Exit 1 => manifest/usage error: the batch did not run.
         if cp.returncode == 1:
             raise TsDevError(
@@ -1837,6 +1897,18 @@ class TsDevClient:
                 message=f"tsdev_cli.exe crashed ({crash_type}, exit code "
                         f"0x{rc & 0xFFFFFFFF:08X}). "
                         "This indicates a bug in the orlib20 integration.",
+                exit_code=rc,
+            )
+        if rc == _WATCHDOG_ABORT_EXIT_CODE:
+            # Watchdog abort mid-batch: no JSON frame and no
+            # batch_completed summary — the in-flight item's outcome is
+            # uncertain; the WATCHDOG ABORT line is on stderr.
+            stderr_text = b"".join(stderr_parts).decode("utf-8", "replace")
+            raise TsDevWatchdogAbortError(
+                message=(
+                    "tsdev_cli batch aborted via dispatch watchdog "
+                    f"(exit 15). stderr={stderr_text!r}"
+                ),
                 exit_code=rc,
             )
         if callback_exc is not None:

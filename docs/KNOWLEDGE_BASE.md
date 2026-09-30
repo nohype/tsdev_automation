@@ -392,3 +392,16 @@ Each entry confirmed by CLI modify from elevated direct CLI (exit 0) + user conf
 | Function → ShowMe caller modify | cmd 0x0D (cat 1/function) + 0x40A | Function `TsDeskFnProbe_20260829` (ProgId=84) v1→v2; debug log: cmd 0x0D dispatched (cat=1 progId=84); `enumerateReverseDependents` reached ShowMe (cat=2 pid=3029); user-confirmed markers moved High→Low immediately |
 | Function → Strategy caller modify | cmd 0x0D (cat 1/function) + 0x40A | Function `TsDeskFnProbe_20260829` (ProgId=84) v1→v2; debug log: `post-verify cmd 0x0D OK, 0x5E=008D3154` (cat=1 progId=84); user-confirmed applied Strategy signal labels `STFN_V1`→`STFN_V2` immediately |
 | Function → TradingApp caller modify | cmd 0x0D (cat 1/function) + 0x40A; open WinForms form reinitializes | Function `TsDeskFnProbe_20260829` (ProgId=84) v1→v2; debug log: `post-verify cmd 0x0D OK, 0x5E=0E8B924C` (cat=1 progId=84) + `enumerateReverseDependents: cat=2 pid=3032`; user-confirmed open TradingApp form reinitialized V1→V2 immediately |
+
+---
+
+## 14. TSCrash.dll unhandled-exception filter — TSCrashReport.exe parenting
+
+TSCrash.dll's unhandled-exception filter launches `TSCrashReport.exe "<faulting-exe-basename>" [SILENT]` via `CreateProcessW` **on the crashing thread** and then blocks on `WaitForSingleObject(child, INFINITE)`. Therefore:
+
+- (a) `CreateProcessW` runs on the crashing thread, so the reporter's `ParentProcessId` is the crashed process's pid.
+- (b) `WaitForSingleObject(child, INFINITE)` keeps the crashed process frozen-but-alive for the reporter's entire lifetime. In-field: WHServer pid 19532 remained enumerable with `present=1` in `whserver.sample` for ≥45 s post-crash (`dist_logs/tsdev_diag_45356_20260924_080015.log`).
+
+Evidence: TSCrash.dll disassembly — `CreateProcessW` call sites at TSCrash+0x2D7B/+0x34F9, the command-line build at +0x33F3–+0x349F verified verbatim; the command line carries the basename only, no pid. Full analysis: `tmp/whserver_crash_analysis/report.md`; disasm evidence scripts: `tmp/crashrep_strings/disasm_cp*.py` (+ the analysis conversation).
+
+Consequence for the dispatch watchdog (`src/dispatch_watchdog.cpp`): a `TSCrashReport.exe` whose parent pid is a WHServer.exe pid is a proven "WHServer crashed and is frozen" signal — the wedged COM call into it will never return — while the crashed WHServer's pid still enumerates as present (so presence alone is not proof of health).

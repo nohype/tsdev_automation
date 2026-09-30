@@ -78,7 +78,7 @@
 // src/tsdev_automation/exceptions.py). 13 = diagnostic-build watchdog abort
 // (tsdev_cli_diag only; see src/diag_watchdog.cpp). 14 = batch aggregate:
 // aborted by the WHServer VAS-headroom guard (see batch exit-code scheme
-// below).
+// below). 15 = dispatch watchdog abort (TVS-3; see src/dispatch_watchdog.cpp).
 // Every direct tsdev_cli subcommand, including serve, requires an elevated
 // administrator process; when the guard runs non-elevated it returns exit 11.
 //
@@ -149,6 +149,7 @@
 #include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
 #include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "dispatch_watchdog.h"  // TVS-3: production bounded-wait dispatch containment
 #include "whserver_health.h" // TVS-1b: WHServer VAS-headroom guard (batch)
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
@@ -310,6 +311,13 @@ void printUsage() {
         "                   strategy roots (skipped by default: strategies\n"
         "                   cannot be dependency targets). Env:\n"
         "                   TSDEV_TRAVERSE_STRATEGY_DEPENDENTS (any value but \"0\").\n"
+        "  --dispatch-timeout-secs <N>  (all subcommands) bounded-wait\n"
+        "                   containment: abort the process with exit 15 when a\n"
+        "                   warehouse dispatch stays in-flight longer than N\n"
+        "                   seconds (WHServer wedged/crashed -> orlib20's\n"
+        "                   synchronous COM call never returns). Default 300;\n"
+        "                   0 disables the watchdog; valid range 0..86400.\n"
+        "                   Env: TSDEV_DISPATCH_TIMEOUT_SECS (flag wins).\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
         "human-readable stdout).\n"
         "                 For batch-* (and tagged serve requests) it also\n"
@@ -439,6 +447,13 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // (batch per-item markers stay exit 12) and the serve-path per-item
         // refusal code.
         case 14: return "whserver_vas_abort";
+        // 15 is the dispatch-watchdog abort code (TerminateProcess(15) from
+        // the watchdog thread in src/dispatch_watchdog.cpp). A watchdog
+        // abort emits no JSON frame — the "WATCHDOG ABORT: ...; exiting
+        // with code 15" line goes to stderr — so this case is unreachable
+        // through normal result emission; kept for completeness so any
+        // future path that does surface exit 15 gets a stable code string.
+        case 15: return "whserver_dispatch_watchdog_abort";
         default: return "unknown_error";
     }
 }
@@ -3365,6 +3380,22 @@ bool parseMbThreshold(const std::string& s, unsigned& out) {
     return true;
 }
 
+// Strict decimal-seconds parse for --dispatch-timeout-secs and the
+// TSDEV_DISPATCH_TIMEOUT_SECS env mirror (TVS-3 dispatch watchdog). Accepts
+// "0".."86400" only (fully numeric, no sign/space/junk); 0 is the documented
+// disable value. Anything else returns false so the caller can reject the
+// flag value or keep the env-default respectively.
+bool parseDispatchTimeoutSecs(const std::string& s, unsigned& out) {
+    if (s.empty()) return false;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+    }
+    const unsigned long v = std::strtoul(s.c_str(), nullptr, 10);
+    if (v > 86400UL) return false;
+    out = static_cast<unsigned>(v);
+    return true;
+}
+
 // Parameters passed to the batch worker thread.
 struct BatchParams {
     std::string             op;  // "insert"/"modify"/"delete"
@@ -4930,6 +4961,11 @@ int main(int argc, char** argv) {
     bool vasFreeFlagSet = false;     // --whserver-free-mb seen
     bool vasLargestFlagSet = false;  // --whserver-largest-free-mb seen
     bool traverseStrategyDependents = false;  // --traverse-strategy-dependents
+    // TVS-3: dispatch watchdog bound in seconds (0 disables). Default 300 —
+    // far above the ~3.4 s legit max single-dispatch duration, far below
+    // forever. --dispatch-timeout-secs / TSDEV_DISPATCH_TIMEOUT_SECS.
+    unsigned dispatchTimeoutSecs = 300;
+    bool dispatchTimeoutFlagSet = false;        // --dispatch-timeout-secs seen
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -5061,6 +5097,34 @@ int main(int argc, char** argv) {
             // strategy (cat-0) roots (skipped by default). A '=' value is
             // ignored; repeats are harmless (idempotent).
             traverseStrategyDependents = true;
+        } else if (arg == "--dispatch-timeout-secs" ||
+                   arg.rfind("--dispatch-timeout-secs=", 0) == 0) {
+            // Space ("--dispatch-timeout-secs <N>") or equals form; strict
+            // decimal seconds 0..86400 (0 disables the watchdog). Invalid ->
+            // usage error (see parseDispatchTimeoutSecs).
+            std::string v;
+            if (arg == "--dispatch-timeout-secs") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--dispatch-timeout-secs requires a value in seconds";
+                    r.humanStderr = "Error: --dispatch-timeout-secs requires a value in seconds\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--dispatch-timeout-secs="));
+            }
+            if (!parseDispatchTimeoutSecs(v, dispatchTimeoutSecs)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --dispatch-timeout-secs value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --dispatch-timeout-secs value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            dispatchTimeoutFlagSet = true;
         } else {
             reducedArgv.push_back(argv[i]);
         }
@@ -5105,7 +5169,30 @@ int main(int argc, char** argv) {
             !(n == 1 && envBuf[0] == '0')) {
             traverseStrategyDependents = true;
         }
+        // TVS-3: TSDEV_DISPATCH_TIMEOUT_SECS env mirror for the dispatch
+        // watchdog bound; the explicit --dispatch-timeout-secs flag wins
+        // (same convention as TSDEV_WHSERVER_*; a garbage/missing value
+        // keeps the 300 s default). "0" disables the watchdog entirely.
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_DISPATCH_TIMEOUT_SECS", envBuf,
+                                    sizeof(envBuf));
+        if (!dispatchTimeoutFlagSet && n > 0 && n < sizeof(envBuf)) {
+            unsigned v = 0;
+            if (parseDispatchTimeoutSecs(envBuf, v)) {
+                dispatchTimeoutSecs = v;
+            }
+        }
     }
+
+    // TVS-3: start the production dispatch watchdog BEFORE any subcommand
+    // dispatch. One call covers single ops, batch workers, and the serve
+    // broker (spawn-once; the thread lives for the process lifetime). Every
+    // orlib20 warehouse call in tsdev_lib.cpp raises the in-flight marker
+    // the watchdog watches; an in-flight dispatch older than the bound — or
+    // a WHServer crash/disappearance mid-flight — aborts the process with
+    // exit 15. A non-elevated run exits 11 below before any dispatch can be
+    // in-flight, so an early start cannot false-fire.
+    tsdev::startDispatchWatchdog(dispatchTimeoutSecs);
 
     // TVS (CLI log levels): set the process-global library log level ONCE,
     // right after the pre-scan and BEFORE subcommand dispatch, so all later

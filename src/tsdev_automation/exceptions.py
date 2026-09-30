@@ -20,6 +20,10 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
     artifact_missing    -> ArtifactMissingError
     ell_missing         -> EllMissingError (legacy compatibility)
     thread_failure      -> ThreadFailure
+    whserver_dispatch_watchdog_abort -> TsDevWatchdogAbortError
+                                  (exit 15; no JSON frame is emitted on a
+                                  watchdog abort — mapping is for symmetry
+                                  only)
 """
 
 from __future__ import annotations
@@ -117,6 +121,41 @@ class TsDevCrashError(TsDevError):
         super().__init__(message=message)
 
 
+class TsDevWatchdogAbortError(TsDevError):
+    """``tsdev_cli`` was terminated by its dispatch watchdog (exit 15).
+
+    The watchdog fires ``TerminateProcess(15)`` when a warehouse dispatch
+    exceeds ``--dispatch-timeout-secs`` or WHServer.exe crashed/vanished
+    mid-flight (see ``src/dispatch_watchdog.cpp``).  The abort writes a
+    ``tsdev_cli: WATCHDOG ABORT: ... [reason: ...]; exiting with code 15``
+    line to the *CLI's own stderr* and produces NO JSON frame — the
+    in-flight item's outcome is uncertain and no ``TsDevResult`` exists for
+    it.  On the serve-broker path the broker's stderr is not captured by
+    the client, so the exit code is the only machine-readable signal; in
+    direct mode the line is visible on the child's stderr.
+
+    Never retry the aborted request into the same server: the wedged
+    WHServer state that provoked the abort persists.
+
+    Mapped under ``error.code == "whserver_dispatch_watchdog_abort"`` for
+    symmetry with the C++ ``errorCodeString`` table, even though a watchdog
+    abort never emits a JSON frame carrying that code.
+    """
+
+    code = "whserver_dispatch_watchdog_abort"
+
+    def __init__(self, result: TsDevResult | None = None, message: str | None = None, exit_code: int | None = None) -> None:
+        self.exit_code = exit_code if exit_code is not None else (result.exit_code if result else None)
+        if message is None:
+            message = (
+                "tsdev_cli was terminated by the dispatch watchdog (exit 15): "
+                "a warehouse dispatch exceeded its bound or WHServer.exe "
+                "crashed/vanished mid-flight. The in-flight item's outcome is "
+                "uncertain; see the process's stderr for the WATCHDOG ABORT line."
+            )
+        super().__init__(result=result, message=message)
+
+
 class ElevationRequiredError(TsDevError):
     """Non-elevated Python caller requested direct mode (client exit 12).
 
@@ -164,6 +203,7 @@ ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "artifact_missing": ArtifactMissingError,
     "ell_missing": EllMissingError,
     "thread_failure": ThreadFailure,
+    "whserver_dispatch_watchdog_abort": TsDevWatchdogAbortError,
 }
 
 
@@ -190,6 +230,7 @@ __all__ = [
     "EllMissingError",
     "ThreadFailure",
     "TsDevCrashError",
+    "TsDevWatchdogAbortError",
     "ElevationRequiredError",
     "ERROR_CODE_MAP",
     "exception_for",

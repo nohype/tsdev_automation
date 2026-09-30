@@ -15,6 +15,7 @@
 #include "delete_disk_cleanup.h"
 #include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "dispatch_watchdog.h"  // TVS-3: production in-flight dispatch marker + watchdog
 
 // TVS-L.13: the test-only construction seam (private ctor
 // TsDevLib::TsDevLib(const wchar_t*, const TsDevLibTestConfig&) and the
@@ -197,6 +198,14 @@ std::string toNarrow(const std::wstring& s) {
 // with ordinal-based alloc/destroy wrappers (orlib20 ordinals 66/67).
 //   callAlloc: invokes ordinal 66 (__cdecl, no args, returns void*).
 //   callDestroy: invokes ordinal 67 (__stdcall, one arg void* p).
+//
+// TVS-3 (dispatch watchdog): every helper below is split into a `callXImpl`
+// body (unchanged SEH logic) and a thin `callX` wrapper that brackets the
+// call with the production in-flight dispatch marker
+// (dispatchEnter/dispatchLeave, dispatch_watchdog.h). The wrapper uses
+// __try/__finally — NOT the RAII DispatchInFlightGuard — because MSVC C2712
+// forbids objects with destructors in functions that also contain __try,
+// and __finally guarantees leave() on SEH and C++ unwind paths alike.
 typedef void  (__cdecl    *StartCompilingFn)(void);
 typedef void  (__fastcall *EndCompilingFn)(int param);
 typedef int   (__stdcall  *VerifyModuleFn)(HWND, int, int, int, void*);
@@ -209,7 +218,7 @@ struct VerifySehResult {
 // __cdecl, no args, returns void* (the constructed object, or NULL on alloc
 // failure). On SEH exception returns false and sets *outPtr=nullptr. POD-only
 // (no C++ objects with destructors) so __try is legal.
-bool callAlloc(CELCompilerAllocFn fn, void** outPtr) {
+bool callAllocImpl(CELCompilerAllocFn fn, void** outPtr) {
     *outPtr = nullptr;
     __try {
         *outPtr = fn();
@@ -219,14 +228,28 @@ bool callAlloc(CELCompilerAllocFn fn, void** outPtr) {
         return false;
     }
 }
+bool callAlloc(CELCompilerAllocFn fn, void** outPtr) {
+    dispatchEnter("CELCompilerAlloc", 0);
+    bool ok = false;
+    __try { ok = callAllocImpl(fn, outPtr); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
-bool callStartCompiling(StartCompilingFn fn) {
+bool callStartCompilingImpl(StartCompilingFn fn) {
     __try {
         fn();
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+bool callStartCompiling(StartCompilingFn fn) {
+    dispatchEnter("StartCompiling", 0);
+    bool ok = false;
+    __try { ok = callStartCompilingImpl(fn); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // --- Direct error array access (TVS-A.4) -----------------------------------
@@ -241,7 +264,7 @@ static constexpr size_t    kErrTextOffset   = 0x29;      // null-terminated erro
 static constexpr size_t    kErrResIdOffset  = 0x12;      // short: string-table resource ID
 static constexpr size_t    kErrCharOffset   = 0x0A;      // int: character offset of error start in source
 
-bool callVerify(VerifyModuleFn verifyFn,
+bool callVerifyImpl(VerifyModuleFn verifyFn,
                 HWND hwnd, int whType, int progId,
                 void* compilerMem, VerifySehResult* out) {
     out->verifyResult = -1;
@@ -252,8 +275,17 @@ bool callVerify(VerifyModuleFn verifyFn,
     }
     return true;
 }
+bool callVerify(VerifyModuleFn verifyFn,
+                HWND hwnd, int whType, int progId,
+                void* compilerMem, VerifySehResult* out) {
+    dispatchEnter("VerifyModule_New", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callVerifyImpl(verifyFn, hwnd, whType, progId, compilerMem, out); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
-bool callEndCompiling(EndCompilingFn fn, int param) {
+bool callEndCompilingImpl(EndCompilingFn fn, int param) {
     __try {
         fn(param);
         return true;
@@ -261,19 +293,33 @@ bool callEndCompiling(EndCompilingFn fn, int param) {
         return false;
     }
 }
+bool callEndCompiling(EndCompilingFn fn, int param) {
+    dispatchEnter("EndCompiling", static_cast<uint32_t>(param));
+    bool ok = false;
+    __try { ok = callEndCompilingImpl(fn, param); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // Workstream M slice M.1: SEH-protected call to ordinal 67 (dtor+free).
 // __stdcall, one arg (void* p), returns void. The wrapper destructs AND frees
 // the object (operator delete(p, 0x58)) — the caller must NOT std::free the
 // pointer afterwards (that would double-free). POD-only (no C++ objects with
 // destructors) so __try is legal.
-bool callDestroy(CELCompilerDestroyFn fn, void* mem) {
+bool callDestroyImpl(CELCompilerDestroyFn fn, void* mem) {
     __try {
         fn(mem);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+bool callDestroy(CELCompilerDestroyFn fn, void* mem) {
+    dispatchEnter("CELCompilerDestroy", 0);
+    bool ok = false;
+    __try { ok = callDestroyImpl(fn, mem); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected __fastcall call to DeleteFromTree (FUN_101e4030).
@@ -283,8 +329,8 @@ bool callDestroy(CELCompilerDestroyFn fn, void* mem) {
 // [ESP+0]=whType, [ESP+4]=progId, [ESP+8]=flag. RET 12 matches.
 typedef void (__fastcall *DeleteFromTreeFn)(
     void*, int*, int, int, int);
-bool callDeleteFromTree(void* fnPtr, void* globalLookup,
-                        int whType, int progId, int flag) {
+bool callDeleteFromTreeImpl(void* fnPtr, void* globalLookup,
+                            int whType, int progId, int flag) {
     DeleteFromTreeFn fn = reinterpret_cast<DeleteFromTreeFn>(fnPtr);
     __try {
         fn(globalLookup, nullptr, whType, progId, flag);
@@ -293,10 +339,18 @@ bool callDeleteFromTree(void* fnPtr, void* globalLookup,
         return false;
     }
 }
+bool callDeleteFromTree(void* fnPtr, void* globalLookup,
+                        int whType, int progId, int flag) {
+    dispatchEnter("DeleteFromTree", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callDeleteFromTreeImpl(fnPtr, globalLookup, whType, progId, flag); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected call to InitGlobalLookup (__cdecl, no args).
 // InitGlobalLookupFn comes from orlib_resolver.h (namespace tsdev).
-bool callInitGlobalLookup(InitGlobalLookupFn fn, void** outPtr) {
+bool callInitGlobalLookupImpl(InitGlobalLookupFn fn, void** outPtr) {
     *outPtr = nullptr;
     __try {
         *outPtr = fn();
@@ -305,10 +359,17 @@ bool callInitGlobalLookup(InitGlobalLookupFn fn, void** outPtr) {
         return false;
     }
 }
+bool callInitGlobalLookup(InitGlobalLookupFn fn, void** outPtr) {
+    dispatchEnter("InitGlobalLookup", 0);
+    bool ok = false;
+    __try { ok = callInitGlobalLookupImpl(fn, outPtr); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected call to GetWarehouse (__cdecl, 1 arg).
 // GetWarehouseFn comes from orlib_resolver.h (namespace tsdev).
-bool callGetWarehouse(GetWarehouseFn fn, int pathParam, void** out) {
+bool callGetWarehouseImpl(GetWarehouseFn fn, int pathParam, void** out) {
     *out = nullptr;
     __try {
         *out = fn(pathParam);
@@ -317,13 +378,20 @@ bool callGetWarehouse(GetWarehouseFn fn, int pathParam, void** out) {
         return false;
     }
 }
+bool callGetWarehouse(GetWarehouseFn fn, int pathParam, void** out) {
+    dispatchEnter("GetWarehouse", static_cast<uint32_t>(pathParam));
+    bool ok = false;
+    __try { ok = callGetWarehouseImpl(fn, pathParam, out); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __fastcall call to FUN_101a8360 (delete orchestrator).
 // __fastcall: ECX=whType, EDX=progId, no stack args, returns void.
 // POD-only (no C++ objects with destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
+bool callDeleteOrchestratorImpl(void* fnPtr, int whType, int progId) {
     __try {
         __asm {
             mov ecx, whType
@@ -336,13 +404,20 @@ bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
     }
 }
 #pragma warning(pop)
+bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
+    dispatchEnter("DeleteOrchestrator", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callDeleteOrchestratorImpl(fnPtr, whType, progId); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __thiscall call to FUN_101cf5b0 (command dispatcher).
 // __thiscall: ECX=warehouse (this), stack=commandId (1 arg, callee cleanup
 // RET 4). POD-only (no C++ objects with destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
+bool callCmdDispatcherImpl(void* fnPtr, void* warehouse, int cmdId) {
     __try {
         __asm {
             push cmdId
@@ -355,18 +430,33 @@ bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
     }
 }
 #pragma warning(pop)
+// Marker aux = cmdId (0x0D / 0x3B / 0x4E / … dispatched through FUN_101cf5b0).
+bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
+    dispatchEnter("CmdDispatcher", static_cast<uint32_t>(cmdId));
+    bool ok = false;
+    __try { ok = callCmdDispatcherImpl(fnPtr, warehouse, cmdId); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected call to _CloseWarehouseForCurrentThreadAndPath@4.
 // __stdcall, 1 int arg (the production call passes 0). POD-only.
 // The boolean reports only whether the underlying call completed without an
 // SEH exception; the close export has no native return status.
-bool callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
+bool callCloseWarehouseHelperImpl(CloseWarehouseFn fn, int param) {
     __try {
         fn(param);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+bool callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
+    dispatchEnter("CloseWarehouse", static_cast<uint32_t>(param));
+    bool ok = false;
+    __try { ok = callCloseWarehouseHelperImpl(fn, param); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected __thiscall call to FUN_101d0950 (cmd 0x0F dispatch helper).
@@ -376,8 +466,8 @@ bool callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
 // POD-only (no C++ objects with destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
-                         int progId, void* outParam) {
+bool callCmd0FDispatcherImpl(void* fnPtr, void* warehouse, void* typeArray,
+                             int progId, void* outParam) {
     __try {
         __asm {
             push outParam
@@ -392,13 +482,21 @@ bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
     }
 }
 #pragma warning(pop)
+bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
+                         int progId, void* outParam) {
+    dispatchEnter("cmd0x0F", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callCmd0FDispatcherImpl(fnPtr, warehouse, typeArray, progId, outParam); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __stdcall call to FUN_101d43a0 (type-array builder).
 // __stdcall: stack=category, outArray (2 args, callee cleanup RET 0x8).
 // POD-only (no C++ objects with destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
+bool callBuildTypeArrayImpl(void* fnPtr, int category, int* outArray) {
     __try {
         __asm {
             push outArray
@@ -411,13 +509,20 @@ bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
     }
 }
 #pragma warning(pop)
+bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
+    dispatchEnter("BuildTypeArray", static_cast<uint32_t>(category));
+    bool ok = false;
+    __try { ok = callBuildTypeArrayImpl(fnPtr, category, outArray); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __fastcall call to FUN_1000dd30 (CELProgramWriter constructor).
 // __fastcall: ECX=buffer (this), no stack args. POD-only (no C++ objects with
 // destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
+bool callCelProgramWriterCtorImpl(void* fnPtr, void* buffer) {
     __try {
         __asm {
             mov ecx, buffer
@@ -429,6 +534,13 @@ bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
     }
 }
 #pragma warning(pop)
+bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
+    dispatchEnter("CelProgramWriterCtor", 0);
+    bool ok = false;
+    __try { ok = callCelProgramWriterCtorImpl(fnPtr, buffer); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __thiscall call to FUN_101cfce0 (cmd 0x0D dispatch helper).
 // __thiscall: ECX=warehouse (this), stack=type, param (2 args, callee cleanup
@@ -438,8 +550,8 @@ bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
 // objects with destructors) so __try is legal.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
-                         int param, void** outInterface) {
+bool callCmd0DDispatcherImpl(void* fnPtr, void* warehouse, int typeVal,
+                             int param, void** outInterface) {
     void* result = nullptr;
     __try {
         __asm {
@@ -457,6 +569,14 @@ bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
     return true;
 }
 #pragma warning(pop)
+bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
+                         int param, void** outInterface) {
+    dispatchEnter("cmd0x0D", static_cast<uint32_t>(param));
+    bool ok = false;
+    __try { ok = callCmd0DDispatcherImpl(fnPtr, warehouse, typeVal, param, outInterface); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // --- SEH-protected wrappers for OrlibInit, OrlibExit, FindExistPos (TVS-B.5 AC3) ---
 // These three call sites were previously unprotected. Each wrapper is
@@ -466,29 +586,43 @@ bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
 // to the TsDevLib member typedefs.
 
 // SEH-protected call to OrlibInit (__stdcall, 2 args).
-bool callOrlibInit(OrlibInitFn fn, const char* workDir, int contextId) {
+bool callOrlibInitImpl(OrlibInitFn fn, const char* workDir, int contextId) {
     __try {
         return fn(workDir, contextId) != FALSE;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
+bool callOrlibInit(OrlibInitFn fn, const char* workDir, int contextId) {
+    dispatchEnter("OrlibInit", static_cast<uint32_t>(contextId));
+    bool ok = false;
+    __try { ok = callOrlibInitImpl(fn, workDir, contextId); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected call to OrlibExit (__stdcall, no args).
-bool callOrlibExit(OrlibExitFn fn) {
+bool callOrlibExitImpl(OrlibExitFn fn) {
     __try {
         return fn() != FALSE;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
+bool callOrlibExit(OrlibExitFn fn) {
+    dispatchEnter("OrlibExit", 0);
+    bool ok = false;
+    __try { ok = callOrlibExitImpl(fn); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected call to FindExistPos (__stdcall, 2 args).
 struct FindExistPosSehResult {
     int result;   // -1 if FindExistPos raised
 };
-bool callFindExistPos(FindExistPosFn fn, const char* name,
-                      int warehouseType, FindExistPosSehResult* out) {
+bool callFindExistPosImpl(FindExistPosFn fn, const char* name,
+                          int warehouseType, FindExistPosSehResult* out) {
     out->result = -1;
     __try {
         out->result = fn(name, warehouseType);
@@ -496,6 +630,14 @@ bool callFindExistPos(FindExistPosFn fn, const char* name,
         return false;
     }
     return true;
+}
+bool callFindExistPos(FindExistPosFn fn, const char* name,
+                      int warehouseType, FindExistPosSehResult* out) {
+    dispatchEnter("FindExistPos", static_cast<uint32_t>(warehouseType));
+    bool ok = false;
+    __try { ok = callFindExistPosImpl(fn, name, warehouseType, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to _LoadTextFileEX@16 (__stdcall, 4 args).
@@ -509,9 +651,9 @@ typedef HGLOBAL (__stdcall *LoadTextFileExFn)(void* unused, int whType,
 struct LoadTextFileExSehResult {
     HGLOBAL result;   // NULL if _LoadTextFileEX raised
 };
-bool callLoadTextFileEx(LoadTextFileExFn fn, void* unused, int whType,
-                        int progId, void* password,
-                        LoadTextFileExSehResult* out) {
+bool callLoadTextFileExImpl(LoadTextFileExFn fn, void* unused, int whType,
+                            int progId, void* password,
+                            LoadTextFileExSehResult* out) {
     out->result = NULL;
     __try {
         out->result = fn(unused, whType, progId, password);
@@ -519,6 +661,15 @@ bool callLoadTextFileEx(LoadTextFileExFn fn, void* unused, int whType,
         return false;
     }
     return true;
+}
+bool callLoadTextFileEx(LoadTextFileExFn fn, void* unused, int whType,
+                        int progId, void* password,
+                        LoadTextFileExSehResult* out) {
+    dispatchEnter("LoadTextFileEx", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callLoadTextFileExImpl(fn, unused, whType, progId, password, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to _LoadMasterRecsEX@16 (__stdcall, 4 args).
@@ -532,9 +683,10 @@ typedef int (__stdcall *LoadMasterRecsExFn)(int category, HGLOBAL* outBuf,
 struct LoadMasterRecsExSehResult {
     int result;  // -1 if _LoadMasterRecsEX raised
 };
-bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
-                          const char* path, int filterMode,
-                          LoadMasterRecsExSehResult* out) {
+bool callLoadMasterRecsExImpl(LoadMasterRecsExFn fn, int category,
+                              HGLOBAL* outBuf, const char* path,
+                              int filterMode,
+                              LoadMasterRecsExSehResult* out) {
     out->result = -1;
     __try {
         out->result = fn(category, outBuf, path, filterMode);
@@ -542,6 +694,15 @@ bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
         return false;
     }
     return true;
+}
+bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
+                          const char* path, int filterMode,
+                          LoadMasterRecsExSehResult* out) {
+    dispatchEnter("LoadMasterRecsEX", static_cast<uint32_t>(category));
+    bool ok = false;
+    __try { ok = callLoadMasterRecsExImpl(fn, category, outBuf, path, filterMode, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to _GetMasterRecByType@16 (__stdcall, 4 args).
@@ -555,9 +716,9 @@ typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
 struct GetMasterRecByTypeSehResult {
     int result;  // -1 if _GetMasterRecByType raised
 };
-bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
-                            int index, void* outBuf,
-                            GetMasterRecByTypeSehResult* out) {
+bool callGetMasterRecByTypeImpl(GetMasterRecByTypeFn fn, int category,
+                                int subType, int index, void* outBuf,
+                                GetMasterRecByTypeSehResult* out) {
     out->result = -1;
     __try {
         out->result = fn(category, subType, index, outBuf);
@@ -565,6 +726,15 @@ bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
         return false;
     }
     return true;
+}
+bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
+                            int index, void* outBuf,
+                            GetMasterRecByTypeSehResult* out) {
+    dispatchEnter("GetMasterRecByType", static_cast<uint32_t>(index));
+    bool ok = false;
+    __try { ok = callGetMasterRecByTypeImpl(fn, category, subType, index, outBuf, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to NotifyLibChanged (orlib20 ordinal 57, __stdcall,
@@ -580,14 +750,22 @@ bool callGetMasterRecByType(GetMasterRecByTypeFn fn, int category, int subType,
 // be SEH-protected; the previous raw m_pNotifyLibChanged(...) calls at the
 // M.3 insert/modify (verifyModule success) and delete (deleteEntry success)
 // paths were not wrapped.
-bool callNotifyLibChanged(NotifyLibChangedFn fn,
-                          unsigned short category, unsigned short progId) {
+bool callNotifyLibChangedImpl(NotifyLibChangedFn fn,
+                              unsigned short category, unsigned short progId) {
     __try {
         fn(category, progId);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+bool callNotifyLibChanged(NotifyLibChangedFn fn,
+                          unsigned short category, unsigned short progId) {
+    dispatchEnter("NotifyLibChanged", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callNotifyLibChangedImpl(fn, category, progId); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected contract-change comparison (M.4).
@@ -667,9 +845,9 @@ struct GetDependenciesSehResult {
     HGLOBAL handle;  // NULL if no deps or SEH
     int depCount;    // number of dependency ProgIds in the handle
 };
-bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
-                         int elementIndex,
-                         GetDependenciesSehResult* out) {
+bool callGetDependenciesImpl(GetDependenciesFn fn, int whType, int progId,
+                             int elementIndex,
+                             GetDependenciesSehResult* out) {
     out->handle = NULL;
     out->depCount = 0;
     __try {
@@ -678,6 +856,15 @@ bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
         return false;
     }
     return true;
+}
+bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
+                         int elementIndex,
+                         GetDependenciesSehResult* out) {
+    dispatchEnter("GetDependencies", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callGetDependenciesImpl(fn, whType, progId, elementIndex, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // ============================================================================
@@ -690,23 +877,38 @@ bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
 typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
                                               int flag, void* outBuf);
 struct Ord28SehResult { unsigned int result; };
-bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
-               void* outBuf, Ord28SehResult* out) {
+bool callOrd28Impl(Ordinal28Fn fn, int category, int progId, int flag,
+                   void* outBuf, Ord28SehResult* out) {
     out->result = 0xFFFFFFFFu;
     __try { out->result = fn(category, progId, flag, outBuf); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return true;
+}
+bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
+               void* outBuf, Ord28SehResult* out) {
+    dispatchEnter("Ord28", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callOrd28Impl(fn, category, progId, flag, outBuf, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to Ordinal_70 (release refcounted record, RVA 0x15DF30).
 // __stdcall, 2 args (rec, flag). POD-only.
 typedef int (__stdcall *Ordinal70Fn)(void* rec, int flag);
 struct Ord70SehResult { int result; };
-bool callOrd70(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
+bool callOrd70Impl(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
     out->result = -1;
     __try { out->result = fn(rec, flag); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return true;
+}
+bool callOrd70(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
+    dispatchEnter("Ord70", static_cast<uint32_t>(flag));
+    bool ok = false;
+    __try { ok = callOrd70Impl(fn, rec, flag, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected call to Ordinal_69 (link module, RVA 0x1A3E00).
@@ -715,12 +917,20 @@ bool callOrd70(Ordinal70Fn fn, void* rec, int flag, Ord70SehResult* out) {
 // (refcounted — release via Ordinal_70) or 0 on failure.
 typedef void* (__cdecl *Ordinal69Fn)(int category, int progId, void* partialBuf);
 struct Ord69SehResult { void* result; };
-bool callOrd69(Ordinal69Fn fn, int category, int progId, void* partialBuf,
-               Ord69SehResult* out) {
+bool callOrd69Impl(Ordinal69Fn fn, int category, int progId, void* partialBuf,
+                   Ord69SehResult* out) {
     out->result = nullptr;
     __try { out->result = fn(category, progId, partialBuf); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return true;
+}
+bool callOrd69(Ordinal69Fn fn, int category, int progId, void* partialBuf,
+               Ord69SehResult* out) {
+    dispatchEnter("Ord69", static_cast<uint32_t>(progId));
+    bool ok = false;
+    __try { ok = callOrd69Impl(fn, category, progId, partialBuf, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // callLinkerManual — calls the linker with ALL 4 args on the stack
@@ -752,8 +962,8 @@ void* callLinkerManual(void* fn, int whType, int whId, int whErrFlag,
 }
 
 struct LinkerSehResult { void* ptr; bool seh; };
-bool callLinkerSafe(void* fn, int type, int id, int errorFlag,
-                    void* partialBuf, LinkerSehResult* out) {
+bool callLinkerSafeImpl(void* fn, int type, int id, int errorFlag,
+                        void* partialBuf, LinkerSehResult* out) {
     out->ptr = nullptr;
     out->seh = false;
     __try {
@@ -763,6 +973,14 @@ bool callLinkerSafe(void* fn, int type, int id, int errorFlag,
         return false;
     }
     return true;
+}
+bool callLinkerSafe(void* fn, int type, int id, int errorFlag,
+                    void* partialBuf, LinkerSehResult* out) {
+    dispatchEnter("Linker", static_cast<uint32_t>(id));
+    bool ok = false;
+    __try { ok = callLinkerSafeImpl(fn, type, id, errorFlag, partialBuf, out); }
+    __finally { dispatchLeave(); }
+    return ok;
 }
 
 // SEH-protected raw readers. POD-only so __try/__except is legal.
@@ -983,8 +1201,9 @@ struct FindItemGetNameSehResult {
 };
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
-                         void* warehouse, FindItemGetNameSehResult* out) {
+bool callFindItemGetNameImpl(void* fnPtr, const char* searchName,
+                             int componentType, void* warehouse,
+                             FindItemGetNameSehResult* out) {
     int retVal = (int)0xFFFFFFFF;
     char* outName = nullptr;
     __try {
@@ -1007,6 +1226,14 @@ bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
     return true;
 }
 #pragma warning(pop)
+bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
+                         void* warehouse, FindItemGetNameSehResult* out) {
+    dispatchEnter("FindProgram", static_cast<uint32_t>(componentType));
+    bool ok = false;
+    __try { ok = callFindItemGetNameImpl(fnPtr, searchName, componentType, warehouse, out); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __thiscall call to FUN_101d05e0 (BST search wrapper).
 // __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode), RET 0xC.
@@ -1014,8 +1241,9 @@ bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
 // POD-only (no C++ objects with destructors) so __try is legal under MSVC.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
-                          const char* name, void** outNode, int* outResult) {
+bool callBstSearchWrapperImpl(void* fnPtr, void* warehouse, int* typeFilter,
+                              const char* name, void** outNode,
+                              int* outResult) {
     *outNode = nullptr;
     *outResult = 0;
     int retVal = 0;
@@ -1036,6 +1264,14 @@ bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
     return true;
 }
 #pragma warning(pop)
+bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
+                          const char* name, void** outNode, int* outResult) {
+    dispatchEnter("BstSearch", typeFilter ? static_cast<uint32_t>(*typeFilter) : 0u);
+    bool ok = false;
+    __try { ok = callBstSearchWrapperImpl(fnPtr, warehouse, typeFilter, name, outNode, outResult); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // SEH-protected __fastcall call to FUN_101c36d0 (verbatim name getter).
 // __fastcall: ECX=node pointer, no stack args, RET. Returns char* to the
@@ -1043,7 +1279,8 @@ bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
 // POD-only (no C++ objects with destructors) so __try is legal under MSVC.
 #pragma warning(push)
 #pragma warning(disable: 4731)
-bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
+bool callVerbatimNameGetterImpl(void* fnPtr, void* nodePtr,
+                                const char** outName) {
     *outName = nullptr;
     void* retVal = nullptr;
     __try {
@@ -1059,6 +1296,13 @@ bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
     return true;
 }
 #pragma warning(pop)
+bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
+    dispatchEnter("VerbatimNameGetter", 0);
+    bool ok = false;
+    __try { ok = callVerbatimNameGetterImpl(fnPtr, nodePtr, outName); }
+    __finally { dispatchLeave(); }
+    return ok;
+}
 
 // Restore `len` original bytes at an executable address. Used by the
 // TsDevLib destructor to undo the thread-check patches so a
@@ -1646,10 +1890,16 @@ int TsDevLib::createEntry(ComponentType type, const std::string& name,
     // §7.1 diag: enter/leave around the _CreateEntryEX dispatch call site.
     TSDEV_DIAG_LOG("dispatch.CreateEntryEX.enter", "cat=%d sub=%d name=%s",
                    getCategory(type), getSubType(type), name.c_str());
+    // TVS-3: in-flight marker around the raw _CreateEntryEX dispatch (this
+    // direct call bypasses the call* helper layer; dispatchLeave is called
+    // on BOTH the normal and the SEH path below).
+    dispatchEnter("CreateEntryEX", static_cast<uint32_t>(getCategory(type)));
     __try {
         progId = m_pCreateEntry(getCategory(type), getSubType(type),
                                 name.c_str(), 0, 0, &errCode);
+        dispatchLeave();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        dispatchLeave();
         // CreateEntryEX can raise SEH on certain malformed states; treat as
         // a hard failure (ProgId 0).
         TSDEV_DIAG_LOG("dispatch.CreateEntryEX.leave",
@@ -1705,10 +1955,16 @@ bool TsDevLib::saveSource(ComponentType type, int progId,
                    "cat=%d progId=%d flags=0x%X verified=%d srcBytes=%zu",
                    getCategory(type), progId, saveFlags,
                    isVerified ? 1 : 0, source.size());
+    // TVS-3: in-flight marker around the raw _SaveModule_New@20 dispatch
+    // (direct call, bypasses the call* helper layer; dispatchLeave on BOTH
+    // the normal and the SEH path).
+    dispatchEnter("SaveModule_New", static_cast<uint32_t>(progId));
     __try {
         result = m_pSaveModuleNew(getCategory(type), progId,
                                   &saveFlags, m_editorHwnd, savePasswordBuf);
+        dispatchLeave();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        dispatchLeave();
         TSDEV_DIAG_LOG("dispatch.SaveModule_New.leave",
                        "cat=%d progId=%d ok=0 seh=1", getCategory(type),
                        progId);

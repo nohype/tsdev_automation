@@ -97,6 +97,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_orlib_resolver';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_diag_log';               RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_whserver_health';        RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_dispatch_watchdog';      RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_path_discovery';         RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_finalization_lifecycle'; RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_insert';                 RequiresTs = $true  }

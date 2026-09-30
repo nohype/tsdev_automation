@@ -93,13 +93,20 @@ add_custom_target(siggen DEPENDS ${GEN_INCLUDE_DIR}/signatures.gen.h)
 # deps) ships in tsdev_lib so the production tsdev_cli's runBatch VAS guard
 # and every unit test that #includes tsdev_cli.cpp resolve it transitively.
 # The diag build already receives the same TU via tsdev_diag (below).
+# TVS-3: src/dispatch_watchdog.cpp implements the production in-flight
+# dispatch marker + bounded-wait watchdog (TerminateProcess(15) fire path).
+# It is pure Win32 (kernel32 + toolhelp + whserver_health) — NO new .lib
+# deps — and is compiled in BOTH production and diag builds (the marker is
+# worthless if compiled out). Also compiled directly into
+# test_dispatch_watchdog below.
 add_library(tsdev_lib STATIC
     src/tsdev_lib.cpp
     src/com_apartment_guard.cpp
     src/persistence_integrity.cpp
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
-    src/whserver_health.cpp)
+    src/whserver_health.cpp
+    src/dispatch_watchdog.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
 target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
@@ -134,7 +141,8 @@ add_library(tsdev_lib_diag STATIC
     src/com_apartment_guard.cpp
     src/persistence_integrity.cpp
     src/create_path_cleanup.cpp
-    src/delete_disk_cleanup.cpp)
+    src/delete_disk_cleanup.cpp
+    src/dispatch_watchdog.cpp)
 target_include_directories(tsdev_lib_diag PUBLIC src)
 target_link_libraries(tsdev_lib_diag PUBLIC orlib_resolver tsdev_diag)
 target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32)
@@ -441,6 +449,26 @@ add_executable(test_whserver_health
     tests/test_whserver_health.cpp
     src/whserver_health.cpp)
 target_include_directories(test_whserver_health PRIVATE src)
+
+# --- Dispatch watchdog unit test (TVS-3, TDD GREEN) ----------------------------
+# Pure unit test for src/dispatch_watchdog.cpp: in-flight marker
+# enter/leave/snapshot semantics, DispatchInFlightGuard RAII on exception
+# paths, and every branch of the pure fire decision decideDispatchFire()
+# (timeout / whserver_crashed / whserver_gone / disabled / not-in-flight).
+# The TerminateProcess(15) side effect is NOT unit-testable by design — the
+# decision is pure; the fire path is covered by manual/E2E verification.
+# src/whserver_health.cpp is compiled in for findWhServerPids (referenced by
+# the watchdog TU); src/dispatch_watchdog.cpp is compiled directly so the
+# test never links tsdev_lib. PURE UNIT TEST (no orlib20, no TsDevLib), so
+# it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+# The exe also has a manual "--fire" mode (like test_crash_handler --crash):
+# it raises a real in-flight marker + real 1 s watchdog and dies by
+# TerminateProcess(15) — used by manual E2E, never by the test runners.
+add_executable(test_dispatch_watchdog
+    tests/test_dispatch_watchdog.cpp
+    src/dispatch_watchdog.cpp
+    src/whserver_health.cpp)
+target_include_directories(test_dispatch_watchdog PRIVATE src)
 
 # --- JSON serialize unit test (TVS-K.2, GREEN) -------------------------------
 # Pure unit test for the implemented cliResultToJson() helper extracted from
@@ -1228,6 +1256,7 @@ add_dependencies(test_regression
     test_close_warehouse
     test_diag_log
     test_whserver_health
+    test_dispatch_watchdog
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
