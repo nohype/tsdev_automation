@@ -102,8 +102,11 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
 - `batch.end` is the designed last record (nothing logged in teardown);
   VEH crash path writes NO diag record → truncation can't distinguish
   external kill vs silent fatal exception.
-- whserver.sample: presence-only (WHServer always windowless in field),
-  does NOT feed watchdog; pid changes only inferable from pids= field.
+- whserver.sample: presence + per-pid VAS headroom (WHServer always
+  windowless in field), does NOT feed watchdog. Fields: `pids=` csv;
+  `vasFreeMB=`/`vasLargestFreeMB=` csv integer-MB truncations
+  positionally aligned with `pids=` ("-" sentinel per failed pid);
+  `vasErr=` count of failed measurements.
 - CONCLUSION: all 3 failures = proven stall flavor; WHServer-side
   wedge reason still OPEN — needs WHServer dump at hang time.
   Full report: `reports/2026-09-29_dist_logs_crash_analysis.md`

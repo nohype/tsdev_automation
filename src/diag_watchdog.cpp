@@ -16,6 +16,7 @@
 #ifdef TSDEV_DIAG
 
 #include "diag_log.h"
+#include "whserver_health.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -376,6 +377,44 @@ void whserverSample() {
         pidList += b;
     }
 
+    // VAS headroom per pid (whserver_health.cpp; VirtualQueryEx walk below
+    // the 2GB non-LARGEADDRESSAWARE user-VAS boundary). Comma-separated lists
+    // aligned positionally with `pids`; a per-pid measurement failure
+    // contributes a "-" sentinel to both lists and increments `vasErr`
+    // (count of failed measurements) so the record stays additive-only.
+    //
+    // whserver.sample schema extension (TVS-1a):
+    //   vasFreeMB=<csv>         free user VAS below 2GB per pid, integer-MB
+    //                           truncation (sufficient vs the ~10MB crash
+    //                           signature); positionally aligned with pids=
+    //   vasLargestFreeMB=<csv>  largest single MEM_FREE region per pid,
+    //                           integer-MB truncation, aligned with pids=
+    //   vasErr=<n>              count of pids whose measurement failed;
+    //                           those pids appear as "-" in both lists
+    std::string vasFreeList;
+    std::string vasLargestList;
+    int vasErr = 0;
+    for (size_t i = 0; i < pids.size(); i++) {
+        WhVasStats vas;
+        char b[32];
+        if (measureVasFree(pids[i], vas)) {
+            std::snprintf(b, sizeof(b), "%llu",
+                          (unsigned long long)(vas.totalFreeBytes / (1024 * 1024)));
+            vasFreeList += b;
+            std::snprintf(b, sizeof(b), "%llu",
+                          (unsigned long long)(vas.largestFreeBlockBytes / (1024 * 1024)));
+            vasLargestList += b;
+        } else {
+            vasErr++;
+            vasFreeList += "-";
+            vasLargestList += "-";
+        }
+        if (i + 1 < pids.size()) {
+            vasFreeList += ",";
+            vasLargestList += ",";
+        }
+    }
+
     // Responsiveness via top-level windows of those pids + IsHungAppWindow.
     // A windowless WHServer can only be reported as present — say so.
     WhSampleCtx ctx{&pids, 0, 0};
@@ -384,12 +423,17 @@ void whserverSample() {
         logRecordNoProgressf(
             "whserver.sample",
             "present=1 pids=%s windows=0 (windowless; responsiveness not "
-            "determinable — presence only)",
-            pidList.c_str());
+            "determinable — presence only) vasFreeMB=%s vasLargestFreeMB=%s "
+            "vasErr=%d",
+            pidList.c_str(), vasFreeList.c_str(), vasLargestList.c_str(),
+            vasErr);
     } else {
-        logRecordNoProgressf("whserver.sample",
-                             "present=1 pids=%s windows=%d hung=%d",
-                             pidList.c_str(), ctx.windows, ctx.hung);
+        logRecordNoProgressf(
+            "whserver.sample",
+            "present=1 pids=%s windows=%d hung=%d vasFreeMB=%s "
+            "vasLargestFreeMB=%s vasErr=%d",
+            pidList.c_str(), ctx.windows, ctx.hung, vasFreeList.c_str(),
+            vasLargestList.c_str(), vasErr);
     }
 }
 

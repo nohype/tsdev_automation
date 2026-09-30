@@ -109,9 +109,13 @@ target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
 # build neither compiles the call-site macros to code nor links this library.
 # dbghelp: StackWalk64 / SymGetModuleBase64 / MiniDumpWriteDump (watchdog).
 # user32: EnumWindows / IsHungAppWindow (WHServer liveness samples).
+# whserver_health.cpp (WHServer pid discovery + VirtualQueryEx VAS-headroom
+# measurement) is pure Win32 (kernel32 + toolhelp only — NO new .lib deps) and
+# is also compiled directly into the test_whserver_health unit test below.
 add_library(tsdev_diag STATIC
     src/diag_log.cpp
-    src/diag_watchdog.cpp)
+    src/diag_watchdog.cpp
+    src/whserver_health.cpp)
 target_include_directories(tsdev_diag PUBLIC src)
 target_compile_definitions(tsdev_diag PRIVATE TSDEV_DIAG)
 target_link_libraries(tsdev_diag PUBLIC dbghelp user32)
@@ -418,6 +422,19 @@ add_executable(test_diag_log
     src/diag_log.cpp)
 target_include_directories(test_diag_log PRIVATE src)
 target_compile_definitions(test_diag_log PRIVATE TSDEV_DIAG)
+
+# --- WHServer VAS-headroom unit test ------------------------------------------
+# Pure unit test for src/whserver_health.cpp (Toolhelp32 WHServer pid
+# discovery + VirtualQueryEx VAS-free measurement). The .cpp is compiled
+# directly into the test (same pattern as test_diag_log above) so no library
+# link is needed; the TU is pure Win32 (kernel32 + toolhelp only, NO new .lib
+# deps). Read-only process inspection only — self, an invalid pid, and a
+# spawned cmd.exe child; WHServer itself is never required to run. Runs under
+# -NoTs.
+add_executable(test_whserver_health
+    tests/test_whserver_health.cpp
+    src/whserver_health.cpp)
+target_include_directories(test_whserver_health PRIVATE src)
 
 # --- JSON serialize unit test (TVS-K.2, GREEN) -------------------------------
 # Pure unit test for the implemented cliResultToJson() helper extracted from
@@ -1204,6 +1221,7 @@ add_dependencies(test_regression
     test_delete_disk_cleanup
     test_close_warehouse
     test_diag_log
+    test_whserver_health
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
