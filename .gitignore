@@ -14,4 +14,7 @@ __pycache__/
 /tmp/
 *.obj
 *.tsc
+/dist_logs/
+*.dmp
+tmp_review_*.txt
 

@@ -63,7 +63,18 @@ namespace tsdev {
 namespace {
 TsDevLogLevel g_logLevel = TsDevLogLevel::Warning;
 TsDevLogSink  g_logSink  = nullptr;  // when set, gated messages go here
+// Whether verifyModule() traverses reverse dependents for strategy (cat-0)
+// roots. Default false = skip (see tsdev_lib.h).
+bool g_traverseStrategyDependents = false;
 } // namespace
+
+void tsdev_set_traverse_strategy_dependents(bool enabled) {
+    g_traverseStrategyDependents = enabled;
+}
+
+bool tsdev_get_traverse_strategy_dependents() {
+    return g_traverseStrategyDependents;
+}
 
 void tsdev_log_set_level(TsDevLogLevel level) {
     g_logLevel = level;
@@ -2196,44 +2207,71 @@ std::string TsDevLib::verifyModule(ComponentType type, int progId,
                           rootCategory, progId);
             }
 
-            // Contract-change check: compare old vs new master record.
-            // Intended old-record capture before saveSource() is currently
-            // missing and is an escalated M.4 blocker. Until it is populated,
-            // m_hasOldMasterRec remains false and this defaults to changed.
-            bool contractChanged = true;  // default: assume changed
-            if (m_hasOldMasterRec) {
-                // Read the new master record.
-                char newRec[0x10A] = {};
-                GetMasterRecByTypeSehResult gmSeh;
-                // §7.1 diag: _GetMasterRecByType@16 dispatches worker cmd
-                // 0x0D (FUN_101d15c0) internally — bracket the call.
-                TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.enter",
-                               "cat=%d progId=%d when=contract-check",
+            // Strategy (cat-0) roots skip the contract-check AND the
+            // reverse-dependent traversal below unless the legacy behavior
+            // is explicitly re-enabled. A strategy cannot be a dependency
+            // target: dep-list entries (0xFA3/0xFA4) record FUNCTION
+            // references only, TSDev's own dependent query returns empty
+            // for strategy roots, and the scan was the dominant WHServer
+            // VAS consumer. Categories 1/4 keep the full path.
+            // The gate applies only at this verifyModule entry (root)
+            // level: the recursive dependent descent inside
+            // traverseReverseDependents still accepts dep.category == 0
+            // (defensive parity — in practice dep-lists never reference
+            // strategies).
+            if (rootCategory == 0 &&
+                !tsdev_get_traverse_strategy_dependents()) {
+                TSDEV_DIAG_LOG("traverse.skipped",
+                               "rootCat=%d rootProgId=%d reason=strategy-root",
                                rootCategory, progId);
-                if (callGetMasterRecByType(m_getMasterRecByType,
-                        rootCategory, getSubType(type), progId, newRec, &gmSeh)
-                    && gmSeh.result == 1) {
-                    TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.leave",
-                                   "cat=%d progId=%d when=contract-check ok=1",
+                // Production-visible counterpart of the diag record: a
+                // strategy root skips the reverse-dependent traversal by
+                // design; emit at Info (-v) so non-diag builds surface it.
+                tsdev_log_message(TsDevLogLevel::Info,
+                                  "verifyModule: strategy root skipped "
+                                  "reverse-dependent traversal (cat=%d "
+                                  "progId=%d)\n",
+                                  rootCategory, progId);
+            } else {
+                // Contract-change check: compare old vs new master record.
+                // Intended old-record capture before saveSource() is currently
+                // missing and is an escalated M.4 blocker. Until it is populated,
+                // m_hasOldMasterRec remains false and this defaults to changed.
+                bool contractChanged = true;  // default: assume changed
+                if (m_hasOldMasterRec) {
+                    // Read the new master record.
+                    char newRec[0x10A] = {};
+                    GetMasterRecByTypeSehResult gmSeh;
+                    // §7.1 diag: _GetMasterRecByType@16 dispatches worker cmd
+                    // 0x0D (FUN_101d15c0) internally — bracket the call.
+                    TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.enter",
+                                   "cat=%d progId=%d when=contract-check",
                                    rootCategory, progId);
-                    int cmpResult = compareMasterRecsContractSeh(
-                        (const char*)m_oldMasterRec, (const char*)newRec);
-                    contractChanged = (cmpResult == 0);  // 0 = changed
+                    if (callGetMasterRecByType(m_getMasterRecByType,
+                            rootCategory, getSubType(type), progId, newRec, &gmSeh)
+                        && gmSeh.result == 1) {
+                        TSDEV_DIAG_LOG("dispatch.GetMasterRecByType.leave",
+                                       "cat=%d progId=%d when=contract-check ok=1",
+                                       rootCategory, progId);
+                        int cmpResult = compareMasterRecsContractSeh(
+                            (const char*)m_oldMasterRec, (const char*)newRec);
+                        contractChanged = (cmpResult == 0);  // 0 = changed
+                    }
+                    m_hasOldMasterRec = false;  // reset for next operation
                 }
-                m_hasOldMasterRec = false;  // reset for next operation
-            }
 
-            // Traverse reverse dependents with an explicit visited-set; cycle termination is not established when contractChanged=true (M.4 blocker).
-            // §7.1 diag: "traverse" batch-phase marker (the currently silent
-            // reverse-dependent revalidation region).
-            std::set<int> visited;
-            visited.insert(progId);  // root is already visited
-            TSDEV_DIAG_LOG("phase.traverse.enter",
-                           "rootCat=%d rootProgId=%d", rootCategory, progId);
-            traverseReverseDependents(type, progId, compilerMem,
-                                      contractChanged, visited, 0);
-            TSDEV_DIAG_LOG("phase.traverse.leave",
-                           "rootCat=%d rootProgId=%d", rootCategory, progId);
+                // Traverse reverse dependents with an explicit visited-set; cycle termination is not established when contractChanged=true (M.4 blocker).
+                // §7.1 diag: "traverse" batch-phase marker (the currently silent
+                // reverse-dependent revalidation region).
+                std::set<int> visited;
+                visited.insert(progId);  // root is already visited
+                TSDEV_DIAG_LOG("phase.traverse.enter",
+                               "rootCat=%d rootProgId=%d", rootCategory, progId);
+                traverseReverseDependents(type, progId, compilerMem,
+                                          contractChanged, visited, 0);
+                TSDEV_DIAG_LOG("phase.traverse.leave",
+                               "rootCat=%d rootProgId=%d", rootCategory, progId);
+            }  // strategy-root traversal skip
         }
     }
 

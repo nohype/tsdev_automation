@@ -304,6 +304,12 @@ void printUsage() {
         "  --no-whserver-vas-guard  (batch-*/serve) disable the WHServer\n"
         "                   VAS-headroom guard entirely. Env:\n"
         "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
+        "  --traverse-strategy-dependents  (all verify paths: single ops,\n"
+        "                   batch-*, serve) restore the legacy per-item\n"
+        "                   whole-library reverse-dependent traversal for\n"
+        "                   strategy roots (skipped by default: strategies\n"
+        "                   cannot be dependency targets). Env:\n"
+        "                   TSDEV_TRAVERSE_STRATEGY_DEPENDENTS (any value but \"0\").\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
         "human-readable stdout).\n"
         "                 For batch-* (and tagged serve requests) it also\n"
@@ -4923,6 +4929,7 @@ int main(int argc, char** argv) {
     VasGuardConfig vasGuard;
     bool vasFreeFlagSet = false;     // --whserver-free-mb seen
     bool vasLargestFlagSet = false;  // --whserver-largest-free-mb seen
+    bool traverseStrategyDependents = false;  // --traverse-strategy-dependents
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -5047,6 +5054,13 @@ int main(int argc, char** argv) {
             // Boolean switch like --json: presence disables the guard; a
             // '=' value is ignored; repeats are harmless (idempotent).
             vasGuard.enabled = false;
+        } else if (arg == "--traverse-strategy-dependents" ||
+                   arg.rfind("--traverse-strategy-dependents=", 0) == 0) {
+            // Boolean switch like --json: presence restores the legacy
+            // per-item whole-library reverse-dependent traversal for
+            // strategy (cat-0) roots (skipped by default). A '=' value is
+            // ignored; repeats are harmless (idempotent).
+            traverseStrategyDependents = true;
         } else {
             reducedArgv.push_back(argv[i]);
         }
@@ -5080,6 +5094,17 @@ int main(int argc, char** argv) {
             !(n == 1 && envBuf[0] == '0')) {
             vasGuard.enabled = false;
         }
+        // TSDEV_TRAVERSE_STRATEGY_DEPENDENTS: any value other than "0"
+        // restores the legacy strategy-root reverse-dependent traversal
+        // (same presence semantics as TSDEV_NO_WHSERVER_VAS_GUARD; the
+        // explicit flag also wins over an env "0").
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS",
+                                    envBuf, sizeof(envBuf));
+        if (!traverseStrategyDependents && n > 0 && n < sizeof(envBuf) &&
+            !(n == 1 && envBuf[0] == '0')) {
+            traverseStrategyDependents = true;
+        }
     }
 
     // TVS (CLI log levels): set the process-global library log level ONCE,
@@ -5087,6 +5112,10 @@ int main(int argc, char** argv) {
     // diagnostics are gated consistently. Batch worker threads and the serve
     // broker are spawned after this point and inherit the level.
     tsdev_log_set_level(LogLevelFromVerbosityCount(verboseCount));
+
+    // Same set-once process-global contract as the log level: apply the
+    // strategy-root traversal switch before any TsDevLib construction.
+    tsdev_set_traverse_strategy_dependents(traverseStrategyDependents);
 
     int reducedArgc = static_cast<int>(reducedArgv.size());
     char** reducedArgvPtr = reducedArgv.data();

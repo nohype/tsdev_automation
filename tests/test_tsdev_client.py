@@ -1371,6 +1371,31 @@ class TestVerboseForwarding:
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
 
+    def test_build_serve_parameters_traverse_strategy_env_forwarding(self, monkeypatch) -> None:
+        """TSDEV_TRAVERSE_STRATEGY_DEPENDENTS is forwarded to the broker as
+        --traverse-strategy-dependents (ShellExecuteExW runas does not
+        inherit the caller's environment block)."""
+        monkeypatch.delenv("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS", raising=False)
+        # Unset -> no flag.
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        # Any value other than "0" forwards.
+        monkeypatch.setenv("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS", "1")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--traverse-strategy-dependents"]
+        )
+        # "0" and "" do not forward.
+        monkeypatch.setenv("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS", "0")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        monkeypatch.setenv("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS", "")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+
     def test_serve_broker_start_forwards_verbose(self, monkeypatch, tmp_path: Path) -> None:
         """``_ServeBroker`` with verbose forwards ``-v`` flags in lpParameters."""
         cli_exe = tmp_path / "tsdev_cli.exe"

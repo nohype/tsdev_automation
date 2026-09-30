@@ -80,6 +80,19 @@ void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...);
 typedef void (*TsDevLogSink)(const char* formattedUtf8);
 void tsdev_log_set_sink(TsDevLogSink sink);
 
+// Process-global switch (set-once at startup, like tsdev_log_set_level)
+// controlling whether verifyModule() runs the reverse-dependent traversal
+// (and its master-record contract-check) for STRATEGY (category-0) roots.
+// Default false = skip. A strategy cannot be a dependency target: dep-list
+// entries (0xFA3/0xFA4) record FUNCTION references only, and TSDev's own
+// dependent query returns empty for strategy roots — the per-item
+// whole-library scan was the dominant driver of WHServer VAS exhaustion
+// while being provably vacuous for cat-0. Set true to restore the legacy
+// traversal (CLI: --traverse-strategy-dependents /
+// TSDEV_TRAVERSE_STRATEGY_DEPENDENTS). Categories 1/4 always traverse.
+void tsdev_set_traverse_strategy_dependents(bool enabled);
+bool tsdev_get_traverse_strategy_dependents();
+
 // Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md §Mapping to
 // orlib20 warehouse types and §Encoding formula). The enum value is the
 // EXPANDED whType (= (subType << 8) | category). For types with sub-type 0

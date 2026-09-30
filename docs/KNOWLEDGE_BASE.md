@@ -328,7 +328,7 @@ Static + runtime analysis of the TSDev.exe function-edit-save path. All evidence
 | 14a | **Ordinal_10** `(0)` — inside `FUN_004D91E0` category-gated block | `FUN_101a9650` @ `0x101a9650` | **MISSING** |
 | 14b | `FUN_004D7140` → **Ordinal_71** + `FUN_004e79d0` / `FUN_004d75b0` (worker cmd 0x0D) | `FUN_101a9460` @ `0x101a9460` / internal TSDev | **MISSING** |
 | 14c | `FUN_004c9670` → **Ordinal_68** (dependent list + count) | `FUN_101a87d0` @ `0x101a87d0` | **MISSING** (CLI uses its own enumeration) |
-| 14d | Recursive `FUN_004D91E0` per dependent | internal TSDev | CLI uses `traverseReverseDependents` (different mechanism) |
+| 14d | Recursive `FUN_004D91E0` per dependent | internal TSDev | CLI uses `traverseReverseDependents` (different mechanism; skipped for cat-0 roots by default — see §13 "CLI implementation") |
 | 17 | **Ordinal_17** `(category, progId)` | `FUN_10151be0` @ `0x10151be0` | **MISSING** |
 | 19 | `FUN_004531A0` (property/cache persistence) | internal TSDev | **MISSING** |
 | — | **Ordinal_57** `(category, progId)` via `FUN_00453f70` | `FUN_101526f0` @ `0x101526f0` | ✓ (cross-process to TradeStation processes via shared `SHARE_WO` array) |
@@ -375,6 +375,8 @@ Evidence:
 The CLI dispatches cmd 0x0D via the generic dispatcher (`FUN_101cf5b0` via `callCmdDispatcher`) inside the category-gated (`rootCategory == 0 || 1 || 4`) post-success block in `verifyModule()`, after `linkModule` and before `traverseReverseDependents`. No Ordinal_10/71/68 or worker-thread infrastructure replication was needed. Non-fatal on all failure modes.
 
 The full TSDev post-verify block also includes Ordinal_10 (session get), Ordinal_71 (singleton), Ordinal_68 (dependent count), and a recursive per-dependent `FUN_004D91E0` traversal. These were NOT needed for the single-caller probe. For multi-dependent scenarios, the recursive traversal with per-dependent cmd 0x0D may be needed — potential future TVS if multi-dependent recalc is found insufficient.
+
+**Strategy (cat-0) roots:** `verifyModule()` skips the master-record contract-check and `traverseReverseDependents` for category-0 roots by default (the post-verify `linkModule` and cmd 0x0D dispatch still run unconditionally within the 0/1/4 gate). A strategy cannot be a dependency target — dep-list entries (0xFA3/0xFA4) record FUNCTION references only and TSDev's dependent query returns empty for strategy roots — so the per-item whole-library scan was provably vacuous for cat-0 while being the dominant WHServer VAS consumer. The legacy traversal is restorable via `--traverse-strategy-dependents` / `TSDEV_TRAVERSE_STRATEGY_DEPENDENTS` (any value but `"0"`); under `TSDEV_DIAG` the skip emits `traverse.skipped rootCat=0 rootProgId=N reason=strategy-root`.
 
 ### Recalc matrix (ALL 8 ENTRIES CONFIRMED — CLOSED)
 

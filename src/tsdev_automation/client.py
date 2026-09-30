@@ -359,6 +359,10 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     # Any value other than "0" disables the guard (C++ env semantics).
     if os.environ.get("TSDEV_NO_WHSERVER_VAS_GUARD") not in (None, "", "0"):
         args.append("--no-whserver-vas-guard")
+    # Same forwarding for the strategy-root traversal switch: any value
+    # other than "0" restores the legacy traversal in the broker.
+    if os.environ.get("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS") not in (None, "", "0"):
+        args.append("--traverse-strategy-dependents")
     args.extend(["-v"] * verbose)
     # ShellExecuteExW receives a command-line string, not an argv list.
     # list2cmdline uses the quoting rules expected by the Windows C runtime.
