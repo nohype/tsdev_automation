@@ -2204,7 +2204,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
 
     // Build the command line. The CLI uses main(int, char**), so a plain
     // ANSI command line works. Quote the path in case of spaces.
-    std::string cmdLine = "\"" + cliPath + "\" batch-insert --batch-stdin";
+    std::string cmdLine = "\"" + cliPath + "\" --json batch-insert --batch-stdin";
     // CreateProcessW needs a mutable wide command line.
     int wlen = MultiByteToWideChar(CP_UTF8, 0, cmdLine.c_str(),
                                    static_cast<int>(cmdLine.size()),
