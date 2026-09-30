@@ -326,25 +326,42 @@ BOOL CALLBACK whWindowEnum(HWND hwnd, LPARAM lp) {
     return TRUE;
 }
 
-void whserverSample() {
+struct ProcEntry {
+    std::wstring exeName;  // enumerated szExeFile, case as observed
+    DWORD pid;
+};
+
+// One Toolhelp32 process snapshot -> all (exeName, pid) pairs in enumeration
+// order. Shared by whserverSample, logTsProcessInventory, and
+// dumpExternalProcesses.
+bool snapshotProcesses(std::vector<ProcEntry>* out) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) {
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            out->push_back({pe.szExeFile, pe.th32ProcessID});
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return true;
+}
+
+void whserverSample() {
+    std::vector<ProcEntry> procs;
+    if (!snapshotProcesses(&procs)) {
         logRecordNoProgressf("whserver.sample",
                              "process-snapshot-failed err=%lu",
                              GetLastError());
         return;
     }
     std::vector<DWORD> pids;
-    PROCESSENTRY32W pe;
-    pe.dwSize = sizeof(pe);
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            if (_wcsicmp(pe.szExeFile, L"WHServer.exe") == 0) {
-                pids.push_back(pe.th32ProcessID);
-            }
-        } while (Process32NextW(snap, &pe));
+    for (const ProcEntry& p : procs) {
+        if (_wcsicmp(p.exeName.c_str(), L"WHServer.exe") == 0) {
+            pids.push_back(p.pid);
+        }
     }
-    CloseHandle(snap);
 
     if (pids.empty()) {
         logRecordNoProgressf("whserver.sample", "present=0");
@@ -376,6 +393,204 @@ void whserverSample() {
     }
 }
 
+// --- External-process dumps + TS process inventory -------------------------
+// (report 2026-09-29_dist_logs_crash_analysis.md §5.1: the self-dump cannot
+// show WHServer.exe's own state or co-running TSDev.exe/orchart.exe, which is
+// the still-open side of the wedged-COM-call root cause.)
+
+// Exact names (case-insensitive) that get a read-only external minidump in
+// the watchdog fire path.
+const wchar_t* const kExtDumpNames[] = {
+    L"WHServer.exe", L"TSDev.exe", L"orchart.exe",
+};
+
+// Inventory-only additions: a live crash reporter is itself evidence of the
+// TS-side crash flavor, and other tsdev_cli*.exe instances may be sharing
+// the same WHServer singleton.
+const wchar_t* const kInventoryExtraNames[] = { L"TSCrashReport.exe" };
+
+bool nameInList(const wchar_t* name, const wchar_t* const* list, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (_wcsicmp(name, list[i]) == 0) return true;
+    }
+    return false;
+}
+
+// tsdev_cli*.exe glob: the "tsdev_cli" prefix (9 chars) plus a ".exe"
+// suffix (4 chars). The shortest possible match is "tsdev_cli.exe" itself
+// (13 chars), so the size guard is >= 13 — it must cover BOTH the 9-char
+// prefix read and the 4-char suffix read.
+bool isTsDevCliName(const std::wstring& name) {
+    return name.size() >= 13 &&
+           _wcsnicmp(name.c_str(), L"tsdev_cli", 9) == 0 &&
+           _wcsicmp(name.c_str() + name.size() - 4, L".exe") == 0;
+}
+
+// UTF-8 narrow form of an enumerated exe name (ASCII in practice; CP_UTF8
+// keeps any non-ASCII byte readable in the log and usable in paths).
+// Caveat: the result is later handed to CreateFileA, which decodes ANSI,
+// not UTF-8 — a non-ASCII exe name would produce a mangled dump filename
+// (the log record still shows the correct UTF-8 name). Accepted: every
+// kExtDumpNames/kInventoryExtraNames entry is ASCII.
+std::string narrowExe(const std::wstring& w) {
+    char buf[MAX_PATH * 4];
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, buf,
+                                static_cast<int>(sizeof(buf)), nullptr,
+                                nullptr);
+    if (n <= 0) return "(name-unconvertible)";
+    return std::string(buf, static_cast<size_t>(n - 1));
+}
+
+// tsproc.inventory: csv of procname:pid for every TS-relevant process
+// running (WHServer/TSDev/orchart/TSCrashReport + other tsdev_cli*.exe —
+// self excluded by pid). progress=true at init, consistent with the
+// diag.init/run.start records which also feed the watchdog timestamp; the
+// watchdog fire path passes false — its records must never feed the
+// watchdog.
+void logTsProcessInventory(bool progress) {
+    std::vector<ProcEntry> procs;
+    if (!snapshotProcesses(&procs)) {
+        if (progress) {
+            logRecordf("tsproc.inventory",
+                       "process-snapshot-failed err=%lu", GetLastError());
+        } else {
+            logRecordNoProgressf("tsproc.inventory",
+                                 "process-snapshot-failed err=%lu",
+                                 GetLastError());
+        }
+        return;
+    }
+    DWORD self = GetCurrentProcessId();
+    std::string csv;
+    for (const ProcEntry& p : procs) {
+        bool match =
+            nameInList(p.exeName.c_str(), kExtDumpNames,
+                       sizeof(kExtDumpNames) / sizeof(kExtDumpNames[0])) ||
+            nameInList(p.exeName.c_str(), kInventoryExtraNames,
+                       sizeof(kInventoryExtraNames) /
+                           sizeof(kInventoryExtraNames[0])) ||
+            (p.pid != self && isTsDevCliName(p.exeName));
+        if (!match) continue;
+        if (!csv.empty()) csv += ',';
+        char pidBuf[16];
+        std::snprintf(pidBuf, sizeof(pidBuf), "%lu",
+                      static_cast<unsigned long>(p.pid));
+        csv += narrowExe(p.exeName);
+        csv += ':';
+        csv += pidBuf;
+    }
+    if (progress) {
+        logRecordf("tsproc.inventory", "%s",
+                   csv.empty() ? "(none)" : csv.c_str());
+    } else {
+        logRecordNoProgressf("tsproc.inventory", "%s",
+                             csv.empty() ? "(none)" : csv.c_str());
+    }
+}
+
+// §5.1: write a read-only minidump of each running WHServer.exe / TSDev.exe
+// / orchart.exe next to the log, so the server side of the wedge is captured
+// at hang time. The targets are never suspended, killed, or otherwise
+// touched beyond MiniDumpWriteDump's own snapshot. Every failure (access
+// denied, bitness mismatch, vanished process) is logged and non-fatal — the
+// fire sequence must still reach watchdog.abort.
+void dumpExternalProcesses() {
+    std::vector<ProcEntry> procs;
+    if (!snapshotProcesses(&procs)) {
+        logRecordNoProgressf("watchdog.extdump",
+                             "process-snapshot-failed err=%lu",
+                             GetLastError());
+        return;
+    }
+    // Same base name as the self-dump (tsdev_diag_<pid>_<ts>) plus a
+    // per-target suffix -> tsdev_diag_<pid>_<ts>_<proc>_<targetpid>.dmp
+    std::string base = dumpPathFor(logPath());  // "..._hhmmss.dmp"
+    base.resize(base.size() - 4);               // strip ".dmp"
+    DWORD self = GetCurrentProcessId();
+    for (const ProcEntry& p : procs) {
+        if (p.pid == self) continue;
+        if (!nameInList(p.exeName.c_str(), kExtDumpNames,
+                        sizeof(kExtDumpNames) / sizeof(kExtDumpNames[0]))) {
+            continue;
+        }
+        std::string name = narrowExe(p.exeName);
+        // File tag without the .exe extension (WHServer.exe -> _WHServer_).
+        std::string fileTag = name;
+        if (fileTag.size() > 4 &&
+            _stricmp(fileTag.c_str() + fileTag.size() - 4, ".exe") == 0) {
+            fileTag.resize(fileTag.size() - 4);
+        }
+        std::string path = base + "_" + fileTag + "_" +
+                           std::to_string(p.pid) + ".dmp";
+        unsigned long pid = static_cast<unsigned long>(p.pid);
+        // Intent record BEFORE writing: a kill mid-dump (a multi-GB WHServer
+        // dump can take tens of seconds) still shows what was attempted.
+        logRecordNoProgressf("watchdog.extdump",
+                             "proc=%s pid=%lu start path=%s", name.c_str(),
+                             pid, path.c_str());
+        DWORD err = 0;
+        BOOL ok = FALSE;
+        // Access for MiniDumpWriteDump on an external process:
+        // QUERY_INFORMATION|VM_READ|DUP_HANDLE — Microsoft documents
+        // PROCESS_DUP_HANDLE as additionally required "if handle
+        // information is to be collected", and field reports show
+        // external dumps failing without it. The trio is still the
+        // minimal read-only set for a same-bitness target from an
+        // elevated process (AGENTS.md). Fallback only: if the minimal
+        // request fails (OpenProcess denied or MiniDumpWriteDump
+        // error), retry once with PROCESS_ALL_ACCESS — some targets
+        // deny the minimal mask even to an elevated caller. Every
+        // failure is logged below and remains non-fatal.
+        const DWORD accessModes[2] = {
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
+                PROCESS_DUP_HANDLE,
+            PROCESS_ALL_ACCESS,
+        };
+        for (int m = 0; m < 2 && !ok; ++m) {
+            if (m > 0) {
+                logRecordNoProgressf(
+                    "watchdog.extdump",
+                    "proc=%s pid=%lu retry access=PROCESS_ALL_ACCESS "
+                    "(minimal request failed err=%lu)",
+                    name.c_str(), pid, err);
+            }
+            HANDLE hProc = OpenProcess(accessModes[m], FALSE, p.pid);
+            if (!hProc) {
+                err = GetLastError();
+                continue;
+            }
+            HANDLE hFile = CreateFileA(path.c_str(), GENERIC_WRITE,
+                                       FILE_SHARE_READ, nullptr,
+                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                                       nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                err = GetLastError();
+                CloseHandle(hProc);
+                break;  // file-side failure; broader access won't help
+            }
+            // Same flag set as the self minidump (writeMinidump).
+            ok = MiniDumpWriteDump(
+                hProc, p.pid, hFile,
+                static_cast<MINIDUMP_TYPE>(MiniDumpNormal |
+                                           MiniDumpWithThreadInfo |
+                                           MiniDumpWithFullMemory),
+                nullptr, nullptr, nullptr);
+            if (!ok) err = GetLastError();
+            CloseHandle(hFile);
+            CloseHandle(hProc);
+        }
+        if (ok) {
+            logRecordNoProgressf("watchdog.extdump",
+                                 "proc=%s pid=%lu ok=1 path=%s", name.c_str(),
+                                 pid, path.c_str());
+        } else {
+            logRecordNoProgressf("watchdog.extdump",
+                                 "proc=%s pid=%lu ok=0 err=%lu",
+                                 name.c_str(), pid, err);
+        }
+    }
+}
+
 // --- Watchdog thread ---------------------------------------------------------
 
 void fire(double idleSecs) {
@@ -396,6 +611,14 @@ void fire(double idleSecs) {
 
     std::string dumpPath = dumpPathFor(logPath());
     writeMinidump(dumpPath);  // §7.1 2d(3)
+
+    // §5.1 (2026-09-29 report): refresh the TS process inventory at hang
+    // time, then read-only external minidumps of WHServer.exe / TSDev.exe /
+    // orchart.exe — the server side the self-dump cannot show. Placed after
+    // the self-dump so it keeps priority if anything here fails; all
+    // failures inside are logged and non-fatal.
+    logTsProcessInventory(/*progress=*/false);
+    dumpExternalProcesses();
 
     // §7.1 2d(4): abort loudly with a distinct exit code.
     logRecordNoProgressf("watchdog.abort", "exit=%d", WATCHDOG_EXIT_CODE);
@@ -563,6 +786,9 @@ void diagInit() {
         logRecordf("diag.init", "pid=%lu watchdogSecs=%.1f",
                    GetCurrentProcessId(), g_thresholdSecs);
     }
+    // §5.1 (2026-09-29 report): which TS processes share this machine at run
+    // start (WHServer pid + co-running clients are cross-run evidence).
+    logTsProcessInventory(/*progress=*/true);
 }
 
 }  // namespace diag

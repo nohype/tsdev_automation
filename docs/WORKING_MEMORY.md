@@ -114,6 +114,58 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
   coalesce per-item 0x0D/0x40A notifications; production bounded-wait
   loud-abort; dev repro = TSDev.exe open + big batch.
 
+## Active task: local reproduction (2026-09-30)
+
+- Goal: reproduce the WHServer wedge locally, then fix. Field
+  correction: desktop is RUNNING but idle with chart windows open
+  (not actively used); time-of-day irrelevant; users only batch
+  strategies.
+- This machine NOW has the real TS desktop running — must NOT disturb
+  it (10min credentialed restart). We may launch + target a local
+  TSDev.exe only. Elevated shell.
+- Test data (READ-ONLY — never modify): `D:\protege_strategy_dev\
+  {swing,daytrading}\*\*\{CANDIDATE_CODE,HISTORY,SFB\eval}` (three
+  levels deep — `swing\s\run1sb\CANDIDATE_CODE` etc.).
+- Cache backup taken pre-repro: `tmp\vss_backup*.ps1` output
+  (VSS shadow copy of `Program\Cache` incl. CAL_cache.clod +
+  robocopy of `MyWork\Bin` → `tmp\ts_backup_*\`).
+- Harness: `tmp\repro\run_repro.ps1` (watches child + dialogs +
+  crash procs; `-CollectExternalDumps` cdb-dumps WHServer/TSDev/
+  orchart live on detection; never kills TS processes).
+- **Harness stall detector is content-based now** (FileStream live
+  Length + last `[secs]` tail record) — the original
+  `LastWriteTimeUtc:Length` signature false-positived on a healthy
+  90MB/226s run because NTFS direntry metadata lags for a
+  continuously-open append handle. Do NOT reintroduce mtime/size
+  signatures for open files.
+- Results so far (all CLEAN): 30+60 delete-upsert cycles on the
+  user's exact failing eval dir (`swing\s\run1sb\SFB\eval`, the same
+  9 `S-220M-*_SFB` strategies as the user crashes); full 640-item
+  `swing\s\run1sb\CANDIDATE_CODE` upsert 590s exit=0. Local library
+  now ~670 cat-0 strategies (user had ~2080). No real wedge
+  reproduced yet; WHServer pid 27908 healthy throughout.
+- Local repro: ~1700 upserts + 130 delete-upsert cycles across the
+  user's exact dirs incl. items open in TSDev editor/charts — NO
+  wedge reproduced. Desktop does react (orchart Format dialogs,
+  TSDev window refresh observed live). Harness now logs dialogs
+  without aborting (-IgnoreDialogs).
+- **ROOT CAUSE PROVEN 2026-09-30** from user's TS crash artifacts
+  (`D:\protege_strategy_dev\tsdev_automation_dist_diag\TS_Crash_files`):
+  WHServer.exe pid 19532 threw `std::bad_alloc` at 08:00:36 on 9/24
+  during run 45356 — CRT `operator new` → malloc NULL inside a COM
+  handler (selector 0x5DC = binary-blob SAFEARRAY(VT_UI1) getter)
+  with **10MB VAS free of 2GB** (non-LAA 32-bit). TSCrashReport
+  froze the process → our pending ORPC never returned → client
+  INFINITE wait. TSELAppHost clients crashed on propagated
+  RPC_E_SERVERFAULT (0x80010105). Cache corruption confirmed by
+  CAL_2026-09-24.Log `cf-20001 Index checksum` errors at 11:14.
+  Analysis: `tmp\whserver_crash_analysis\report.md`.
+- Fix direction (evidence-backed): cut per-item WHServer load
+  (strategy reverse-enum is the ~2900-call/item driver), guard on
+  WHServer VAS headroom, bound the wait so a frozen server can't
+  hang us forever. 08:04/10:08 wedge-only failures still [OPEN]
+  (VAS near-exhaustion plausibly explains slowness-without-crash).
+
 ## Current state (not derivable from code)
 
 - **Quiet-output TVS done — committed + released as v0.1.3.** New batch

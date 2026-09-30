@@ -16,10 +16,19 @@
 //       is not obtainable it logs that explicitly and relies on stacks +
 //       minidump,
 //   (3) writes a minidump next to the log,
+//   (3b) refreshes the tsproc.inventory record and writes read-only
+//        minidumps of any running WHServer.exe / TSDev.exe / orchart.exe
+//        next to the log (report 2026-09-29_dist_logs_crash_analysis.md
+//        §5.1 — the server side of the wedged COM call that the self-dump
+//        cannot show); failures are logged and non-fatal, and the targets
+//        are never suspended or terminated,
 //   (4) aborts loudly: final log record, a clear stderr message naming the
 //       watchdog and the log/dump paths, then terminates the process with
 //       exit code 13 (unused elsewhere — see diag_watchdog.cpp).
 // While idle it samples WHServer.exe liveness every 5 s (§7.1 2e).
+// At init it also logs one tsproc.inventory record — a csv of procname:pid
+// for WHServer.exe / TSDev.exe / orchart.exe / TSCrashReport.exe and any
+// other tsdev_cli*.exe instance — refreshed again in the fire path.
 //
 // Idle-by-design phases (review F3b): code that enters a legitimately idle
 // wait (the serve broker blocked in ConnectNamedPipe) brackets it with
