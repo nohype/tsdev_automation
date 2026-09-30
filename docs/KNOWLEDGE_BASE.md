@@ -405,3 +405,16 @@ TSCrash.dll's unhandled-exception filter launches `TSCrashReport.exe "<faulting-
 Evidence: TSCrash.dll disassembly — `CreateProcessW` call sites at TSCrash+0x2D7B/+0x34F9, the command-line build at +0x33F3–+0x349F verified verbatim; the command line carries the basename only, no pid. Full analysis: `tmp/whserver_crash_analysis/report.md`; disasm evidence scripts: `tmp/crashrep_strings/disasm_cp*.py` (+ the analysis conversation).
 
 Consequence for the dispatch watchdog (`src/dispatch_watchdog.cpp`): a `TSCrashReport.exe` whose parent pid is a WHServer.exe pid is a proven "WHServer crashed and is frozen" signal — the wedged COM call into it will never return — while the crashed WHServer's pid still enumerates as present (so presence alone is not proof of health).
+
+---
+
+## 15. WHServer.exe VAS exhaustion — `std::bad_alloc` crash mechanism (PROVEN)
+
+- **WHServer.exe is 32-bit non-LARGEADDRESSAWARE** (CHARACTERISTICS `0x103`, no `0x20` bit) → hard **2 GB user-VAS ceiling** for the shared warehouse server. [PROVEN: PE header inspection]
+- **Observed fatal failure:** WHServer pid 19532 threw unhandled `std::bad_alloc` at 09-24 08:00:36 with **2047 MB used / 10 MB free** user VAS. CRT path: `operator new` (`0x42D150`) → `malloc` NULL → `_callnewh` → `__scrt_throw_std_bad_alloc` (`0x42DB87`). Handle/GDI counts were normal — pure virtual-address-space commit exhaustion, not a resource leak. [PROVEN: `_ThrowInfo` RTTI `.?AVbad_alloc@std@@` + TSErrorLog header]
+- **VAS exhaustion is cumulative across all attached clients.** WHServer is the lazy-lifetime singleton shared by tsdev_cli, TSDev.exe, TSELAppHost.exe, orchart.exe, etc.; pid 19532 had served our batch runs since 09-20 plus concurrent desktop traffic. Which client's workload filled the 2 GB is not attributable from available evidence. [INFERRED]
+- **The throw site is an incoming COM read, not our specific call:** STA dispatch → selector `0x5DC` → `WHServer!0x415D90`, a binary-blob getter materializing item binary content into `SAFEARRAY(VT_UI1)` (`new[blob_count]` + memcpy in `WHServer!0x40CC80`; needs ~2× blob bytes incl. the SafeArray data block). Once VAS is ~exhausted, *any* server-side allocation can fail — the crash lands at a random later call. [PROVEN shape; symbolic name INFERRED]
+- **Client-visible cascade:** TSCrashReport froze WHServer (§14(b)) → pending ORPC never returns → our `CCliModalLoop` infinite wait; other clients receive `_com_error(0x80010105 RPC_E_SERVERFAULT)` on orlib20 worker threads; TSDev.exe crashed 6 s later (`0x80000003` in the cmd-0x35 dispatch family). [PROVEN: TSELAppHost minidumps + aggregated report blocks]
+- **Pre-fatal manifestation [INFERRED]:** a WHServer approaching the ceiling can manifest as slowness/wedge (new-handler retries, fragmented commits) before `malloc` returns NULL — the 08:04/10:08 wedge-only hangs are plausibly this mechanism, unproven.
+
+Evidence: `tmp/whserver_crash_analysis/report.md` (analysis of `D:\protege_strategy_dev\tsdev_automation_dist_diag\TS_Crash_files`; ThrowInfo decode, disasm listings). Correlating root-cause report: `reports/2026-09-29_dist_logs_crash_analysis.md` postscript.

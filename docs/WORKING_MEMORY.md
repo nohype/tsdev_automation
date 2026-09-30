@@ -168,6 +168,24 @@ Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
   WHServer VAS headroom, bound the wait so a frozen server can't
   hang us forever. 08:04/10:08 wedge-only failures still [OPEN]
   (VAS near-exhaustion plausibly explains slowness-without-crash).
+- **Fixes LANDED 2026-09-30** (all reviewed+verified):
+  `5bfc08b` whserver_health VAS measure + whserver.sample
+  vasFreeMB/vasLargestFreeMB fields; `3b70f71` runBatch VAS guard
+  (exit 14, --whserver-free-mb 256 / --whserver-largest-free-mb 64
+  / --no-whserver-vas-guard, TSDEV_WHSERVER_* env); `9e68bd6` serve
+  broker + client.py guard (exit-14 refusal, no env inherit under
+  runas -> flags forwarded); `be34ff3` cat-0 reverse-enum skip
+  (default on; --traverse-strategy-dependents restores; cmd-0x0D
+  recalc kept; verified 51-line vs 8727-line log same item);
+  `57959b0` dispatch watchdog: in-flight marker on every orlib20
+  crossing, 1s poll, fires on >300s (--dispatch-timeout-secs),
+  TSCrashReport-parented-by-WHServer fast path, or WHServer vanish
+  (3-sample gate) -> stderr WATCHDOG ABORT + TerminateProcess(15)
+  (never ExitProcess/DLL-detach). client.py raises
+  TsDevWatchdogAbortError, no retry into wedged server.
+- WHServer recycle PROVEN UNSAFE: no reconnect path; killing it
+  mid-session crashes all connected clients (E5/E1r x3). Recycle
+  only safe when zero TS clients connected.
 
 ## Current state (not derivable from code)
 

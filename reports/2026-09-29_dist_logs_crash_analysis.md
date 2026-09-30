@@ -20,6 +20,8 @@ Run 39964's minidump captures the complete chain verbatim: batch worker tid 4346
 
 **Root cause of WHServer's non-response is [OPEN]** — it is not determinable from client-side artifacts; WHServer.exe is a separate process absent from our dump. Leading hypothesis (below) is cross-process COM contention/deadlock between our dispatch flood and the concurrently open desktop. Closing it requires a WHServer-side dump captured at hang time (§5.1) or the TS-side crash artifacts (§5.2).
 
+> **RESOLVED 2026-09-30 — see "Postscript 2026-09-30" below.** The TS-side crash artifacts (§5.2) were harvested and analyzed: WHServer threw an unhandled `std::bad_alloc` at 2047 MB used / 10 MB free of its 2 GB non-LAA VAS at 08:00:36 — the run-45356 non-response is proven server death-by-VAS-exhaustion, not STA deadlock.
+
 ## 2. Census of all 21 logs
 
 | Log (pid) | Date/time | Command | Outcome | WHServer pid |
@@ -68,11 +70,11 @@ Not a poisoned record: progId 518 linked fine in runs 38492, 39388, and 45356 it
 | Poisoned warehouse residue | delete batch ran clean at 08:04:41, ~4 min after 45356's stall, same boot (WHServer pid unrecorded — run ended before the first 5s sample; same-boot QPC epoch + lazy singleton lifetime make "probably still 19532" reasonable) | [INFERRED] — wedge is per-request-timing, not persistent corruption |
 | WHServer shared across days and clients | pid 19532 served runs from 09-20→09-24 08:00 incl. the 640-item clean run | [PROVEN] — lazy-lifetime singleton (E6) |
 | Concurrent desktop/TSDev use | user: "usually open"; all 3 failures at 08:00/10:08 (workday); the cleanest big runs at 03:2x (overnight, likely idle desktop) | [INFERRED] — contention-active-desktop correlation is consistent but not directly logged |
-| WHServer-side wedge mechanism | server alive, not answering; in-proc evidence shows no AV/EDR, no injected DLLs | [OPEN] — needs WHServer dump at hang time (§5.1) |
+| WHServer-side wedge mechanism | server alive, not answering; in-proc evidence shows no AV/EDR, no injected DLLs | [OPEN] → **RESOLVED for the 08:00 run by postscript**: WHServer pid 19532 threw unhandled `std::bad_alloc` at 08:00:36 inside a COM blob-getter (selector 0x5DC), then was frozen-but-alive by TSCrashReport — explaining both `present=1` and non-response. The 08:04/10:08 wedge-only failures remain [OPEN] (postscript) |
 
-**Leading mechanism hypothesis [INFERRED]:** the per-item post-verify `cmd 0x0D` dispatch "fires WHServer COM events that cause orchart.exe to recalculate" (code comment, `tsdev_lib.cpp:2150`). With the desktop open, every verified item injects recalc work into WHServer→desktop traffic. If WHServer's request handling serializes on an STA that is blocked delivering an event to a busy/modal desktop STA (or deadlocked on a reentrant call back into WHServer from that delivery), every subsequent client call — ours and the desktop's — stalls permanently. This explains: why it only fails when the desktop is up and active; why the hang lands at a random later call (the wedge is already armed when item N's notification churns); and why the desktop crashes too.
+**Leading mechanism hypothesis [INFERRED]** *(superseded for the 08:00 run — see postscript; the actual mechanism was VAS exhaustion, not STA deadlock, though the desktop's contribution to cumulative VAS growth remains plausible)*: the per-item post-verify `cmd 0x0D` dispatch "fires WHServer COM events that cause orchart.exe to recalculate" (code comment, `tsdev_lib.cpp:2150`). With the desktop open, every verified item injects recalc work into WHServer→desktop traffic. If WHServer's request handling serializes on an STA that is blocked delivering an event to a busy/modal desktop STA (or deadlocked on a reentrant call back into WHServer from that delivery), every subsequent client call — ours and the desktop's — stalls permanently. This explains: why it only fails when the desktop is up and active; why the hang lands at a random later call (the wedge is already armed when item N's notification churns); and why the desktop crashes too.
 
-An alternative [OPEN]: WHServer is merely *busy* on a heavyweight recalc/record job triggered by our verify on the user's large library (2080 cat-0 + 414 cat-4 records) rather than deadlocked; >60s server-side work produces the same signature. The WHServer dump discriminates (blocked-in-send vs busy-execute stack).
+An alternative [OPEN] *(for the 08:00 run, superseded — proven `std::bad_alloc` under VAS exhaustion; see postscript)*: WHServer is merely *busy* on a heavyweight recalc/record job triggered by our verify on the user's large library (2080 cat-0 + 414 cat-4 records) rather than deadlocked; >60s server-side work produces the same signature. The WHServer dump discriminates (blocked-in-send vs busy-execute stack).
 
 ## 5. Recommended next steps
 
@@ -95,3 +97,35 @@ Leftover-wedged WHServer as sole cause (fresh servers hang); poisoned record (sa
 
 - `tmp\dump_analysis_39964.md` (+ `dump_stacks.txt`, `dump_details.txt`, `dump_lm.txt`, `dump_runaway.txt`, `dump_handles.txt`) — cdb analysis of the 1.44GB minidump.
 - Log evidence quoted in-line above; tag→code map lives in `src/diag_log.*`, `src/diag_watchdog.*`, and the `TSDEV_DIAG_LOG` sites in `tsdev_lib.cpp`/`tsdev_cli.cpp`.
+
+---
+
+## Postscript 2026-09-30: WHServer-side root cause proven
+
+The §5.2 artifacts were harvested from the user machine (`D:\protege_strategy_dev\tsdev_automation_dist_diag\TS_Crash_files`) and fully analyzed in `tmp\whserver_crash_analysis\report.md`. This postscript records the resolved facts; it supersedes the [OPEN]/[INFERRED] items named below without rewriting the dated client-side record above.
+
+### Proven facts (all [PROVEN] unless tagged)
+
+- **WHServer.exe pid 19532 threw an unhandled `std::bad_alloc` at 09-24 08:00:36 — during run 45356.** `_ThrowInfo` at `WHServer+0x3C41C` decodes via RTTI to `.?AVbad_alloc@std@@` (+ "bad allocation" what-string); the CRT path is `operator new` (`0x42D150`) → `malloc` NULL → `_callnewh` → `__scrt_throw_std_bad_alloc` (`0x42DB87`) → `_CxxThrowException`.
+- **VAS exhaustion at the throw:** report header records `2047 MBytes user address space / 10 MBytes user address space free`. WHServer.exe is 32-bit **non-LARGEADDRESSAWARE** → hard 2 GB user-VAS ceiling. `malloc` returned NULL because nothing committable remained.
+- **The failing allocation was inside an incoming COM handler:** STA dispatch (`user32 DispatchMessage` → `combase`/`rpcrt4`/`oleaut32`) → selector `0x5DC` → `WHServer!0x415D90` — a binary-blob getter that materializes an item's compiled/encrypted body into `SAFEARRAY(VT_UI1)` (`new[blob_count]` + memcpy in `WHServer!0x40CC80`; the same call was about to allocate a second equal-size block for the SafeArray data).
+- **The hang mechanism is proven end-to-end:** TSCrash.dll's unhandled-exception filter spawned TSCrashReport.exe and blocked `WaitForSingleObject(child, INFINITE)` → WHServer stayed frozen-but-alive (`present=1` for days) → our client's pending ORPC never returned → `CCliModalLoop` infinite wait. This is exactly the run-39964 chain (tid 47936) — WHServer non-response was the frozen corpse, not a live wedge.
+- **Client echoes:** the `.28`/`.33` bundles contain minidumps of two TSELAppHost.exe processes (pids `0x48AC`, `0x2AB0`), each mid-throw of `_com_error(0x80010105 RPC_E_SERVERFAULT)` on an orlib20 worker thread — pending calls into WHServer receiving the marshaled server fault.
+- **TSDev.exe crashed 6 s after WHServer** (breakpoint `0x80000003` in the same cmd-0x35 dispatch family — the `.28` bundle aggregates WHServer+TSDev+TSELAppHost report blocks). The user-observed "TSDev/desktop crashes" are this cascade.
+- **`CAL_2026-09-24.Log` shows hundreds of `[storage cache] code #cf-20001 Index checksum does not match` errors at 11:14** — desktop cache corruption, consistent with the day's session destabilization.
+- **[INFERRED — not attributable]** which client owned the in-flight selector-0x5DC call (ours vs TSELAppHost); both were connected. Also [INFERRED] what filled the 2 GB — no WHServer dump exists; VAS state is proven only by the self-reported header.
+
+### Open questions from the original report — resolution status
+
+| Original item | Status |
+|---|---|
+| §1 "Root cause of WHServer's non-response is [OPEN]" | **RESOLVED for 08:00** — `std::bad_alloc` at 2047/10 MB VAS, frozen by TSCrashReport. Not STA deadlock, not busy-work. |
+| §4 "WHServer-side wedge mechanism [OPEN] — needs WHServer dump" | **RESOLVED for 08:00** via crash-bundle evidence (no live dump needed). |
+| §4 "Concurrent desktop/TSDev use [INFERRED]" | Corroborated: report header lists `orchart.exe`, `TSDev.exe`, and our `tsdev_cli_diag.exe` all attached at 08:00:36. Desktop's contribution to VAS growth remains [INFERRED]. |
+| §5.1 "dump WHServer at hang time" | Made moot for 08:00; still the discriminating tool for wedge-only failures. |
+| 08:04 (run 39964, fresh pid 48560) and 10:08 (run 5528, fresh pid 10436, post-reboot) hangs | **REMAIN [OPEN].** No crash bundles exist for those runs — both are wedge-only (server alive, ORPC pending). [INFERRED]: plausibly the same cumulative-VAS mechanism manifesting as pre-fatal slowness/wedge rather than a crash — a server approaching its 2 GB ceiling slows (new-handler retries, fragmented commits) before `malloc` returns NULL. Not proven; 48560 was fresh (cumulative-VAS within 22 s is implausible unless a shared cache/compaction job inflated it), so an alternative mechanism cannot be excluded. |
+| Which client's workload exhausted the VAS | **[INFERRED/OPEN]** — cumulative across all attached clients (ours, TSDev, TSELAppHost, orchart); pid 19532 had served batches since 09-20 plus live desktop traffic. |
+
+### Fix-implication changes
+
+The §5.3 candidates stand, with reprioritization: prevention now means bounding WHServer VAS growth (smaller batches, WHServer restart between large batches, monitoring private/commit bytes) plus the production containment of §5.3c (bounded dispatch wait → loud abort). The "deadlock inside STA delivery" theory is retired for the 08:00 failure; coalescing notifications (§5.3b) remains useful as VAS-pressure reduction rather than deadlock avoidance.
