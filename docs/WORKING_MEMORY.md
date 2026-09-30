@@ -5,6 +5,23 @@ Do not restate what the code itself documents.
 
 ## Current objective
 
+**ACTIVE (2026-09-30): `--backup-cache` / `--restore-cache` feature.** Global
+position-free flags; run before any other op (backup→restore→subcommand).
+Backup root `%LOCALAPPDATA%\tsdev_cli\cache-backup\` (`cache\` tree +
+`backup.info`, staged→swap so a visible backup is always complete).
+Modules `src/ts_install.*` (extracted resolver) + `src/cache_backup.*`
+(engine: enumerate→CopyFileExW→stage→swap; restore: info check→lock probe→
+rename-aside→copy→rollback). CLI phase + CONIN$ O/S/C prompt + determinate
+byte-% indicator wired in tsdev_cli.cpp; exit 16 cache_io_error / 17
+cache_cancelled; serve+flags = usage error (serve request ops planned TVS-3).
+OPEN FIELD GAP: live backup fails err=32 on `CAL_cache.clod` (desktop
+holds cache deny-read) — FILE_FLAG_BACKUP_SEMANTICS fallback mandated.
+Remaining: adversarial review round, restore/Python/TVS-4 compression,
+elevated E2E gate. **This shell IS elevated now** (S-1-16-12288,
+verified 2026-09-30 — supersedes the stale "NOT elevated" note below).
+
+## Prior objective (closed)
+
 Root-cause the v0.1.0 field bug (batch operations hang indefinitely).
 **DONE 2026-09-02:** report approved by adversarial review —
 `reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md` (read it first).

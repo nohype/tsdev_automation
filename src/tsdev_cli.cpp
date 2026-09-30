@@ -19,6 +19,9 @@
 //   tsdev_cli [--json] [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]
+//   tsdev_cli [--json] [--ts-path <directory>] --backup-cache|--restore-cache [--cache-backup-policy=<mode>]
+//                 (standalone cache maintenance — the flags also run before
+//                 any subcommand, fixed order backup -> restore -> op)
 //
 //   <type>        "strategy", "function", "indicator", "tradingapp", or "showme" (case-insensitive)
 //   <name>        component name
@@ -48,6 +51,27 @@
 //                 warnings, and a non-clean BATCH COMPLETE scroll above it.
 //                 stderr only — stdout (results / JSON) is never touched.
 //                 Cannot be combined with --json; not valid with serve.
+//   --backup-cache / --restore-cache
+//                 Global, position-free presence booleans. When either is
+//                 given the cache phase runs once, after all validation and
+//                 the elevation guard but BEFORE any subcommand dispatch
+//                 (backup -> restore -> subcommand, regardless of argv
+//                 order); any cache-phase failure aborts the run before the
+//                 subcommand. With no subcommand they run standalone and
+//                 print a stdout result. Not valid with serve.
+//   --cache-backup-policy=<prompt|overwrite|skip|abort>
+//                 What --backup-cache does when a backup already exists.
+//                 Requires --backup-cache (a usage error without it).
+//                 Default prompt: interactive consoles get an
+//                 O(verwrite)/S(kip)/C(ancel) prompt read from CONIN$
+//                 (never stdin — --batch-stdin owns it); non-interactive
+//                 prompt behaves as skip (keep existing backup, continue).
+//                 abort cancels the run with exit 17 before any operation.
+//                 The cache dir is <root>\Program\Cache resolved via
+//                 resolveTsInstallRoot — a --ts-path sandbox only needs
+//                 <root>\Program\Cache to exist for the cache phase; a stub
+//                 orlib20.dll is required only when an OP also runs
+//                 against the sandbox.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
 //                 raises the runtime log level (tsdev_lib) one step:
 //                 default = warnings + errors only; 1 occurrence (-v) = + info;
@@ -71,7 +95,8 @@
 //
 // Exit codes: 0=success, 1=usage/arg error, 2=unknown type, 3=source file
 // error, 4=init failure, 5=not-found (modify/delete) OR already-exists
-// (insert), 6=entry op failure (insert/modify/delete), 7=saveSource failure,
+// (insert) — also: no cache backup found on restore-cache — 6=entry op
+// failure (insert/modify/delete), 7=saveSource failure,
 // 8=compile error, 9=.ell missing,
 // 10=CreateThread failure, 11=not elevated.
 // 12 is used by the Python client (ElevationRequiredError,
@@ -79,6 +104,9 @@
 // (tsdev_cli_diag only; see src/diag_watchdog.cpp). 14 = batch aggregate:
 // aborted by the WHServer VAS-headroom guard (see batch exit-code scheme
 // below). 15 = dispatch watchdog abort (TVS-3; see src/dispatch_watchdog.cpp).
+// 16 = cache I/O error (backup/restore failure, cache dir or backup root
+// unreachable, restore of a locked cache); 17 = cache backup cancelled
+// (--cache-backup-policy=abort or 'C' at the prompt).
 // Every direct tsdev_cli subcommand, including serve, requires an elevated
 // administrator process; when the guard runs non-elevated it returns exit 11.
 //
@@ -151,6 +179,8 @@
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "dispatch_watchdog.h"  // TVS-3: production bounded-wait dispatch containment
 #include "whserver_health.h" // TVS-1b: WHServer VAS-headroom guard (batch)
+#include "ts_install.h"     // resolveTsCacheDir for the cache phase
+#include "cache_backup.h"   // cache backup/restore engine (--backup-cache/--restore-cache)
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
 
@@ -172,6 +202,8 @@
 #include <io.h>
 #include <fcntl.h>
 #include <atomic>      // TVS-K.4: std::atomic<bool> for serve quit flag
+#include <chrono>      // cache-phase progress renderer timing/throttle
+#include <cwctype>     // towlower for the cache-backup prompt key read
 #include <sddl.h>      // TVS-K.4: ConvertStringSecurityDescriptorToSecurityDescriptorW
 
 using namespace tsdev;
@@ -332,6 +364,27 @@ void printUsage() {
         "                 scroll above the bar, and BATCH COMPLETE prints\n"
         "                 only when the batch was not fully clean.\n"
         "                 Not with --json; not valid with serve.\n"
+        "  --backup-cache  Back up <TS>\\Program\\Cache to\n"
+        "                 %LOCALAPPDATA%\\tsdev_cli\\cache-backup before the\n"
+        "                 subcommand (fixed order: backup -> restore -> op).\n"
+        "                 Standalone: tsdev_cli --backup-cache\n"
+        "                 [--cache-backup-policy=...].\n"
+        "  --restore-cache  Restore the backup into the Cache dir first\n"
+        "                 (exit 5 when no backup exists; exit 16 when the cache\n"
+        "                 is locked by a running TradeStation).\n"
+        "  --cache-backup-policy <prompt|overwrite|skip|abort>  What to do when\n"
+        "                 a backup already exists (default prompt; a\n"
+        "                 non-interactive prompt behaves as skip; abort cancels\n"
+        "                 with exit 17). Requires --backup-cache. The cache\n"
+        "                 flags are not valid with serve.\n"
+        "                 Output placement: standalone (no subcommand) prints\n"
+        "                 BACKUP COMPLETE / BACKUP KEPT / RESTORE COMPLETE — or\n"
+        "                 the --json object — on stdout; combined with a\n"
+        "                 subcommand the cache phase emits stderr lines only.\n"
+        "                 Standalone --json object: \"op\" plus a \"cache\"\n"
+        "                 payload for a single flag, or \"backup\"+\"restore\"\n"
+        "                 payloads for the two-flag combo; a skipped backup\n"
+        "                 adds \"skipped\":true,\"created\":...\n"
         "  --ts-path <directory>  Override the TradeStation install directory "
         "(default: auto-discovered from registry)\n"
         "  -v, --verbose  Raise the stderr log level. Position-free global "
@@ -454,6 +507,11 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // through normal result emission; kept for completeness so any
         // future path that does surface exit 15 gets a stable code string.
         case 15: return "whserver_dispatch_watchdog_abort";
+        // 16/17 are the cache-phase codes (--backup-cache/--restore-cache):
+        // 16 any cache I/O failure (also covers restore of a locked cache),
+        // 17 a cancelled backup (policy abort or 'C' at the prompt).
+        case 16: return "cache_io_error";
+        case 17: return "cache_cancelled";
         default: return "unknown_error";
     }
 }
@@ -1045,6 +1103,782 @@ void emitOutput(const CliResult& r, bool jsonMode) {
         std::fflush(stdout);
         std::exit(1);
     }
+}
+
+// --- --backup-cache / --restore-cache: cache phase ---------------------------
+//
+// Global, position-free presence flags. The cache phase runs once, after all
+// argument validation and the elevation guard but BEFORE any subcommand
+// dispatch, in the fixed order backup -> restore -> subcommand regardless of
+// argv order (the serve subcommand rejects the flags earlier). Any
+// cache-phase failure aborts the run before the subcommand — the flags are
+// an insurance contract and never silently proceed.
+//
+// Rendering mirrors the --pbar mechanics: pure line builders
+// (cacheElapsedFormat / cacheProgressLine / cacheSpinnerLine /
+// cachePipeProgressLine) so a same-TU unit test can pin the bytes, plus a
+// thin CacheProgressRenderer driven inline by the engine's CacheProgress
+// callback (no display thread). Console stderr gets a redrawn <=79-cell
+// frame throttled to >=100 ms; redirected stderr gets one whole line every
+// >=5 s (NDJSON under --json). All of it is stderr-only — with a subcommand
+// the cache phase writes nothing to stdout; standalone
+// (--backup-cache/--restore-cache with no subcommand) prints a stdout
+// result (human COMPLETE/KEPT lines, or one JSON object under --json).
+
+// --cache-backup-policy value -> parsed enum; Prompt is the default.
+enum class CacheBackupPolicy { Prompt, Overwrite, Skip, Abort };
+
+// Case-insensitive value parse. False on an unrecognized value (usage error).
+bool parseCacheBackupPolicy(const std::string& v, CacheBackupPolicy& out) {
+    if (iequals(v, "prompt"))    { out = CacheBackupPolicy::Prompt;    return true; }
+    if (iequals(v, "overwrite")) { out = CacheBackupPolicy::Overwrite; return true; }
+    if (iequals(v, "skip"))      { out = CacheBackupPolicy::Skip;      return true; }
+    if (iequals(v, "abort"))     { out = CacheBackupPolicy::Abort;     return true; }
+    return false;
+}
+
+// Format an elapsed duration as M:SS below one hour, else H:MM:SS. Pure.
+std::string cacheElapsedFormat(double elapsedSecs) {
+    unsigned long long s =
+        elapsedSecs > 0.0 ? static_cast<unsigned long long>(elapsedSecs) : 0;
+    char buf[32];
+    if (s < 3600) {
+        std::snprintf(buf, sizeof(buf), "%llu:%02llu", s / 60, s % 60);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%llu:%02llu:%02llu",
+                      s / 3600, (s / 60) % 60, s % 60);
+    }
+    return buf;
+}
+
+// Determinate console frame (pure, no '\r'/'\n', never wider than
+// kPbarMaxCells display cells):
+//   <OP> [<30-cell bar>] <pct>% <elapsed>[ — <current file basename>]
+// Same bar geometry as pbarLine: kPbarBarCells of '█'/'░', pct = done*100/
+// total right-aligned to width 3 + '%', elapsed via cacheElapsedFormat. The
+// " — <file>" suffix (U+2014 em dash) is truncated on a code-point boundary
+// to fit, and dropped entirely when fewer than 4 cells remain.
+std::string cacheProgressLine(const std::string& op, uint64_t done,
+                              uint64_t total, double elapsedSecs,
+                              const std::string& fileBase) {
+    size_t filled = 0;
+    unsigned long long pct = 0;
+    if (total != 0) {
+        const unsigned long long f =
+            (static_cast<unsigned long long>(done) * kPbarBarCells) / total;
+        filled = static_cast<size_t>(f > kPbarBarCells ? kPbarBarCells : f);
+        pct = (static_cast<unsigned long long>(done) * 100) / total;
+    }
+    std::string line = op;
+    line += " [";
+    for (size_t i = 0; i < filled; ++i)             line += kPbarFullGlyph;
+    for (size_t i = filled; i < kPbarBarCells; ++i) line += kPbarShadeGlyph;
+    line += "] ";
+    char pctBuf[16];
+    std::snprintf(pctBuf, sizeof(pctBuf), "%3llu", pct);
+    line += pctBuf;
+    line += '%';
+    line += ' ';
+    line += cacheElapsedFormat(elapsedSecs);
+
+    if (!fileBase.empty()) {
+        const size_t used = pbarCellWidth(line);
+        if (used < kPbarMaxCells) {
+            const size_t budget = kPbarMaxCells - used;  // cells for suffix
+            if (budget >= 3 + pbarCellWidth(fileBase)) {
+                line += ' ';
+                line += kPbarEmDash;
+                line += ' ';
+                line += fileBase;
+            } else if (budget >= 4) {
+                // Minimum useful form: " — " + a truncated basename.
+                line += ' ';
+                line += kPbarEmDash;
+                line += ' ';
+                line += pbarTruncCells(fileBase, budget - 3);
+            }
+            // else: the suffix is dropped entirely.
+        }
+    }
+    if (pbarCellWidth(line) > kPbarMaxCells) {
+        line = pbarTruncCells(line, kPbarMaxCells);
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+    }
+    return line;
+}
+
+// Indeterminate console frame (pure, ASCII-only): "<OP> <spin> <elapsed>"
+// where <spin> cycles '|', '/', '-', '\' by tick.
+std::string cacheSpinnerLine(const std::string& op, unsigned tick,
+                             double elapsedSecs) {
+    const char kSpin[] = "|/-\\";
+    std::string line = op;
+    line += ' ';
+    line += kSpin[tick % 4];
+    line += ' ';
+    line += cacheElapsedFormat(elapsedSecs);
+    return line;
+}
+
+// Redirected-stderr progress line (pure): the human form is a whole
+// key=value line; under --json it is one NDJSON event object
+// (cache_backup_progress / cache_restore_progress by op name).
+std::string cachePipeProgressLine(const std::string& op, uint64_t done,
+                                  uint64_t total, double elapsedSecs,
+                                  bool jsonMode) {
+    const unsigned long long pct =
+        total != 0 ? (static_cast<unsigned long long>(done) * 100) / total : 0;
+    const unsigned long long es =
+        elapsedSecs > 0.0 ? static_cast<unsigned long long>(elapsedSecs) : 0;
+    if (jsonMode) {
+        ordered_json j;
+        j["event"] = (op == "RESTORE") ? "cache_restore_progress"
+                                       : "cache_backup_progress";
+        j["bytes"]        = done;
+        j["total"]        = total;
+        j["pct"]          = pct;
+        j["elapsed_secs"] = es;
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return op + " PROGRESS pct=" + std::to_string(pct) +
+           " bytes=" + std::to_string(done) +
+           " total=" + std::to_string(total) +
+           " elapsed_secs=" + std::to_string(es);
+}
+
+// Wide -> UTF-8 conversion for paths/messages (the CLI's argv-derived strings
+// are narrow; engine paths are wide). Empty/failed conversion -> "".
+std::string wideToUtf8Cli(const std::wstring& s) {
+    if (s.empty()) return std::string();
+    int len = WideCharToMultiByte(CP_UTF8, 0, s.c_str(),
+                                  static_cast<int>(s.size()),
+                                  nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return std::string();
+    std::string out(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                        &out[0], len, nullptr, nullptr);
+    return out;
+}
+
+// Byte count -> "<value> <unit>" with two decimals (KiB/MiB/GiB/TiB) for the
+// existing-backup prompt's size= field. Pure.
+std::string formatBytesHuman(uint64_t bytes) {
+    const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+    double v = static_cast<double>(bytes);
+    size_t u = 0;
+    while (v >= 1024.0 && u < 4) {
+        v /= 1024.0;
+        ++u;
+    }
+    char buf[48];
+    if (u == 0) {
+        std::snprintf(buf, sizeof(buf), "%llu B",
+                      static_cast<unsigned long long>(bytes));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.2f %s", v, units[u]);
+    }
+    return buf;
+}
+
+// stderr resolves to a real console (same detection pair as PbarRenderer).
+bool stderrIsConsole() {
+    const int fd = _fileno(stderr);
+    DWORD mode = 0;
+    return (fd >= 0) && (_isatty(fd) != 0) &&
+           GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode);
+}
+
+// CONIN$ can be opened — the second half of the prompt-interactivity check.
+// Opening CONIN$ (not stdin) keeps the prompt independent of a piped stdin
+// (--batch-stdin / --batch-progress-control own stdin).
+bool coninAvailable() {
+    HANDLE hIn = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_EXISTING, 0, nullptr);
+    if (hIn == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(hIn);
+    return true;
+}
+
+// CacheProgressRenderer — the cache-phase emitter. Thin glue over the pure
+// builders: the engine's CacheProgress callback calls progress() inline (no
+// display thread); console stderr gets a '\r'-redrawn frame throttled to
+// >=100 ms, redirected stderr gets a whole line every >=5 s. finish()
+// always emits the final frame + '\n'. Determinate rendering (bar) is used
+// whenever the engine reports a nonzero byte total; otherwise the ASCII
+// spinner is drawn.
+struct CacheProgressRenderer {
+    CacheProgressRenderer(const std::string& op, bool jsonMode)
+        : op_(op), json_(jsonMode) {
+        isConsole_ = stderrIsConsole();
+        start_ = std::chrono::steady_clock::now();
+        // The first progress callback always draws.
+        lastDraw_ = start_ - throttle();
+    }
+
+    // Engine callback entry point (CacheProgress signature).
+    void progress(uint64_t done, uint64_t total, const std::wstring& file) {
+        lastDone_ = done;
+        lastTotal_ = total;
+        if (!file.empty()) {
+            const size_t sep = file.find_last_of(L"\\/");
+            fileBase_ = wideToUtf8Cli(
+                sep == std::wstring::npos ? file : file.substr(sep + 1));
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastDraw_ < throttle()) return;
+        lastDraw_ = now;
+        drawFrame();
+    }
+
+    // Final frame + newline (a whole PROGRESS/NDJSON line on a pipe).
+    void finish() {
+        drawFrame();
+        writeRaw("\n");
+    }
+
+private:
+    std::chrono::steady_clock::duration throttle() const {
+        return isConsole_ ? std::chrono::milliseconds(100)
+                          : std::chrono::seconds(5);
+    }
+
+    double elapsed() const {
+        return std::chrono::duration<double>(
+                   std::chrono::steady_clock::now() - start_)
+            .count();
+    }
+
+    void drawFrame() {
+        if (isConsole_) {
+            const std::string line =
+                lastTotal_ != 0
+                    ? cacheProgressLine(op_, lastDone_, lastTotal_, elapsed(),
+                                        fileBase_)
+                    : cacheSpinnerLine(op_, tick_++, elapsed());
+            const int cells = static_cast<int>(pbarCellWidth(line));
+            if (cells > maxCells_) maxCells_ = cells;
+            writeRaw(pbarDrawSeq(line, maxCells_));
+        } else {
+            writeRaw(cachePipeProgressLine(op_, lastDone_, lastTotal_,
+                                           elapsed(), json_));
+            writeRaw("\n");
+        }
+    }
+
+    // Same write path as PbarRenderer::writeRaw — WriteConsoleW on a real
+    // console (fflush first so C-stdio and console writes stay ordered),
+    // UTF-8 fwrite on a redirected stream. Best-effort: conversion/write
+    // failures drop the piece; stderr is fflushed afterwards regardless.
+    void writeRaw(const std::string& utf8) {
+        if (!utf8.empty()) {
+            if (isConsole_) {
+                std::fflush(stderr);
+                const int wlen = MultiByteToWideChar(
+                    CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
+                    nullptr, 0);
+                if (wlen > 0) {
+                    std::wstring w(static_cast<size_t>(wlen), L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                        static_cast<int>(utf8.size()),
+                                        w.data(), wlen);
+                    DWORD written = 0;
+                    WriteConsoleW(GetStdHandle(STD_ERROR_HANDLE), w.data(),
+                                  static_cast<DWORD>(w.size()), &written,
+                                  nullptr);
+                }
+            } else {
+                std::fwrite(utf8.data(), 1, utf8.size(), stderr);
+            }
+        }
+        std::fflush(stderr);
+    }
+
+    std::string op_;            // "BACKUP" / "RESTORE"
+    bool json_ = false;         // --json selects NDJSON on redirected stderr
+    bool isConsole_ = false;
+    uint64_t lastDone_ = 0;
+    uint64_t lastTotal_ = 0;
+    std::string fileBase_;      // current-file basename (UTF-8)
+    unsigned tick_ = 0;         // spinner position
+    int maxCells_ = 0;          // widest console frame drawn
+    std::chrono::steady_clock::time_point start_;
+    std::chrono::steady_clock::time_point lastDraw_;
+};
+
+// Outcome of the existing-backup policy decision. Prompt = ask the operator
+// via CONIN$ (only reachable on an interactive console); Overwrite = create
+// or replace the backup; Skip = keep the existing backup and continue;
+// Cancel = abort the run with exit 17.
+enum class BackupAction { Prompt, Overwrite, Skip, Cancel };
+
+// Pure policy decision for an existing (or absent) cache backup:
+//   - !exists               -> Overwrite (proceed silently)
+//   - exists && !complete   -> Overwrite regardless of policy EXCEPT abort,
+//     which still cancels -> Cancel. A torn/corrupt backup.info is never
+//     offered "keep existing": keeping broken insurance is the unsafe
+//     default. The caller prints the incomplete-backup warning.
+//   - exists && complete    -> overwrite->Overwrite, skip->Skip,
+//     abort->Cancel, prompt->Prompt when `interactive` else Skip (the
+//     non-interactive prompt fallback; caller prints the keep-warning).
+BackupAction decideBackupAction(const BackupInfo& info,
+                                CacheBackupPolicy policy,
+                                bool interactive) {
+    if (!info.exists) return BackupAction::Overwrite;
+    if (!info.complete) {
+        return policy == CacheBackupPolicy::Abort ? BackupAction::Cancel
+                                                  : BackupAction::Overwrite;
+    }
+    switch (policy) {
+        case CacheBackupPolicy::Overwrite: return BackupAction::Overwrite;
+        case CacheBackupPolicy::Skip:      return BackupAction::Skip;
+        case CacheBackupPolicy::Abort:     return BackupAction::Cancel;
+        case CacheBackupPolicy::Prompt:
+            return interactive ? BackupAction::Prompt : BackupAction::Skip;
+    }
+    return BackupAction::Overwrite;
+}
+
+// Pure builder for the existing-backup detail line printed above the
+// interactive prompt: path=<root>\cache created=<ts> files=<n> size=<human>
+// [ source=<info.source>]. `source=` is omitted when the backup carries no
+// recorded source dir — it identifies which install the backup was taken
+// from so a changed install/--ts-path never blind-overwrites.
+std::string existingBackupDetailLine(const std::wstring& backupRoot,
+                                     const BackupInfo& info) {
+    std::string line = "path=" + wideToUtf8Cli(backupRoot) +
+        "\\cache created=" + info.created +
+        " files=" + std::to_string(
+            static_cast<unsigned long long>(info.files)) +
+        " size=" + formatBytesHuman(info.bytes);
+    if (!info.source.empty()) {
+        line += " source=";
+        line += wideToUtf8Cli(info.source);
+    }
+    return line;
+}
+
+// Pure key-from-line parse for the existing-backup prompt: the first
+// non-whitespace wide char of `line` (lowercased) is the choice
+// ('o'/'s'/'c'); an empty or whitespace-only line (bare Enter) is 's';
+// anything else returns L'\0' (invalid -> caller re-prompts).
+wchar_t cachePromptChoice(const std::wstring& line) {
+    for (wchar_t ch : line) {
+        if (iswspace(ch)) continue;
+        ch = static_cast<wchar_t>(towlower(ch));
+        return (ch == L'o' || ch == L's' || ch == L'c') ? ch : L'\0';
+    }
+    return L's';
+}
+
+// Interactive existing-backup prompt. Returns 'o' (overwrite), 's' (skip —
+// keep the existing backup and continue), or 'c' (cancel). Keys are
+// case-insensitive; bare Enter is 's'; an invalid key re-prompts; EOF/read
+// failure returns 's' (the non-interactive default). Input is read from
+// CONIN$ via ReadConsoleW — never stdin, which --batch-stdin /
+// --batch-progress-control own — and the console echoes the key itself.
+// Callers must only invoke this when stderr is a console AND CONIN$ opens
+// (checked again here defensively).
+char promptExistingCacheBackup(const std::wstring& backupRoot,
+                               const BackupInfo& info) {
+    std::fprintf(stderr, "tsdev_cli: a cache backup already exists:\n");
+    std::fprintf(stderr, "%s\n",
+                 existingBackupDetailLine(backupRoot, info).c_str());
+    HANDLE hIn = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_EXISTING, 0, nullptr);
+    if (hIn == INVALID_HANDLE_VALUE) return 's';
+    char result = 's';
+    for (;;) {
+        std::fprintf(stderr,
+            "[O]verwrite / [S]kip %s keep existing backup, continue / "
+            "[C]ancel: ", kPbarEmDash);
+        std::fflush(stderr);
+        // Read the FULL line per attempt (ReadConsoleW in cooked mode
+        // returns through the trailing CR/LF), then take the first
+        // non-whitespace char via the pure cachePromptChoice seam. Reading
+        // one char at a time left the '\n' queued after an invalid key, so
+        // the next read consumed it as a bare Enter and the documented
+        // re-prompt never happened.
+        wchar_t buf[256];
+        DWORD n = 0;
+        if (!ReadConsoleW(hIn, buf, _countof(buf), &n, nullptr) || n == 0) {
+            std::fputc('\n', stderr);
+            result = 's';  // EOF/read failure -> non-interactive default
+            break;
+        }
+        // A line longer than the buffer arrives without its '\n'; drain the
+        // remainder so it cannot pollute the next prompt attempt. `line`
+        // is captured first so the drain cannot clobber the choice text.
+        std::wstring line(buf, n);
+        bool sawNewline = line.find(L'\n') != std::wstring::npos;
+        while (!sawNewline) {
+            DWORD dn = 0;
+            if (!ReadConsoleW(hIn, buf, _countof(buf), &dn, nullptr) ||
+                dn == 0) {
+                break;
+            }
+            for (DWORD k = 0; k < dn && !sawNewline; ++k)
+                sawNewline = (buf[k] == L'\n');
+        }
+        const wchar_t choice = cachePromptChoice(line);
+        if (choice != L'\0') {
+            result = static_cast<char>(choice);
+            break;
+        }
+        std::fprintf(stderr, "tsdev_cli: please enter O, S, or C.\n");
+    }
+    CloseHandle(hIn);
+    return result;
+}
+
+// Torn-capture disclosure: true when the backup copied at least one file
+// from a live/locked source — via a VSS snapshot or the
+// FILE_FLAG_BACKUP_SEMANTICS fallback (CacheOpResult::usedVss /
+// usedBackupSemantics in cache_backup.h; mirrors backup.info's
+// live_source=true marker).
+bool backupCapturedLiveSource(const CacheOpResult& res) {
+    return res.usedVss || res.usedBackupSemantics;
+}
+
+// " live_source=true" suffix for the BACKUP COMPLETE line when the backup
+// captured a live source; empty otherwise.
+const char* liveSourceSuffix(const CacheOpResult& res) {
+    return backupCapturedLiveSource(res) ? " live_source=true" : "";
+}
+
+// Additive-only JSON disclosure for the standalone cache/backup payload:
+// "live_source":true when the capture touched a live source, plus
+// "used_vss":true when the VSS snapshot path was used. No keys otherwise.
+void applyLiveSourceJson(ordered_json& c, const CacheOpResult& res) {
+    if (backupCapturedLiveSource(res)) c["live_source"] = true;
+    if (res.usedVss) c["used_vss"] = true;
+}
+
+// The single stdout JSON error object for a cache-phase failure under
+// --json. Pure builder sharing the CliResult shape via cliResultToJson:
+// {"op":<phase label>,"success":false,"exit_code":<n>,
+//  "error":{"code":<derived from exit code>,"message":<message>}}.
+// `op` is "backup-cache", "restore-cache", or "backup-cache+restore-cache"
+// matching which phase(s) ran (same label as the standalone success object).
+ordered_json cacheErrorJson(const std::string& op, int exitCode,
+                            const std::string& message) {
+    CliResult r;
+    r.op           = op;
+    r.exitCode     = exitCode;
+    r.errorMessage = message;
+    return cliResultToJson(r);
+}
+
+// Write one cacheErrorJson object to stdout. Human mode is a no-op — the
+// stderr "tsdev_cli: ERROR — ..." lines already carry the reason. Called at
+// most once per run (every call site is a failure return), so under --json
+// stdout still carries exactly one object even in combined mode (the
+// subcommand never runs, so nothing else can emit).
+void emitCacheErrorJson(const std::string& op, int exitCode,
+                        const std::string& message, bool jsonMode) {
+    if (!jsonMode) return;
+    const ordered_json j = cacheErrorJson(op, exitCode, message);
+    const std::string s =
+        j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    std::fwrite(s.c_str(), 1, s.size(), stdout);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
+}
+
+// Run the cache phase for --backup-cache / --restore-cache. Returns -1 to
+// continue into subcommand dispatch, or the process exit code to return
+// immediately (standalone runs and all abort paths).
+//
+// `subcommand` is empty for a standalone invocation (no subcommand given);
+// the "— <subcommand> not run" tails then read "— exiting".
+int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
+                  const wchar_t* tsPathOverride,
+                  const std::string& subcommand, bool jsonMode) {
+    // Tail for the "cancelled/failed — X" stderr lines: names the skipped
+    // subcommand in combined mode, or "exiting" standalone (avoids the
+    // double-negative "no further operations not run").
+    const std::string tail =
+        subcommand.empty() ? "exiting" : (subcommand + " not run");
+    // JSON "op" label: which phase(s) were requested (same for the success
+    // object and every failure object).
+    const std::string cacheOp =
+        (doBackup && doRestore) ? "backup-cache+restore-cache"
+                                : (doBackup ? "backup-cache" : "restore-cache");
+
+    const std::wstring backupRoot = cacheBackupRoot();
+    if (backupRoot.empty()) {
+        const std::string msg =
+            "cannot determine the cache backup root "
+            "(LOCALAPPDATA is unavailable)";
+        std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+        emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+        return 16;
+    }
+    const std::wstring cacheDir = resolveTsCacheDir(tsPathOverride);
+    std::error_code cacheDirEc;
+    const bool cacheDirExists =
+        !cacheDir.empty() &&
+        std::filesystem::exists(std::filesystem::path(cacheDir), cacheDirEc);
+    if (cacheDir.empty() || cacheDirEc || !cacheDirExists) {
+        const std::string msg =
+            "cannot locate TradeStation cache directory (looked for " +
+            wideToUtf8Cli(cacheDir) + ")";
+        std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+        emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+        return 16;
+    }
+
+    bool backupKept = false;
+    CacheOpResult backupRes{};
+    if (doBackup) {
+        // Warn-only: a running desktop means the copy may capture a live cache.
+        const std::vector<std::wstring> running = runningTsProcessNames();
+        if (!running.empty()) {
+            std::string names;
+            for (const std::wstring& p : running) {
+                if (!names.empty()) names += ", ";
+                names += wideToUtf8Cli(p);
+            }
+            std::fprintf(stderr,
+                "tsdev_cli: WARNING — TradeStation is running (%s); the "
+                "backup may capture a live cache.\n", names.c_str());
+        }
+
+        // Existing-backup policy decision (pure seam: decideBackupAction).
+        const BackupInfo info = readBackupInfo(backupRoot);
+        const bool interactive = stderrIsConsole() && coninAvailable();
+        const BackupAction action =
+            decideBackupAction(info, policy, interactive);
+        if (info.exists && !info.complete &&
+            action != BackupAction::Cancel) {
+            std::fprintf(stderr,
+                "tsdev_cli: WARNING — existing cache backup is incomplete "
+                "(created=%s) — replacing it with a fresh backup\n",
+                info.created.empty() ? "unknown" : info.created.c_str());
+        }
+        char decision = 'o';
+        switch (action) {
+            case BackupAction::Cancel:
+                decision = 'c';
+                break;
+            case BackupAction::Prompt:
+                decision = promptExistingCacheBackup(backupRoot, info);
+                break;
+            case BackupAction::Skip:
+                decision = 's';
+                // The non-interactive prompt fallback keeps the backup with
+                // a warning (interactive Prompt never reaches this case).
+                if (policy == CacheBackupPolicy::Prompt && !interactive) {
+                    std::fprintf(stderr,
+                        "tsdev_cli: WARNING — keeping existing backup "
+                        "(created=%s) — continuing without a new backup\n",
+                        info.created.c_str());
+                }
+                break;
+            case BackupAction::Overwrite:
+                decision = 'o';
+                break;
+        }
+        if (decision == 'c') {
+            std::fprintf(stderr,
+                "tsdev_cli: cache backup cancelled — %s\n",
+                tail.c_str());
+            emitCacheErrorJson(cacheOp, 17, "cache backup cancelled",
+                               jsonMode);
+            return 17;
+        }
+        if (decision == 's') {
+            backupKept = true;
+        }
+
+        if (!backupKept) {
+            // Free-space pre-flight is warn-only; real copy errors still abort.
+            CacheEnumerateResult en = enumerateTree(cacheDir);
+            if (en.ok) {
+                uint64_t avail = 0;
+                if (!tsdev::queryVolumeFreeSpace(backupRoot, avail)) {
+                    std::fprintf(stderr,
+                        "tsdev_cli: WARNING — could not determine free "
+                        "space on the backup volume\n");
+                } else if (avail < en.totalBytes) {
+                    std::fprintf(stderr,
+                        "tsdev_cli: WARNING — low disk space on the backup "
+                        "volume (needed=%llu bytes, available=%llu bytes); "
+                        "the backup may fail\n",
+                        static_cast<unsigned long long>(en.totalBytes),
+                        static_cast<unsigned long long>(avail));
+                }
+            }
+            CacheProgressRenderer renderer("BACKUP", jsonMode);
+            backupRes = backupCache(
+                cacheDir, backupRoot,
+                [&renderer](uint64_t d, uint64_t t, const std::wstring& f) {
+                    renderer.progress(d, t, f);
+                });
+            renderer.finish();
+            if (backupRes.status != CacheOpStatus::Ok) {
+                const std::string msg =
+                    "cache backup failed: " +
+                    wideToUtf8Cli(backupRes.errorPath) + " " +
+                    backupRes.message + " (err=" +
+                    std::to_string(
+                        static_cast<unsigned long>(backupRes.win32Error)) +
+                    ")";
+                std::fprintf(stderr, "tsdev_cli: ERROR — %s\n",
+                             msg.c_str());
+                std::fprintf(stderr,
+                    "tsdev_cli: cache backup failed — %s\n",
+                    tail.c_str());
+                emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+                return 16;
+            }
+            std::fprintf(stderr,
+                "BACKUP COMPLETE path=%s files=%llu bytes=%llu "
+                "elapsed_secs=%llu%s\n",
+                wideToUtf8Cli(backupRoot + L"\\cache").c_str(),
+                static_cast<unsigned long long>(backupRes.files),
+                static_cast<unsigned long long>(backupRes.bytes),
+                static_cast<unsigned long long>(backupRes.elapsedSecs),
+                liveSourceSuffix(backupRes));
+        }
+    }
+
+    CacheOpResult restoreRes{};
+    if (doRestore) {
+        CacheProgressRenderer renderer("RESTORE", jsonMode);
+        restoreRes = restoreCache(
+            backupRoot, cacheDir,
+            [&renderer](uint64_t d, uint64_t t, const std::wstring& f) {
+                renderer.progress(d, t, f);
+            });
+        // Suppress the cosmetic final pct=0 frame when the restore never
+        // started copying (NotFound/InUse before any bytes moved).
+        if (restoreRes.status == CacheOpStatus::Ok ||
+            restoreRes.files != 0 || restoreRes.bytes != 0) {
+            renderer.finish();
+        }
+        if (restoreRes.status == CacheOpStatus::NotFound) {
+            // Append the engine's reason when set (e.g. "unsupported backup
+            // format 2" or "no complete backup found") — the root path stays.
+            std::string msg =
+                "no cache backup found at " + wideToUtf8Cli(backupRoot);
+            if (!restoreRes.message.empty()) {
+                msg += ": " + restoreRes.message;
+            }
+            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            emitCacheErrorJson(cacheOp, 5, msg, jsonMode);
+            return 5;
+        }
+        if (restoreRes.status == CacheOpStatus::InUse) {
+            const std::string msg =
+                "cannot restore cache: " +
+                wideToUtf8Cli(restoreRes.errorPath) + " is locked. "
+                "Close TradeStation Desktop (orchart.exe, WHServer.exe, "
+                "TSDev.exe) and retry.";
+            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+            return 16;
+        }
+        if (restoreRes.status != CacheOpStatus::Ok) {
+            const std::string msg =
+                "cache restore failed: " +
+                wideToUtf8Cli(restoreRes.errorPath) + " " +
+                restoreRes.message + " (err=" +
+                std::to_string(
+                    static_cast<unsigned long>(restoreRes.win32Error)) +
+                ")";
+            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            std::fprintf(stderr,
+                "tsdev_cli: cache restore failed — %s\n",
+                tail.c_str());
+            emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+            return 16;
+        }
+        std::fprintf(stderr,
+            "RESTORE COMPLETE path=%s files=%llu bytes=%llu "
+            "elapsed_secs=%llu\n",
+            wideToUtf8Cli(cacheDir).c_str(),
+            static_cast<unsigned long long>(restoreRes.files),
+            static_cast<unsigned long long>(restoreRes.bytes),
+            static_cast<unsigned long long>(restoreRes.elapsedSecs));
+        std::fprintf(stderr,
+            "tsdev_cli: cache restored — TradeStation Desktop will "
+            "revalidate it on next start.\n");
+    }
+
+    if (!subcommand.empty()) {
+        return -1;  // continue to subcommand dispatch (cache phase is done)
+    }
+
+    // Standalone invocation: the cache phase owns the stdout result.
+    if (jsonMode) {
+        // One stdout object for the whole standalone run so json.loads on
+        // all-of-stdout works even when both flags were given.
+        ordered_json j;
+        const bool both = doBackup && doRestore;
+        j["op"] = cacheOp;
+        j["success"] = true;
+        j["exit_code"] = 0;
+        if (doBackup) {
+            ordered_json c;
+            c["path"] = wideToUtf8Cli(backupRoot + L"\\cache");
+            if (backupKept) {
+                c["skipped"] = true;
+                c["created"] = readBackupInfo(backupRoot).created;
+            } else {
+                c["files"]        = backupRes.files;
+                c["bytes"]        = backupRes.bytes;
+                c["elapsed_secs"] =
+                    static_cast<unsigned long long>(backupRes.elapsedSecs);
+                c["created"] = readBackupInfo(backupRoot).created;
+                applyLiveSourceJson(c, backupRes);
+            }
+            j[both ? "backup" : "cache"] = c;
+        }
+        if (doRestore) {
+            ordered_json c;
+            c["path"]         = wideToUtf8Cli(cacheDir);
+            c["files"]        = restoreRes.files;
+            c["bytes"]        = restoreRes.bytes;
+            c["elapsed_secs"] =
+                static_cast<unsigned long long>(restoreRes.elapsedSecs);
+            j[both ? "restore" : "cache"] = c;
+        }
+        const std::string s =
+            j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        std::fwrite(s.c_str(), 1, s.size(), stdout);
+        std::fputc('\n', stdout);
+        std::fflush(stdout);
+    } else {
+        if (doBackup) {
+            if (backupKept) {
+                std::fprintf(stdout, "BACKUP KEPT path=%s created=%s\n",
+                             wideToUtf8Cli(backupRoot + L"\\cache").c_str(),
+                             readBackupInfo(backupRoot).created.c_str());
+            } else {
+                std::fprintf(stdout,
+                    "BACKUP COMPLETE path=%s files=%llu bytes=%llu "
+                    "elapsed_secs=%llu%s\n",
+                    wideToUtf8Cli(backupRoot + L"\\cache").c_str(),
+                    static_cast<unsigned long long>(backupRes.files),
+                    static_cast<unsigned long long>(backupRes.bytes),
+                    static_cast<unsigned long long>(backupRes.elapsedSecs),
+                    liveSourceSuffix(backupRes));
+            }
+        }
+        if (doRestore) {
+            std::fprintf(stdout,
+                "RESTORE COMPLETE path=%s files=%llu bytes=%llu "
+                "elapsed_secs=%llu\n",
+                wideToUtf8Cli(cacheDir).c_str(),
+                static_cast<unsigned long long>(restoreRes.files),
+                static_cast<unsigned long long>(restoreRes.bytes),
+                static_cast<unsigned long long>(restoreRes.elapsedSecs));
+        }
+        std::fflush(stdout);
+    }
+    return 0;
 }
 
 // --- TVS-D.3: reusable per-op logic (shared by single-item + batch) --------
@@ -4987,6 +5821,13 @@ int main(int argc, char** argv) {
     // forever. --dispatch-timeout-secs / TSDEV_DISPATCH_TIMEOUT_SECS.
     unsigned dispatchTimeoutSecs = 300;
     bool dispatchTimeoutFlagSet = false;        // --dispatch-timeout-secs seen
+    // Cache phase (--backup-cache / --restore-cache): presence-true booleans
+    // consumed here like --pbar; the phase runs after all validation, before
+    // subcommand dispatch (fixed order backup -> restore -> subcommand).
+    bool backupCacheFlag = false;
+    bool restoreCacheFlag = false;
+    CacheBackupPolicy cachePolicy = CacheBackupPolicy::Prompt;  // default
+    bool cachePolicyFlagSet = false;   // --cache-backup-policy seen
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -5146,6 +5987,45 @@ int main(int argc, char** argv) {
                 return 1;
             }
             dispatchTimeoutFlagSet = true;
+        } else if (arg == "--backup-cache" ||
+                   arg.rfind("--backup-cache=", 0) == 0) {
+            // Boolean switch like --json: presence requests the backup step;
+            // a '=' value is ignored; repeats are harmless.
+            backupCacheFlag = true;
+        } else if (arg == "--restore-cache" ||
+                   arg.rfind("--restore-cache=", 0) == 0) {
+            // Boolean switch like --json: presence requests the restore step.
+            restoreCacheFlag = true;
+        } else if (arg == "--cache-backup-policy" ||
+                   arg.rfind("--cache-backup-policy=", 0) == 0) {
+            // Space ("--cache-backup-policy <mode>") or equals form; the
+            // value is one of prompt|overwrite|skip|abort (case-insensitive,
+            // see parseCacheBackupPolicy). Invalid -> usage error.
+            std::string v;
+            if (arg == "--cache-backup-policy") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--cache-backup-policy requires a value "
+                                     "(prompt|overwrite|skip|abort)";
+                    r.humanStderr = "Error: --cache-backup-policy requires a "
+                                    "value (prompt|overwrite|skip|abort)\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--cache-backup-policy="));
+            }
+            if (!parseCacheBackupPolicy(v, cachePolicy)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --cache-backup-policy value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --cache-backup-policy value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            cachePolicyFlagSet = true;
         } else {
             reducedArgv.push_back(argv[i]);
         }
@@ -5228,7 +6108,24 @@ int main(int argc, char** argv) {
     int reducedArgc = static_cast<int>(reducedArgv.size());
     char** reducedArgvPtr = reducedArgv.data();
 
-    if (reducedArgc < 2) {
+    // The policy only applies to --backup-cache; an explicit
+    // --cache-backup-policy without it (also under --restore-cache alone)
+    // would otherwise be silently ignored — a usage error instead. Checked
+    // before the no-subcommand usage error below so a bare
+    // `tsdev_cli --cache-backup-policy=<mode>` reports the real problem.
+    if (cachePolicyFlagSet && !backupCacheFlag) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--cache-backup-policy requires --backup-cache";
+        r.humanStderr = "Error: --cache-backup-policy requires --backup-cache\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
+
+    // No-subcommand is a usage error UNLESS a standalone cache op
+    // (--backup-cache / --restore-cache) was requested — those run without
+    // a subcommand.
+    if (reducedArgc < 2 && !backupCacheFlag && !restoreCacheFlag) {
         CliResult r;
         r.exitCode = 1;
         r.errorMessage = "no subcommand given";
@@ -5241,7 +6138,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::string subcommand = reducedArgvPtr[1];
+    // Empty for a standalone --backup-cache/--restore-cache invocation.
+    std::string subcommand =
+        reducedArgc >= 2 ? reducedArgvPtr[1] : "";
 
     // Convert the narrow tsPathOverride to wide for the TsDevLib constructor.
     // The existing toWide() helper lives in an anonymous namespace in
@@ -5304,6 +6203,19 @@ int main(int argc, char** argv) {
         emitOutput(r, jsonMode);  // jsonMode is false here; kept uniform
         return 1;
     }
+    // The cache phase runs in the direct CLI process before dispatch; serve
+    // is a long-lived broker, so the flags are rejected there (a future
+    // request-level mechanism is out of scope).
+    if ((backupCacheFlag || restoreCacheFlag) &&
+        iequals(subcommand, "serve")) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--backup-cache/--restore-cache are not valid with serve";
+        r.humanStderr = "tsdev_cli: --backup-cache/--restore-cache are not "
+                        "valid with serve\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
 
     // --batch-progress-control is batch-only and non-repeatable: the flag
     // is recognized, counted, and removed during the global scan, but both
@@ -5342,6 +6254,18 @@ int main(int argc, char** argv) {
             }
             return 1;
         }
+    }
+
+    // Cache phase (--backup-cache / --restore-cache): runs after ALL
+    // validation above and before any subcommand dispatch — before any
+    // worker thread or TsDevLib exists — in the fixed order backup ->
+    // restore -> subcommand. A failure exits before the subcommand runs;
+    // a standalone invocation (no subcommand) returns its exit code here.
+    if (backupCacheFlag || restoreCacheFlag) {
+        const int cacheRc = runCachePhase(backupCacheFlag, restoreCacheFlag,
+                                          cachePolicy, tsPathWidePtr,
+                                          subcommand, jsonMode);
+        if (cacheRc >= 0) return cacheRc;
     }
 
     // --- TVS-K.4: serve subcommand ---

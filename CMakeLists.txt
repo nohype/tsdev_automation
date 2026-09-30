@@ -106,10 +106,13 @@ add_library(tsdev_lib STATIC
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
     src/whserver_health.cpp
-    src/dispatch_watchdog.cpp)
+    src/dispatch_watchdog.cpp
+    src/ts_install.cpp
+    src/cache_backup.cpp
+    src/vss_snapshot.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
-target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)
+target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid)
 # TVS (CLI log levels): the former `target_compile_definitions(tsdev_lib
 # PRIVATE TSDEV_DEBUG)` is REMOVED — TSDEV_DBG diagnostics are now gated at
 # runtime by the process-global log level (tsdev_log_set_level, default
@@ -142,10 +145,13 @@ add_library(tsdev_lib_diag STATIC
     src/persistence_integrity.cpp
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
-    src/dispatch_watchdog.cpp)
+    src/dispatch_watchdog.cpp
+    src/ts_install.cpp
+    src/cache_backup.cpp
+    src/vss_snapshot.cpp)
 target_include_directories(tsdev_lib_diag PUBLIC src)
 target_link_libraries(tsdev_lib_diag PUBLIC orlib_resolver tsdev_diag)
-target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32)
+target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid)
 target_compile_definitions(tsdev_lib_diag PRIVATE TSDEV_DIAG)
 
 # --- INSERT integration test (historical TDD red-green) --------------------------------
@@ -470,6 +476,21 @@ add_executable(test_dispatch_watchdog
     src/whserver_health.cpp)
 target_include_directories(test_dispatch_watchdog PRIVATE src)
 
+# --- Cache backup unit test ---------------------------------------------------
+# Pure unit test for src/cache_backup.cpp (Program\Cache backup/restore
+# engine: enumerate, staged backup + swap, backup.info round-trip,
+# transactional restore, lock probe, Toolhelp32 TS-process snapshot). The .cpp
+# is compiled directly into the test (same pattern as test_whserver_health) so
+# no library link is needed; the TU is pure Win32 + std::filesystem and all
+# paths point at %TEMP%. PURE UNIT TEST (no orlib20, no TsDevLib), so it is
+# NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_cache_backup
+    tests/test_cache_backup.cpp
+    src/cache_backup.cpp
+    src/vss_snapshot.cpp)
+target_include_directories(test_cache_backup PRIVATE src)
+target_link_libraries(test_cache_backup PRIVATE shell32 ole32 oleaut32 vssapi wbemuuid)
+
 # --- JSON serialize unit test (TVS-K.2, GREEN) -------------------------------
 # Pure unit test for the implemented cliResultToJson() helper extracted from
 # emitOutput()'s JSON branch. cliResultToJson() lives inside an anonymous
@@ -576,6 +597,25 @@ add_executable(test_pbar tests/test_pbar.cpp)
 target_include_directories(test_pbar PRIVATE third_party)
 target_link_libraries(test_pbar tsdev_lib)
 add_dependencies(test_pbar siggen)
+
+# --- Cache-phase (--backup-cache/--restore-cache) helper unit test ----------
+# Pure unit test for the cache-phase helpers in src/tsdev_cli.cpp:
+# parseCacheBackupPolicy (flag value validation), cacheElapsedFormat /
+# cacheProgressLine / cacheSpinnerLine / cachePipeProgressLine (PURE line
+# builders used by CacheProgressRenderer), and formatBytesHuman. The helpers
+# live inside the anonymous namespace in src/tsdev_cli.cpp (internal
+# linkage), so the test #includes the .cpp directly (same TU) and #defines
+# TSDEV_CLI_TEST to exclude its main() — the same mechanism used by
+# test_pbar. The test needs the third_party include dir (nlohmann/json)
+# because the included tsdev_cli.cpp uses it, and links tsdev_lib for the
+# TsDevLib/cache_backup/ts_install symbols referenced by the included CLI
+# code. It is a PURE UNIT TEST (no orlib20 access, no filesystem mutation —
+# only the pure builders are exercised), so it is NOT in TSDEV_ADMIN_TARGETS
+# and runs under -NoTs.
+add_executable(test_cache_cli_units tests/test_cache_cli_units.cpp)
+target_include_directories(test_cache_cli_units PRIVATE third_party)
+target_link_libraries(test_cache_cli_units tsdev_lib)
+add_dependencies(test_cache_cli_units siggen)
 
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
@@ -1257,6 +1297,8 @@ add_dependencies(test_regression
     test_diag_log
     test_whserver_health
     test_dispatch_watchdog
+    test_cache_backup
+    test_cache_cli_units
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
