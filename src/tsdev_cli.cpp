@@ -476,6 +476,11 @@ struct CliResult {
     // warehouse-level cmd 0x0D → cmd 0x3B path. Empty when the op is not
     // "dependents" or when no callers were found.
     std::vector<TsDevLib::CallerInfo> callers;
+    // Serve cache ops (backup-cache/restore-cache): extra top-level members
+    // merged into the success JSON response — carries the exact standalone
+    // --json cache payload (the "cache" member object). Null/empty for all
+    // other ops (no serialization change).
+    ordered_json extraPayload;
 };
 
 // Map an exit code to the machine-readable error.code string (TVS-D.2 §3).
@@ -562,6 +567,15 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
                 arr.push_back(entry);
             }
             j["dependents"] = arr;
+        }
+        // Extra top-level payload (serve cache ops): merge each member so
+        // the response carries the standalone --json cache/backup/restore
+        // object verbatim.
+        if (r.extraPayload.is_object()) {
+            for (auto it = r.extraPayload.begin();
+                 it != r.extraPayload.end(); ++it) {
+                j[it.key()] = it.value();
+            }
         }
     } else {
         ordered_json err;
@@ -1575,8 +1589,21 @@ ordered_json cacheErrorJson(const std::string& op, int exitCode,
 // most once per run (every call site is a failure return), so under --json
 // stdout still carries exactly one object even in combined mode (the
 // subcommand never runs, so nothing else can emit).
+//
+// Serve-request mode (serveResult != nullptr): no stdout write — the broker
+// response frame is a CliResult serialized by writeServeResponse, so the
+// failure is recorded into `serveResult` instead (same CliResult shape the
+// standalone cacheErrorJson serializes through cliResultToJson).
 void emitCacheErrorJson(const std::string& op, int exitCode,
-                        const std::string& message, bool jsonMode) {
+                        const std::string& message, bool jsonMode,
+                        CliResult* serveResult = nullptr) {
+    if (serveResult) {
+        serveResult->op           = op;
+        serveResult->success      = false;
+        serveResult->exitCode     = exitCode;
+        serveResult->errorMessage = message;
+        return;
+    }
     if (!jsonMode) return;
     const ordered_json j = cacheErrorJson(op, exitCode, message);
     const std::string s =
@@ -1586,20 +1613,79 @@ void emitCacheErrorJson(const std::string& op, int exitCode,
     std::fflush(stdout);
 }
 
+// The single stdout success object for a standalone cache-phase run under
+// --json: {"op":<phase label>,"success":true,"exit_code":0,"cache"|"backup"/
+// "restore":{...}}. Pure builder — also used by the serve-request path, which
+// hands the same object back via CliResult::extraPayload so the broker
+// response mirrors this exact shape.
+ordered_json cacheSuccessJson(const std::string& cacheOp,
+                              bool doBackup, bool doRestore,
+                              bool backupKept,
+                              const CacheOpResult& backupRes,
+                              const CacheOpResult& restoreRes,
+                              const std::wstring& backupRoot,
+                              const std::wstring& cacheDir) {
+    ordered_json j;
+    const bool both = doBackup && doRestore;
+    j["op"] = cacheOp;
+    j["success"] = true;
+    j["exit_code"] = 0;
+    if (doBackup) {
+        ordered_json c;
+        c["path"] = wideToUtf8Cli(backupRoot + L"\\cache");
+        if (backupKept) {
+            c["skipped"] = true;
+            c["created"] = readBackupInfo(backupRoot).created;
+        } else {
+            c["files"]        = backupRes.files;
+            c["bytes"]        = backupRes.bytes;
+            c["elapsed_secs"] =
+                static_cast<unsigned long long>(backupRes.elapsedSecs);
+            c["created"] = readBackupInfo(backupRoot).created;
+            applyLiveSourceJson(c, backupRes);
+        }
+        j[both ? "backup" : "cache"] = c;
+    }
+    if (doRestore) {
+        ordered_json c;
+        c["path"]         = wideToUtf8Cli(cacheDir);
+        c["files"]        = restoreRes.files;
+        c["bytes"]        = restoreRes.bytes;
+        c["elapsed_secs"] =
+            static_cast<unsigned long long>(restoreRes.elapsedSecs);
+        j[both ? "restore" : "cache"] = c;
+    }
+    return j;
+}
+
 // Run the cache phase for --backup-cache / --restore-cache. Returns -1 to
 // continue into subcommand dispatch, or the process exit code to return
 // immediately (standalone runs and all abort paths).
 //
 // `subcommand` is empty for a standalone invocation (no subcommand given);
 // the "— <subcommand> not run" tails then read "— exiting".
+//
+// Serve-request mode (serveResult != nullptr): invoked by
+// dispatchServeRequest for the "backup-cache"/"restore-cache" broker ops.
+// The phase logic is identical (pure filesystem), but nothing is written to
+// stdout — the result is recorded into `serveResult` instead: failures go
+// through emitCacheErrorJson's serve branch, and on success the standalone
+// --json payload object is stored in serveResult->extraPayload so
+// cliResultToJson merges it into the response frame. The cancel tail names
+// the serve session (the run is not aborted — only the request's backup
+// intent is).
 int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                   const wchar_t* tsPathOverride,
-                  const std::string& subcommand, bool jsonMode) {
+                  const std::string& subcommand, bool jsonMode,
+                  CliResult* serveResult = nullptr) {
     // Tail for the "cancelled/failed — X" stderr lines: names the skipped
     // subcommand in combined mode, or "exiting" standalone (avoids the
-    // double-negative "no further operations not run").
+    // double-negative "no further operations not run"). Serve mode notes
+    // that the broker session continues.
     const std::string tail =
-        subcommand.empty() ? "exiting" : (subcommand + " not run");
+        serveResult ? "serve session continues"
+                    : (subcommand.empty() ? "exiting"
+                                          : (subcommand + " not run"));
     // JSON "op" label: which phase(s) were requested (same for the success
     // object and every failure object).
     const std::string cacheOp =
@@ -1612,7 +1698,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             "cannot determine the cache backup root "
             "(LOCALAPPDATA is unavailable)";
         std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
-        emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+        emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
         return 16;
     }
     const std::wstring cacheDir = resolveTsCacheDir(tsPathOverride);
@@ -1625,7 +1711,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             "cannot locate TradeStation cache directory (looked for " +
             wideToUtf8Cli(cacheDir) + ")";
         std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
-        emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+        emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
         return 16;
     }
 
@@ -1684,8 +1770,15 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             std::fprintf(stderr,
                 "tsdev_cli: cache backup cancelled — %s\n",
                 tail.c_str());
-            emitCacheErrorJson(cacheOp, 17, "cache backup cancelled",
-                               jsonMode);
+            // Serve mode carries the "session continues" notion inside the
+            // error message itself: the broker's stderr is not captured by
+            // the client, so the JSON message is the only channel.
+            const std::string cancelMsg =
+                serveResult
+                    ? "cache backup cancelled (serve session continues)"
+                    : "cache backup cancelled";
+            emitCacheErrorJson(cacheOp, 17, cancelMsg,
+                               jsonMode, serveResult);
             return 17;
         }
         if (decision == 's') {
@@ -1730,7 +1823,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 std::fprintf(stderr,
                     "tsdev_cli: cache backup failed — %s\n",
                     tail.c_str());
-                emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+                emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
                 return 16;
             }
             std::fprintf(stderr,
@@ -1767,7 +1860,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 msg += ": " + restoreRes.message;
             }
             std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
-            emitCacheErrorJson(cacheOp, 5, msg, jsonMode);
+            emitCacheErrorJson(cacheOp, 5, msg, jsonMode, serveResult);
             return 5;
         }
         if (restoreRes.status == CacheOpStatus::InUse) {
@@ -1777,7 +1870,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 "Close TradeStation Desktop (orchart.exe, WHServer.exe, "
                 "TSDev.exe) and retry.";
             std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
-            emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+            emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
             return 16;
         }
         if (restoreRes.status != CacheOpStatus::Ok) {
@@ -1792,7 +1885,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             std::fprintf(stderr,
                 "tsdev_cli: cache restore failed — %s\n",
                 tail.c_str());
-            emitCacheErrorJson(cacheOp, 16, msg, jsonMode);
+            emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
             return 16;
         }
         std::fprintf(stderr,
@@ -1811,40 +1904,27 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         return -1;  // continue to subcommand dispatch (cache phase is done)
     }
 
+    // Serve-request path: hand the exact standalone --json payload back in
+    // the CliResult (cliResultToJson merges extraPayload into the response
+    // frame — op/success/exit_code are identical to the CliResult's own).
+    // Nothing is written to stdout: the broker wire is the pipe frame.
+    if (serveResult) {
+        serveResult->op           = cacheOp;
+        serveResult->success      = true;
+        serveResult->exitCode     = 0;
+        serveResult->extraPayload = cacheSuccessJson(
+            cacheOp, doBackup, doRestore, backupKept, backupRes, restoreRes,
+            backupRoot, cacheDir);
+        return 0;
+    }
+
     // Standalone invocation: the cache phase owns the stdout result.
     if (jsonMode) {
         // One stdout object for the whole standalone run so json.loads on
         // all-of-stdout works even when both flags were given.
-        ordered_json j;
-        const bool both = doBackup && doRestore;
-        j["op"] = cacheOp;
-        j["success"] = true;
-        j["exit_code"] = 0;
-        if (doBackup) {
-            ordered_json c;
-            c["path"] = wideToUtf8Cli(backupRoot + L"\\cache");
-            if (backupKept) {
-                c["skipped"] = true;
-                c["created"] = readBackupInfo(backupRoot).created;
-            } else {
-                c["files"]        = backupRes.files;
-                c["bytes"]        = backupRes.bytes;
-                c["elapsed_secs"] =
-                    static_cast<unsigned long long>(backupRes.elapsedSecs);
-                c["created"] = readBackupInfo(backupRoot).created;
-                applyLiveSourceJson(c, backupRes);
-            }
-            j[both ? "backup" : "cache"] = c;
-        }
-        if (doRestore) {
-            ordered_json c;
-            c["path"]         = wideToUtf8Cli(cacheDir);
-            c["files"]        = restoreRes.files;
-            c["bytes"]        = restoreRes.bytes;
-            c["elapsed_secs"] =
-                static_cast<unsigned long long>(restoreRes.elapsedSecs);
-            j[both ? "restore" : "cache"] = c;
-        }
+        const ordered_json j = cacheSuccessJson(
+            cacheOp, doBackup, doRestore, backupKept, backupRes, restoreRes,
+            backupRoot, cacheDir);
         const std::string s =
             j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
         std::fwrite(s.c_str(), 1, s.size(), stdout);
@@ -4899,7 +4979,8 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 // TsDevLib and is validated via E2E in K.6a).
 
 // ServeRequest is the parsed, validated form of a single broker request.
-//   op            insert/modify/delete/exists/upsert/get-source/quit
+//   op            insert/modify/delete/exists/upsert/get-source/quit/
+//                 backup-cache/restore-cache
 //   type          ComponentType (resolved from typeStr)
 //   typeStr       the original type string verbatim (for CliResult)
 //   name          component name
@@ -4911,6 +4992,9 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 //                 mutating ops only (insert/modify/delete/upsert); hasBatch
 //                 gates stderr progress emission and the response "progress"
 //                 member (see parseServeRequest/addServeProgress)
+//   policy      backup-cache only (optional; verbatim request string —
+//                 "skip"|"overwrite"|"abort", absent = default "abort";
+//                 "prompt" is rejected at parse: the broker has no console)
 struct ServeRequest {
     std::string op;
     ComponentType type = ComponentType::Strategy;
@@ -4919,6 +5003,7 @@ struct ServeRequest {
     std::string source;
     bool caseInsensitive = false;
     std::string outputPath;
+    std::string policy;
     bool hasBatch = false;
     std::string batchId;
     size_t batchIndex = 0;
@@ -4948,7 +5033,8 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
 
     // 2. Validate the op against the known set.
     const std::string knownOps[] = {
-        "insert", "modify", "delete", "exists", "upsert", "get-source", "quit"
+        "insert", "modify", "delete", "exists", "upsert", "get-source",
+        "quit", "backup-cache", "restore-cache"
     };
     bool opKnown = false;
     for (const std::string& k : knownOps) {
@@ -5010,12 +5096,58 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         out.batchTotal = static_cast<size_t>(tot);
     }
 
-    // 3. 'quit' needs no other fields.
-    if (op == "quit") {
-        out.op = "quit";
+    // Optional 'policy' — backup-cache only. Checked before the cache-op
+    // early-out so policy on a non-cache op (incl. quit) still rejects. The
+    // value must be a string naming skip/overwrite/abort (case-insensitive,
+    // like --cache-backup-policy). "prompt" is deliberately rejected: the
+    // broker has no console for interactive prompts.
+    if (req.contains("policy")) {
+        if (op != "backup-cache") {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.errorMessage =
+                "'policy' is only valid for op 'backup-cache'";
+            return r;
+        }
+        if (!req["policy"].is_string()) {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.errorMessage =
+                "invalid 'policy' (expected a string: 'skip', 'overwrite', "
+                "or 'abort')";
+            return r;
+        }
+        const std::string pv = req["policy"].get<std::string>();
+        if (!iequals(pv, "skip") && !iequals(pv, "overwrite") &&
+            !iequals(pv, "abort")) {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.errorMessage =
+                "invalid 'policy' value '" + pv + "' (expected 'skip', "
+                "'overwrite', or 'abort'; 'prompt' is unavailable — the "
+                "broker has no console)";
+            return r;
+        }
+        out.policy = pv;
+    }
+    // Absent 'policy' on backup-cache defaults to "abort": the broker has no
+    // console to prompt, and abort is the fail-safe default (an existing
+    // backup is never silently overwritten or skipped).
+    if (op == "backup-cache" && out.policy.empty())
+        out.policy = "abort";
+
+    // 3. 'quit' and the cache ops need no type/name/source. The cache ops
+    // are pure filesystem — they are not WHServer-mutating, so they bypass
+    // the VAS guard and reject 'batch' tags (the batch gate above only
+    // accepts insert/modify/delete/upsert).
+    if (op == "quit" || op == "backup-cache" || op == "restore-cache") {
+        out.op = op;
         r.success = true;
         r.exitCode = 0;
-        r.op = "quit";
+        r.op = op;
         return r;
     }
 
@@ -5129,11 +5261,37 @@ std::pair<std::string, std::string> taggedParseFailureLines(
 // the TsDevLib destructor) and the explicit closeWarehouse() in runServe.
 // Read-only ops (exists/get-source) need no flush. "quit" returns a success
 // CliResult with op="quit" (the broker layer in K.4 handles the actual
-// shutdown).
+// shutdown). "backup-cache"/"restore-cache" are pure filesystem — they take
+// no lib state, so they run through runCachePhase's serve path even though
+// the session's TsDevLib already exists; the "before any other operation"
+// contract is satisfied by sequential request handling (a cache request is
+// fully answered before the client's subsequent lib op is dispatched).
 //
 // NOTE: not unit-tested (needs a real, concrete TsDevLib). Validated via E2E
 // in K.6a.
-CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req) {
+CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
+                               const wchar_t* tsPathOverride = nullptr) {
+    if (req.op == "backup-cache" || req.op == "restore-cache") {
+        // Pure-filesystem cache ops: run the same core as the standalone
+        // --backup-cache/--restore-cache phase (runCachePhase's serve path).
+        // Not WHServer-mutating — they bypass the VAS guard and reject
+        // 'batch' tags in parseServeRequest. The policy was validated at
+        // parse; empty = default "abort" (the broker never prompts).
+        // parseServeRequest already rejected "prompt" and unknown values —
+        // that parse-layer rejection is authoritative, so this reparse
+        // cannot fail and its return value is intentionally ignored.
+        CacheBackupPolicy policy = CacheBackupPolicy::Abort;
+        if (!req.policy.empty()) parseCacheBackupPolicy(req.policy, policy);
+        CliResult r;
+        runCachePhase(req.op == "backup-cache",
+                      req.op == "restore-cache", policy, tsPathOverride,
+                      /*subcommand=*/"", /*jsonMode=*/false, &r);
+        // Defensive fallback: unreachable today (runCachePhase/
+        // emitCacheErrorJson set r.op on every path), kept so a future
+        // cache-phase path that forgets r.op still reports the right op.
+        if (r.op.empty()) r.op = req.op;
+        return r;
+    }
     if (req.op == "insert") {
         return doInsert(lib, req.type, req.typeStr, req.name,
                         req.source, /*flushPerItem=*/false);
@@ -5537,7 +5695,8 @@ DWORD WINAPI runServe(LPVOID param) {
             // 'quit' op: respond with the quit success result, then signal
             // shutdown and break the inner loop.
             if (req.op == "quit") {
-                CliResult qr = dispatchServeRequest(*lib, req);
+                CliResult qr = dispatchServeRequest(*lib, req,
+                                                    p->tsPathOverride);
                 writeFramed(pipe, cliResultToJson(qr).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
                 p->quit.store(true);
                 break;
@@ -5572,7 +5731,7 @@ DWORD WINAPI runServe(LPVOID param) {
             // exception would be misclassified. Exit 1 / internal_error is
             // unambiguous.
             try {
-                r = dispatchServeRequest(*lib, req);
+                r = dispatchServeRequest(*lib, req, p->tsPathOverride);
             } catch (const std::exception& e) {
                 r = CliResult();
                 r.op = req.op;

@@ -40,6 +40,8 @@ from .exceptions import (
     SaveSourceError,
     SourceFileError,
     ThreadFailure,
+    TsDevCacheCancelledError,
+    TsDevCacheError,
     TsDevCrashError,
     TsDevError,
     TsDevWatchdogAbortError,
@@ -79,6 +81,8 @@ __all__ = [
     "ThreadFailure",
     "TsDevCrashError",
     "TsDevWatchdogAbortError",
+    "TsDevCacheError",
+    "TsDevCacheCancelledError",
     "main",
 ]
 

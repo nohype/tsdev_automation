@@ -211,6 +211,7 @@ All return a `TsDevResult` dataclass. `insert`/`modify`/`upsert`/`delete`/`get_s
 - `.exists: bool`, `.stored_name: str`, `.prog_id: int` — populated by `exists` (`.prog_id == 0` and `.stored_name == ""` when not found)
 - `.source: str` — populated by `get_source` (empty string on failure)
 - `.error: TsDevErrorInfo | None` — set when `success` is False; carries `.code: str`, `.message: str`, plus `.compile_errors: str | None` (exit 8) and `.existing_prog_id: int | None` (insert, exit 5)
+- `.cache: dict | None` — populated by `backup_cache`/`restore_cache`/`cache_maintenance` results (the phase's own `"cache"` payload). `None` on ordinary op results, including ops run with the `backup_cache`/`restore_cache`/`cache_backup_policy` kwargs (combined mode). The raw CLI's two-flag standalone `--backup-cache --restore-cache` object carries `{"backup": ..., "restore": ...}` instead; `cache_maintenance` splits that shape into one result per phase, so it never surfaces through the Python API.
 
 Methods:
 - `insert(type, name, source)`
@@ -222,6 +223,14 @@ Methods:
 - `delete(type, name)`
 - `exists(type, name, *, case_insensitive=False)`
 - `get_source(type, name, output_file=None)` — if `output_file` is given, the source is also written to disk.
+
+### Cache maintenance
+
+- `backup_cache(on_existing="abort")` — standalone `--backup-cache`. `on_existing` ∈ `{"prompt","overwrite","skip","abort"}` (`ValueError` otherwise). The Python default is `abort` (fail-safe; the direct CLI flag default stays `prompt`). `prompt` can never prompt under a pipe (degrades to keep-existing + warning on the direct path); on the serve path it raises `ValueError` client-side (the broker has no console). A serve `backup-cache` request without a `policy` field defaults to `abort`.
+- `restore_cache()` — standalone `--restore-cache`; raises `NotFoundError` when no backup exists.
+- `cache_maintenance(*, backup=False, restore=False, on_existing="abort")` — standalone backup+restore in one call. Direct mode spawns ONE `tsdev_cli` process carrying both flags (fixed order backup -> restore); serve mode sends the two broker requests sequentially in the same order. Returns one `TsDevResult` per requested phase, in run order, each with its own `.cache` payload. A phase failure raises the typed exception and suppresses the later phase.
+- Combined: every single-item and batch method also accepts `backup_cache=False`, `restore_cache=False`, `cache_backup_policy=None` keyword args. Direct path appends `--backup-cache`/`--restore-cache`/`--cache-backup-policy=...` to the same argv (cache phase runs before the op, fixed order backup -> restore -> op); serve path sends `{"op":"backup-cache","policy":...}` / `{"op":"restore-cache"}` requests before the op request, and a failed pre-request suppresses the op. `cache_backup_policy` implies `backup_cache` even when `backup_cache=False` is passed explicitly. When `backup_cache=True` is given without a policy, Python emits `--cache-backup-policy=abort` — the API default is `abort` on every path. Combined-mode op results never carry a `.cache` payload (`.cache is None`).
+- Exit 16 -> `TsDevCacheError`, exit 17 -> `TsDevCacheCancelledError`, exit 5 -> `NotFoundError` (restore: no backup found) — all exported at package top level.
 
 ### Batch methods
 

@@ -24,6 +24,8 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
                                   (exit 15; no JSON frame is emitted on a
                                   watchdog abort — mapping is for symmetry
                                   only)
+    cache_io_error      -> TsDevCacheError (exit 16)
+    cache_cancelled     -> TsDevCacheCancelledError (exit 17)
 """
 
 from __future__ import annotations
@@ -67,7 +69,12 @@ class InitFailure(TsDevError):
 
 
 class NotFoundError(TsDevError):
-    """Component not found for modify/delete (exit 5)."""
+    """Component not found for modify/delete (exit 5).
+
+    Also reused for a cache restore that found no backup: the
+    ``--restore-cache`` phase (standalone or combined) reports exit 5 /
+    ``not_found`` when no backup exists to restore.
+    """
 
 
 class AlreadyExistsError(TsDevError):
@@ -188,6 +195,24 @@ class ElevationRequiredError(TsDevError):
         super().__init__(message=message)
 
 
+class TsDevCacheError(TsDevError):
+    """Cache backup/restore I/O failure (exit 16).
+
+    Raised by the ``--backup-cache``/``--restore-cache`` cache phase (and the
+    serve ``backup-cache``/``restore-cache`` requests) when the cache dir or
+    backup root is unreachable, a copy fails, or a restore hits a locked
+    cache.
+    """
+
+
+class TsDevCacheCancelledError(TsDevError):
+    """Cache backup cancelled (exit 17).
+
+    Raised when ``--cache-backup-policy=abort`` (or 'C' at the interactive
+    prompt) cancels a backup over an existing one.
+    """
+
+
 # error.code -> exception class
 ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "usage_error": UsageError,
@@ -204,6 +229,8 @@ ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "ell_missing": EllMissingError,
     "thread_failure": ThreadFailure,
     "whserver_dispatch_watchdog_abort": TsDevWatchdogAbortError,
+    "cache_io_error": TsDevCacheError,
+    "cache_cancelled": TsDevCacheCancelledError,
 }
 
 
@@ -231,6 +258,8 @@ __all__ = [
     "ThreadFailure",
     "TsDevCrashError",
     "TsDevWatchdogAbortError",
+    "TsDevCacheError",
+    "TsDevCacheCancelledError",
     "ElevationRequiredError",
     "ERROR_CODE_MAP",
     "exception_for",

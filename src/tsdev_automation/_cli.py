@@ -20,6 +20,11 @@ Usage::
     tsdev-automation batch-modify-dir  strategy ./mydir [-t el]...
     tsdev-automation batch-delete-dir  strategy ./mydir [-t el]...
     tsdev-automation batch-upsert-dir  strategy ./mydir [-t el]...
+    tsdev-automation --backup-cache [--cache-backup-policy <mode>]
+    tsdev-automation --restore-cache
+    tsdev-automation --backup-cache insert strategy MyName ./source.el
+        (the cache flags are global: with an operation they run the CLI's
+        cache phase first, fixed order backup -> restore -> op)
 
 For insert/modify the source argument is interpreted as a file path if it
 exists, otherwise as inline EasyLanguage source text (matching the Python API).
@@ -62,7 +67,31 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Increase tsdev_cli log verbosity (repeatable): default warnings+errors; -v info; -vv debug.",
     )
-    sub = p.add_subparsers(dest="command", required=True)
+    p.add_argument(
+        "--backup-cache",
+        action="store_true",
+        default=False,
+        help="back up <TS>\\Program\\Cache to %%LOCALAPPDATA%%\\tsdev_cli\\cache-backup "
+        "before the operation (standalone when no operation is given).",
+    )
+    p.add_argument(
+        "--restore-cache",
+        action="store_true",
+        default=False,
+        help="restore the cache backup into the Cache dir before the operation "
+        "(standalone when no operation is given).",
+    )
+    p.add_argument(
+        "--cache-backup-policy",
+        choices=("prompt", "overwrite", "skip", "abort"),
+        default=None,
+        metavar="{prompt,overwrite,skip,abort}",
+        help="what --backup-cache does when a backup already exists "
+        "(Python-side default abort; 'prompt' degrades to keep-existing "
+        "on a pipe and raises ValueError on the serve path). "
+        "Requires --backup-cache.",
+    )
+    sub = p.add_subparsers(dest="command", required=False)
 
     for op in ("insert", "modify"):
         sp = sub.add_parser(op, help=f"{op} a component.")
@@ -109,47 +138,77 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    # Mirror the C++ CLI rule: --cache-backup-policy requires --backup-cache.
+    if args.cache_backup_policy is not None and not args.backup_cache:
+        parser.error("--cache-backup-policy requires --backup-cache")
+    if args.command is None and not (args.backup_cache or args.restore_cache):
+        parser.error("the following arguments are required: command")
     client = TsDevClient(cli_path=args.cli_path, ts_path=args.ts_path, timeout=args.timeout, verbose=args.verbose)
 
+    # Cache-phase kwargs forwarded to op methods; empty dict keeps the
+    # signatures of simple fakes used by tests unchanged.
+    cache_kwargs: dict = {}
+    if args.backup_cache:
+        cache_kwargs["backup_cache"] = True
+    if args.restore_cache:
+        cache_kwargs["restore_cache"] = True
+    if args.cache_backup_policy is not None:
+        cache_kwargs["cache_backup_policy"] = args.cache_backup_policy
+
     try:
+        if args.command is None:
+            # Standalone cache maintenance: fixed order backup -> restore.
+            # Direct mode runs ONE tsdev_cli process carrying both flags;
+            # serve mode sends the two broker requests sequentially. Phase
+            # failures raise (handled below), so every returned result is a
+            # success.
+            results = client.cache_maintenance(
+                backup=args.backup_cache,
+                restore=args.restore_cache,
+                on_existing=args.cache_backup_policy or "abort",
+            )
+            for r in results:
+                print(f"[OK] {r.op} cache={r.cache}")
+            return 0
         if args.command in ("insert", "modify"):
-            r = getattr(client, args.command)(args.type, args.name, args.source)
+            r = getattr(client, args.command)(args.type, args.name, args.source, **cache_kwargs)
             _print_result(r)
             return 0 if r.success else 1
         if args.command == "delete":
-            r = client.delete(args.type, args.name)
+            r = client.delete(args.type, args.name, **cache_kwargs)
             _print_result(r)
             return 0 if r.success else 1
         if args.command == "exists":
-            r = client.exists(args.type, args.name, case_insensitive=args.case_insensitive)
+            r = client.exists(args.type, args.name, case_insensitive=args.case_insensitive, **cache_kwargs)
             if r.exists:
                 print(f"[OK] exists {r.type} {r.name!r} -> ProgId={r.prog_id} stored_name={r.stored_name!r}")
             else:
                 print(f"[OK] exists {r.type} {r.name!r} -> not found")
             return 0
         if args.command == "get-source":
-            r = client.get_source(args.type, args.name, output_file=args.output)
+            r = client.get_source(args.type, args.name, output_file=args.output, **cache_kwargs)
             if args.output is None:
                 print(r.source, end="")
             else:
                 print(f"Source written to {args.output}")
             return 0
         if args.command == "upsert":
-            r = client.upsert(args.type, args.name, args.source)
+            r = client.upsert(args.type, args.name, args.source, **cache_kwargs)
             _print_result(r)
             return 0 if r.success else 1
         if args.command.endswith("-dir"):
             # batch-insert-dir, batch-modify-dir, batch-delete-dir, batch-upsert-dir
             op = args.command[len("batch-"):-len("-dir")]  # "insert", "modify", "delete", "upsert"
-            results = getattr(client, f"batch_{op}_dir")(args.type, args.dir_path, args.extensions)
+            results = getattr(client, f"batch_{op}_dir")(args.type, args.dir_path, args.extensions, **cache_kwargs)
             for r in results:
                 _print_result(r)
             return 0 if all(r.success for r in results) else 1
         elif args.command.startswith("batch-"):
             op = args.command.split("-", 1)[1]
             items = _read_manifest(Path(args.manifest), needs_source=(op != "delete"))
-            results = getattr(client, f"batch_{op}")(items)
+            results = getattr(client, f"batch_{op}")(items, **cache_kwargs)
             for r in results:
                 _print_result(r)
             return 0 if all(r.success for r in results) else 1

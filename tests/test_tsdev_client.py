@@ -4160,6 +4160,10 @@ class _FakeCliProc:
             return
         if s.pre_run_stderr is not None:
             self._emit_err_line(s.pre_run_stderr)
+            if s.stdout is not None:
+                # A pre-run failure may still emit a stdout object (e.g. the
+                # single cache-phase error object on exit 5/16/17).
+                self._emit_out(s.stdout)
             self._exit_code = s.exit_code
             return
         if s.hang:
@@ -6058,3 +6062,800 @@ class TestE2E:
             for t in _ALL_TYPES:
                 with pytest.raises(NotFoundError):
                     self.c.delete(t, f"{_UNIQUE}_Batch{i:02d}")
+
+
+# ---------------------------------------------------------------------------
+# Cache-phase flags (--backup-cache / --restore-cache) — mocked unit tests
+# ---------------------------------------------------------------------------
+
+
+def _cache_success_json(op: str, payload_key: str = "cache") -> str:
+    return json.dumps(
+        {
+            "op": op,
+            "success": True,
+            "exit_code": 0,
+            payload_key: {
+                "path": "C:/bk/cache",
+                "files": 3,
+                "bytes": 10,
+                "elapsed_secs": 1,
+                "created": "2025-01-01T00:00:00Z",
+            },
+        }
+    )
+
+
+class TestCacheOps:
+    """Unit tests for backup_cache/restore_cache and the cache-phase kwargs."""
+
+    def test_backup_cache_argv_direct(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_cache_success_json("backup-cache"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.backup_cache()
+        assert r.success is True
+        assert r.op == "backup-cache"
+        assert r.cache is not None
+        assert r.cache["files"] == 3
+        assert r.cache["created"] == "2025-01-01T00:00:00Z"
+        assert seen["cmd"] == [
+            str(client.cli_path),
+            "--json",
+            "--backup-cache",
+            "--cache-backup-policy=abort",
+        ]
+
+    def test_backup_cache_policy_forwarded_verbatim(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_cache_success_json("backup-cache"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.backup_cache(on_existing="abort")
+        assert seen["cmd"][-2:] == ["--backup-cache", "--cache-backup-policy=abort"]
+
+    def test_backup_cache_invalid_policy_raises(self, client: TsDevClient) -> None:
+        with pytest.raises(ValueError):
+            client.backup_cache(on_existing="bogus")
+
+    def test_restore_cache_argv_direct(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_cache_success_json("restore-cache"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.restore_cache()
+        assert r.success is True
+        assert seen["cmd"] == [str(client.cli_path), "--json", "--restore-cache"]
+
+    def test_backup_cache_exit16_raises_typed(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("backup-cache", None, None, "cache_io_error", "io failed", exit_code=16),
+                returncode=16,
+            ),
+        )
+        with pytest.raises(exc.TsDevCacheError) as ei:
+            client.backup_cache()
+        assert ei.value.result.exit_code == 16
+        assert ei.value.result.error.code == "cache_io_error"
+
+    def test_backup_cache_exit17_raises_cancelled(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17),
+                returncode=17,
+            ),
+        )
+        with pytest.raises(exc.TsDevCacheCancelledError) as ei:
+            client.backup_cache(on_existing="abort")
+        assert ei.value.result.exit_code == 17
+        assert ei.value.result.error.code == "cache_cancelled"
+
+    def test_exception_map_exit16_17(self) -> None:
+        assert exc.ERROR_CODE_MAP["cache_io_error"] is exc.TsDevCacheError
+        assert exc.ERROR_CODE_MAP["cache_cancelled"] is exc.TsDevCacheCancelledError
+        assert issubclass(exc.TsDevCacheError, TsDevError)
+        assert issubclass(exc.TsDevCacheCancelledError, TsDevError)
+
+    def test_op_with_backup_cache_flag_direct(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_success_json("insert", "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.insert("strategy", "X", "x;", backup_cache=True, restore_cache=True)
+        assert "--backup-cache" in seen["cmd"]
+        assert "--restore-cache" in seen["cmd"]
+        assert seen["cmd"].index("--backup-cache") < seen["cmd"].index("insert")
+
+    def test_policy_kwarg_implies_backup_direct(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_success_json("delete", "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.delete("strategy", "X", cache_backup_policy="overwrite")
+        assert "--backup-cache" in seen["cmd"]
+        assert "--cache-backup-policy=overwrite" in seen["cmd"]
+
+    def test_invalid_policy_kwarg_raises_before_spawn(self, client: TsDevClient, monkeypatch) -> None:
+        calls: list = []
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: calls.append(a) or _make_completed()
+        )
+        with pytest.raises(ValueError):
+            client.insert("strategy", "X", "x;", cache_backup_policy="bogus")
+        assert calls == []
+
+    # -- serve path ---------------------------------------------------------
+
+    def test_backup_cache_serve_default_abort(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_cache_success_json("backup-cache"))
+        c = _serve_client(tmp_path, fake_broker)
+        r = c.backup_cache()
+        assert r.success is True
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "backup-cache", "policy": "abort"}
+
+    def test_backup_cache_serve_prompt_raises(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        c = _serve_client(tmp_path, fake_broker)
+        with pytest.raises(ValueError, match="unavailable under serve"):
+            c.backup_cache(on_existing="prompt")
+        fake_broker.call.assert_not_called()
+
+    def test_backup_cache_serve_policy_verbatim(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_cache_success_json("backup-cache"))
+        c = _serve_client(tmp_path, fake_broker)
+        c.backup_cache(on_existing="overwrite")
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "backup-cache", "policy": "overwrite"}
+
+    def test_restore_cache_serve_request(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_cache_success_json("restore-cache"))
+        c = _serve_client(tmp_path, fake_broker)
+        c.restore_cache()
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "restore-cache"}
+
+    def test_serve_cache_pre_requests_precede_op(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        fake_broker.call.side_effect = [
+            json.loads(_cache_success_json("backup-cache")),
+            json.loads(_cache_success_json("restore-cache")),
+            json.loads(_success_json("delete", "strategy", "X")),
+        ]
+        c = _serve_client(tmp_path, fake_broker)
+        c.delete("strategy", "X", backup_cache=True, restore_cache=True)
+        assert fake_broker.call.call_count == 3
+        reqs = [c_.args[0] for c_ in fake_broker.call.call_args_list]
+        assert reqs[0] == {"op": "backup-cache", "policy": "abort"}
+        assert reqs[1] == {"op": "restore-cache"}
+        assert reqs[2]["op"] == "delete"
+
+    def test_serve_failed_pre_request_suppresses_op(self, tmp_path: Path) -> None:
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(
+            _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17)
+        )
+        c = _serve_client(tmp_path, fake_broker)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            c.insert("strategy", "X", "x;", backup_cache=True, cache_backup_policy="abort")
+        assert fake_broker.call.call_count == 1
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "backup-cache", "policy": "abort"}
+
+
+class TestCliCacheFlags:
+    """``_cli.py`` parse/dispatch tests for the global cache flags."""
+
+    def test_cache_only_backup_dispatch(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def cache_maintenance(self, *, backup=False, restore=False, on_existing="abort"):
+                calls["cache_maintenance"] = {
+                    "backup": backup, "restore": restore, "on_existing": on_existing,
+                }
+                return [
+                    TsDevResult(
+                        op="backup-cache", type=None, name=None, success=True, exit_code=0,
+                        cache={"path": "C:/bk/cache", "files": 1},
+                    )
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["--backup-cache", "--cache-backup-policy", "skip"])
+        assert rc == 0
+        assert calls["cache_maintenance"] == {
+            "backup": True, "restore": False, "on_existing": "skip",
+        }
+        assert "backup-cache" in capsys.readouterr().out
+
+    def test_cache_only_restore_dispatch(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def cache_maintenance(self, *, backup=False, restore=False, on_existing="abort"):
+                calls["cache_maintenance"] = {
+                    "backup": backup, "restore": restore, "on_existing": on_existing,
+                }
+                return [
+                    TsDevResult(
+                        op="restore-cache", type=None, name=None, success=True, exit_code=0,
+                        cache={"path": "C:/ts/Cache", "files": 2},
+                    )
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["--restore-cache"])
+        assert rc == 0
+        assert calls["cache_maintenance"] == {
+            "backup": False, "restore": True, "on_existing": "abort",
+        }
+
+    def test_policy_without_backup_is_error(self, monkeypatch) -> None:
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        with pytest.raises(SystemExit) as ei:
+            _main(["--cache-backup-policy", "abort", "delete", "strategy", "X"])
+        assert ei.value.code == 2
+
+    def test_no_command_no_cache_flags_is_error(self, monkeypatch) -> None:
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        with pytest.raises(SystemExit) as ei:
+            _main([])
+        assert ei.value.code == 2
+
+    def test_combined_flags_forwarded_to_op(self, monkeypatch) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def delete(self, type_, name, **kwargs):
+                calls["delete"] = (type_, name, kwargs)
+                return TsDevResult(
+                    op="delete", type=type_, name=name, success=True, exit_code=0
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["--backup-cache", "--cache-backup-policy", "abort", "delete", "strategy", "X"])
+        assert rc == 0
+        assert calls["delete"] == (
+            "strategy", "X",
+            {"backup_cache": True, "cache_backup_policy": "abort"},
+        )
+
+    def test_cache_only_combined_single_call(self, monkeypatch, capsys) -> None:
+        """``--backup-cache --restore-cache`` standalone is ONE client call."""
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def cache_maintenance(self, *, backup=False, restore=False, on_existing="abort"):
+                calls["cache_maintenance"] = {
+                    "backup": backup, "restore": restore, "on_existing": on_existing,
+                }
+                return [
+                    TsDevResult(
+                        op="backup-cache", type=None, name=None, success=True, exit_code=0,
+                        cache={"path": "C:/bk/cache", "files": 1},
+                    ),
+                    TsDevResult(
+                        op="restore-cache", type=None, name=None, success=True, exit_code=0,
+                        cache={"path": "C:/ts/Cache", "files": 2},
+                    ),
+                ]
+
+            def backup_cache(self, on_existing="abort"):  # must NOT be called
+                raise AssertionError("standalone combined must not split calls")
+
+            def restore_cache(self):
+                raise AssertionError("standalone combined must not split calls")
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["--backup-cache", "--restore-cache"])
+        assert rc == 0
+        assert calls["cache_maintenance"] == {
+            "backup": True, "restore": True, "on_existing": "abort",
+        }
+        out = capsys.readouterr().out
+        assert "backup-cache" in out and "restore-cache" in out
+
+
+# ---------------------------------------------------------------------------
+# Cache-flag argv pinning across all cache-kwarg-bearing methods
+# ---------------------------------------------------------------------------
+
+
+def _assert_cache_flags(cmd: list[str], subcmd: str) -> None:
+    """The cache-phase flags must precede the subcommand token in argv."""
+    for flag in ("--backup-cache", "--restore-cache", "--cache-backup-policy=abort"):
+        assert flag in cmd, f"{flag} missing from argv: {cmd!r}"
+    assert cmd.index("--backup-cache") < cmd.index(subcmd)
+    assert cmd.index("--restore-cache") < cmd.index(subcmd)
+
+
+class TestCacheFlagArgvPinning:
+    """All 14 cache-kwarg-bearing methods place the cache flags in argv
+    (direct) or the pre-request sequence (serve, covered in TestCacheOps)."""
+
+    _SINGLE_METHODS = [
+        pytest.param("insert", True, id="insert"),
+        pytest.param("modify", True, id="modify"),
+        pytest.param("upsert", True, id="upsert"),
+        pytest.param("delete", False, id="delete"),
+        pytest.param("exists", False, id="exists"),
+        pytest.param("get_source", False, id="get_source"),
+    ]
+    _BATCH_METHODS = [
+        pytest.param("batch_insert", "insert", id="batch_insert"),
+        pytest.param("batch_modify", "modify", id="batch_modify"),
+        pytest.param("batch_delete", "delete", id="batch_delete"),
+        pytest.param("batch_upsert", "upsert", id="batch_upsert"),
+    ]
+    _BATCH_DIR_METHODS = [
+        pytest.param("batch_insert_dir", "insert", id="batch_insert_dir"),
+        pytest.param("batch_modify_dir", "modify", id="batch_modify_dir"),
+        pytest.param("batch_delete_dir", "delete", id="batch_delete_dir"),
+        pytest.param("batch_upsert_dir", "upsert", id="batch_upsert_dir"),
+    ]
+
+    @pytest.mark.parametrize("method_name,needs_source", _SINGLE_METHODS)
+    def test_single_op_cache_flags(self, client: TsDevClient, monkeypatch, method_name, needs_source) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            if method_name == "exists":
+                return _make_completed(_exists_json("strategy", "X", exists=False))
+            if method_name == "get_source":
+                return _make_completed(_get_source_json("strategy", "X"))
+            return _make_completed(_success_json(method_name, "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        args = ("strategy", "X", "x;") if needs_source else ("strategy", "X")
+        getattr(client, method_name)(
+            *args, backup_cache=True, restore_cache=True
+        )
+        cmd = seen["cmd"]
+        _assert_cache_flags(cmd, method_name.replace("_", "-"))
+
+    @pytest.mark.parametrize("method_name,op", _BATCH_METHODS)
+    def test_batch_stdin_cache_flags(self, client: TsDevClient, monkeypatch, method_name, op) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["input"] = kw.get("input")
+            return _make_completed("[]")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        getattr(client, method_name)(
+            [BatchItem("strategy", "A", "x;")], backup_cache=True, restore_cache=True
+        )
+        cmd = seen["cmd"]
+        assert "--batch-stdin" in cmd
+        _assert_cache_flags(cmd, f"batch-{op}")
+
+    @pytest.mark.parametrize("method_name,op", _BATCH_METHODS)
+    def test_batch_progress_control_cache_flags(self, client: TsDevClient, monkeypatch, method_name, op) -> None:
+        scenario = _CliScenario(
+            op=op,
+            items=[_CliItem("strategy", "A", json.loads(_success_json(op, "strategy", "A")))],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        getattr(client, method_name)(
+            [BatchItem("strategy", "A", "x;")],
+            on_progress=lambda p: None,
+            backup_cache=True,
+            restore_cache=True,
+        )
+        assert len(procs) == 1
+        cmd = procs[0].args
+        assert "--batch-stdin" in cmd
+        assert "--batch-progress-control" in cmd
+        _assert_cache_flags(cmd, f"batch-{op}")
+        _assert_proc_clean(procs[0])
+
+    @pytest.mark.parametrize("method_name,op", _BATCH_DIR_METHODS)
+    def test_batch_dir_cache_flags(self, client: TsDevClient, monkeypatch, tmp_path: Path, method_name, op) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed("[]")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        getattr(client, method_name)(
+            "strategy", str(tmp_path), backup_cache=True, restore_cache=True
+        )
+        cmd = seen["cmd"]
+        _assert_cache_flags(cmd, f"batch-{op}-dir")
+
+    @pytest.mark.parametrize("method_name,op", _BATCH_DIR_METHODS)
+    def test_batch_dir_progress_control_cache_flags(self, client: TsDevClient, monkeypatch, tmp_path: Path, method_name, op) -> None:
+        scenario = _CliScenario(
+            op=op,
+            items=[_CliItem("strategy", "a", json.loads(_success_json(op, "strategy", "a")))],
+        )
+        procs = _install_fake_popen(monkeypatch, scenario)
+        getattr(client, method_name)(
+            "strategy",
+            str(tmp_path),
+            on_progress=lambda p: None,
+            backup_cache=True,
+            restore_cache=True,
+        )
+        assert len(procs) == 1
+        cmd = procs[0].args
+        assert "--batch-progress-control" in cmd
+        _assert_cache_flags(cmd, f"batch-{op}-dir")
+        _assert_proc_clean(procs[0])
+
+    def test_backup_cache_true_no_policy_emits_abort(self, client: TsDevClient, monkeypatch) -> None:
+        """``backup_cache=True`` without a policy pins --cache-backup-policy=abort
+        (the Python-side default is abort on every path)."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_success_json("delete", "strategy", "X"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.delete("strategy", "X", backup_cache=True)
+        assert "--cache-backup-policy=abort" in seen["cmd"]
+
+
+class TestBatchCachePhaseErrors:
+    """A cache-phase failure before a direct batch returns a single error
+    object (exit 5/16/17); the typed exception must be raised, not the
+    'not a JSON array' protocol error."""
+
+    @pytest.mark.parametrize(
+        "exit_code,code,exc_cls",
+        [
+            pytest.param(17, "cache_cancelled", exc.TsDevCacheCancelledError, id="abort_17"),
+            pytest.param(16, "cache_io_error", exc.TsDevCacheError, id="io_16"),
+            pytest.param(5, "not_found", NotFoundError, id="restore_5"),
+        ],
+    )
+    def test_batch_cache_phase_error_typed(self, client: TsDevClient, monkeypatch, exit_code, code, exc_cls) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("backup-cache", None, None, code, "cache phase failed", exit_code=exit_code),
+                returncode=exit_code,
+            ),
+        )
+        with pytest.raises(exc_cls) as ei:
+            client.batch_insert(
+                [BatchItem("strategy", "A", "x;")],
+                backup_cache=True,
+                restore_cache=True,
+            )
+        assert ei.value.result.exit_code == exit_code
+        assert ei.value.result.error.code == code
+
+    def test_batch_dir_cache_phase_error_typed(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17),
+                returncode=17,
+            ),
+        )
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            client.batch_delete_dir("strategy", str(tmp_path), backup_cache=True)
+
+    def test_batch_progress_control_cache_phase_error_typed(self, client: TsDevClient, monkeypatch) -> None:
+        """The controlled path takes the same typed route: single error
+        object on stdout, exit 17, no batch_completed summary."""
+        err = _failure_json("backup-cache", None, None, "cache_cancelled", "cache backup cancelled", exit_code=17)
+        scenario = _CliScenario(
+            op="delete",
+            items=[],
+            exit_code=17,
+            pre_run_stderr="tsdev_cli: cache backup cancelled - batch-delete not run",
+            stdout=err,
+        )
+        _install_fake_popen(monkeypatch, scenario)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            client.batch_delete(
+                [BatchItem("strategy", "A")],
+                on_progress=lambda p: None,
+                backup_cache=True,
+                cache_backup_policy="abort",
+            )
+
+    def test_batch_malformed_stdout_still_protocol_error(self, client: TsDevClient, monkeypatch) -> None:
+        """Garbage stdout at a cache exit code keeps the protocol error."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed("not json at all", returncode=17),
+        )
+        with pytest.raises(TsDevError, match="non-JSON"):
+            client.batch_insert([BatchItem("strategy", "A", "x;")], backup_cache=True)
+
+    def test_batch_dict_stdout_success_still_protocol_error(self, client: TsDevClient, monkeypatch) -> None:
+        """A non-array success object is still the 'not a JSON array' error."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                json.dumps({"op": "backup-cache", "success": True, "exit_code": 0}),
+                returncode=17,
+            ),
+        )
+        with pytest.raises(TsDevError, match="not a JSON array"):
+            client.batch_insert([BatchItem("strategy", "A", "x;")], backup_cache=True)
+
+
+class TestServeBatchCachePhase:
+    """Serve-path cache pre-requests precede the batch and suppress it on
+    failure — for both _batch_serve and _batch_dir_serve."""
+
+    @staticmethod
+    def _broker_ok(ops: list[str]) -> MagicMock:
+        """Broker answering a cache pre-request then the batch item(s)."""
+        broker = MagicMock()
+
+        def _call(request: dict) -> dict:
+            op = request["op"]
+            ops.append(op)
+            if op == "backup-cache":
+                return json.loads(_cache_success_json("backup-cache"))
+            if op == "restore-cache":
+                return json.loads(_cache_success_json("restore-cache"))
+            resp = json.loads(_success_json(op, request["type"], request["name"]))
+            resp["progress"] = _progress_member(request["batch"])
+            return resp
+
+        broker.call.side_effect = _call
+        return broker
+
+    def test_batch_serve_backup_precedes_items(self, tmp_path: Path) -> None:
+        ops: list[str] = []
+        broker = self._broker_ok(ops)
+        c = _serve_client(tmp_path, broker)
+        results = c.batch_delete(
+            [BatchItem("strategy", "A"), BatchItem("strategy", "B")],
+            backup_cache=True,
+        )
+        assert ops == ["backup-cache", "delete", "delete"]
+        assert broker.call.call_args_list[0].args[0] == {
+            "op": "backup-cache", "policy": "abort",
+        }
+        assert [r.name for r in results] == ["A", "B"]
+
+    def test_batch_serve_failed_pre_request_suppresses_batch(self, tmp_path: Path) -> None:
+        broker = MagicMock()
+        broker.call.return_value = json.loads(
+            _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17)
+        )
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            c.batch_delete([BatchItem("strategy", "A")], backup_cache=True)
+        assert broker.call.call_count == 1, "the op request must never be sent"
+
+    def test_batch_serve_empty_items_still_runs_cache_phase(self, tmp_path: Path) -> None:
+        """Cache pre-requests precede even the empty-batch return (direct
+        parity: the CLI runs the cache phase before any batch work)."""
+        broker = self._broker_ok([])
+        c = _serve_client(tmp_path, broker)
+        assert c.batch_delete([], backup_cache=True) == []
+        assert broker.call.call_count == 1
+        assert broker.call.call_args_list[0].args[0]["op"] == "backup-cache"
+
+    def test_batch_dir_serve_backup_precedes_items(self, tmp_path: Path) -> None:
+        d = tmp_path / "el"
+        d.mkdir()
+        (d / "a.el").write_text("// a", encoding="utf-8")
+        ops: list[str] = []
+        broker = self._broker_ok(ops)
+        c = _serve_client(tmp_path, broker)
+        results = c.batch_insert_dir("strategy", d, backup_cache=True)
+        assert ops == ["backup-cache", "insert"]
+        assert [r.name for r in results] == ["a"]
+
+    def test_batch_dir_serve_failed_pre_request_suppresses_batch(self, tmp_path: Path) -> None:
+        d = tmp_path / "el"
+        d.mkdir()
+        (d / "a.el").write_text("// a", encoding="utf-8")
+        broker = MagicMock()
+        broker.call.return_value = json.loads(
+            _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17)
+        )
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            c.batch_insert_dir("strategy", d, backup_cache=True)
+        assert broker.call.call_count == 1
+
+    def test_batch_dir_serve_cache_phase_precedes_dir_validation(self, tmp_path: Path) -> None:
+        """A failed cache pre-request raises before the directory is even
+        validated — matching the direct path where the CLI runs the cache
+        phase before opening the directory."""
+        broker = MagicMock()
+        broker.call.return_value = json.loads(
+            _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17)
+        )
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            c.batch_delete_dir("strategy", tmp_path / "nonexistent", backup_cache=True)
+        assert broker.call.call_count == 1
+
+
+class TestCacheMaintenanceMethod:
+    """``cache_maintenance`` — the one-call standalone backup+restore."""
+
+    def test_direct_combined_single_process_split_results(self, client: TsDevClient, monkeypatch) -> None:
+        """Direct mode spawns ONE process; the two-flag object is split into
+        one result per phase (the {"backup","restore"} shape never surfaces)."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(json.dumps({
+                "op": "backup-cache+restore-cache",
+                "success": True,
+                "exit_code": 0,
+                "backup": {"path": "C:/bk/cache", "files": 3},
+                "restore": {"path": "C:/ts/Cache", "files": 3},
+            }))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.cache_maintenance(backup=True, restore=True)
+        assert seen["cmd"] == [
+            str(client.cli_path),
+            "--json",
+            "--backup-cache",
+            "--cache-backup-policy=abort",
+            "--restore-cache",
+        ]
+        assert [r.op for r in results] == ["backup-cache", "restore-cache"]
+        assert results[0].cache == {"path": "C:/bk/cache", "files": 3}
+        assert results[1].cache == {"path": "C:/ts/Cache", "files": 3}
+
+    def test_direct_single_phase_payload(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(_cache_success_json("restore-cache")),
+        )
+        results = client.cache_maintenance(restore=True)
+        assert len(results) == 1
+        assert results[0].op == "restore-cache"
+        assert results[0].cache["files"] == 3
+
+    def test_direct_failure_raises_and_suppresses(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("backup-cache+restore-cache", None, None, "cache_cancelled", "cancelled", exit_code=17),
+                returncode=17,
+            ),
+        )
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            client.cache_maintenance(backup=True, restore=True)
+
+    def test_serve_sequential_requests(self, tmp_path: Path) -> None:
+        broker = MagicMock()
+        broker.call.side_effect = [
+            json.loads(_cache_success_json("backup-cache")),
+            json.loads(_cache_success_json("restore-cache")),
+        ]
+        c = _serve_client(tmp_path, broker)
+        results = c.cache_maintenance(backup=True, restore=True, on_existing="skip")
+        reqs = [c_.args[0] for c_ in broker.call.call_args_list]
+        assert reqs == [{"op": "backup-cache", "policy": "skip"}, {"op": "restore-cache"}]
+        assert [r.op for r in results] == ["backup-cache", "restore-cache"]
+
+    def test_serve_failed_backup_suppresses_restore(self, tmp_path: Path) -> None:
+        broker = MagicMock()
+        broker.call.return_value = json.loads(
+            _failure_json("backup-cache", None, None, "cache_cancelled", "cancelled", exit_code=17)
+        )
+        c = _serve_client(tmp_path, broker)
+        with pytest.raises(exc.TsDevCacheCancelledError):
+            c.cache_maintenance(backup=True, restore=True)
+        assert broker.call.call_count == 1
+
+    def test_neither_flag_raises(self, client: TsDevClient) -> None:
+        with pytest.raises(ValueError):
+            client.cache_maintenance()
+
+
+class TestCacheResultShapes:
+    """Misc cache-payload parsing coverage."""
+
+    def test_from_json_two_flag_cache_shape(self) -> None:
+        """The raw two-flag standalone object yields .cache == {"backup","restore"}."""
+        r = TsDevResult.from_json({
+            "op": "backup-cache+restore-cache",
+            "success": True,
+            "exit_code": 0,
+            "backup": {"path": "C:/bk/cache", "files": 1},
+            "restore": {"path": "C:/ts/Cache", "files": 2},
+        })
+        assert r.cache == {
+            "backup": {"path": "C:/bk/cache", "files": 1},
+            "restore": {"path": "C:/ts/Cache", "files": 2},
+        }
+
+    def test_restore_cache_exit5_raises_not_found(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _failure_json("restore-cache", None, None, "not_found", "no cache backup found", exit_code=5),
+                returncode=5,
+            ),
+        )
+        with pytest.raises(NotFoundError) as ei:
+            client.restore_cache()
+        assert ei.value.result.exit_code == 5
+        assert ei.value.result.error.code == "not_found"
+
+    def test_combined_mode_op_result_cache_is_none(self, client: TsDevClient, monkeypatch) -> None:
+        """An op run with cache kwargs still returns .cache is None."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(_success_json("delete", "strategy", "X")),
+        )
+        r = client.delete("strategy", "X", backup_cache=True)
+        assert r.cache is None

@@ -57,6 +57,10 @@ class TsDevResult:
     exists: bool = False
     stored_name: str = ""
     source: str = ""
+    # Cache-phase payload for standalone --backup-cache/--restore-cache runs
+    # (and serve backup-cache/restore-cache responses): the "cache" dict, or
+    # {"backup": ..., "restore": ...} when both flags ran.  None otherwise.
+    cache: dict | None = None
     # Raw subprocess output retained for debugging.
     stdout: str = ""
     stderr: str = ""
@@ -74,6 +78,14 @@ class TsDevResult:
                 compile_errors=err_obj.get("compile_errors"),
                 existing_prog_id=err_obj.get("existing_prog_id"),
             )
+        cache = obj.get("cache")
+        if not isinstance(cache, dict):
+            # Two-flag standalone object: "backup"/"restore" payloads.
+            both = {
+                k: obj[k] for k in ("backup", "restore")
+                if isinstance(obj.get(k), dict)
+            }
+            cache = both or None
         return cls(
             op=str(obj.get("op", "")),
             type=obj.get("type"),
@@ -86,6 +98,7 @@ class TsDevResult:
             exists=bool(obj.get("exists", False)),
             stored_name=str(obj.get("stored_name", "")),
             source=str(obj.get("source", "")),
+            cache=cache,
             stdout=stdout,
             stderr=stderr,
         )

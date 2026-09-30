@@ -85,6 +85,22 @@
 //      index<=total; 4294967296 rejected for index and for total (the
 //      binary is built Win32, size_t is 32-bit).
 //
+// Checks (serve cache ops — backup-cache/restore-cache):
+//  19. Both ops parse with no type/name/source (quit-style early-out);
+//      absent "policy" -> out.policy "abort" on backup-cache (serve
+//      default; the broker has no console to prompt), empty on
+//      restore-cache.
+//  20. "policy" on backup-cache: skip/overwrite/abort accepted
+//      (case-insensitive, verbatim into out.policy); "prompt" rejected
+//      exit 1 (broker has no console); unknown/non-string values rejected.
+//  21. "policy" rejected exit 1 on non-backup-cache ops (quit/restore-cache/
+//      exists/insert).
+//  22. "batch" metadata rejected exit 1 on cache ops (mutating-op gate —
+//      cache ops are not WHServer-mutating).
+//  23. CliResult::extraPayload merge: success CliResult carrying the
+//      standalone --json payload serializes its members at top level via
+//      cliResultToJson (the seam dispatchServeRequest returns through).
+//
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
@@ -956,6 +972,216 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::fprintf(stdout,
                      "    PASS: 32-bit index/total boundaries enforced\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 19: Serve cache ops parse with no type/name/source.
+    //   {"op":"backup-cache"} and {"op":"restore-cache"}
+    // Expected: parse succeeds, out.op set, absent "policy" resolves to
+    //   out.policy "abort" on backup-cache (the serve default — the broker
+    //   has no console) and stays empty on restore-cache; no type/name
+    //   required (same early-out pattern as quit).
+    // ------------------------------------------------------------------
+    {
+        const char* ops[] = {"backup-cache", "restore-cache"};
+        const char* wantPolicy[] = {"abort", ""};
+        for (int i = 0; i < 2; ++i) {
+            ordered_json req = ordered_json::parse(
+                std::string("{\"op\":\"") + ops[i] + "\"}");
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [19.%d] %s: %s\n", i, ops[i],
+                         cliResultToJson(r).dump().c_str());
+            if (!r.success || r.exitCode != 0) {
+                ec = fail("check19: cache op should parse", 200 + i);
+                return 0;
+            }
+            if (out.op != ops[i]) {
+                ec = fail("check19: out.op mismatch", 202 + i);
+                return 0;
+            }
+            if (out.policy != wantPolicy[i]) {
+                ec = fail("check19: out.policy default mismatch", 204 + i);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: cache ops parse with no type/name/source\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 20: 'policy' field on backup-cache.
+    //   skip/overwrite/abort accepted (case-insensitive); "prompt" rejected
+    //   exit 1 (broker has no console); unknown value rejected; non-string
+    //   rejected. Accepted values land verbatim in out.policy.
+    // ------------------------------------------------------------------
+    {
+        const char* ok[] = {"skip", "overwrite", "abort", "Overwrite"};
+        for (int i = 0; i < 4; ++i) {
+            ordered_json req = ordered_json::parse(
+                std::string("{\"op\":\"backup-cache\",\"policy\":\"") +
+                ok[i] + "\"}");
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [20a.%d] policy=%s: %s\n", i, ok[i],
+                         cliResultToJson(r).dump().c_str());
+            if (!r.success || r.exitCode != 0) {
+                ec = fail("check20a: valid policy should parse", 210 + i);
+                return 0;
+            }
+            if (out.policy != ok[i]) {
+                ec = fail("check20a: out.policy mismatch", 214 + i);
+                return 0;
+            }
+        }
+        // "prompt" is deliberately rejected: the broker has no console.
+        {
+            ordered_json req = ordered_json::parse(
+                "{\"op\":\"backup-cache\",\"policy\":\"prompt\"}");
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [20b] policy=prompt: %s\n",
+                         cliResultToJson(r).dump().c_str());
+            if (r.success || r.exitCode != 1) {
+                ec = fail("check20b: policy=prompt must reject exit 1", 218);
+                return 0;
+            }
+            if (!contains(r.errorMessage, "policy")) {
+                ec = fail("check20b: message missing 'policy'", 219);
+                return 0;
+            }
+        }
+        const char* bad[] = {
+            "{\"op\":\"backup-cache\",\"policy\":\"bogus\"}",
+            "{\"op\":\"backup-cache\",\"policy\":7}",
+            "{\"op\":\"backup-cache\",\"policy\":true}",
+            "{\"op\":\"backup-cache\",\"policy\":null}",
+        };
+        for (int i = 0; i < 4; ++i) {
+            ordered_json req = ordered_json::parse(bad[i]);
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [20c.%d] bad policy: %s\n", i,
+                         cliResultToJson(r).dump().c_str());
+            if (r.success || r.exitCode != 1) {
+                ec = fail("check20c: invalid policy must reject exit 1",
+                          220 + i);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: policy validated (skip/overwrite/abort; "
+                     "prompt rejected)\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 21: 'policy' rejected on non-backup-cache ops.
+    //   quit, restore-cache, exists, insert -> exitCode==1.
+    // ------------------------------------------------------------------
+    {
+        const char* bad[] = {
+            "{\"op\":\"quit\",\"policy\":\"skip\"}",
+            "{\"op\":\"restore-cache\",\"policy\":\"skip\"}",
+            "{\"op\":\"exists\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"policy\":\"skip\"}",
+            "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
+            "\"source\":\"x\",\"policy\":\"skip\"}",
+        };
+        for (int i = 0; i < 4; ++i) {
+            ordered_json req = ordered_json::parse(bad[i]);
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [21.%d] policy on non-cache op: %s\n", i,
+                         cliResultToJson(r).dump().c_str());
+            if (r.success || r.exitCode != 1) {
+                ec = fail("check21: policy on non-cache op must reject",
+                          230 + i);
+                return 0;
+            }
+            if (!contains(r.errorMessage, "policy")) {
+                ec = fail("check21: message missing 'policy'", 234 + i);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: 'policy' rejected on non-backup-cache ops\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 22: 'batch' metadata rejected on the cache ops (they are not
+    //   WHServer-mutating, so the mutating-op gate refuses them).
+    //   {"op":"backup-cache","batch":{...valid...}} -> exitCode==1.
+    // ------------------------------------------------------------------
+    {
+        const char* bad[] = {
+            "{\"op\":\"backup-cache\",\"batch\":{\"id\":\"b\",\"index\":1,"
+            "\"total\":2}}",
+            "{\"op\":\"restore-cache\",\"batch\":{\"id\":\"b\",\"index\":1,"
+            "\"total\":2}}",
+        };
+        for (int i = 0; i < 2; ++i) {
+            ordered_json req = ordered_json::parse(bad[i]);
+            ServeRequest out;
+            CliResult r = parseServeRequest(req, out);
+            std::fprintf(stdout, "  [22.%d] batch on cache op: %s\n", i,
+                         cliResultToJson(r).dump().c_str());
+            if (r.success || r.exitCode != 1) {
+                ec = fail("check22: batch tag on cache op must reject",
+                          240 + i);
+                return 0;
+            }
+            if (out.hasBatch) {
+                ec = fail("check22: hasBatch must stay false", 242 + i);
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: 'batch' metadata rejected on cache ops\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 23: CliResult::extraPayload merge — the response-frame seam for
+    //   the serve cache ops. A success CliResult carrying the standalone
+    //   --json payload object must serialize its members at top level via
+    //   cliResultToJson (op/success/exit_code identical). This is the pure
+    //   seam dispatchServeRequest returns through; dispatchServeRequest
+    //   itself needs a real TsDevLib/cache layout (not unit-testable).
+    // ------------------------------------------------------------------
+    {
+        CliResult r;
+        r.op = "backup-cache";
+        r.success = true;
+        r.exitCode = 0;
+        r.extraPayload["op"] = "backup-cache";
+        r.extraPayload["success"] = true;
+        r.extraPayload["exit_code"] = 0;
+        ordered_json cache;
+        cache["path"] = "C:\\Backup\\cache";
+        cache["files"] = 3;
+        cache["bytes"] = 42;
+        cache["elapsed_secs"] = 0;
+        cache["created"] = "2026-01-01T00:00:00Z";
+        cache["live_source"] = true;
+        r.extraPayload["cache"] = cache;
+        const ordered_json j = cliResultToJson(r);
+        std::fprintf(stdout, "  [23] extraPayload merge: %s\n",
+                     j.dump().c_str());
+        if (!j.contains("cache") || !j["cache"].is_object()) {
+            ec = fail("check23: response missing 'cache' payload", 250);
+            return 0;
+        }
+        if (j["cache"]["files"] != 3 ||
+            j["cache"]["live_source"] != true) {
+            ec = fail("check23: payload members not merged verbatim", 251);
+            return 0;
+        }
+        if (j["op"] != "backup-cache" || j["success"] != true ||
+            j["exit_code"] != 0) {
+            ec = fail("check23: op/success/exit_code corrupted", 252);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: extraPayload merged into response frame\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

@@ -41,6 +41,34 @@ from .results import BatchProgress, BatchProgressCallback, TsDevErrorInfo, TsDev
 # The component types confirmed in tsdev_cli.cpp (parseType).
 _VALID_TYPES: frozenset[str] = frozenset({"strategy", "function", "indicator", "tradingapp", "showme"})
 
+# --cache-backup-policy values accepted by the CLI (direct default "prompt";
+# the Python/serve default is "abort").
+_CACHE_BACKUP_POLICIES: frozenset[str] = frozenset({"prompt", "overwrite", "skip", "abort"})
+
+
+def _validate_cache_policy(policy: str) -> str:
+    """Lower-case and validate a cache backup policy; raise ``ValueError`` if unknown."""
+    p = policy.strip().lower()
+    if p not in _CACHE_BACKUP_POLICIES:
+        raise ValueError(
+            f"unknown cache backup policy {policy!r} (expected one of {sorted(_CACHE_BACKUP_POLICIES)})"
+        )
+    return p
+
+
+def _serve_cache_policy(policy: str) -> str:
+    """Map a cache backup policy to a valid serve ``policy`` value.
+
+    ``"prompt"`` is unavailable under serve (the broker has no console), so
+    it raises ``ValueError``; the other policies pass through verbatim.
+    """
+    if policy == "prompt":
+        raise ValueError(
+            "cache backup policy 'prompt' is unavailable under serve "
+            "(no console): use 'skip', 'overwrite', or 'abort'"
+        )
+    return policy
+
 # Subcommand name per high-level operation.
 _SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "get-source": "get-source", "upsert": "upsert"}
 _BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete", "upsert": "batch-upsert"}
@@ -166,6 +194,44 @@ _VAS_ABORT_ERROR_CODE = "whserver_vas_abort"
 _VAS_ABORT_MARKER_MESSAGE = (
     "Batch aborted (WHServer VAS headroom) before this item was attempted"
 )
+
+
+# Exit codes a direct batch invocation can return when the cache phase
+# (backup/restore) failed BEFORE the batch ran: 5 = no backup to restore,
+# 16 = cache I/O error, 17 = backup cancelled.  In that case stdout carries
+# a single result object — no results array exists.
+_CACHE_PHASE_EXIT_CODES: frozenset[int] = frozenset({5, 16, 17})
+
+
+def _raise_cache_phase_error(stdout: str, stderr: str, returncode: int) -> None:
+    """Raise the typed exception when a cache-phase failure preempted a batch.
+
+    With cache flags, the CLI runs backup/restore before the batch; a failure
+    there exits with a ``_CACHE_PHASE_EXIT_CODES`` code and emits a SINGLE
+    failed result object on stdout (the batch never ran, so no results
+    array).  When the exit code is in that set and stdout parses as one
+    failed result object, convert it through the same
+    :func:`exception_for` path single ops use
+    (:class:`TsDevCacheError` / :class:`TsDevCacheCancelledError` /
+    :class:`NotFoundError`).  Anything else — including genuinely malformed
+    output — is a no-op so the caller's normal protocol/array validation
+    reports it.
+    """
+    if returncode not in _CACHE_PHASE_EXIT_CODES:
+        return
+    try:
+        obj = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        return
+    if not isinstance(obj, dict):
+        return
+    try:
+        result = TsDevResult.from_json(obj, stdout=stdout, stderr=stderr)
+    except (TypeError, ValueError, AttributeError):
+        return
+    if result.success or result.error is None:
+        return
+    raise exception_for(result)
 
 
 def _cancelled_result(
@@ -780,20 +846,181 @@ class TsDevClient:
 
     # -- public API --------------------------------------------------------
 
-    def insert(self, type: str, name: str, source: str | os.PathLike) -> TsDevResult:
+    def backup_cache(self, on_existing: str = "abort") -> TsDevResult:
+        """Back up the TradeStation cache dir (``<TS>\\Program\\Cache``).
+
+        Standalone ``--backup-cache`` invocation.  ``on_existing`` selects the
+        existing-backup policy: ``"abort"`` (the Python default — fail-safe,
+        an existing backup is never silently overwritten or skipped),
+        ``"prompt"``, ``"overwrite"``, or ``"skip"`` — any other value raises
+        ``ValueError`` client-side.
+
+        Note: ``"prompt"`` can never actually prompt under a piped subprocess
+        (the child's stderr is not a console); the CLI degrades it to
+        keep-existing + warning.  On the serve path there is no console at
+        all, so ``"prompt"`` raises ``ValueError`` client-side rather than
+        being silently remapped.
+
+        The result's ``.cache`` dict carries the payload (``path``,
+        ``files``/``bytes``/``elapsed_secs``/``created``, optional
+        ``live_source``/``used_vss``/``skipped`` keys).  Raises
+        :class:`~tsdev_automation.exceptions.TsDevCacheError` on cache I/O
+        failure (exit 16) and
+        :class:`~tsdev_automation.exceptions.TsDevCacheCancelledError` when
+        the backup is cancelled (exit 17).
+        """
+        policy = _validate_cache_policy(on_existing)
+        if self._serve_active():
+            return self._call_broker_cache("backup-cache", _serve_cache_policy(policy))
+        cmd = self._base_cmd() + ["--json", "--backup-cache", f"--cache-backup-policy={policy}"]
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def restore_cache(self) -> TsDevResult:
+        """Restore the cache backup into ``<TS>\\Program\\Cache``.
+
+        Standalone ``--restore-cache`` invocation.  The result's ``.cache``
+        dict carries the payload (``path``, ``files``/``bytes``/
+        ``elapsed_secs``).  Raises
+        :class:`~tsdev_automation.exceptions.TsDevCacheError` on cache I/O
+        failure (exit 16) and
+        :class:`~tsdev_automation.exceptions.NotFoundError` when no backup
+        exists (exit 5).
+        """
+        if self._serve_active():
+            return self._call_broker_cache("restore-cache", None)
+        cmd = self._base_cmd() + ["--json", "--restore-cache"]
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def cache_maintenance(
+        self,
+        *,
+        backup: bool = False,
+        restore: bool = False,
+        on_existing: str = "abort",
+    ) -> list[TsDevResult]:
+        """Run standalone cache maintenance (backup then restore) in one call.
+
+        Direct mode spawns ONE ``tsdev_cli`` process carrying both flags —
+        identical to ``tsdev_cli --json --backup-cache --restore-cache`` —
+        so the CLI runs its cache phase in the fixed order
+        backup -> restore in a single process/invocation.  Serve mode sends
+        the ``backup-cache`` / ``restore-cache`` broker requests
+        sequentially in the same order.  Returns one ``TsDevResult`` per
+        requested phase, in run order; each carries that phase's own
+        ``.cache`` payload (the raw CLI's two-flag
+        ``{"backup": ..., "restore": ...}`` shape is split per phase and
+        never surfaces through this API).  A phase failure raises the typed
+        exception (:class:`TsDevCacheError`, exit 16;
+        :class:`TsDevCacheCancelledError`, exit 17;
+        :class:`NotFoundError`, exit 5 when no backup exists to restore)
+        and suppresses the later phase.
+
+        ``on_existing`` is the existing-backup policy for the backup phase
+        (Python-side default ``"abort"`` — see :meth:`backup_cache`); it is
+        validated only when ``backup`` is requested.  ``"prompt"`` raises
+        :class:`ValueError` on the serve path (the broker has no console).
+        """
+        if not backup and not restore:
+            raise ValueError("cache_maintenance requires backup and/or restore")
+        if self._serve_active():
+            # Sequential broker requests in the fixed order; a failed
+            # pre-request raises and suppresses the later phase.
+            results: list[TsDevResult] = []
+            if backup:
+                results.append(self.backup_cache(on_existing=on_existing))
+            if restore:
+                results.append(self.restore_cache())
+            return results
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup, restore, on_existing if backup else None)
+        )
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        # The single emitted object nests per-phase payloads under
+        # "backup"/"restore" when both flags ran, or carries one "cache"
+        # payload for a single-phase run (from_json already mapped that to
+        # result.cache).  Split into one result per phase, in run order.
+        cache = result.cache if isinstance(result.cache, dict) else None
+        two_phase = cache is not None and ("backup" in cache or "restore" in cache)
+        results = []
+        if backup:
+            results.append(TsDevResult(
+                op="backup-cache", type=None, name=None,
+                success=True, exit_code=0,
+                cache=cache.get("backup") if two_phase else cache,
+            ))
+        if restore:
+            results.append(TsDevResult(
+                op="restore-cache", type=None, name=None,
+                success=True, exit_code=0,
+                cache=cache.get("restore") if two_phase else cache,
+            ))
+        return results
+
+    def insert(
+        self,
+        type: str,
+        name: str,
+        source: str | os.PathLike,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
         """Insert a new component and compile/verify it.
 
         Raises :class:`~tsdev_automation.exceptions.AlreadyExistsError` if the
         component exists, :class:`~tsdev_automation.exceptions.CompileError` on
         compilation failure, etc.
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
         """
-        return self._single("insert", type, name, source)
+        return self._single("insert", type, name, source,
+                            backup_cache=backup_cache, restore_cache=restore_cache,
+                            cache_backup_policy=cache_backup_policy)
 
-    def modify(self, type: str, name: str, source: str | os.PathLike) -> TsDevResult:
-        """Replace an existing component's source and recompile/verify it."""
-        return self._single("modify", type, name, source)
+    def modify(
+        self,
+        type: str,
+        name: str,
+        source: str | os.PathLike,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
+        """Replace an existing component's source and recompile/verify it.
 
-    def upsert(self, type: str, name: str, source: str | os.PathLike) -> TsDevResult:
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
+        """
+        return self._single("modify", type, name, source,
+                            backup_cache=backup_cache, restore_cache=restore_cache,
+                            cache_backup_policy=cache_backup_policy)
+
+    def upsert(
+        self,
+        type: str,
+        name: str,
+        source: str | os.PathLike,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
         """Insert a new component, or modify the existing one if it already exists.
 
         Materializes `source` the same way insert/modify do (string -> temp .el file;
@@ -801,14 +1028,42 @@ class TsDevClient:
         Raises CompileError on compile failure, SourceFileError if the source file
         cannot be read, ValueError for an unknown component type. Never raises
         NotFoundError/AlreadyExistsError (upsert branches on existence by construction).
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
         """
-        return self._single("upsert", type, name, source)
+        return self._single("upsert", type, name, source,
+                            backup_cache=backup_cache, restore_cache=restore_cache,
+                            cache_backup_policy=cache_backup_policy)
 
-    def delete(self, type: str, name: str) -> TsDevResult:
-        """Delete an existing component."""
-        return self._single("delete", type, name, None)
+    def delete(
+        self,
+        type: str,
+        name: str,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
+        """Delete an existing component.
 
-    def exists(self, type: str, name: str, *, case_insensitive: bool = False) -> TsDevResult:
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
+        """
+        return self._single("delete", type, name, None,
+                            backup_cache=backup_cache, restore_cache=restore_cache,
+                            cache_backup_policy=cache_backup_policy)
+
+    def exists(
+        self,
+        type: str,
+        name: str,
+        *,
+        case_insensitive: bool = False,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
         """Query whether a component named `name` of `type` exists in the TSDev Library.
 
         Returns a TsDevResult with ``.exists`` (bool), ``.prog_id`` (int; 0 if not
@@ -822,13 +1077,22 @@ class TsDevClient:
 
         Does NOT raise on not-found (not-found is a valid query result, success=True).
         Raises typed exceptions on real errors (unknown_type, usage_error, etc.).
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
         """
         t = _validate_type(type)
         # Serve-broker routing for exists.
         if self._serve_active():
+            self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
             return self._call_broker_exists(t, name, case_insensitive)
         sub = _SINGLE_SUBCMD["exists"]
-        cmd = self._base_cmd() + ["--json", sub, t, name]
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
+            + [sub, t, name]
+        )
         if case_insensitive:
             cmd.append("--case-insensitive")
         result = self._run_cli(cmd)
@@ -842,6 +1106,10 @@ class TsDevClient:
         type: str,
         name: str,
         output_file: str | os.PathLike | None = None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> TsDevResult:
         """Retrieve the EasyLanguage source of an existing component.
 
@@ -855,13 +1123,22 @@ class TsDevClient:
         to ``output_file`` fails.
         Raises :class:`ValueError` for an unknown component type (client-side
         validation).
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
         """
         t = _validate_type(type)
         # Serve-broker routing for get-source.
         if self._serve_active():
+            self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
             return self._call_broker_get_source(t, name, output_file)
         sub = _SINGLE_SUBCMD["get-source"]
-        cmd = self._base_cmd() + ["--json", sub, t, name]
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
+            + [sub, t, name]
+        )
         if output_file is not None:
             cmd += ["--output", str(output_file)]
         result = self._run_cli(cmd)
@@ -875,6 +1152,9 @@ class TsDevClient:
         items: Sequence[BatchItem],
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-insert many items. Returns one result per item (in order).
 
@@ -892,35 +1172,55 @@ class TsDevClient:
         direct elevated path (``--batch-progress-control`` cooperative
         stdin control); a non-elevated ``use_serve=False`` session still
         raises ``ElevationRequiredError`` before the CLI is launched.
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the
+        CLI's cache phase once before the batch (see :meth:`_cache_flag_args`).
         """
-        return self._batch("insert", items, on_progress)
+        return self._batch("insert", items, on_progress,
+                           backup_cache=backup_cache, restore_cache=restore_cache,
+                           cache_backup_policy=cache_backup_policy)
 
     def batch_modify(
         self,
         items: Sequence[BatchItem],
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-modify many items. See :meth:`batch_insert`."""
-        return self._batch("modify", items, on_progress)
+        return self._batch("modify", items, on_progress,
+                           backup_cache=backup_cache, restore_cache=restore_cache,
+                           cache_backup_policy=cache_backup_policy)
 
     def batch_delete(
         self,
         items: Sequence[BatchItem],
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-delete many items. See :meth:`batch_insert`."""
-        return self._batch("delete", items, on_progress)
+        return self._batch("delete", items, on_progress,
+                           backup_cache=backup_cache, restore_cache=restore_cache,
+                           cache_backup_policy=cache_backup_policy)
 
     def batch_upsert(
         self,
         items: Sequence[BatchItem],
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-upsert many items (insert-or-modify). See :meth:`batch_insert`."""
-        return self._batch("upsert", items, on_progress)
+        return self._batch("upsert", items, on_progress,
+                           backup_cache=backup_cache, restore_cache=restore_cache,
+                           cache_backup_policy=cache_backup_policy)
 
     def batch_insert_dir(
         self,
@@ -929,6 +1229,9 @@ class TsDevClient:
         extensions: Sequence[str] | None = None,
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-insert all .el files in a directory. File stem = item name, file content = EL source.
 
@@ -940,8 +1243,13 @@ class TsDevClient:
         :class:`TsDevError`. ``on_progress`` behaves exactly as in
         :meth:`batch_insert`; positions are sorted-entry positions, and a local
         source-read failure is an actual result that invokes the callback.
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the
+        CLI's cache phase once before the batch (see :meth:`_cache_flag_args`).
         """
-        return self._batch_dir("insert", type, dir_path, extensions, on_progress)
+        return self._batch_dir("insert", type, dir_path, extensions, on_progress,
+                               backup_cache=backup_cache, restore_cache=restore_cache,
+                               cache_backup_policy=cache_backup_policy)
 
     def batch_modify_dir(
         self,
@@ -950,9 +1258,14 @@ class TsDevClient:
         extensions: Sequence[str] | None = None,
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-modify all .el files in a directory. See :meth:`batch_insert_dir`."""
-        return self._batch_dir("modify", type, dir_path, extensions, on_progress)
+        return self._batch_dir("modify", type, dir_path, extensions, on_progress,
+                               backup_cache=backup_cache, restore_cache=restore_cache,
+                               cache_backup_policy=cache_backup_policy)
 
     def batch_delete_dir(
         self,
@@ -961,9 +1274,14 @@ class TsDevClient:
         extensions: Sequence[str] | None = None,
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-delete all .el files in a directory (file stem = item name; content ignored). See :meth:`batch_insert_dir`."""
-        return self._batch_dir("delete", type, dir_path, extensions, on_progress)
+        return self._batch_dir("delete", type, dir_path, extensions, on_progress,
+                               backup_cache=backup_cache, restore_cache=restore_cache,
+                               cache_backup_policy=cache_backup_policy)
 
     def batch_upsert_dir(
         self,
@@ -972,9 +1290,14 @@ class TsDevClient:
         extensions: Sequence[str] | None = None,
         *,
         on_progress: BatchProgressCallback | None = None,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Batch-upsert all .el files in a directory. See :meth:`batch_insert_dir`."""
-        return self._batch_dir("upsert", type, dir_path, extensions, on_progress)
+        return self._batch_dir("upsert", type, dir_path, extensions, on_progress,
+                               backup_cache=backup_cache, restore_cache=restore_cache,
+                               cache_backup_policy=cache_backup_policy)
 
     # -- internals ---------------------------------------------------------
 
@@ -984,6 +1307,76 @@ class TsDevClient:
             cmd += ["--ts-path", self.ts_path]
         cmd += ["-v"] * self.verbose
         return cmd
+
+    @staticmethod
+    def _cache_flag_args(
+        backup_cache: bool,
+        restore_cache: bool,
+        cache_backup_policy: str | None,
+    ) -> list[str]:
+        """Build the direct-mode cache-phase argv fragment.
+
+        ``--backup-cache``/``--restore-cache``/``--cache-backup-policy=...``
+        are position-free presence flags; the CLI runs them once before any
+        subcommand in the fixed order backup -> restore -> op.  A non-None
+        ``cache_backup_policy`` implies ``--backup-cache`` — even when
+        ``backup_cache=False`` is passed explicitly (the policy is
+        meaningless without it); an invalid policy raises ``ValueError``
+        before any subprocess is spawned.
+
+        The Python-side default policy is ``abort`` on EVERY path (direct
+        and serve): ``--cache-backup-policy=abort`` is emitted whenever
+        ``backup_cache`` is set without an explicit policy, because the
+        bare flag's own default ("prompt") degrades to keep-existing on a
+        piped subprocess.
+
+        Cache-phase payloads are not attached to the operation result: a
+        combined-mode op result's ``.cache`` is ``None``.  Only standalone
+        :meth:`backup_cache`/:meth:`restore_cache`/:meth:`cache_maintenance`
+        results carry ``.cache``.
+        """
+        policy: str | None = None
+        if cache_backup_policy is not None:
+            backup_cache = True
+            policy = _validate_cache_policy(cache_backup_policy)
+        args: list[str] = []
+        if backup_cache:
+            args.append("--backup-cache")
+            # Always pin the policy: the Python-side default is "abort" on
+            # every path (see docstring), so the bare flag's CLI default of
+            # "prompt" must never leak through.
+            args.append(
+                f"--cache-backup-policy={policy if policy is not None else 'abort'}"
+            )
+        if restore_cache:
+            args.append("--restore-cache")
+        return args
+
+    def _serve_cache_phase(
+        self,
+        backup_cache: bool,
+        restore_cache: bool,
+        cache_backup_policy: str | None,
+    ) -> None:
+        """Send cache-phase broker requests ahead of the op request.
+
+        Mirrors the CLI's fixed order (backup -> restore -> op): each
+        pre-request runs before the op, and a failed pre-request (success
+        false -> typed exception, or a broker exception) propagates so the
+        op request is never sent.
+        """
+        if cache_backup_policy is not None:
+            backup_cache = True
+        if not backup_cache and not restore_cache:
+            return
+        if backup_cache:
+            # The serve default is "abort" (fail-safe). "prompt" is
+            # unavailable under serve (the broker has no console) and raises
+            # ValueError in _serve_cache_policy; other policies pass through.
+            policy = _validate_cache_policy(cache_backup_policy or "abort")
+            self._call_broker_cache("backup-cache", _serve_cache_policy(policy))
+        if restore_cache:
+            self._call_broker_cache("restore-cache", None)
 
     # -- serve-broker routing ----------------------------------------------
 
@@ -1064,6 +1457,24 @@ class TsDevClient:
             raise exception_for(result)
         return result
 
+    def _call_broker_cache(self, op: str, policy: str | None) -> TsDevResult:
+        """Route a ``backup-cache``/``restore-cache`` request through the broker.
+
+        ``policy`` is the serve-mode existing-backup policy for
+        ``backup-cache`` (``"prompt"`` must already be rejected via
+        :func:`_serve_cache_policy`) and is omitted for ``restore-cache``.
+        """
+        request: dict = {"op": op}
+        if policy is not None:
+            request["policy"] = policy
+        broker = self._ensure_broker()
+        obj = broker.call(request)
+        result = TsDevResult.from_json(obj)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
     def _read_source(self, source: str | os.PathLike) -> str:
         """Read EL source from a file path or pass through a source string.
 
@@ -1076,16 +1487,32 @@ class TsDevClient:
             return p.read_text(encoding="utf-8", errors="replace")
         return source if isinstance(source, str) else str(source)
 
-    def _single(self, op: str, type_: str, name: str, source: str | os.PathLike | None) -> TsDevResult:
+    def _single(
+        self,
+        op: str,
+        type_: str,
+        name: str,
+        source: str | os.PathLike | None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
         t = _validate_type(type_)
         # Serve-broker routing: when not elevated and use_serve is active,
         # route single-item ops through the elevated broker instead of
         # spawning a fresh child per op.  Otherwise _run_cli requires an
         # elevated process for direct subprocess mode.
         if self._serve_active():
+            self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
             return self._call_broker_single(op, t, name, source)
         sub = _SINGLE_SUBCMD[op]
-        cmd = self._base_cmd() + ["--json", sub, t, name]
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
+            + [sub, t, name]
+        )
         cleanup: list[Path] = []
         try:
             if source is not None:
@@ -1104,26 +1531,36 @@ class TsDevClient:
         op: str,
         items: Sequence[BatchItem],
         on_progress: BatchProgressCallback | None = None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         if self._serve_active():
-            return self._batch_serve(op, items, on_progress)
+            return self._batch_serve(op, items, on_progress,
+                                     backup_cache=backup_cache,
+                                     restore_cache=restore_cache,
+                                     cache_backup_policy=cache_backup_policy)
         needs_source = op in ("insert", "modify", "upsert")
         cleanup: list[Path] = []
         try:
             manifest = self._build_manifest_string(items, needs_source, cleanup)
             sub = _BATCH_SUBCMD[op]
+            cache_args = self._cache_flag_args(
+                backup_cache, restore_cache, cache_backup_policy
+            )
             # --json selects NDJSON progress on stderr AND the stdout
             # results array (batch stdout is empty without it), so
             # captured stderr is machine-readable.
             if on_progress is None:
-                cmd = self._base_cmd() + ["--json", sub, "--batch-stdin"]
+                cmd = self._base_cmd() + ["--json"] + cache_args + [sub, "--batch-stdin"]
                 results = self._run_batch(cmd, input=manifest)
             else:
                 # --batch-progress-control: the manifest goes to stdin as a
                 # framed TSDEV_BATCH_CONTROL/1 block and stdin stays open
                 # for per-item continue/cancel decisions.
-                cmd = self._base_cmd() + [
-                    "--json", sub, "--batch-stdin", "--batch-progress-control"
+                cmd = self._base_cmd() + ["--json"] + cache_args + [
+                    sub, "--batch-stdin", "--batch-progress-control"
                 ]
                 results = self._run_batch_controlled(
                     cmd, manifest.encode("utf-8"), op, on_progress
@@ -1137,6 +1574,10 @@ class TsDevClient:
         op: str,
         items: Sequence[BatchItem],
         on_progress: BatchProgressCallback | None = None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Route a batch op through the serve broker by looping over items.
 
@@ -1163,6 +1604,12 @@ class TsDevClient:
                     f"batch {it.type}/{it.name}: source is required for {op}"
                 )
             validated.append((t, it))
+        # Cache-phase pre-requests run once before the batch, in the CLI's
+        # fixed order; a failed pre-request propagates and no item runs.
+        # This precedes even the empty-batch return so the ordering matches
+        # the direct path (where the cache phase runs before any batch
+        # processing, including an empty manifest).
+        self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
         if not validated:
             return []
         broker = self._ensure_broker()
@@ -1216,16 +1663,28 @@ class TsDevClient:
         dir_path: str | os.PathLike,
         extensions: Sequence[str] | None,
         on_progress: BatchProgressCallback | None = None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         if self._serve_active():
-            return self._batch_dir_serve(op, type_, dir_path, extensions, on_progress)
+            return self._batch_dir_serve(op, type_, dir_path, extensions, on_progress,
+                                         backup_cache=backup_cache,
+                                         restore_cache=restore_cache,
+                                         cache_backup_policy=cache_backup_policy)
         t = _validate_type(type_)
         exts = list(extensions) if extensions else []
         for e in exts:
             if not isinstance(e, str) or not e:
                 raise ValueError(f"invalid extension {e!r}: must be a non-empty string")
         # --json: see _batch — keeps captured stderr progress machine-readable.
-        cmd = self._base_cmd() + ["--json", f"batch-{op}-dir", t, str(dir_path)]
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
+            + [f"batch-{op}-dir", t, str(dir_path)]
+        )
         for e in exts:
             cmd += ["-t", e]
         if on_progress is None:
@@ -1241,6 +1700,10 @@ class TsDevClient:
         dir_path: str | os.PathLike,
         extensions: Sequence[str] | None,
         on_progress: BatchProgressCallback | None = None,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
     ) -> list[TsDevResult]:
         """Route a directory batch op through the serve broker.
 
@@ -1285,6 +1748,13 @@ class TsDevClient:
                 exts.append(ext)
         else:
             exts = [".el", ".txt"]
+
+        # Cache-phase pre-requests run once before the batch (fixed order,
+        # failure suppresses the op — same rule as _batch_serve).  This
+        # precedes directory validation/enumeration so the ordering matches
+        # the direct path (where the CLI runs the cache phase before opening
+        # the directory).
+        self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
 
         dir_p = Path(dir_path)
         if not dir_p.is_dir():
@@ -1544,6 +2014,9 @@ class TsDevClient:
                     f"stdout={stdout!r} stderr={stderr!r}"
                 )
             )
+        # A cache-phase failure (exit 5/16/17) preempts the batch: stdout is
+        # a single error object, not a results array.
+        _raise_cache_phase_error(stdout, stderr, cp.returncode)
         try:
             arr = json.loads(stdout)
         except json.JSONDecodeError:
@@ -1922,6 +2395,9 @@ class TsDevClient:
                     f"stdout={stdout_text!r} stderr={stderr_text!r}"
                 )
             )
+        # Same cache-phase preemption as _run_batch: a single error object
+        # on stdout (exit 5/16/17); no batch_completed summary is emitted.
+        _raise_cache_phase_error(stdout_text, stderr_text, rc)
         if first_error is not None:
             raise TsDevError(
                 message=(
