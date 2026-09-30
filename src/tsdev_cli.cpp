@@ -95,19 +95,26 @@
 //  14 = batch aborted by the WHServer VAS-headroom guard (same full-length
 //       array + exit-12 not-run markers for unattempted items)
 //
-// WHServer VAS-headroom guard (batch-* only): WHServer.exe is 32-bit and
-// non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free user
-// address space (std::bad_alloc inside a COM handler). After each completed
-// non-final item the batch measures WHServer's free VAS (see
+// WHServer VAS-headroom guard (batch-* and serve): WHServer.exe is 32-bit
+// and non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free
+// user address space (std::bad_alloc inside a COM handler). After each
+// completed non-final item the batch measures WHServer's free VAS (see
 // whserver_health.h); when the total free MB drops below --whserver-free-mb
 // (default 256) or the largest contiguous free block drops below
 // --whserver-largest-free-mb (default 64) the batch aborts LOUDLY before
 // dispatching the next item: remaining items become exit-12 not-run markers
-// and the process exits 14. WHServer not running (lazy singleton not yet
-// spawned) = pass; a transient measurement failure warns once and does NOT
-// abort. --no-whserver-vas-guard disables the guard. Env mirrors:
+// and the process exits 14. On the serve path the same gate runs before
+// dispatching each mutating request (insert/modify/delete/upsert): a breach
+// returns an exit-14 refusal response (error.code "whserver_vas_abort")
+// without executing the op — the client treats it as a batch abort.
+// WHServer not running (lazy singleton not yet spawned) = pass; a transient
+// measurement failure warns once and does NOT abort/refuse.
+// --no-whserver-vas-guard disables the guard. Env mirrors:
 // TSDEV_WHSERVER_FREE_MB / TSDEV_WHSERVER_LARGEST_FREE_MB /
-// TSDEV_NO_WHSERVER_VAS_GUARD (explicit CLI flags win over env).
+// TSDEV_NO_WHSERVER_VAS_GUARD (explicit CLI flags win over env). NOTE:
+// ShellExecuteExW runas does NOT inherit the caller's environment block, so
+// the Python client forwards TSDEV_WHSERVER_* overrides to the serve broker
+// as explicit --whserver-* flags (see _build_serve_parameters).
 //
 // Batch progress is always emitted on stderr (independent of -v): one
 // BATCH SUCCESS/BATCH FAILED completion line per attempted item (a FAILED
@@ -285,16 +292,16 @@ void printUsage() {
         "                   input stops before the next item: remaining items\n"
         "                   become exit-12 not-run markers (full-length array)\n"
         "                   and the process exits 3.\n"
-        "  --whserver-free-mb <N>  (batch-* only) WHServer VAS-headroom guard:\n"
+        "  --whserver-free-mb <N>  (batch-*/serve) WHServer VAS-headroom guard:\n"
         "                   abort the batch (exit 14, remaining items become\n"
         "                   exit-12 not-run markers) before the next item when\n"
         "                   WHServer.exe total free user address space drops\n"
         "                   below N MB. Default 256. Env: TSDEV_WHSERVER_FREE_MB.\n"
-        "  --whserver-largest-free-mb <N>  (batch-* only) same guard on the\n"
+        "  --whserver-largest-free-mb <N>  (batch-*/serve) same guard on the\n"
         "                   largest contiguous free block (fragmentation kills\n"
         "                   contiguous allocations). Default 64.\n"
         "                   Env: TSDEV_WHSERVER_LARGEST_FREE_MB.\n"
-        "  --no-whserver-vas-guard  (batch-* only) disable the WHServer\n"
+        "  --no-whserver-vas-guard  (batch-*/serve) disable the WHServer\n"
         "                   VAS-headroom guard entirely. Env:\n"
         "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
@@ -422,9 +429,9 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 10: return "thread_failure";
         case 11: return "not_elevated";
         case 12: return "cancelled";
-        // 14 is the batch-aggregate WHServer VAS-guard abort code; it never
-        // appears on a per-item result (markers stay exit 12), but the map
-        // stays truthful if it is ever serialized.
+        // 14 is the WHServer VAS-guard abort code: the batch-aggregate exit
+        // (batch per-item markers stay exit 12) and the serve-path per-item
+        // refusal code.
         case 14: return "whserver_vas_abort";
         default: return "unknown_error";
     }
@@ -3325,7 +3332,7 @@ std::string whserverVasAbortLine(DWORD pid, const tsdev::WhVasStats& st,
            "); aborting before next item";
 }
 
-// WHServer VAS-headroom guard configuration (batch-* only). Defaults match
+// WHServer VAS-headroom guard configuration (batch-* and serve). Defaults
 // the field-crash analysis: 256 MB total-free headroom and 64 MB for the
 // largest contiguous free block (non-LAA 32-bit WHServer dies near ~10 MB
 // free; 64 MB of contiguous headroom is the fragmentation tripwire).
@@ -4455,11 +4462,91 @@ int serveConnectExitCode(BOOL connected, DWORD connectError) {
     return 1;
 }
 
+// TVS-1c: WHServer VAS-headroom guard — serve-path gate. runServe calls this
+// once per parsed request BEFORE dispatchServeRequest — the serve-side analog
+// of runBatch's between-items gate (serve requests are already per-item: the
+// Python client loops items and sends one tagged request each). Only the
+// item-mutating ops (insert/modify/delete/upsert) are gated — read-only ops
+// (exists/get-source/quit) and parse failures never reach this check.
+// WHServer is a lazy singleton: no pids -> pass. A transient measureVasFree
+// failure warns once per process lifetime (measureWarned flag, runServe
+// scope) and does NOT refuse. A breach (either threshold) emits the same
+// batch_aborted event as runBatch and fills `refusal` with an exit-14
+// CliResult — error.code "whserver_vas_abort" via errorCodeString, message
+// carrying the measured headroom + breaching reason — and returns true; the
+// caller writes the refusal response WITHOUT dispatching the op (one request
+// still yields exactly one response frame).
+bool serveVasGuardRefuse(const ServeRequest& req,
+                         const VasGuardConfig& vasGuard,
+                         bool& measureWarned, bool jsonProgress,
+                         CliResult& refusal) {
+    if (!vasGuard.enabled) return false;
+    const bool mutating = (req.op == "insert" || req.op == "modify" ||
+                           req.op == "delete"  || req.op == "upsert");
+    if (!mutating) return false;
+    const std::vector<DWORD> whPids = tsdev::findWhServerPids();
+    for (DWORD whPid : whPids) {
+        tsdev::WhVasStats vst;
+        if (!tsdev::measureVasFree(whPid, vst)) {
+            if (!measureWarned) {
+                measureWarned = true;
+                emitBatchProgress(whserverVasMeasureFailedLine(
+                    whPid, jsonProgress));
+            }
+            TSDEV_DIAG_LOG("whserver.vas.check",
+                           "pid=%lu result=measure_failed",
+                           static_cast<unsigned long>(whPid));
+            continue;
+        }
+        const uint64_t freeMB    = vst.totalFreeBytes        / (1024 * 1024);
+        const uint64_t largestMB = vst.largestFreeBlockBytes / (1024 * 1024);
+        const bool breach = tsdev::vasBreach(freeMB, largestMB,
+                                             vasGuard.freeThresholdMB,
+                                             vasGuard.largestThresholdMB);
+        TSDEV_DIAG_LOG("whserver.vas.check",
+                       "pid=%lu freeMB=%llu largestMB=%llu "
+                       "thresholdFreeMB=%u thresholdLargestMB=%u decision=%s",
+                       static_cast<unsigned long>(whPid),
+                       (unsigned long long)freeMB,
+                       (unsigned long long)largestMB,
+                       vasGuard.freeThresholdMB,
+                       vasGuard.largestThresholdMB,
+                       breach ? "refuse" : "pass");
+        if (breach) {
+            emitBatchProgress(whserverVasAbortLine(
+                whPid, vst, vasGuard.freeThresholdMB,
+                vasGuard.largestThresholdMB, jsonProgress));
+            // Same truthfulness rule as runBatch: name the breaching metric
+            // + measured MB (total-free is checked first; when both breach,
+            // report it).
+            const std::string reason =
+                (freeMB < vasGuard.freeThresholdMB)
+                ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
+                : "whserver_vas_largest_free=" +
+                      std::to_string(largestMB) + "MB";
+            refusal = CliResult();
+            refusal.op = req.op;
+            refusal.typeStr = req.typeStr;
+            refusal.name = req.name;
+            refusal.success = false;
+            refusal.exitCode = 14;
+            refusal.errorMessage =
+                "WHServer VAS headroom below threshold: free=" +
+                std::to_string(freeMB) + "MB largest=" +
+                std::to_string(largestMB) + "MB (" + reason +
+                "); refusing " + req.op + " before dispatch";
+            return true;
+        }
+    }
+    return false;
+}
+
 // Parameters passed to the serve worker thread.
 struct ServeParams {
     HANDLE             pipe = INVALID_HANDLE_VALUE;
     const wchar_t*     tsPathOverride = nullptr;  // nullptr = auto-discover
     bool               jsonProgress = false;      // --json: NDJSON progress
+    VasGuardConfig     vasGuard;                  // WHServer VAS-headroom guard
     std::atomic<bool>  quit{false};               // set by worker on 'quit' op
     int                exitCode = 0;              // set by worker
 };
@@ -4474,6 +4561,8 @@ struct ServeParams {
 DWORD WINAPI runServe(LPVOID param) {
     ServeParams* p = static_cast<ServeParams*>(param);
     HANDLE pipe = p->pipe;
+    bool vasMeasureWarned = false;  // one-shot measure_failed warning
+                                    // (once per process lifetime)
 
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
@@ -4562,6 +4651,19 @@ DWORD WINAPI runServe(LPVOID param) {
                 break;
             }
 
+            // WHServer VAS-headroom guard (TVS-1c): gate BEFORE dispatch,
+            // mirroring runBatch's between-items check — a tagged request
+            // that is refused was never attempted, so it gets NO
+            // started/completed item events (like a batch not-run marker);
+            // the refusal response frame still carries the tagged
+            // "progress" member via writeServeResponse.
+            CliResult vasRefusal;
+            if (serveVasGuardRefuse(req, p->vasGuard, vasMeasureWarned,
+                                    p->jsonProgress, vasRefusal)) {
+                if (!writeServeResponse(pipe, vasRefusal, req)) break;
+                continue;
+            }
+
             // Batch-tagged requests emit the same item progress to the serve
             // stderr (human or NDJSON per --json), flushed per event.
             if (req.hasBatch) {
@@ -4637,7 +4739,8 @@ DWORD WINAPI runServe(LPVOID param) {
 // the pipe name to stdout, launches runServe on a 64MB-stack thread, and
 // waits for it to exit.
 int cmdServe(int argc, char** argv, bool jsonMode,
-             const wchar_t* tsPathOverride) {
+             const wchar_t* tsPathOverride,
+             const VasGuardConfig& vasGuard) {
     // Parse --serve-pipe-file <path> (optional; survives the global pre-scan
     // because it is serve-specific, like --case-insensitive/--output).
     std::string pipeFile;
@@ -4704,6 +4807,7 @@ int cmdServe(int argc, char** argv, bool jsonMode,
     params.pipe = hPipe;
     params.tsPathOverride = tsPathOverride;
     params.jsonProgress = jsonMode;
+    params.vasGuard = vasGuard;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runServe, &params, 0, nullptr);
@@ -4814,7 +4918,7 @@ int main(int argc, char** argv) {
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
     int verboseCount = 0;   // accumulated -v/--verbose occurrences
-    // TVS-1b: WHServer VAS-headroom guard flags (honored by batch-* only;
+    // TVS-1b: WHServer VAS-headroom guard flags (honored by batch-* and serve;
     // parsing is global like the other position-free switches).
     VasGuardConfig vasGuard;
     bool vasFreeFlagSet = false;     // --whserver-free-mb seen
@@ -5109,7 +5213,8 @@ int main(int argc, char** argv) {
     // --serve-pipe-file <path> (parsed inside cmdServe). Placed before the
     // other subcommands so it is dispatched first.
     if (iequals(subcommand, "serve")) {
-        return cmdServe(reducedArgc, reducedArgvPtr, jsonMode, tsPathWidePtr);
+        return cmdServe(reducedArgc, reducedArgvPtr, jsonMode, tsPathWidePtr,
+                        vasGuard);
     }
 
     if (iequals(subcommand, "insert")) {

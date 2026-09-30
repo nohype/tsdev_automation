@@ -1336,6 +1336,41 @@ class TestVerboseForwarding:
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
 
+    def test_build_serve_parameters_vas_guard_env_forwarding(self, monkeypatch) -> None:
+        """TSDEV_WHSERVER_* env overrides are forwarded to the broker as
+        explicit --whserver-* flags (ShellExecuteExW runas does not inherit
+        the caller's environment block)."""
+        monkeypatch.delenv("TSDEV_WHSERVER_FREE_MB", raising=False)
+        monkeypatch.delenv("TSDEV_WHSERVER_LARGEST_FREE_MB", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        # No env -> byte-identical default command line.
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
+        monkeypatch.setenv("TSDEV_WHSERVER_LARGEST_FREE_MB", "128")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--whserver-free-mb", "5000", "--whserver-largest-free-mb", "128"]
+        )
+        # Garbage/out-of-range values are dropped (env semantics: keep default).
+        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "bogus")
+        monkeypatch.setenv("TSDEV_WHSERVER_LARGEST_FREE_MB", "9999999")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        # Disable switch: any value but "0" forwards; "0"/unset do not.
+        monkeypatch.delenv("TSDEV_WHSERVER_FREE_MB")
+        monkeypatch.delenv("TSDEV_WHSERVER_LARGEST_FREE_MB")
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe", "--no-whserver-vas-guard"]
+        )
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "0")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+
     def test_serve_broker_start_forwards_verbose(self, monkeypatch, tmp_path: Path) -> None:
         """``_ServeBroker`` with verbose forwards ``-v`` flags in lpParameters."""
         cli_exe = tmp_path / "tsdev_cli.exe"
@@ -2741,6 +2776,77 @@ class TestServeBatchRouting:
         req = fake_broker.call.call_args[0][0]
         _assert_batch_request(req, "insert", "strategy", "test", 1, 1, "// real file source")
 
+    def test_batch_serve_vas_abort_fills_not_run_markers(self, tmp_path):
+        """A broker exit-14 refusal (WHServer VAS headroom) aborts the batch:
+        the refusal is recorded as the item's result, the unattempted
+        remainder becomes exit-12 markers carrying the abort message, and no
+        further requests are sent."""
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 14,
+             "error": {"code": "whserver_vas_abort",
+                       "message": "WHServer VAS headroom below threshold: free=10MB largest=4MB "
+                                  "(whserver_vas_free=10MB); refusing insert before dispatch"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        progressed: list[int] = []
+
+        def on_progress(p):
+            progressed.append(p.index)
+            return True
+
+        results = c.batch_insert(
+            [
+                BatchItem(type="strategy", name="A", source="// a"),
+                BatchItem(type="strategy", name="B", source="// b"),
+                BatchItem(type="strategy", name="C", source="// c"),
+            ],
+            on_progress=on_progress,
+        )
+        # No request was sent for item C — the batch stopped at the refusal.
+        assert fake_broker.call.call_count == 2
+        assert len(results) == 3
+        assert results[0].success is True
+        # The refused item keeps its real exit-14 result.
+        assert results[1].success is False
+        assert results[1].exit_code == 14
+        assert results[1].error is not None
+        assert results[1].error.code == "whserver_vas_abort"
+        assert "WHServer VAS headroom" in results[1].error.message
+        # The never-attempted remainder is an exit-12 marker that says WHY.
+        assert results[2].success is False
+        assert results[2].exit_code == 12
+        assert results[2].name == "C"
+        assert results[2].error is not None
+        assert results[2].error.code == "cancelled"
+        assert results[2].error.message == (
+            "Batch aborted (WHServer VAS headroom) before this item was attempted"
+        )
+        # The refused item was never attempted -> no on_progress callback
+        # for index 2 (only item 1 reported real progress).
+        assert progressed == [1]
+
+    def test_batch_serve_vas_abort_first_item(self, tmp_path):
+        """A refusal on the very first item leaves a full-length list:
+        index 1 is the exit-14 refusal, the rest are exit-12 abort markers."""
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A", "success": False, "exit_code": 14,
+             "error": {"code": "whserver_vas_abort", "message": "WHServer VAS headroom"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_delete([
+            BatchItem(type="strategy", name="A"),
+            BatchItem(type="strategy", name="B"),
+        ])
+        assert fake_broker.call.call_count == 1
+        assert len(results) == 2
+        assert results[0].exit_code == 14
+        assert results[0].error.code == "whserver_vas_abort"
+        assert results[1].exit_code == 12
+        assert results[1].error.message == (
+            "Batch aborted (WHServer VAS headroom) before this item was attempted"
+        )
+
 
 class TestServeBatchDirRouting:
     """batch_*_dir ops route through the serve broker when _serve_active()."""
@@ -2914,6 +3020,34 @@ class TestServeBatchDirRouting:
         c = _serve_client(tmp_path, fake_broker)
         with pytest.raises(TsDevCrashError, match="broker crashed"):
             c.batch_insert_dir("strategy", str(d))
+
+    def test_batch_dir_serve_vas_abort_fills_not_run_markers(self, tmp_path):
+        """A broker exit-14 refusal aborts the dir batch the same way as
+        _batch_serve: refusal recorded, remainder exit-12 abort markers, no
+        further requests."""
+        d = tmp_path / "vas_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a")
+        (d / "b.el").write_text("// b")
+        (d / "c.el").write_text("// c")
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "b", "success": False, "exit_code": 14,
+             "error": {"code": "whserver_vas_abort",
+                       "message": "WHServer VAS headroom below threshold"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_insert_dir("strategy", str(d))
+        assert fake_broker.call.call_count == 2
+        assert len(results) == 3
+        assert results[0].success is True
+        assert results[1].exit_code == 14
+        assert results[1].error.code == "whserver_vas_abort"
+        assert results[2].name == "c"
+        assert results[2].exit_code == 12
+        assert results[2].error.message == (
+            "Batch aborted (WHServer VAS headroom) before this item was attempted"
+        )
 
     def test_batch_dir_serve_case_insensitive_extension(self, tmp_path):
         """File extension matching is case-insensitive."""

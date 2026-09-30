@@ -89,11 +89,11 @@ With `--json`, stdout is a JSON array (one element per item); without it stdout 
 - `1` - usage error, manifest not found, or manifest empty (batch did not run)
 - `2` - batch ran, but one or more items failed (per-item details in the JSON array under `--json`, else on stderr)
 - `3` - batch cooperatively cancelled via `--batch-progress-control` (under `--json` the array stays full length; unattempted items are exit-12 `cancelled` markers)
-- `14` - batch aborted by the WHServer VAS-headroom guard (same full-length array + exit-12 not-run markers, `error.message="Batch aborted (WHServer VAS headroom) before this item was attempted"`; the summary gains `aborted=true abort_reason=whserver_vas_free=<N>MB` or `whserver_vas_largest_free=<N>MB`, and a `batch_aborted` / `BATCH ABORTED` event precedes it)
+- `14` - batch aborted by the WHServer VAS-headroom guard (same full-length array + exit-12 not-run markers, `error.message="Batch aborted (WHServer VAS headroom) before this item was attempted"`; the summary gains `aborted=true abort_reason=whserver_vas_free=<N>MB` or `whserver_vas_largest_free=<N>MB`, and a `batch_aborted` / `BATCH ABORTED` event precedes it). Under `serve`, `14` is instead a per-request refusal code (`error.code="whserver_vas_abort"`) on the refused item — the broker process keeps running and non-mutating requests still pass.
 
-### WHServer VAS-headroom guard (batch only)
+### WHServer VAS-headroom guard (batch-* and serve)
 
-WHServer.exe is 32-bit and non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free user address space. After each completed non-final item the batch measures WHServer's free user address space and aborts loudly — before dispatching the next item — when headroom drops below the thresholds, so a runaway batch can never push WHServer over the cliff:
+WHServer.exe is 32-bit and non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free user address space. After each completed non-final batch item — and in `serve` before dispatching each mutating request — the guard measures WHServer's free user address space and aborts loudly when headroom drops below the thresholds, so a runaway batch can never push WHServer over the cliff. A `serve` breach refuses that request with exit `14` / `error.code="whserver_vas_abort"` (the Python client stops the batch there and marks the unattempted remainder not-run); a direct `batch-*` breach aborts the whole run with process exit `14`:
 
 - `--whserver-free-mb <N>` - abort when total free VAS falls below N MB (default `256`)
 - `--whserver-largest-free-mb <N>` - abort when the largest contiguous free block falls below N MB (default `64`; fragmentation kills contiguous allocations even while total free looks ample)

@@ -2123,6 +2123,100 @@ class TestServeE2E:
                 except Exception:
                     pass
 
+    def test_serve_vas_guard_abort(self, monkeypatch):
+        """TVS-1c GREEN (test-only): WHServer VAS-headroom guard on the
+        serve path, end to end through the real elevated broker.
+
+        Phase 1 (default thresholds): a 2-item ``batch_upsert`` succeeds —
+        the guard passes with normal WHServer headroom.
+        Phase 2 (``TSDEV_WHSERVER_FREE_MB=5000`` set in the client process
+        env; ``_build_serve_parameters`` forwards it to the broker as
+        ``--whserver-free-mb 5000`` because ``runas`` does not inherit env):
+        every mutating request is refused with ``exit_code=14`` /
+        ``error.code == "whserver_vas_abort"`` without executing the op; the
+        client aborts the batch — refusal recorded, remaining items become
+        exit-12 markers carrying the abort message, no further requests are
+        sent. Read-only ``exists`` is NOT gated and still answers.
+        """
+        # Skip if elevated — serve mode only activates when NOT elevated.
+        if _detect_elevation():
+            pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
+
+        cli_path = _find_cli()
+        names = ["TS_AUTO_PY_SERVE_VAS_01", "TS_AUTO_PY_SERVE_VAS_02"]
+
+        def _src(n: str) -> str:
+            return (
+                f"{{ TVS-1c serve VAS guard {n} }}\n"
+                "Inputs: FastLen(10), SlowLen(20);\n"
+                "Variables: FastMA(0), SlowMA(0);\n"
+                "FastMA = AverageFC(Close, FastLen);\n"
+                "SlowMA = AverageFC(Close, SlowLen);\n"
+                "if FastMA > SlowMA then Buy next bar at Market;\n"
+            )
+
+        items = [BatchItem(type="strategy", name=n, source=_src(n))
+                 for n in names]
+
+        # --- Phase 1: default thresholds -> guard passes, batch succeeds ---
+        client1 = TsDevClient(cli_path=cli_path)
+        try:
+            for nm in names:
+                try:
+                    client1.delete("strategy", nm)
+                except Exception:
+                    pass
+            results = client1.batch_upsert(items)
+            assert len(results) == 2
+            assert all(r.success for r in results), (
+                f"default-threshold batch_upsert must succeed: {results!r}"
+            )
+            exists_r = client1.exists("strategy", names[0])
+            assert exists_r.exists is True
+        finally:
+            # Production cleanup through the same (default-guard) broker:
+            # deletes are mutating ops but pass the normal thresholds.
+            for nm in names:
+                _cleanup(client1, nm)
+
+        # --- Phase 2: absurd threshold -> broker refuses mutating requests ---
+        # ShellExecuteExW runas does NOT inherit the caller's environment
+        # block, so _build_serve_parameters forwards TSDEV_WHSERVER_FREE_MB
+        # to the broker as an explicit --whserver-free-mb flag. 5000 MB is
+        # above any possible non-LAA 32-bit free VAS (~2 GB ceiling), so the
+        # guard ALWAYS breaches while WHServer.exe is running.
+        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
+        client2 = TsDevClient(cli_path=cli_path)
+        try:
+            assert client2._serve_active()
+            results = client2.batch_upsert(items)
+            assert len(results) == 2
+            # Item 1: the broker refused before dispatch.
+            assert results[0].success is False
+            assert results[0].exit_code == 14
+            assert results[0].error is not None
+            assert results[0].error.code == "whserver_vas_abort"
+            assert "WHServer VAS headroom" in results[0].error.message
+            # Item 2: never attempted — exit-12 marker with the abort
+            # message (verbatim kVasAbortMarkerMessage).
+            assert results[1].success is False
+            assert results[1].exit_code == 12
+            assert results[1].error is not None
+            assert results[1].error.message == (
+                "Batch aborted (WHServer VAS headroom) "
+                "before this item was attempted"
+            )
+            # Nothing was written by phase 2 (items were deleted in phase 1
+            # cleanup and the refused upserts never dispatched).
+            r = client2.exists("strategy", names[0])
+            assert r.exit_code == 0 and r.exists is False
+        finally:
+            if client2._broker is not None:
+                try:
+                    client2._broker.shutdown()
+                except Exception:
+                    pass
+
 
 def _snapshot_crash_reporter_pids() -> dict[int, str]:
     """Return a mapping of {pid: process_name} for WerFault.exe and

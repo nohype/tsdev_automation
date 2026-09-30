@@ -142,7 +142,31 @@ def _validate_serve_progress(obj: dict, batch_id: str, index: int, total: int) -
         )
 
 
-def _cancelled_result(op: str, type_: str, name: str) -> TsDevResult:
+# Exit code the serve broker returns when the WHServer VAS-headroom guard
+# refuses to dispatch a mutating request (error.code "whserver_vas_abort").
+# Mirrors the batch-aggregate exit-14 contract of the direct-CLI path.
+_VAS_ABORT_EXIT_CODE = 14
+
+# Error-code string the broker sets on a VAS-guard refusal (from the C++
+# errorCodeString for exit 14).  The batch abort check requires BOTH the
+# exit code and this error code so a future, unrelated exit-14 producer
+# cannot accidentally abort a batch.
+_VAS_ABORT_ERROR_CODE = "whserver_vas_abort"
+
+# Message used for not-run markers after a broker VAS-guard refusal —
+# verbatim from the C++ kVasAbortMarkerMessage (distinct from the
+# cooperative-cancel message so the list says WHY the item never ran).
+_VAS_ABORT_MARKER_MESSAGE = (
+    "Batch aborted (WHServer VAS headroom) before this item was attempted"
+)
+
+
+def _cancelled_result(
+    op: str,
+    type_: str,
+    name: str,
+    message: str = "Batch cancelled before this item was attempted",
+) -> TsDevResult:
     """Synthesize the not-run marker for an item the batch never attempted."""
     return TsDevResult(
         op=op,
@@ -152,7 +176,7 @@ def _cancelled_result(op: str, type_: str, name: str) -> TsDevResult:
         exit_code=12,
         error=TsDevErrorInfo(
             code="cancelled",
-            message="Batch cancelled before this item was attempted",
+            message=message,
         ),
     )
 
@@ -309,11 +333,32 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     ``verbose`` (the client's already-clamped level) appends that many
     ``-v`` flags; the CLI pre-scans them position-free before subcommand
     parsing, so placement is arbitrary (they go last, matching _base_cmd).
+
+    WHServer VAS-headroom guard: ``TSDEV_WHSERVER_*`` env overrides do NOT
+    reach the elevated broker — ``ShellExecuteExW`` ``runas`` spawns the
+    child with the user's default environment, not the caller's environment
+    block — so they are forwarded here as explicit CLI flags (which the
+    pre-scan consumes before ``cmdServe`` argument validation).  Non-numeric
+    or out-of-range MB values are dropped client-side, mirroring the C++
+    ``parseMbThreshold`` env rule (garbage keeps the default) instead of
+    becoming a hard flag error that would fail the whole broker launch.
     """
     args: list[str] = []
     if ts_path:
         args.extend(("--ts-path", ts_path))
     args.extend(("serve", "--serve-pipe-file", handshake_path))
+    for env_name, flag in (
+        ("TSDEV_WHSERVER_FREE_MB", "--whserver-free-mb"),
+        ("TSDEV_WHSERVER_LARGEST_FREE_MB", "--whserver-largest-free-mb"),
+    ):
+        v = os.environ.get(env_name)
+        # isascii() guards isdigit(): Unicode digits (e.g. "²") pass
+        # isdigit() but crash int(), breaking the drop-invalid contract.
+        if v and v.isascii() and v.isdigit() and int(v) <= 1048575:
+            args.extend((flag, v))
+    # Any value other than "0" disables the guard (C++ env semantics).
+    if os.environ.get("TSDEV_NO_WHSERVER_VAS_GUARD") not in (None, "", "0"):
+        args.append("--no-whserver-vas-guard")
     args.extend(["-v"] * verbose)
     # ShellExecuteExW receives a command-line string, not an argv list.
     # list2cmdline uses the quoting rules expected by the Windows C runtime.
@@ -1095,6 +1140,24 @@ class TsDevClient:
             _validate_serve_progress(obj, batch_id, index, total)
             result = TsDevResult.from_json(obj)
             results.append(result)
+            if (
+                result.exit_code == _VAS_ABORT_EXIT_CODE
+                and result.error is not None
+                and result.error.code == _VAS_ABORT_ERROR_CODE
+            ):
+                # The broker's WHServer VAS-headroom guard refused to
+                # dispatch this item. Record the refusal as this item's
+                # result, then mark the unattempted remainder as not-run
+                # (exit-12 markers carrying the abort message) and STOP —
+                # no further requests are sent, no callback invoked for the
+                # refused item (it was never attempted, same as the C++
+                # batch markers).
+                results.extend(
+                    _cancelled_result(op, t2, it2.name,
+                                      _VAS_ABORT_MARKER_MESSAGE)
+                    for t2, it2 in validated[index:]
+                )
+                break
             if _invoke_progress(on_progress, index, total, result):
                 results.extend(
                     _cancelled_result(op, t2, it2.name)
@@ -1251,6 +1314,17 @@ class TsDevClient:
             _validate_serve_progress(obj, batch_id, index, total)
             result = TsDevResult.from_json(obj)
             results.append(result)
+            if (
+                result.exit_code == _VAS_ABORT_EXIT_CODE
+                and result.error is not None
+                and result.error.code == _VAS_ABORT_ERROR_CODE
+            ):
+                # Same broker VAS-guard abort rule as _batch_serve.
+                results.extend(
+                    _cancelled_result(op, t, n, _VAS_ABORT_MARKER_MESSAGE)
+                    for n, _p in entries[index:]
+                )
+                break
             if _invoke_progress(on_progress, index, total, result):
                 results.extend(
                     _cancelled_result(op, t, n) for n, _p in entries[index:]

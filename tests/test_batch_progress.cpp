@@ -1224,6 +1224,85 @@ DWORD WINAPI runTest(LPVOID param) {
                      "truthful fields\n");
     }
 
+    // ------------------------------------------------------------------
+    // Check 14 (TVS-1c): serve-path VAS-guard refusal —
+    //   (a) serveVasGuardRefuse returns false for a disabled guard, for a
+    //       non-mutating op (exists/get-source are never VAS-gated), and
+    //       for a mutating op with zero thresholds (breach requires a
+    //       value STRICTLY below the threshold; 0 can never breach) — all
+    //       deterministic, no WHServer dependency.
+    //   (b) The refusal CliResult serializes like a normal op failure:
+    //       exit_code=14, error.code="whserver_vas_abort" via
+    //       errorCodeString, message carried verbatim — the contract the
+    //       Python client aborts on.
+    // ------------------------------------------------------------------
+    {
+        ServeRequest req;
+        req.op      = "insert";
+        req.typeStr = "function";
+        req.name    = "F";
+
+        VasGuardConfig disabled;
+        disabled.enabled = false;
+        bool warned = false;
+        CliResult refusal;
+        refusal.exitCode = -777;  // sentinel: must stay untouched
+        if (serveVasGuardRefuse(req, disabled, warned, false, refusal) ||
+            refusal.exitCode != -777) {
+            ec = fail("check14a: disabled guard refused", 171);
+            return 0;
+        }
+
+        ServeRequest ro;
+        ro.op      = "exists";
+        ro.typeStr = "function";
+        ro.name    = "F";
+        VasGuardConfig enabled;
+        if (serveVasGuardRefuse(ro, enabled, warned, false, refusal)) {
+            ec = fail("check14a: non-mutating op was VAS-gated", 172);
+            return 0;
+        }
+
+        // Enabled guard + a mutating op but impossible thresholds (0):
+        // every WHServer pid either fails to measure (warn-once, no
+        // refusal) or reports free MB >= 0 -> never breaches. Deterministic
+        // whether or not WHServer is running.
+        VasGuardConfig zero;
+        zero.freeThresholdMB    = 0;
+        zero.largestThresholdMB = 0;
+        warned = false;
+        if (serveVasGuardRefuse(req, zero, warned, false, refusal)) {
+            ec = fail("check14a: zero thresholds refused", 173);
+            return 0;
+        }
+
+        // Refusal serialization: the exact CliResult shape
+        // serveVasGuardRefuse fills on breach -> cliResultToJson must carry
+        // exit_code=14 and error.code "whserver_vas_abort".
+        CliResult ref;
+        ref.op = "insert";
+        ref.typeStr = "function";
+        ref.name = "F";
+        ref.success = false;
+        ref.exitCode = 14;
+        ref.errorMessage =
+            "WHServer VAS headroom below threshold: free=10MB largest=4MB "
+            "(whserver_vas_free=10MB); refusing insert before dispatch";
+        ordered_json rj = cliResultToJson(ref);
+        if (rj["exit_code"].get<int>() != 14 ||
+            rj["success"].get<bool>() != false ||
+            rj["error"]["code"].get<std::string>() != "whserver_vas_abort" ||
+            rj["error"]["message"].get<std::string>() != ref.errorMessage ||
+            rj["op"].get<std::string>() != "insert" ||
+            rj["name"].get<std::string>() != "F") {
+            ec = fail("check14b: refusal serialization wrong", 174);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: serve VAS-guard refusal gate + exit-14 "
+                     "serialization\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }
