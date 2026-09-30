@@ -169,6 +169,40 @@ BackupInfo readBackupInfo(const std::wstring& backupRoot);
 // Used for a warn-only "desktop running" notice on backup.
 std::vector<std::wstring> runningTsProcessNames();
 
+// Compression accounting for compressTreeInPlace. All counts are cumulative
+// for one call.
+struct CompressStats {
+    uint64_t files;        // regular files visited
+    uint64_t compressed;   // files FSCTL_SET_COMPRESSION succeeded on
+    uint64_t skipped;      // visited files not compressed (attr/size/open/IOCTL)
+    uint64_t bytesBefore;  // sum of logical sizes of compressed files
+    uint64_t bytesAfter;   // sum of GetCompressedFileSizeW of compressed files
+};
+
+// Recursively NTFS-compresses `root` in place via
+// DeviceIoControl(FSCTL_SET_COMPRESSION, COMPRESSION_FORMAT_LZNT1), one file
+// at a time. Only regular files >= 64 KB are attempted (smaller files cannot
+// gain meaningfully). Skipped silently: files already COMPRESSED, files with
+// READONLY/SYSTEM/HIDDEN/ENCRYPTED/SPARSE/REPARSE attributes, and any open
+// or per-file IOCTL failure. Exception: the FIRST filesystem-level rejection
+// (ERROR_INVALID_FUNCTION / ERROR_NOT_SUPPORTED — the volume is not NTFS)
+// stops the whole walk immediately. shouldStop() is checked between files;
+// true ends the walk early. Compression is transparent to readers — a
+// partially compressed tree is always valid and readable. `stats` (optional
+// out-param) receives the per-call accounting.
+void compressTreeInPlace(const std::wstring& root,
+                         const std::function<bool()>& shouldStop,
+                         CompressStats* stats = nullptr);
+
+// Fire-and-forget NTFS compression of `root` (typically <backupRoot>\cache)
+// on a detached worker thread at THREAD_PRIORITY_LOWEST +
+// THREAD_MODE_BACKGROUND_BEGIN (low I/O priority so foreground ops are not
+// slowed). The predicate never stops early — process exit is the stop; an
+// abrupt exit mid-FSCTL is safe because a partially compressed tree is
+// always valid/readable (NTFS guarantees). Never throws; any error ends the
+// thread quietly.
+void startBackupCompression(const std::wstring& root);
+
 } // namespace tsdev
 
 #endif // TSDEV_CACHE_BACKUP_H

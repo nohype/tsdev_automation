@@ -859,6 +859,99 @@ int runTests() {
         std::fprintf(stdout, "    PASS: group 23 (queryVolumeFreeSpace)\n");
     }
 
+    // -------------------------------------------------------------------
+    // Group 24: compressTreeInPlace — NTFS in-place compression.
+    //   Compressible >64KB file gets FILE_ATTRIBUTE_COMPRESSED, reads back
+    //   byte-identical, and its on-disk compressed size shrinks; readonly
+    //   and <64KB files are skipped; shouldStop() ends the walk.
+    // -------------------------------------------------------------------
+    {
+        const fs::path compRoot = g_tmp / L"comp_root";
+        // 256 KB of a repeated byte: highly compressible under LZNT1.
+        const std::string big(256 * 1024, 'A');
+        const fs::path bigFile = compRoot / "sub" / "big.bin";
+        const fs::path smallFile = compRoot / "small.bin";
+        const fs::path roFile = compRoot / "readonly.bin";
+        writeFile(bigFile, big);
+        writeFile(smallFile, "SMALL");                 // < 64 KB
+        writeFile(roFile, big);
+        if (!SetFileAttributesW(roFile.wstring().c_str(),
+                                FILE_ATTRIBUTE_READONLY))
+            return fail("could not set readonly on comp fixture", 240);
+
+        tsdev::CompressStats st{};
+        tsdev::compressTreeInPlace(w(compRoot),
+                                   [] { return false; }, &st);
+        if (st.files != 3)
+            return fail("compressTreeInPlace visited != 3 files", 241);
+        if (st.compressed != 1 || st.skipped != 2)
+            return fail("compressTreeInPlace compressed/skipped wrong",
+                        242);
+        const DWORD bigAttrs =
+            GetFileAttributesW(bigFile.wstring().c_str());
+        if (bigAttrs == INVALID_FILE_ATTRIBUTES ||
+            !(bigAttrs & FILE_ATTRIBUTE_COMPRESSED))
+            return fail("big file lacks FILE_ATTRIBUTE_COMPRESSED", 243);
+        if (readFile(bigFile) != big)
+            return fail("compressed file content not identical", 244);
+        DWORD hi = 0;
+        const DWORD lo =
+            GetCompressedFileSizeW(bigFile.wstring().c_str(), &hi);
+        const uint64_t onDisk =
+            (static_cast<uint64_t>(hi) << 32) | lo;
+        if (lo == INVALID_FILE_SIZE ||
+            onDisk >= static_cast<uint64_t>(big.size()))
+            return fail("compressed size not below original", 245);
+        if (st.bytesAfter >= st.bytesBefore)
+            return fail("stats bytesAfter >= bytesBefore", 246);
+        const DWORD smallAttrs =
+            GetFileAttributesW(smallFile.wstring().c_str());
+        if (smallAttrs == INVALID_FILE_ATTRIBUTES ||
+            (smallAttrs & FILE_ATTRIBUTE_COMPRESSED))
+            return fail("<64KB file was compressed", 247);
+        const DWORD roAttrs =
+            GetFileAttributesW(roFile.wstring().c_str());
+        if (roAttrs == INVALID_FILE_ATTRIBUTES ||
+            (roAttrs & FILE_ATTRIBUTE_COMPRESSED))
+            return fail("readonly file was compressed", 248);
+        SetFileAttributesW(roFile.wstring().c_str(),
+                           FILE_ATTRIBUTE_NORMAL); // allow cleanup
+
+        // shouldStop honored: walk ends before any file is touched.
+        const fs::path stopRoot = g_tmp / L"stop_root";
+        writeFile(stopRoot / "big.bin", big);
+        tsdev::CompressStats st2{};
+        tsdev::compressTreeInPlace(w(stopRoot),
+                                   [] { return true; }, &st2);
+        if (st2.files != 0 || st2.compressed != 0)
+            return fail("shouldStop did not abort the walk", 249);
+
+        // startBackupCompression: detached worker actually compresses when
+        // the process stays alive long enough (production runs race exit —
+        // the unit test holds the process so the path is exercised for
+        // real). Poll briefly to tolerate scheduling jitter.
+        const fs::path bgRoot = g_tmp / L"bg_root";
+        const fs::path bgFile = bgRoot / "big.bin";
+        writeFile(bgFile, big);
+        tsdev::startBackupCompression(w(bgRoot));
+        bool bgDone = false;
+        for (int i = 0; i < 100 && !bgDone; ++i) {
+            Sleep(50);
+            const DWORD a = GetFileAttributesW(bgFile.wstring().c_str());
+            bgDone = (a != INVALID_FILE_ATTRIBUTES) &&
+                     (a & FILE_ATTRIBUTE_COMPRESSED);
+        }
+        if (!bgDone)
+            return fail("startBackupCompression thread never compressed",
+                        250);
+        if (readFile(bgFile) != big)
+            return fail("background-compressed content not identical", 251);
+        std::fprintf(stdout,
+            "    PASS: group 24 (NTFS compress, %llu->%llu bytes)\n",
+            static_cast<unsigned long long>(st.bytesBefore),
+            static_cast<unsigned long long>(st.bytesAfter));
+    }
+
     fs::remove_all(g_tmp);
     return 0;
 }

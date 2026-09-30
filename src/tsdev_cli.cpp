@@ -72,6 +72,15 @@
 //                 <root>\Program\Cache to exist for the cache phase; a stub
 //                 orlib20.dll is required only when an OP also runs
 //                 against the sandbox.
+//   --no-cache-compress
+//                 Global, position-free presence boolean. Suppresses the
+//                 default post-backup kick: after a successful backup phase
+//                 (fresh or kept-existing) a detached lowest-priority
+//                 background thread NTFS-compresses the backup's cache\ tree
+//                 in place (FSCTL_SET_COMPRESSION, files >= 64 KB only).
+//                 Transparent to restore; a partially compressed tree is
+//                 always valid. Backup tree only — restore output and the
+//                 live cache are never compressed.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
 //                 raises the runtime log level (tsdev_lib) one step:
 //                 default = warnings + errors only; 1 occurrence (-v) = + info;
@@ -377,6 +386,12 @@ void printUsage() {
         "                 non-interactive prompt behaves as skip; abort cancels\n"
         "                 with exit 17). Requires --backup-cache. The cache\n"
         "                 flags are not valid with serve.\n"
+        "  --no-cache-compress  Suppress the background NTFS in-place\n"
+        "                 compression of the backup tree that otherwise\n"
+        "                 starts after a successful backup phase (fresh or\n"
+        "                 kept-existing). Compression is transparent to\n"
+        "                 restore; only the backup dir is touched, never the\n"
+        "                 live cache.\n"
         "                 Output placement: standalone (no subcommand) prints\n"
         "                 BACKUP COMPLETE / BACKUP KEPT / RESTORE COMPLETE — or\n"
         "                 the --json object — on stdout; combined with a\n"
@@ -1677,6 +1692,7 @@ ordered_json cacheSuccessJson(const std::string& cacheOp,
 int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                   const wchar_t* tsPathOverride,
                   const std::string& subcommand, bool jsonMode,
+                  bool noCacheCompress = false,
                   CliResult* serveResult = nullptr) {
     // Tail for the "cancelled/failed — X" stderr lines: names the skipped
     // subcommand in combined mode, or "exiting" standalone (avoids the
@@ -1834,6 +1850,17 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 static_cast<unsigned long long>(backupRes.bytes),
                 static_cast<unsigned long long>(backupRes.elapsedSecs),
                 liveSourceSuffix(backupRes));
+        }
+
+        // A complete backup now exists in the root (freshly staged OR kept
+        // existing). Kick detached low-priority NTFS in-place compression of
+        // backupRoot\cache — opportunistic; the insurance is already secured,
+        // and a partially compressed tree is always valid/readable. Restore
+        // output is never compressed (it is the live user cache).
+        if (!noCacheCompress) {
+            std::fprintf(stderr,
+                "tsdev_cli: compressing cache backup in background (NTFS)\n");
+            tsdev::startBackupCompression(backupRoot + L"\\cache");
         }
     }
 
@@ -5285,7 +5312,8 @@ CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
         CliResult r;
         runCachePhase(req.op == "backup-cache",
                       req.op == "restore-cache", policy, tsPathOverride,
-                      /*subcommand=*/"", /*jsonMode=*/false, &r);
+                      /*subcommand=*/"", /*jsonMode=*/false,
+                      /*noCacheCompress=*/false, &r);
         // Defensive fallback: unreachable today (runCachePhase/
         // emitCacheErrorJson set r.op on every path), kept so a future
         // cache-phase path that forgets r.op still reports the right op.
@@ -5985,6 +6013,7 @@ int main(int argc, char** argv) {
     // subcommand dispatch (fixed order backup -> restore -> subcommand).
     bool backupCacheFlag = false;
     bool restoreCacheFlag = false;
+    bool noCacheCompressFlag = false;  // --no-cache-compress
     CacheBackupPolicy cachePolicy = CacheBackupPolicy::Prompt;  // default
     bool cachePolicyFlagSet = false;   // --cache-backup-policy seen
 
@@ -6155,6 +6184,12 @@ int main(int argc, char** argv) {
                    arg.rfind("--restore-cache=", 0) == 0) {
             // Boolean switch like --json: presence requests the restore step.
             restoreCacheFlag = true;
+        } else if (arg == "--no-cache-compress" ||
+                   arg.rfind("--no-cache-compress=", 0) == 0) {
+            // Boolean switch like --json: presence suppresses the background
+            // NTFS compression kick after a successful backup phase; a '='
+            // value is ignored; repeats are harmless.
+            noCacheCompressFlag = true;
         } else if (arg == "--cache-backup-policy" ||
                    arg.rfind("--cache-backup-policy=", 0) == 0) {
             // Space ("--cache-backup-policy <mode>") or equals form; the
@@ -6423,7 +6458,8 @@ int main(int argc, char** argv) {
     if (backupCacheFlag || restoreCacheFlag) {
         const int cacheRc = runCachePhase(backupCacheFlag, restoreCacheFlag,
                                           cachePolicy, tsPathWidePtr,
-                                          subcommand, jsonMode);
+                                          subcommand, jsonMode,
+                                          noCacheCompressFlag);
         if (cacheRc >= 0) return cacheRc;
     }
 

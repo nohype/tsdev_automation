@@ -9,6 +9,7 @@
 
 #include <shlobj.h>
 #include <tlhelp32.h>
+#include <winioctl.h>
 
 #include <chrono>
 #include <cstdio>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -924,6 +926,90 @@ std::vector<std::wstring> runningTsProcessNames() {
     }
     CloseHandle(snap);
     return found;
+}
+
+void compressTreeInPlace(const std::wstring& root,
+                         const std::function<bool()>& shouldStop,
+                         CompressStats* stats) {
+    CompressStats acc{};
+    // Attributes that disqualify a file from in-place compression outright.
+    const DWORD kSkipAttrs =
+        FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_READONLY |
+        FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN |
+        FILE_ATTRIBUTE_ENCRYPTED | FILE_ATTRIBUTE_SPARSE_FILE |
+        FILE_ATTRIBUTE_REPARSE_POINT;
+
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(fs::path(root), ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (shouldStop && shouldStop()) break;
+        std::error_code ec2;
+        if (!it->is_regular_file(ec2)) continue;
+        ++acc.files;
+        const std::wstring path = it->path().wstring();
+        const DWORD attrs = GetFileAttributesW(path.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES ||
+            (attrs & kSkipAttrs) != 0) {
+            ++acc.skipped;
+            continue;
+        }
+        const uint64_t size = it->file_size(ec2);
+        if (ec2 || size < 64 * 1024) {
+            ++acc.skipped;
+            continue;
+        }
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                   FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                               nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            ++acc.skipped;
+            continue;
+        }
+        const USHORT fmt = COMPRESSION_FORMAT_LZNT1;
+        DWORD ret = 0;
+        const BOOL ok =
+            DeviceIoControl(h, FSCTL_SET_COMPRESSION,
+                            const_cast<USHORT*>(&fmt), sizeof(fmt),
+                            nullptr, 0, &ret, nullptr);
+        if (!ok) {
+            const DWORD err = GetLastError();
+            CloseHandle(h);
+            ++acc.skipped;
+            if (err == ERROR_INVALID_FUNCTION || err == ERROR_NOT_SUPPORTED)
+                break; // not an NTFS volume — no point continuing the walk
+            continue;
+        }
+        DWORD hi = 0;
+        const DWORD lo = GetCompressedFileSizeW(path.c_str(), &hi);
+        acc.bytesBefore += size;
+        if (lo != INVALID_FILE_SIZE || GetLastError() == NO_ERROR) {
+            acc.bytesAfter +=
+                (static_cast<uint64_t>(hi) << 32) | lo;
+        }
+        ++acc.compressed;
+        CloseHandle(h);
+    }
+    if (stats) *stats = acc;
+}
+
+void startBackupCompression(const std::wstring& root) {
+    try {
+        std::thread([root] {
+            try {
+                HANDLE self = GetCurrentThread();
+                SetThreadPriority(self, THREAD_PRIORITY_LOWEST);
+                SetThreadPriority(self, THREAD_MODE_BACKGROUND_BEGIN);
+                compressTreeInPlace(root, [] { return false; }, nullptr);
+                SetThreadPriority(self, THREAD_MODE_BACKGROUND_END);
+            } catch (...) {
+                // Opportunistic compression: any error ends the thread quietly.
+            }
+        }).detach();
+    } catch (...) {
+        // Thread construction itself may throw; compression is opportunistic.
+    }
 }
 
 } // namespace tsdev
