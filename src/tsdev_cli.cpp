@@ -3544,7 +3544,78 @@ DWORD WINAPI runBatch(LPVOID param) {
     size_t index = 0;
     size_t attempted = 0;
 
+    // WHServer VAS-headroom guard (TVS-1b/1d): ONE check shared by the
+    // pre-flight (below) and the between-items gate (in the loop). Samples
+    // WHServer's free VAS; WHServer is a lazy singleton so no pids means
+    // nothing to exhaust -> pass. A transient measureVasFree failure warns
+    // once per run and does NOT abort. A breach (either threshold) aborts
+    // loudly: emit the abort event, set `aborted` + `abortReason` — the
+    // shared marker/summary machinery below reports truthfully.
+    auto vasGuardCheck = [&]() {
+        const std::vector<DWORD> whPids = tsdev::findWhServerPids();
+        for (DWORD whPid : whPids) {
+            tsdev::WhVasStats vst;
+            if (!tsdev::measureVasFree(whPid, vst)) {
+                if (!vasMeasureWarned) {
+                    vasMeasureWarned = true;
+                    emitLine(whserverVasMeasureFailedLine(
+                        whPid, p->jsonProgress));
+                }
+                TSDEV_DIAG_LOG("whserver.vas.check",
+                               "pid=%lu result=measure_failed",
+                               static_cast<unsigned long>(whPid));
+                continue;
+            }
+            const uint64_t freeMB =
+                vst.totalFreeBytes / (1024 * 1024);
+            const uint64_t largestMB =
+                vst.largestFreeBlockBytes / (1024 * 1024);
+            const bool breach = tsdev::vasBreach(
+                freeMB, largestMB, p->vasGuard.freeThresholdMB,
+                p->vasGuard.largestThresholdMB);
+            TSDEV_DIAG_LOG("whserver.vas.check",
+                           "pid=%lu freeMB=%llu largestMB=%llu "
+                           "thresholdFreeMB=%u thresholdLargestMB=%u "
+                           "decision=%s",
+                           static_cast<unsigned long>(whPid),
+                           (unsigned long long)freeMB,
+                           (unsigned long long)largestMB,
+                           p->vasGuard.freeThresholdMB,
+                           p->vasGuard.largestThresholdMB,
+                           breach ? "abort" : "pass");
+            if (breach) {
+                emitLine(whserverVasAbortLine(
+                    whPid, vst, p->vasGuard.freeThresholdMB,
+                    p->vasGuard.largestThresholdMB, p->jsonProgress));
+                aborted = true;
+                // Truthful machine-readable reason for the summary:
+                // name the breaching metric + measured MB. Total-free
+                // is checked first; when both breach, report it.
+                abortReason =
+                    (freeMB < p->vasGuard.freeThresholdMB)
+                    ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
+                    : "whserver_vas_largest_free=" +
+                          std::to_string(largestMB) + "MB";
+                return;
+            }
+        }
+    };
+
+    // Pre-flight VAS check (before item 0): the between-items gate only
+    // runs after item N completes, so a WHServer already below threshold
+    // when the batch starts (the field case — WHServer persisted from a
+    // previous session) would leave item 0 unguarded. runBatch has NO
+    // explicit warehouse-open step: WHServer.exe is a lazy singleton
+    // spawned inside item 0's first orlib20 dispatch, so empty pids here
+    // means WHServer is not attached yet — the attach itself spawns a
+    // fresh 2 GB process, which is genuinely safe to pass. Only an
+    // already-running (depleted) WHServer breaches here.
+    if (p->vasGuard.enabled) {
+        vasGuardCheck();
+    }
+
     for (auto& item : p->items) {
+        if (aborted) break;  // pre-flight abort: no item is dispatched
         ++index;
         if (p->pbar) bar.itemStarted(item.typeStr, item.name);
         // Started events exist only in the --json NDJSON protocol (the
@@ -3625,62 +3696,12 @@ DWORD WINAPI runBatch(LPVOID param) {
             }
         }
 
-        // WHServer VAS-headroom guard (TVS-1b): same between-items gate
-        // position as the control check — sample AFTER item N completes,
-        // BEFORE item N+1 is dispatched (in-flight ops cannot be
-        // cancelled). WHServer is a lazy singleton: no pids means nothing
-        // to exhaust -> pass. A transient measureVasFree failure warns
-        // once per run and does NOT abort. A breach (either threshold)
-        // aborts loudly: emit the abort event, set aborted, break — the
-        // shared marker/summary machinery below reports truthfully.
+        // WHServer VAS-headroom guard (TVS-1b): between-items gate — sample
+        // AFTER item N completes, BEFORE item N+1 is dispatched (in-flight
+        // ops cannot be cancelled). Same shared check as the pre-flight; a
+        // breach aborts loudly and breaks the loop.
         if (p->vasGuard.enabled && index < total) {
-            const std::vector<DWORD> whPids = tsdev::findWhServerPids();
-            for (DWORD whPid : whPids) {
-                tsdev::WhVasStats vst;
-                if (!tsdev::measureVasFree(whPid, vst)) {
-                    if (!vasMeasureWarned) {
-                        vasMeasureWarned = true;
-                        emitLine(whserverVasMeasureFailedLine(
-                            whPid, p->jsonProgress));
-                    }
-                    TSDEV_DIAG_LOG("whserver.vas.check",
-                                   "pid=%lu result=measure_failed",
-                                   static_cast<unsigned long>(whPid));
-                    continue;
-                }
-                const uint64_t freeMB =
-                    vst.totalFreeBytes / (1024 * 1024);
-                const uint64_t largestMB =
-                    vst.largestFreeBlockBytes / (1024 * 1024);
-                const bool breach = tsdev::vasBreach(
-                    freeMB, largestMB, p->vasGuard.freeThresholdMB,
-                    p->vasGuard.largestThresholdMB);
-                TSDEV_DIAG_LOG("whserver.vas.check",
-                               "pid=%lu freeMB=%llu largestMB=%llu "
-                               "thresholdFreeMB=%u thresholdLargestMB=%u "
-                               "decision=%s",
-                               static_cast<unsigned long>(whPid),
-                               (unsigned long long)freeMB,
-                               (unsigned long long)largestMB,
-                               p->vasGuard.freeThresholdMB,
-                               p->vasGuard.largestThresholdMB,
-                               breach ? "abort" : "pass");
-                if (breach) {
-                    emitLine(whserverVasAbortLine(
-                        whPid, vst, p->vasGuard.freeThresholdMB,
-                        p->vasGuard.largestThresholdMB, p->jsonProgress));
-                    aborted = true;
-                    // Truthful machine-readable reason for the summary:
-                    // name the breaching metric + measured MB. Total-free
-                    // is checked first; when both breach, report it.
-                    abortReason =
-                        (freeMB < p->vasGuard.freeThresholdMB)
-                        ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
-                        : "whserver_vas_largest_free=" +
-                              std::to_string(largestMB) + "MB";
-                    break;
-                }
-            }
+            vasGuardCheck();
             if (aborted) break;
         }
     }
