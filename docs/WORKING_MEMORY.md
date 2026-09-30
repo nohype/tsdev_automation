@@ -5,20 +5,18 @@ Do not restate what the code itself documents.
 
 ## Current objective
 
-**ACTIVE (2026-09-30): `--backup-cache` / `--restore-cache` feature.** Global
-position-free flags; run before any other op (backup→restore→subcommand).
-Backup root `%LOCALAPPDATA%\tsdev_cli\cache-backup\` (`cache\` tree +
-`backup.info`, staged→swap so a visible backup is always complete).
-Modules `src/ts_install.*` (extracted resolver) + `src/cache_backup.*`
-(engine: enumerate→CopyFileExW→stage→swap; restore: info check→lock probe→
-rename-aside→copy→rollback). CLI phase + CONIN$ O/S/C prompt + determinate
-byte-% indicator wired in tsdev_cli.cpp; exit 16 cache_io_error / 17
-cache_cancelled; serve+flags = usage error (serve request ops planned TVS-3).
-OPEN FIELD GAP: live backup fails err=32 on `CAL_cache.clod` (desktop
-holds cache deny-read) — FILE_FLAG_BACKUP_SEMANTICS fallback mandated.
-Remaining: adversarial review round, restore/Python/TVS-4 compression,
-elevated E2E gate. **This shell IS elevated now** (S-1-16-12288,
-verified 2026-09-30 — supersedes the stale "NOT elevated" note below).
+**DONE 2026-09-30: `--backup-cache` / `--restore-cache` shipped** (3 commits:
+b0866d0 C++ core, 99f3692 serve+Python, b6f35a5 NTFS compression).
+All adversarially approved; elevated E2E gate green incl. real 1.8GB live
+backup with desktop running (VSS path proven). Residual notes:
+- PS64 bridge (Sysnative powershell -EncodedCommand) is the only working
+  32->64bit VSS path on WOW64; orphaned-shadow window exists if the bridge
+  child dies between Create and SID parse (bounded, best-effort release).
+- Standalone runs race exit for background compression (best-effort; serve
+  sessions benefit fully). Defaults: CLI `prompt`, Python/serve `abort`.
+- KB §16 records the WOW64/share-lock/NTFS facts (why VSS needs the bridge).
+**This shell IS elevated** (S-1-16-12288, verified 2026-09-30 — supersedes
+the stale "NOT elevated" note below).
 
 ## Prior objective (closed)
 
