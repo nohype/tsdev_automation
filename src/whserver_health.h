@@ -59,6 +59,19 @@ std::vector<DWORD> findWhServerPids();
 // `out` is only meaningful when true.
 bool measureVasFree(DWORD pid, WhVasStats& out);
 
+// Pure breach decision for the runBatch VAS-headroom guard, in MB so the
+// caller's threshold config and the measured values share one unit.
+// Breach semantics: STRICTLY BELOW — a measured value exactly equal to its
+// threshold is healthy (pass). Breach when EITHER the total free VAS is
+// below `thresholdTotalMB` OR the largest contiguous free block is below
+// `thresholdContigMB` (fragmentation kills contiguous `new[]` allocations
+// even while total free looks ample — the observed crash signature).
+inline bool vasBreach(uint64_t totalFreeMB, uint64_t largestFreeMB,
+                      uint64_t thresholdTotalMB, uint64_t thresholdContigMB) {
+    return totalFreeMB < thresholdTotalMB ||
+           largestFreeMB < thresholdContigMB;
+}
+
 } // namespace tsdev
 
 #endif // TSDEV_WHSERVER_HEALTH_H

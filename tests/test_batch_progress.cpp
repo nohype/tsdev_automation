@@ -1093,6 +1093,137 @@ DWORD WINAPI runTest(LPVOID param) {
                      "aggregates to exit 3\n");
     }
 
+    // ------------------------------------------------------------------
+    // Check 13 (TVS-1b): WHServer VAS-guard abort path —
+    //   (a) batchAggregateExitCode(started, anyFailed, cancelled=false,
+    //       aborted=true) == 14; aborted dominates anyFailed.
+    //   (b) batchCompletedLine with aborted=true + abortReason renders the
+    //       ABORTED token and aborted/abort_reason fields (human + JSON);
+    //       a non-aborted call stays byte-identical (already pinned by
+    //       checks 4/6 — re-asserted implicitly here via JSON members).
+    //   (c) cancelledBatchItemResult with the abort message keeps exit 12
+    //       and carries the abort reason verbatim.
+    //   (d) whserverVasAbortLine / whserverVasMeasureFailedLine render one
+    //       physical line in both modes.
+    //   (e) parseMbThreshold accepts "0"/"5000", rejects "x"/"-1"/""/"1.5".
+    // ------------------------------------------------------------------
+    {
+        if (batchAggregateExitCode(/*batchStarted=*/true,
+                                   /*anyFailed=*/true,
+                                   /*cancelled=*/false,
+                                   /*aborted=*/true) != 14) {
+            ec = fail("check13a: aborted aggregate != 14", 160);
+            return 0;
+        }
+        if (batchAggregateExitCode(/*batchStarted=*/true,
+                                   /*anyFailed=*/false,
+                                   /*cancelled=*/false,
+                                   /*aborted=*/true) != 14) {
+            ec = fail("check13a: clean aborted aggregate != 14", 161);
+            return 0;
+        }
+
+        const std::string reason = "whserver_vas_free=123MB";
+        std::string hl = batchCompletedLine(
+            "upsert", /*completed=*/1, /*total=*/3, /*successes=*/1,
+            /*failures=*/0, /*notRun=*/2, /*cancelled=*/false,
+            /*closeFailed=*/false, /*exitCode=*/14, false,
+            /*aborted=*/true, reason);
+        std::fprintf(stdout, "  [13b] human aborted line: %s\n",
+                     hl.c_str());
+        if (hl != "BATCH COMPLETE ABORTED op=upsert completed=1 total=3 "
+                  "successes=1 failures=0 not_run=2 cancelled=false "
+                  "aborted=true abort_reason=whserver_vas_free=123MB "
+                  "close_failed=false exit_code=14") {
+            ec = fail("check13b: human ABORTED line != canonical", 162);
+            return 0;
+        }
+        std::string jl = batchCompletedLine(
+            "upsert", 1, 3, 1, 0, 2, false, false, 14, true,
+            true, reason);
+        std::fprintf(stdout, "  [13b] json aborted line: %s\n",
+                     jl.c_str());
+        ordered_json aj = ordered_json::parse(jl);
+        if (!aj.contains("aborted") || aj["aborted"].get<bool>() != true ||
+            !aj.contains("abort_reason") ||
+            aj["abort_reason"].get<std::string>() != reason ||
+            !aj.contains("exit_code") || aj["exit_code"].get<int>() != 14) {
+            ec = fail("check13b: JSON aborted fields wrong", 163);
+            return 0;
+        }
+        // Non-aborted JSON carries NO aborted members (byte-identical
+        // contract preserved — exact member count already pinned in
+        // check 4a).
+        if (aj.contains("not_run") != true) {
+            ec = fail("check13b: JSON missing not_run", 164);
+            return 0;
+        }
+
+        BatchItem item;
+        item.typeStr = "function";
+        item.name    = "NeverRan";
+        CliResult am = cancelledBatchItemResult("upsert", item,
+                                                kVasAbortMarkerMessage);
+        if (am.exitCode != 12 || am.success != false ||
+            am.errorMessage !=
+                "Batch aborted (WHServer VAS headroom) before this item "
+                "was attempted") {
+            ec = fail("check13c: abort marker wrong", 165);
+            return 0;
+        }
+
+        tsdev::WhVasStats st;
+        st.totalFreeBytes        = 123ULL * 1024 * 1024;
+        st.largestFreeBlockBytes = 40ULL * 1024 * 1024;
+        st.privateBytes          = 0;
+        std::string ahl = whserverVasAbortLine(4321, st, 256, 64, false);
+        std::string ajl = whserverVasAbortLine(4321, st, 256, 64, true);
+        std::string mhl = whserverVasMeasureFailedLine(4321, false);
+        std::string mjl = whserverVasMeasureFailedLine(4321, true);
+        std::fprintf(stdout, "  [13d] abort human: %s\n", ahl.c_str());
+        std::fprintf(stdout, "  [13d] abort json: %s\n", ajl.c_str());
+        if (!isSingleLine(ahl) || !isSingleLine(ajl) ||
+            !isSingleLine(mhl) || !isSingleLine(mjl)) {
+            ec = fail("check13d: renderer emitted multi-line output", 166);
+            return 0;
+        }
+        if (ahl.find("BATCH ABORTED") != 0 ||
+            ahl.find("pid=4321") == std::string::npos ||
+            ahl.find("free=123MB") == std::string::npos ||
+            ahl.find("largest=40MB") == std::string::npos) {
+            ec = fail("check13d: human abort line content wrong", 167);
+            return 0;
+        }
+        ordered_json abj = ordered_json::parse(ajl);
+        if (abj["event"].get<std::string>() != "batch_aborted" ||
+            abj["action"].get<std::string>() != "abort" ||
+            abj["free_mb"].get<uint64_t>() != 123 ||
+            abj["largest_free_mb"].get<uint64_t>() != 40) {
+            ec = fail("check13d: JSON abort line content wrong", 168);
+            return 0;
+        }
+        ordered_json mbj = ordered_json::parse(mjl);
+        if (mbj["event"].get<std::string>() !=
+                "whserver_vas_measure_failed" ||
+            mbj["pid"].get<unsigned long>() != 4321UL) {
+            ec = fail("check13d: JSON measure_failed line wrong", 169);
+            return 0;
+        }
+
+        unsigned tv = 0;
+        if (!parseMbThreshold("0", tv) || tv != 0 ||
+            !parseMbThreshold("5000", tv) || tv != 5000 ||
+            parseMbThreshold("x", tv) || parseMbThreshold("-1", tv) ||
+            parseMbThreshold("", tv) || parseMbThreshold("1.5", tv) ||
+            parseMbThreshold("1048576", tv)) {
+            ec = fail("check13e: parseMbThreshold contract wrong", 170);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: VAS-guard abort path renders exit 14 + "
+                     "truthful fields\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }

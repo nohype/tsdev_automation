@@ -88,12 +88,18 @@ add_custom_target(siggen DEPENDS ${GEN_INCLUDE_DIR}/signatures.gen.h)
 # (step 5, after each DeleteFileA on the .ell/.xml artifacts) and by the
 # test_delete_disk_cleanup unit test. It is side-effect free (no orlib20 /
 # warehouse / filesystem access), so it adds no link dependencies.
+# TVS-1b: src/whserver_health.cpp (WHServer pid discovery + VirtualQueryEx
+# VAS-headroom measurement, pure Win32 kernel32 + toolhelp — NO new .lib
+# deps) ships in tsdev_lib so the production tsdev_cli's runBatch VAS guard
+# and every unit test that #includes tsdev_cli.cpp resolve it transitively.
+# The diag build already receives the same TU via tsdev_diag (below).
 add_library(tsdev_lib STATIC
     src/tsdev_lib.cpp
     src/com_apartment_guard.cpp
     src/persistence_integrity.cpp
     src/create_path_cleanup.cpp
-    src/delete_disk_cleanup.cpp)
+    src/delete_disk_cleanup.cpp
+    src/whserver_health.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
 target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32)

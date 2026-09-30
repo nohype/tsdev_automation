@@ -76,7 +76,9 @@
 // 10=CreateThread failure, 11=not elevated.
 // 12 is used by the Python client (ElevationRequiredError,
 // src/tsdev_automation/exceptions.py). 13 = diagnostic-build watchdog abort
-// (tsdev_cli_diag only; see src/diag_watchdog.cpp).
+// (tsdev_cli_diag only; see src/diag_watchdog.cpp). 14 = batch aggregate:
+// aborted by the WHServer VAS-headroom guard (see batch exit-code scheme
+// below).
 // Every direct tsdev_cli subcommand, including serve, requires an elevated
 // administrator process; when the guard runs non-elevated it returns exit 11.
 //
@@ -90,6 +92,22 @@
 //   3 = batch cooperatively cancelled via --batch-progress-control (the
 //       stdout array stays full length; unattempted items are exit-12
 //       "cancelled" markers)
+//  14 = batch aborted by the WHServer VAS-headroom guard (same full-length
+//       array + exit-12 not-run markers for unattempted items)
+//
+// WHServer VAS-headroom guard (batch-* only): WHServer.exe is 32-bit and
+// non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free user
+// address space (std::bad_alloc inside a COM handler). After each completed
+// non-final item the batch measures WHServer's free VAS (see
+// whserver_health.h); when the total free MB drops below --whserver-free-mb
+// (default 256) or the largest contiguous free block drops below
+// --whserver-largest-free-mb (default 64) the batch aborts LOUDLY before
+// dispatching the next item: remaining items become exit-12 not-run markers
+// and the process exits 14. WHServer not running (lazy singleton not yet
+// spawned) = pass; a transient measurement failure warns once and does NOT
+// abort. --no-whserver-vas-guard disables the guard. Env mirrors:
+// TSDEV_WHSERVER_FREE_MB / TSDEV_WHSERVER_LARGEST_FREE_MB /
+// TSDEV_NO_WHSERVER_VAS_GUARD (explicit CLI flags win over env).
 //
 // Batch progress is always emitted on stderr (independent of -v): one
 // BATCH SUCCESS/BATCH FAILED completion line per attempted item (a FAILED
@@ -124,6 +142,7 @@
 #include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
 #include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "whserver_health.h" // TVS-1b: WHServer VAS-headroom guard (batch)
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
 
@@ -266,6 +285,18 @@ void printUsage() {
         "                   input stops before the next item: remaining items\n"
         "                   become exit-12 not-run markers (full-length array)\n"
         "                   and the process exits 3.\n"
+        "  --whserver-free-mb <N>  (batch-* only) WHServer VAS-headroom guard:\n"
+        "                   abort the batch (exit 14, remaining items become\n"
+        "                   exit-12 not-run markers) before the next item when\n"
+        "                   WHServer.exe total free user address space drops\n"
+        "                   below N MB. Default 256. Env: TSDEV_WHSERVER_FREE_MB.\n"
+        "  --whserver-largest-free-mb <N>  (batch-* only) same guard on the\n"
+        "                   largest contiguous free block (fragmentation kills\n"
+        "                   contiguous allocations). Default 64.\n"
+        "                   Env: TSDEV_WHSERVER_LARGEST_FREE_MB.\n"
+        "  --no-whserver-vas-guard  (batch-* only) disable the WHServer\n"
+        "                   VAS-headroom guard entirely. Env:\n"
+        "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
         "  --json         Emit a single JSON result object on stdout (suppress "
         "human-readable stdout).\n"
         "                 For batch-* (and tagged serve requests) it also\n"
@@ -391,6 +422,10 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 10: return "thread_failure";
         case 11: return "not_elevated";
         case 12: return "cancelled";
+        // 14 is the batch-aggregate WHServer VAS-guard abort code; it never
+        // appears on a per-item result (markers stay exit 12), but the map
+        // stays truthful if it is ever serialized.
+        case 14: return "whserver_vas_abort";
         default: return "unknown_error";
     }
 }
@@ -541,12 +576,16 @@ std::string batchItemCompletedLine(const std::string& op, size_t index,
 }
 
 // Render the single batch_completed summary. cancelled inserts the CANCELLED
-// token in the human form.
+// token in the human form; aborted (WHServer VAS guard) inserts the ABORTED
+// token plus the machine-readable aborted/abort_reason fields. A non-aborted
+// run stays byte-identical to the pre-guard contract: the aborted/abort_reason
+// members exist ONLY when aborted=true.
 std::string batchCompletedLine(const std::string& op, size_t completed,
                                size_t total, size_t successes,
                                size_t failures, size_t notRun, bool cancelled,
                                bool closeFailed, int exitCode,
-                               bool jsonOutput) {
+                               bool jsonOutput, bool aborted = false,
+                               const std::string& abortReason = "") {
     if (jsonOutput) {
         ordered_json j;
         j["event"]           = "batch_completed";
@@ -557,29 +596,43 @@ std::string batchCompletedLine(const std::string& op, size_t completed,
         j["failures"]        = failures;
         j["not_run"]         = notRun;
         j["cancelled"]       = cancelled;
+        if (aborted) {
+            j["aborted"]      = true;
+            j["abort_reason"] = abortReason;
+        }
         j["close_failed"]    = closeFailed;
         j["exit_code"]       = exitCode;
         return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     }
-    return std::string(cancelled ? "BATCH COMPLETE CANCELLED"
-                                 : "BATCH COMPLETE") +
+    const char* head = cancelled ? "BATCH COMPLETE CANCELLED"
+                     : aborted   ? "BATCH COMPLETE ABORTED"
+                                 : "BATCH COMPLETE";
+    std::string line = std::string(head) +
         " op=" + op +
         " completed=" + std::to_string(completed) +
         " total=" + std::to_string(total) +
         " successes=" + std::to_string(successes) +
         " failures=" + std::to_string(failures) +
         " not_run=" + std::to_string(notRun) +
-        " cancelled=" + (cancelled ? "true" : "false") +
+        " cancelled=" + (cancelled ? "true" : "false");
+    if (aborted) {
+        line += " aborted=true abort_reason=" + abortReason;
+    }
+    return line +
         " close_failed=" + (closeFailed ? "true" : "false") +
         " exit_code=" + std::to_string(exitCode);
 }
 
 // Aggregate batch exit code: 1 = batch did not run (pre-run failure),
-// 3 = cooperatively cancelled (dominates once set), 2 = ran with failures,
-// 0 = clean.
+// 14 = aborted by the WHServer VAS-headroom guard, 3 = cooperatively
+// cancelled, 2 = ran with failures, 0 = clean. aborted and cancelled are
+// mutually exclusive in runBatch (only one gate can break the loop first);
+// aborted is checked first so a hypothetical both-set run reports the
+// louder code.
 int batchAggregateExitCode(bool batchStarted, bool anyFailed,
-                           bool cancelled) {
+                           bool cancelled, bool aborted = false) {
     if (!batchStarted) return 1;
+    if (aborted)       return 14;
     if (cancelled)     return 3;
     if (anyFailed)     return 2;
     return 0;
@@ -3199,18 +3252,104 @@ std::string batchControlErrorLine(const std::string& message,
 }
 
 // Synthesize the not-run marker for an item the batch never attempted after
-// a cancellation. Preserves the parsed op/type/name verbatim; exit 12
+// a cancellation (default message) or a guard-driven abort (override
+// message). Preserves the parsed op/type/name verbatim; exit 12
 // serializes as error.code "cancelled" via errorCodeString.
-CliResult cancelledBatchItemResult(const std::string& op,
-                                   const BatchItem& item) {
+CliResult cancelledBatchItemResult(
+    const std::string& op, const BatchItem& item,
+    const std::string& message =
+        "Batch cancelled before this item was attempted") {
     CliResult r;
     r.op = op;
     r.typeStr = item.typeStr;
     r.name = item.name;
     r.success = false;
     r.exitCode = 12;
-    r.errorMessage = "Batch cancelled before this item was attempted";
+    r.errorMessage = message;
     return r;
+}
+
+// Message used for not-run markers when the WHServer VAS-headroom guard
+// aborted the batch (distinct from the cooperative-cancel message so the
+// array says WHY the item never ran).
+static const char* const kVasAbortMarkerMessage =
+    "Batch aborted (WHServer VAS headroom) before this item was attempted";
+
+// Render the one-shot warning for a transient measureVasFree() failure
+// (emitted once per run — a handle/OpenProcess race must not kill a batch).
+// JSON: {event:"whserver_vas_measure_failed", pid}. Human:
+//   tsdev_cli: whserver.vas.measure_failed pid=N (continuing)
+std::string whserverVasMeasureFailedLine(DWORD pid, bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"] = "whserver_vas_measure_failed";
+        j["pid"]   = static_cast<unsigned long>(pid);
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return "tsdev_cli: whserver.vas.measure_failed pid=" +
+           std::to_string(static_cast<unsigned long>(pid)) + " (continuing)";
+}
+
+// Render the loud abort event emitted when the WHServer VAS-headroom guard
+// fires (breach semantics: measured value STRICTLY below its threshold).
+// JSON: {event:"batch_aborted", reason:"whserver_vas_headroom", pid,
+//        free_mb, largest_free_mb, threshold_free_mb,
+//        threshold_largest_mb, action:"abort"}. Human:
+//   BATCH ABORTED: WHServer VAS headroom below threshold
+//   (pid=N free=XMB largest=YMB thresholds free=TMB largest=CMB);
+//   aborting before next item
+std::string whserverVasAbortLine(DWORD pid, const tsdev::WhVasStats& st,
+                                 unsigned thresholdFreeMB,
+                                 unsigned thresholdLargestMB,
+                                 bool jsonOutput) {
+    const uint64_t freeMB    = st.totalFreeBytes        / (1024 * 1024);
+    const uint64_t largestMB = st.largestFreeBlockBytes / (1024 * 1024);
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]                  = "batch_aborted";
+        j["reason"]                 = "whserver_vas_headroom";
+        j["pid"]                    = static_cast<unsigned long>(pid);
+        j["free_mb"]                = freeMB;
+        j["largest_free_mb"]        = largestMB;
+        j["threshold_free_mb"]      = thresholdFreeMB;
+        j["threshold_largest_mb"]   = thresholdLargestMB;
+        j["action"]                 = "abort";
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return "BATCH ABORTED: WHServer VAS headroom below threshold (pid=" +
+           std::to_string(static_cast<unsigned long>(pid)) +
+           " free=" + std::to_string(freeMB) + "MB" +
+           " largest=" + std::to_string(largestMB) + "MB" +
+           " thresholds free=" + std::to_string(thresholdFreeMB) + "MB" +
+           " largest=" + std::to_string(thresholdLargestMB) + "MB" +
+           "); aborting before next item";
+}
+
+// WHServer VAS-headroom guard configuration (batch-* only). Defaults match
+// the field-crash analysis: 256 MB total-free headroom and 64 MB for the
+// largest contiguous free block (non-LAA 32-bit WHServer dies near ~10 MB
+// free; 64 MB of contiguous headroom is the fragmentation tripwire).
+// Overridable via --whserver-free-mb / --whserver-largest-free-mb /
+// --no-whserver-vas-guard and the TSDEV_WHSERVER_* env mirrors.
+struct VasGuardConfig {
+    bool     enabled            = true;
+    unsigned freeThresholdMB    = 256;
+    unsigned largestThresholdMB = 64;
+};
+
+// Strict decimal-MB threshold parse shared by the --whserver-*-mb flags and
+// the TSDEV_WHSERVER_*_MB env mirrors. Accepts "0".."1048575" only (fully
+// numeric, no sign/space/junk); anything else returns false so the caller
+// can reject the flag value or keep the env-default respectively.
+bool parseMbThreshold(const std::string& s, unsigned& out) {
+    if (s.empty()) return false;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+    }
+    const unsigned long v = std::strtoul(s.c_str(), nullptr, 10);
+    if (v > 1048575UL) return false;
+    out = static_cast<unsigned>(v);
+    return true;
 }
 
 // Parameters passed to the batch worker thread.
@@ -3221,8 +3360,9 @@ struct BatchParams {
     bool                    jsonProgress = false;  // --json: NDJSON progress
     bool                    batchControl = false;  // --batch-progress-control
     bool                    pbar = false;   // --pbar: pinned stderr bar
+    VasGuardConfig          vasGuard;       // WHServer VAS-headroom guard
     std::vector<CliResult>  results;  // populated by runBatch
-    int                     exitCode = 0;   // 0/2/3 (set by worker)
+    int                     exitCode = 0;   // 0/2/3/14 (set by worker)
 };
 
 // The batch worker: constructs ONE TsDevLib, loops over items IN ORDER using
@@ -3354,6 +3494,9 @@ DWORD WINAPI runBatch(LPVOID param) {
 
     bool anyFailed = false;
     bool cancelled = false;
+    bool aborted = false;            // WHServer VAS-headroom guard fired
+    std::string abortReason;         // e.g. "whserver_vas_free=123MB"
+    bool vasMeasureWarned = false;   // one-shot measure_failed warning
     size_t index = 0;
     size_t attempted = 0;
 
@@ -3437,13 +3580,76 @@ DWORD WINAPI runBatch(LPVOID param) {
                 break;
             }
         }
+
+        // WHServer VAS-headroom guard (TVS-1b): same between-items gate
+        // position as the control check — sample AFTER item N completes,
+        // BEFORE item N+1 is dispatched (in-flight ops cannot be
+        // cancelled). WHServer is a lazy singleton: no pids means nothing
+        // to exhaust -> pass. A transient measureVasFree failure warns
+        // once per run and does NOT abort. A breach (either threshold)
+        // aborts loudly: emit the abort event, set aborted, break — the
+        // shared marker/summary machinery below reports truthfully.
+        if (p->vasGuard.enabled && index < total) {
+            const std::vector<DWORD> whPids = tsdev::findWhServerPids();
+            for (DWORD whPid : whPids) {
+                tsdev::WhVasStats vst;
+                if (!tsdev::measureVasFree(whPid, vst)) {
+                    if (!vasMeasureWarned) {
+                        vasMeasureWarned = true;
+                        emitLine(whserverVasMeasureFailedLine(
+                            whPid, p->jsonProgress));
+                    }
+                    TSDEV_DIAG_LOG("whserver.vas.check",
+                                   "pid=%lu result=measure_failed",
+                                   static_cast<unsigned long>(whPid));
+                    continue;
+                }
+                const uint64_t freeMB =
+                    vst.totalFreeBytes / (1024 * 1024);
+                const uint64_t largestMB =
+                    vst.largestFreeBlockBytes / (1024 * 1024);
+                const bool breach = tsdev::vasBreach(
+                    freeMB, largestMB, p->vasGuard.freeThresholdMB,
+                    p->vasGuard.largestThresholdMB);
+                TSDEV_DIAG_LOG("whserver.vas.check",
+                               "pid=%lu freeMB=%llu largestMB=%llu "
+                               "thresholdFreeMB=%u thresholdLargestMB=%u "
+                               "decision=%s",
+                               static_cast<unsigned long>(whPid),
+                               (unsigned long long)freeMB,
+                               (unsigned long long)largestMB,
+                               p->vasGuard.freeThresholdMB,
+                               p->vasGuard.largestThresholdMB,
+                               breach ? "abort" : "pass");
+                if (breach) {
+                    emitLine(whserverVasAbortLine(
+                        whPid, vst, p->vasGuard.freeThresholdMB,
+                        p->vasGuard.largestThresholdMB, p->jsonProgress));
+                    aborted = true;
+                    // Truthful machine-readable reason for the summary:
+                    // name the breaching metric + measured MB. Total-free
+                    // is checked first; when both breach, report it.
+                    abortReason =
+                        (freeMB < p->vasGuard.freeThresholdMB)
+                        ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
+                        : "whserver_vas_largest_free=" +
+                              std::to_string(largestMB) + "MB";
+                    break;
+                }
+            }
+            if (aborted) break;
+        }
     }
 
-    // After a cancellation the remaining items are never attempted: append
-    // exit-12 not-run markers so the emitted array stays full length.
-    // Markers get no item events and no decision reads.
+    // After a cancellation or abort the remaining items are never
+    // attempted: append exit-12 not-run markers so the emitted array stays
+    // full length. Markers get no item events and no decision reads; the
+    // abort marker message says WHY (guard abort vs cooperative cancel).
     for (size_t j = attempted; j < total; ++j) {
-        p->results.push_back(cancelledBatchItemResult(op, p->items[j]));
+        p->results.push_back(cancelledBatchItemResult(
+            op, p->items[j],
+            aborted ? kVasAbortMarkerMessage
+                    : "Batch cancelled before this item was attempted"));
     }
 
     // Flush the warehouse ONCE at the end of the batch (per the TsDevLib
@@ -3477,7 +3683,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     delete lib;
 
     p->exitCode = batchAggregateExitCode(/*batchStarted=*/true, anyFailed,
-                                         cancelled);
+                                         cancelled, aborted);
 
     // §7.1 diag: batch end record (final aggregate exit code).
     TSDEV_DIAG_LOG("batch.end", "op=%s exit=%d", op.c_str(), p->exitCode);
@@ -3497,13 +3703,13 @@ DWORD WINAPI runBatch(LPVOID param) {
     // when the batch was NOT fully clean — a clean run's committed bar is
     // the whole report. In the non-pbar modes it always prints.
     if (p->pbar) bar.finish();
-    const bool notClean = failures > 0 || cancelled || closeFailed ||
-                          (total - attempted) > 0;
+    const bool notClean = failures > 0 || cancelled || aborted ||
+                          closeFailed || (total - attempted) > 0;
     if (!p->pbar || notClean) {
         emitBatchProgress(batchCompletedLine(
             op, attempted, total, successes, failures,
             /*notRun=*/total - attempted, cancelled, closeFailed,
-            p->exitCode, p->jsonProgress));
+            p->exitCode, p->jsonProgress, aborted, abortReason));
     }
     tsdev_log_set_sink(nullptr);
     g_pbarLogTarget = nullptr;
@@ -3533,7 +3739,8 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
 // duplicated.
 int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
                     const wchar_t* tsPathOverride, bool jsonProgress,
-                    bool batchControl, bool pbar) {
+                    bool batchControl, bool pbar,
+                    const VasGuardConfig& vasGuard) {
     // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
     BatchParams params;
     params.op = op;
@@ -3542,6 +3749,7 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     params.jsonProgress = jsonProgress;
     params.batchControl = batchControl;
     params.pbar = pbar;
+    params.vasGuard = vasGuard;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runBatch, &params, 0, nullptr);
@@ -3566,7 +3774,7 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
              bool useStdin, const wchar_t* tsPathOverride, bool jsonProgress,
-             bool batchControl, bool pbar) {
+             bool batchControl, bool pbar, const VasGuardConfig& vasGuard) {
     const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
 
     // Parse the manifest on the main thread (before the worker).
@@ -3624,7 +3832,7 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
     }
 
     return runBatchAndEmit(op, items, tsPathOverride, jsonProgress,
-                           batchControl, pbar);
+                           batchControl, pbar, vasGuard);
 }
 
 // --- TVS-I.2: directory batch mode -------------------------------------------
@@ -3735,7 +3943,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
 int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
                 const std::string& dirPath, const std::vector<std::string>& extensions,
                 const wchar_t* tsPath, bool jsonProgress, bool batchControl,
-                bool pbar) {
+                bool pbar, const VasGuardConfig& vasGuard) {
     // Validate type (unknown -> exit 2, matching existing pattern).
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
@@ -3780,7 +3988,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
         _setmode(_fileno(stdin), _O_BINARY);
     }
     return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl,
-                           pbar);
+                           pbar, vasGuard);
 }
 
 // --- TVS-K.3: serve request dispatch -----------------------------------------
@@ -4606,6 +4814,11 @@ int main(int argc, char** argv) {
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
     int verboseCount = 0;   // accumulated -v/--verbose occurrences
+    // TVS-1b: WHServer VAS-headroom guard flags (honored by batch-* only;
+    // parsing is global like the other position-free switches).
+    VasGuardConfig vasGuard;
+    bool vasFreeFlagSet = false;     // --whserver-free-mb seen
+    bool vasLargestFlagSet = false;  // --whserver-largest-free-mb seen
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -4672,8 +4885,96 @@ int main(int argc, char** argv) {
             // the number of v chars. (Anything after the v run, e.g.
             // "-verbose" or "-vx", does not match and flows to reducedArgv.)
             verboseCount += static_cast<int>(arg.size() - 1);
+        } else if (arg == "--whserver-free-mb" ||
+                   arg.rfind("--whserver-free-mb=", 0) == 0) {
+            // Space ("--whserver-free-mb <N>") or equals form; strict
+            // decimal MB (see parseMbThreshold). Invalid -> usage error.
+            std::string v;
+            if (arg == "--whserver-free-mb") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--whserver-free-mb requires a value in MB";
+                    r.humanStderr = "Error: --whserver-free-mb requires a value in MB\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--whserver-free-mb="));
+            }
+            if (!parseMbThreshold(v, vasGuard.freeThresholdMB)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --whserver-free-mb value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --whserver-free-mb value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            vasFreeFlagSet = true;
+        } else if (arg == "--whserver-largest-free-mb" ||
+                   arg.rfind("--whserver-largest-free-mb=", 0) == 0) {
+            // Same value contract as --whserver-free-mb.
+            std::string v;
+            if (arg == "--whserver-largest-free-mb") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--whserver-largest-free-mb requires a value in MB";
+                    r.humanStderr = "Error: --whserver-largest-free-mb requires a value in MB\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--whserver-largest-free-mb="));
+            }
+            if (!parseMbThreshold(v, vasGuard.largestThresholdMB)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --whserver-largest-free-mb value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --whserver-largest-free-mb value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            vasLargestFlagSet = true;
+        } else if (arg == "--no-whserver-vas-guard" ||
+                   arg.rfind("--no-whserver-vas-guard=", 0) == 0) {
+            // Boolean switch like --json: presence disables the guard; a
+            // '=' value is ignored; repeats are harmless (idempotent).
+            vasGuard.enabled = false;
         } else {
             reducedArgv.push_back(argv[i]);
+        }
+    }
+
+    // TVS-1b: TSDEV_WHSERVER_* env mirrors for the VAS-headroom guard,
+    // applied BEFORE dispatch; explicit CLI flags win (same convention as
+    // TSDEV_DIAG_WATCHDOG_SECS — a garbage/missing value keeps the
+    // default). TSDEV_NO_WHSERVER_VAS_GUARD: any value other than "0"
+    // disables the guard (an explicit --no-whserver-vas-guard flag also
+    // wins over an env "0", matching the flag's presence semantics).
+    {
+        char envBuf[64] = {};
+        DWORD n = GetEnvironmentVariableA("TSDEV_WHSERVER_FREE_MB", envBuf,
+                                          sizeof(envBuf));
+        if (!vasFreeFlagSet && n > 0 && n < sizeof(envBuf)) {
+            unsigned v = 0;
+            if (parseMbThreshold(envBuf, v)) vasGuard.freeThresholdMB = v;
+        }
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_WHSERVER_LARGEST_FREE_MB", envBuf,
+                                    sizeof(envBuf));
+        if (!vasLargestFlagSet && n > 0 && n < sizeof(envBuf)) {
+            unsigned v = 0;
+            if (parseMbThreshold(envBuf, v)) vasGuard.largestThresholdMB = v;
+        }
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_NO_WHSERVER_VAS_GUARD", envBuf,
+                                    sizeof(envBuf));
+        if (vasGuard.enabled && n > 0 && n < sizeof(envBuf) &&
+            !(n == 1 && envBuf[0] == '0')) {
+            vasGuard.enabled = false;
         }
     }
 
@@ -5021,10 +5322,10 @@ int main(int argc, char** argv) {
         std::string arg2 = reducedArgvPtr[2];
         if (arg2 == "--batch-stdin") {
             return cmdBatch(op, std::string(), true, tsPathWidePtr, jsonMode,
-                            batchControl, pbar);
+                            batchControl, pbar, vasGuard);
         }
         return cmdBatch(op, arg2, false, tsPathWidePtr, jsonMode,
-                        batchControl, pbar);
+                        batchControl, pbar, vasGuard);
     }
 
     // --- TVS-I.2: directory batch subcommands ---
@@ -5091,7 +5392,8 @@ int main(int argc, char** argv) {
         int typeInt = static_cast<int>(ctype);
 
         return cmdBatchDir(op, typeInt, typeStr, dirPath, extensions,
-                           tsPathWidePtr, jsonMode, batchControl, pbar);
+                           tsPathWidePtr, jsonMode, batchControl, pbar,
+                           vasGuard);
     }
 
     {

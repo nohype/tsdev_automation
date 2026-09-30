@@ -122,6 +122,37 @@ int runTests() {
         std::fprintf(stdout, "    PASS: group 4 (pid enumeration sane)\n");
     }
 
+    // -------------------------------------------------------------------
+    // Group 5: vasBreach — the pure runBatch guard decision. Semantics:
+    // STRICTLY below the threshold breaches; exactly-at-threshold passes.
+    // -------------------------------------------------------------------
+    {
+        const unsigned T_TOTAL = 256, T_CONTIG = 64;
+        // Healthy headroom -> pass.
+        if (tsdev::vasBreach(400, 300, T_TOTAL, T_CONTIG))
+            return fail("vasBreach(400,300,256,64) breached on healthy", 50);
+        // Total below threshold -> breach.
+        if (!tsdev::vasBreach(100, 300, T_TOTAL, T_CONTIG))
+            return fail("vasBreach(100,300,256,64) passed on low total", 51);
+        // Largest block below threshold -> breach (fragmentation), even
+        // when total is ample.
+        if (!tsdev::vasBreach(400, 10, T_TOTAL, T_CONTIG))
+            return fail("vasBreach(400,10,256,64) passed on low largest", 52);
+        // Both below -> breach.
+        if (!tsdev::vasBreach(10, 5, T_TOTAL, T_CONTIG))
+            return fail("vasBreach(10,5,256,64) passed on double breach", 53);
+        // Exactly AT threshold -> pass (documented '<' semantics).
+        if (tsdev::vasBreach(T_TOTAL, T_CONTIG, T_TOTAL, T_CONTIG))
+            return fail("vasBreach at threshold breached ('<' semantics)", 54);
+        // Zero thresholds -> everything passes (degenerate config).
+        if (tsdev::vasBreach(0, 0, 0, 0))
+            return fail("vasBreach(0,0,0,0) breached with zero thresholds", 55);
+        // Impossible threshold (used by the manual forced-breach check).
+        if (!tsdev::vasBreach(440, 400, 5000, 64))
+            return fail("vasBreach(440,400,5000,64) passed vs 5000MB", 56);
+        std::fprintf(stdout, "    PASS: group 5 (vasBreach decision)\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }
