@@ -101,6 +101,16 @@
 //  12. (TVS C) cancel composition: attempted prefix + markers stays full
 //      length in the emitted array, and cancelled+anyFailed aggregates to
 //      exit 3 (batchCompletedLine: completed=attempted, not_run=markers).
+//  15. (R6) bounded batch-control wait: runBoundedControlRead pass-through
+//      for Continue/Cancel/Error+diagnostic; a blocked reader yields Error
+//      after the bound (orphan-wait containment); FILE* end-to-end via
+//      readBatchControlDecisionBounded (timeoutSecs=0 -> direct read,
+//      >0 -> bounded, EOF still Error); parseTimeoutSecs contract.
+//  16. (P4 gaps a/g-1) zombie pre-check + enum-failure seams:
+//      whserverZombiePid intersection; whserverZombieAbortLine /
+//      whserverEnumFailedLine renderers; the zombie refusal's exit-14
+//      serialization; kZombieAbortMarkerMessage + abort_reason
+//      "whserver_zombie" on the summary.
 //
 // NOT pinned here (no same-TU seam exists): the --batch-progress-control
 // argument wiring lives inside tsdev_cli.cpp's main(), which is excluded
@@ -189,6 +199,29 @@ std::string drainFile(FILE* f) {
         out.append(buf, n);
     }
     return out;
+}
+
+// Injected readers (R6 checks): runBoundedControlRead takes the reader as
+// a function pointer so the real helper-thread + bounded-wait machinery
+// can be exercised without stdin.
+BatchControlDecision readerReturnsContinue(void*, std::string& err) {
+    err = "reader-side diagnostic";  // passes through verbatim
+    return BatchControlDecision::Continue;
+}
+BatchControlDecision readerReturnsCancel(void*, std::string& err) {
+    err.clear();
+    return BatchControlDecision::Cancel;
+}
+BatchControlDecision readerReturnsError(void*, std::string& err) {
+    err = "injected read failure";
+    return BatchControlDecision::Error;
+}
+// Blocks longer than any bound the test arms — models the orphaned
+// control channel (dead parent, open pipe: fgetc never returns).
+BatchControlDecision readerBlocksForever(void* ctx, std::string& err) {
+    err.clear();
+    Sleep(*static_cast<const DWORD*>(ctx));
+    return BatchControlDecision::Continue;
 }
 
 struct TestState {
@@ -1235,6 +1268,10 @@ DWORD WINAPI runTest(LPVOID param) {
     //       exit_code=14, error.code="whserver_vas_abort" via
     //       errorCodeString, message carried verbatim — the contract the
     //       Python client aborts on.
+    //   (c) R1: the attached-site deferred recycle boundary (engine NOT
+    //       run — +7 m_nLock lasts the process's lifetime) serializes on
+    //       the same exit-18 "whserver_recycled" frame the client
+    //       respawns on.
     // ------------------------------------------------------------------
     {
         ServeRequest req;
@@ -1244,7 +1281,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
         VasGuardConfig disabled;
         disabled.enabled = false;
-        bool warned = false;
+        VasGuardWarns warned;
         CliResult refusal;
         refusal.exitCode = -777;  // sentinel: must stay untouched
         if (serveVasGuardRefuse(req, disabled, warned, false, refusal) ||
@@ -1266,11 +1303,14 @@ DWORD WINAPI runTest(LPVOID param) {
         // Enabled guard + a mutating op but impossible thresholds (0):
         // every WHServer pid either fails to measure (warn-once, no
         // refusal) or reports free MB >= 0 -> never breaches. Deterministic
-        // whether or not WHServer is running.
+        // whether or not WHServer is running — the one environmental input
+        // that CAN still refuse is a real crash-frozen WHServer on this
+        // machine (the zombie pre-check fires regardless of thresholds;
+        // genuinely absent in test environments).
         VasGuardConfig zero;
         zero.freeThresholdMB    = 0;
         zero.largestThresholdMB = 0;
-        warned = false;
+        warned = VasGuardWarns();
         if (serveVasGuardRefuse(req, zero, warned, false, refusal)) {
             ec = fail("check14a: zero thresholds refused", 173);
             return 0;
@@ -1298,9 +1338,287 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check14b: refusal serialization wrong", 174);
             return 0;
         }
+
+        // R1: the attached-site deferred recycle boundary serializes on
+        // the same exit-18 frame the client respawns on — exit_code=18,
+        // error.code "whserver_recycled" via errorCodeString (the frame
+        // is the contract; the message says WHY deferred).
+        CliResult def;
+        def.op = "insert";
+        def.typeStr = "function";
+        def.name = "F";
+        def.success = false;
+        def.exitCode = 18;
+        def.errorMessage =
+            "WHServer recycle deferred (whserver_vas_free=10MB); "
+            "resubmit on the respawned broker";
+        ordered_json dj = cliResultToJson(def);
+        if (dj["exit_code"].get<int>() != 18 ||
+            dj["success"].get<bool>() != false ||
+            dj["error"]["code"].get<std::string>() != "whserver_recycled" ||
+            dj["error"]["message"].get<std::string>() != def.errorMessage) {
+            ec = fail("check14c: deferred refusal serialization wrong",
+                      175);
+            return 0;
+        }
         std::fprintf(stdout,
                      "    PASS: serve VAS-guard refusal gate + exit-14 "
-                     "serialization\n");
+                     "serialization + R1 defer frame\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 15 (R6): bounded batch-control wait (design §5) — the decision
+    //   read runs on a helper thread under a bounded wait; a stalled/open
+    //   channel yields Error (cancel) instead of an unbounded orphan wait.
+    //   runBoundedControlRead is exercised with INJECTED readers so the
+    //   real thread + WaitForSingleObject machinery is covered without
+    //   stdin; readBatchControlDecisionBounded is covered end-to-end with
+    //   the FILE* pipe helper.
+    //   (a) reader completing inside the bound -> decision AND error pass
+    //       through verbatim.
+    //   (b) reader blocked past the bound -> Error + nonempty diagnostic
+    //       naming the bound (fail-closed cancel).
+    //   (c) injected reader error -> Error + injected diagnostic verbatim.
+    //   (d) readBatchControlDecisionBounded: timeoutSecs=0 -> plain
+    //       blocking read (documented escape hatch); >0 -> bounded read;
+    //       EOF channel still yields Error (EOF-as-cancel preserved).
+    //   (e) parseTimeoutSecs shared contract.
+    // ------------------------------------------------------------------
+    {
+        std::string err;
+        BatchControlDecision d = runBoundedControlRead(
+            readerReturnsContinue, nullptr, 5000, err);
+        if (d != BatchControlDecision::Continue ||
+            err != "reader-side diagnostic") {
+            ec = fail("check15a: Continue pass-through broken", 180);
+            return 0;
+        }
+        d = runBoundedControlRead(readerReturnsCancel, nullptr, 5000, err);
+        if (d != BatchControlDecision::Cancel || !err.empty()) {
+            ec = fail("check15a: Cancel pass-through broken", 181);
+            return 0;
+        }
+
+        // Orphaned channel: reader blocks 60 s; the 150 ms bound must fire.
+        DWORD blockMs = 60000;
+        err.clear();
+        const DWORD t0 = GetTickCount();
+        d = runBoundedControlRead(readerBlocksForever, &blockMs, 150, err);
+        const DWORD waited = GetTickCount() - t0;
+        if (d != BatchControlDecision::Error) {
+            ec = fail("check15b: bound expiry did not yield Error", 182);
+            return 0;
+        }
+        if (err.empty() ||
+            err.find("exceeded") == std::string::npos) {
+            ec = fail("check15b: bound-expiry diagnostic missing", 183);
+            return 0;
+        }
+        if (waited > 10000) {
+            ec = fail("check15b: wait was not bounded", 184);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "  [15b] blocked reader -> Error after %lu ms: %s\n",
+                     static_cast<unsigned long>(waited), err.c_str());
+
+        err.clear();
+        d = runBoundedControlRead(readerReturnsError, nullptr, 5000, err);
+        if (d != BatchControlDecision::Error || err != "injected read failure") {
+            ec = fail("check15c: injected error pass-through broken", 185);
+            return 0;
+        }
+
+        // FILE* end-to-end: 0 disables the bound (plain blocking read).
+        FILE* f = fileFromBytes("cancel\n");
+        if (!f) {
+            ec = fail("check15d: pipe setup failed", 186);
+            return 0;
+        }
+        err.clear();
+        d = readBatchControlDecisionBounded(f, 0, err);
+        std::fclose(f);
+        if (d != BatchControlDecision::Cancel) {
+            ec = fail("check15d: timeoutSecs=0 did not read directly", 187);
+            return 0;
+        }
+        // Bounded path: decision within the bound.
+        f = fileFromBytes("continue\n");
+        if (!f) {
+            ec = fail("check15d: pipe setup failed", 188);
+            return 0;
+        }
+        err.clear();
+        d = readBatchControlDecisionBounded(f, 30, err);
+        std::fclose(f);
+        if (d != BatchControlDecision::Continue) {
+            ec = fail("check15d: bounded read broke Continue", 189);
+            return 0;
+        }
+        // EOF-as-cancel preserved through the bounded path.
+        f = fileFromBytes("");
+        if (!f) {
+            ec = fail("check15d: pipe setup failed", 190);
+            return 0;
+        }
+        err.clear();
+        d = readBatchControlDecisionBounded(f, 30, err);
+        std::fclose(f);
+        if (d != BatchControlDecision::Error || err.empty()) {
+            ec = fail("check15d: EOF did not yield Error", 191);
+            return 0;
+        }
+
+        unsigned tv = 0;
+        if (!parseTimeoutSecs("0", tv) || tv != 0 ||
+            !parseTimeoutSecs("900", tv) || tv != 900 ||
+            !parseTimeoutSecs("86400", tv) || tv != 86400 ||
+            parseTimeoutSecs("86401", tv) || parseTimeoutSecs("-1", tv) ||
+            parseTimeoutSecs("", tv) || parseTimeoutSecs("1.5", tv) ||
+            parseTimeoutSecs("x", tv)) {
+            ec = fail("check15e: parseTimeoutSecs contract wrong", 192);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: bounded control wait — pass-through, "
+                     "bound expiry (cancel), EOF-as-cancel, 0=unbounded\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 16 (P4 gaps a/g-1): zombie pre-check + enum-failure warning
+    // seams —
+    //   (a) whserverZombiePid: the first WHServer pid that parents a
+    //       TSCrashReport.exe, or 0 — intersection order, non-matching
+    //       parents, empty sets.
+    //   (b) whserverZombieAbortLine / whserverEnumFailedLine render one
+    //       physical line in both modes; JSON carries the honest fields
+    //       (batch_aborted + reason "whserver_zombie"; the enum_failed
+    //       event names).
+    //   (c) the zombie refusal CliResult serializes like a normal op
+    //       failure on the SHARED exit-14 guard class: exit_code=14,
+    //       error.code="whserver_vas_abort" via errorCodeString (the
+    //       Python client's batch-abort contract), and the message
+    //       carries the whserver_zombie token + the frozen pid verbatim
+    //       from whserverZombieRefusalMessage.
+    //   (d) kZombieAbortMarkerMessage keeps exit 12 and stays distinct
+    //       from the VAS-abort marker; batchCompletedLine carries
+    //       abort_reason="whserver_zombie" verbatim.
+    // ------------------------------------------------------------------
+    {
+        // (a) pure intersection decision.
+        if (whserverZombiePid({111, 222}, {222, 333}) != 222 ||
+            whserverZombiePid({111, 222}, {333}) != 0 ||
+            whserverZombiePid({}, {111}) != 0 ||
+            whserverZombiePid({111}, {}) != 0 ||
+            whserverZombiePid({111, 222}, {999, 222}) != 222 ||
+            whserverZombiePid({222, 111}, {222}) != 222) {
+            ec = fail("check16a: whserverZombiePid intersection wrong", 200);
+            return 0;
+        }
+
+        // (b) renderer shape — single physical lines, honest fields.
+        std::string zhl = whserverZombieAbortLine(4321, false);
+        std::string zjl = whserverZombieAbortLine(4321, true);
+        std::string weh = whserverEnumFailedLine("whserver", false);
+        std::string wej = whserverEnumFailedLine("whserver", true);
+        std::string ceh = whserverEnumFailedLine("crashreport", false);
+        std::string cej = whserverEnumFailedLine("crashreport", true);
+        std::fprintf(stdout, "  [16b] zombie human: %s\n", zhl.c_str());
+        std::fprintf(stdout, "  [16b] zombie json: %s\n", zjl.c_str());
+        if (!isSingleLine(zhl) || !isSingleLine(zjl) ||
+            !isSingleLine(weh) || !isSingleLine(wej) ||
+            !isSingleLine(ceh) || !isSingleLine(cej)) {
+            ec = fail("check16b: renderer emitted multi-line output", 201);
+            return 0;
+        }
+        if (zhl.find("BATCH ABORTED") != 0 ||
+            zhl.find("pid=4321") == std::string::npos ||
+            zhl.find("zombie") == std::string::npos ||
+            zhl.find("TSCrashReport") == std::string::npos ||
+            zhl.find("free=") != std::string::npos) {  // no fake VAS numbers
+            ec = fail("check16b: human zombie line content wrong", 202);
+            return 0;
+        }
+        ordered_json zbj = ordered_json::parse(zjl);
+        if (zbj["event"].get<std::string>() != "batch_aborted" ||
+            zbj["reason"].get<std::string>() != "whserver_zombie" ||
+            zbj["pid"].get<unsigned long>() != 4321UL ||
+            zbj["action"].get<std::string>() != "abort") {
+            ec = fail("check16b: JSON zombie line content wrong", 203);
+            return 0;
+        }
+        ordered_json wbj = ordered_json::parse(wej);
+        ordered_json cbj = ordered_json::parse(cej);
+        if (wbj["event"].get<std::string>() != "whserver_enum_failed" ||
+            cbj["event"].get<std::string>() != "crashreport_enum_failed" ||
+            weh.find("whserver.enum_failed") == std::string::npos ||
+            ceh.find("crashreport.enum_failed") == std::string::npos ||
+            weh.find("; continuing)") == std::string::npos ||
+            ceh.find("; continuing)") == std::string::npos) {
+            ec = fail("check16b: enum_failed warning shape wrong", 204);
+            return 0;
+        }
+
+        // (c) zombie refusal shape — same exit-14 class as the VAS
+        // breach (the Python client aborts on exit 14 + error.code
+        // "whserver_vas_abort"); the honest reason lives in the message.
+        CliResult zref;
+        zref.op = "insert";
+        zref.typeStr = "function";
+        zref.name = "F";
+        zref.success = false;
+        zref.exitCode = 14;
+        zref.errorMessage = whserverZombieRefusalMessage("insert", 4321);
+        ordered_json zrj = cliResultToJson(zref);
+        if (zrj["exit_code"].get<int>() != 14 ||
+            zrj["success"].get<bool>() != false ||
+            zrj["error"]["code"].get<std::string>() !=
+                "whserver_vas_abort" ||
+            zrj["error"]["message"].get<std::string>() !=
+                zref.errorMessage ||
+            zref.errorMessage.find("(whserver_zombie)") ==
+                std::string::npos ||
+            zref.errorMessage.find("pid=4321") == std::string::npos ||
+            zref.errorMessage.find("refusing insert before dispatch") ==
+                std::string::npos) {
+            ec = fail("check16c: zombie refusal serialization wrong", 205);
+            return 0;
+        }
+
+        // (d) zombie marker + aborted summary carry the honest reason.
+        BatchItem zitem;
+        zitem.typeStr = "function";
+        zitem.name    = "NeverRanZombie";
+        CliResult zm = cancelledBatchItemResult("insert", zitem,
+                                                kZombieAbortMarkerMessage);
+        if (zm.exitCode != 12 || zm.success != false ||
+            zm.errorMessage !=
+                "Batch aborted (WHServer crash-frozen zombie) before this "
+                "item was attempted" ||
+            std::string(kZombieAbortMarkerMessage) ==
+                kVasAbortMarkerMessage) {
+            ec = fail("check16d: zombie abort marker wrong", 206);
+            return 0;
+        }
+        std::string zsum = batchCompletedLine(
+            "insert", /*completed=*/1, /*total=*/3, /*successes=*/1,
+            /*failures=*/0, /*notRun=*/2, /*cancelled=*/false,
+            /*closeFailed=*/false, /*exitCode=*/14, false,
+            /*aborted=*/true, /*abortReason=*/"whserver_zombie");
+        std::string zsumj = batchCompletedLine(
+            "insert", 1, 3, 1, 0, 2, false, false, 14, true,
+            true, "whserver_zombie");
+        ordered_json zsj = ordered_json::parse(zsumj);
+        if (zsum.find("abort_reason=whserver_zombie") ==
+                std::string::npos ||
+            zsj["abort_reason"].get<std::string>() != "whserver_zombie" ||
+            zsj["exit_code"].get<int>() != 14) {
+            ec = fail("check16d: zombie abort summary wrong", 207);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: zombie pre-check + enum-failure seams "
+                     "render exit-14 refusal + honest fields\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

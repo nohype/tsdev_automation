@@ -101,11 +101,12 @@ DWORD WINAPI watchdogProc(LPVOID) {
     // during the current flight before its disappearance can fire
     // whserver_gone (WHServer is a lazy singleton — absent while idle and
     // for a short window at flight start while the dispatch itself spawns
-    // it), and the empty result must persist across
-    // kWhServerGoneConfirmSamples consecutive polls — a single empty poll
-    // is inconclusive (findWhServerPids() returns empty on a Toolhelp32
-    // snapshot FAILURE too). Re-armed whenever a new flight's enterQpc is
-    // observed.
+    // it), and the absence must persist across
+    // kWhServerGoneConfirmSamples consecutive CONFIRMED-empty polls — a
+    // failed Toolhelp32 snapshot is inconclusive (NEVER an empty sample)
+    // and resets the streak via accountWhServerSample, so consecutive
+    // snapshot failures can never kill a healthy in-flight dispatch.
+    // Re-armed whenever a new flight's enterQpc is observed.
     uint64_t lastEnterQpc  = 0;
     bool     whSeen        = false;
     unsigned emptyWhSamples = 0;
@@ -130,14 +131,32 @@ DWORD WINAPI watchdogProc(LPVOID) {
             emptyWhSamples = 0;
         }
 
-        const std::vector<DWORD> whPids = findWhServerPids();
-        if (!whPids.empty()) {
-            whSeen = true;
-            emptyWhSamples = 0;
-        } else {
-            ++emptyWhSamples;
+        // snapshotOk overload (NOT the collapsing one): a failed
+        // Toolhelp32 snapshot is INCONCLUSIVE — it must never count as an
+        // empty sample toward whserver_gone (consecutive failures
+        // mid-flight would otherwise kill a HEALTHY in-flight dispatch).
+        // Same fail-closed convention as the census/deathPoll
+        // re-enumerations and the tscrash-enum below.
+        std::vector<DWORD> whPids;
+        const bool whSnapOk = findWhServerPids(whPids);
+        if (!whSnapOk) {
+            // Logged so the diag trail shows the whserver_gone fast path
+            // was blind this poll rather than confirming absence.
+            TSDEV_DIAG_LOG("dispatch.watchdog.wh-enum",
+                           "snapshot inconclusive; whserver_gone blind");
         }
-        const std::vector<DWORD> crashParents = findCrashReportParentPids();
+        accountWhServerSample(whSnapOk, whPids, whSeen, emptyWhSamples);
+        std::vector<DWORD> crashParents;
+        if (!findCrashReportParentPids(crashParents)) {
+            // Inconclusive — NOT "no reporters": the whserver_crashed fast
+            // path is blind this poll. Not-firing is the fail-safe
+            // direction for a fire path (firing on an inconclusive set
+            // could kill a healthy dispatch); the in-flight-age bound
+            // remains the backstop for a wedged call. Logged so the diag
+            // trail shows the fast path was blind rather than empty.
+            TSDEV_DIAG_LOG("dispatch.watchdog.tscrash-enum",
+                           "snapshot inconclusive; whserver_crashed blind");
+        }
 
 #ifdef TSDEV_DIAG
         // A TSCrashReport.exe whose parent is OUR pid is our own crash being
@@ -244,10 +263,13 @@ DispatchFireReason decideDispatchFire(
 
     // (3) Fast path: WHServer vanished mid-flight after having been seen —
     // dead is dead. WHServer never seen during this flight (lazy singleton
-    // still spawning) is NOT a fire condition, and neither is a single
-    // empty sample: findWhServerPids() returns empty on a Toolhelp32
-    // snapshot failure too, so the absence must persist across
-    // kWhServerGoneConfirmSamples consecutive polls before it counts.
+    // still spawning) is NOT a fire condition, and neither is a streak of
+    // fewer than kWhServerGoneConfirmSamples empty samples: the caller
+    // increments whServerEmptySamples ONLY on confirmed-empty polls (a
+    // failed Toolhelp32 snapshot is inconclusive and resets the streak —
+    // accountWhServerSample), so the absence must persist across
+    // kWhServerGoneConfirmSamples consecutive confirmed-empty polls
+    // before it counts.
     if (whServerSeenDuringFlight && whServerPids.empty() &&
         whServerEmptySamples >= kWhServerGoneConfirmSamples) {
         return DispatchFireReason::WhServerGone;
@@ -256,10 +278,32 @@ DispatchFireReason decideDispatchFire(
     return DispatchFireReason::None;
 }
 
-std::vector<DWORD> findCrashReportParentPids() {
-    std::vector<DWORD> parents;
+void accountWhServerSample(bool snapshotOk,
+                           const std::vector<DWORD>& whServerPids,
+                           bool& whSeen, unsigned& emptyWhSamples) {
+    if (!snapshotOk) {
+        // Inconclusive poll — not an empty sample and not a sighting. The
+        // confirmed-empty streak RESETS: whserver_gone requires
+        // consecutive CONFIRMED-empty polls and a gap in confirmation
+        // breaks consecutiveness (the census "inconclusive never counts"
+        // discipline — whserver_census.cpp emptyStreak/absentStreak and
+        // whserver_recycle.cpp deadStreak). whSeen keeps its per-flight
+        // value: a failed snapshot is no evidence of presence either.
+        emptyWhSamples = 0;
+        return;
+    }
+    if (!whServerPids.empty()) {
+        whSeen = true;
+        emptyWhSamples = 0;
+    } else {
+        ++emptyWhSamples;
+    }
+}
+
+bool findCrashReportParentPids(std::vector<DWORD>& parents) {
+    parents.clear();
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return parents;
+    if (snap == INVALID_HANDLE_VALUE) return false;
     PROCESSENTRY32W pe;
     pe.dwSize = sizeof(pe);
     if (Process32FirstW(snap, &pe)) {
@@ -269,7 +313,22 @@ std::vector<DWORD> findCrashReportParentPids() {
             }
         } while (Process32NextW(snap, &pe));
     }
+    // Same ERROR_NO_MORE_FILES convention as findWhServerPids
+    // (whserver_health.cpp): the clean end of both arms — a genuinely
+    // empty snapshot on First, a completed walk on Next. Any other error
+    // is a truncated enumeration — a partial set is never evidence of
+    // "no crash reporters", so the result is inconclusive and carries no
+    // set.
+    const bool ok = (GetLastError() == ERROR_NO_MORE_FILES);
     CloseHandle(snap);
+    if (!ok) parents.clear();
+    return ok;
+}
+
+std::vector<DWORD> findCrashReportParentPids() {
+    std::vector<DWORD> parents;
+    findCrashReportParentPids(parents);  // enumeration failure collapses to
+                                         // empty (legacy contract)
     return parents;
 }
 

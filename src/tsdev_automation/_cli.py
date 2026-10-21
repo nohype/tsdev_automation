@@ -36,7 +36,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from .client import BatchItem, TsDevClient
+from .client import (
+    BatchItem,
+    TsDevClient,
+    _MANIFEST_WS,
+    _VALID_TYPES,
+    _manifest_line_tokens,
+)
 from .exceptions import TsDevError
 from .results import TsDevResult
 
@@ -51,6 +57,30 @@ def _print_result(r: TsDevResult) -> None:
             print(f"       {err.message}")
         if err and err.compile_errors:
             print(f"       compile_errors:\n{err.compile_errors}")
+
+
+def _print_stderr_once(results: list[TsDevResult]) -> None:
+    """Print each distinct captured child stderr once (batch results all
+    carry the same run's stderr — diagnostics such as resume-manifest
+    refusals live there and would otherwise never be seen).
+
+    Only non-JSON lines are surfaced: the always-on ``--json`` batch
+    protocol writes its NDJSON progress frames to the child's stderr,
+    and echoing that raw frame dump would trip stderr-nonempty=failed
+    wrappers while duplicating information already in the stdout
+    results.  Lines that do not start with ``{`` are human diagnostics.
+    """
+    seen: set[str] = set()
+    for r in results:
+        if not r.stderr:
+            continue
+        diag = "\n".join(
+            line for line in r.stderr.splitlines()
+            if line.strip() and not line.lstrip().startswith("{")
+        )
+        if diag and diag not in seen:
+            seen.add(diag)
+            print(diag, file=sys.stderr)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -204,6 +234,7 @@ def _main(argv: list[str] | None = None) -> int:
             results = getattr(client, f"batch_{op}_dir")(args.type, args.dir_path, args.extensions, **cache_kwargs)
             for r in results:
                 _print_result(r)
+            _print_stderr_once(results)
             return 0 if all(r.success for r in results) else 1
         elif args.command.startswith("batch-"):
             op = args.command.split("-", 1)[1]
@@ -211,6 +242,7 @@ def _main(argv: list[str] | None = None) -> int:
             results = getattr(client, f"batch_{op}")(items, **cache_kwargs)
             for r in results:
                 _print_result(r)
+            _print_stderr_once(results)
             return 0 if all(r.success for r in results) else 1
     except TsDevError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -222,18 +254,68 @@ def _main(argv: list[str] | None = None) -> int:
 
 
 def _read_manifest(path: Path, needs_source: bool) -> list[BatchItem]:
+    """Read a batch manifest into ``BatchItem``s.
+
+    Reproduces the C++ ``parseManifestLines`` tokenization EXACTLY via
+    :func:`client._manifest_line_tokens` — the same 6-char
+    ``_MANIFEST_WS`` whitespace class (NOT Python's generic whitespace:
+    ``\\x0b``/``\\x0c`` delimit tokens but ``\\xa0`` does not), lines
+    split on ``'\\n'`` only (``str.splitlines`` would also split on
+    ``\\v``/``\\f``/``\\x85``/``\\u2028``), and the same double-quoted
+    ``<name>`` form the resume-manifest writer emits.
+
+    Validation mirrors the C++ per-line order — malformed quoted name,
+    then ``<type>``, then non-empty ``<name>``, then ``<source_file>`` —
+    and a line the C++ parser would mark a pre-validation failure
+    produces an item carrying :attr:`BatchItem.prevalid_failure` (the
+    C++ ``preValid=false`` shape: a per-item failure result, never a
+    dispatch, never a silent re-tokenization that could retarget a
+    delete), so the batch continues and reports it in position.
+
+    The file is decoded strictly as UTF-8 — a non-UTF-8 manifest raises
+    ``UnicodeDecodeError`` (a ``ValueError`` -> exit 3) rather than
+    silently corrupting names to U+FFFD.
+    """
     items: list[BatchItem] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    text = path.read_text(encoding="utf-8")
+    for raw in text.split("\n"):
+        toks = _manifest_line_tokens(raw)
+        if toks is None:
             continue
-        parts = line.split(None, 2)
-        if needs_source and len(parts) == 3:
-            items.append(BatchItem(parts[0], parts[1], parts[2]))
-        elif not needs_source and len(parts) >= 2:
-            items.append(BatchItem(parts[0], parts[1]))
+        type_tok, name_tok, rest, quote_err = toks
+        trimmed = raw.strip(_MANIFEST_WS)
+        if quote_err == "unterminated":
+            items.append(BatchItem(type_tok, "", prevalid_failure=(
+                2, "unterminated quoted component name in manifest line: "
+                   f'"{trimmed}"')))
+            continue
+        if quote_err == "malformed":
+            items.append(BatchItem(type_tok, "", prevalid_failure=(
+                2, "malformed quoted component name in manifest line "
+                   "(characters after the closing quote): "
+                   f'"{trimmed}"')))
+            continue
+        # Validate <type> FIRST (C++ order): an unknown type is a
+        # per-item exit-2 failure even when the name is also missing.
+        if type_tok.strip().lower() not in _VALID_TYPES:
+            items.append(BatchItem(type_tok, name_tok or "",
+                                   prevalid_failure=(
+                2, f'unknown type "{type_tok}" (expected '
+                   "strategy/function/indicator/tradingapp/showme)")))
+            continue
+        if not name_tok:
+            items.append(BatchItem(type_tok, "", prevalid_failure=(
+                2, "component name must not be empty")))
+            continue
+        if needs_source:
+            if not rest:
+                items.append(BatchItem(type_tok, name_tok,
+                                       prevalid_failure=(
+                    1, f'manifest line missing <source_file>: "{trimmed}"')))
+                continue
+            items.append(BatchItem(type_tok, name_tok, rest))
         else:
-            raise ValueError(f"malformed manifest line: {raw!r}")
+            items.append(BatchItem(type_tok, name_tok))
     return items
 
 

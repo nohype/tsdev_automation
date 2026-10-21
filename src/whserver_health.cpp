@@ -10,10 +10,10 @@
 
 namespace tsdev {
 
-std::vector<DWORD> findWhServerPids() {
-    std::vector<DWORD> pids;
+bool findWhServerPids(std::vector<DWORD>& pids) {
+    pids.clear();
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return pids;
+    if (snap == INVALID_HANDLE_VALUE) return false;
     PROCESSENTRY32W pe;
     pe.dwSize = sizeof(pe);
     if (Process32FirstW(snap, &pe)) {
@@ -23,7 +23,19 @@ std::vector<DWORD> findWhServerPids() {
             }
         } while (Process32NextW(snap, &pe));
     }
+    // ERROR_NO_MORE_FILES is the clean end of both arms: on First it is a
+    // genuinely empty snapshot (authoritative-empty), on Next a completed
+    // walk. Any other error is a truncated enumeration — a partial set is
+    // never evidence, so the poll is inconclusive and carries no set.
+    const bool ok = (GetLastError() == ERROR_NO_MORE_FILES);
     CloseHandle(snap);
+    if (!ok) pids.clear();
+    return ok;
+}
+
+std::vector<DWORD> findWhServerPids() {
+    std::vector<DWORD> pids;
+    findWhServerPids(pids);  // enumeration failure collapses to empty (legacy contract)
     return pids;
 }
 

@@ -303,6 +303,94 @@ DWORD WINAPI runTest(LPVOID param) {
                      "    PASS: not found JSON structure correct\n");
     }
 
+    // ------------------------------------------------------------------
+    // Check 6: CliResult::sessionMayBeOpen (§5 teardown flag) is INTERNAL
+    //   ONLY — never serialized by cliResultToJson. A flagged close-failure
+    //   result must produce the byte-identical schema as an unflagged one
+    //   (exit 6, entry_op_failure); the teardown contract changes HOW the
+    //   process dies, never what it emitted.
+    // ------------------------------------------------------------------
+    {
+        CliResult r;
+        r.op               = "insert";
+        r.typeStr          = "strategy";
+        r.name             = "Test";
+        r.success          = false;
+        r.exitCode         = 6;
+        r.progId           = 42;
+        r.errorMessage     = "closeWarehouse failed for ProgId=42";
+        r.sessionMayBeOpen = true;
+
+        ordered_json j = cliResultToJson(r);
+        std::fprintf(stdout, "  [6] flagged close-failure: %s\n",
+                     j.dump().c_str());
+
+        if (!r.sessionMayBeOpen) {
+            ec = fail("check6: sessionMayBeOpen flag not settable", 60);
+            return 0;
+        }
+        if (j.contains("sessionMayBeOpen") ||
+            j.contains("session_may_be_open")) {
+            ec = fail("check6: teardown flag leaked into JSON schema", 61);
+            return 0;
+        }
+        if (!j.contains("exit_code") || j["exit_code"].get<int>() != 6) {
+            ec = fail("check6: exit_code != 6", 62);
+            return 0;
+        }
+        if (!j.contains("error") ||
+            !j["error"].contains("code") ||
+            j["error"]["code"].get<std::string>() != "entry_op_failure") {
+            ec = fail("check6: error.code != \"entry_op_failure\"", 63);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: teardown flag never serialized; schema "
+                     "unchanged\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 7: deleteResultLeavesSessionOpen() — the §5 classification of
+    //   a deleteEntry result. Full truth table over
+    //   (deleted x diskCleanupErrorEmpty x flushPerItem):
+    //   true ONLY for (deleted=false, empty=true, flush=true) — the
+    //   single-op failure bundle where the op's close did not provably
+    //   complete (entry vanished / orchestrator SEH / close failed are
+    //   inseparable at this level). Everything else leaves the session
+    //   provably closed or open-by-design (batch/serve).
+    // ------------------------------------------------------------------
+    {
+        struct Row { bool deleted; bool empty; bool flush; bool want; };
+        const Row rows[] = {
+            // deleted, diskCleanupErrorEmpty, flushPerItem -> flag
+            { false, true,  true,  true  },  // close fail / never ran — FLAG
+            { false, true,  false, false },  // same failure, batch/serve —
+                                             // session open by design
+            { false, false, true,  false },  // disk-cleanup fail => close
+                                             // SUCCEEDED first
+            { false, false, false, false },
+            { true,  true,  true,  false },  // success — no failure at all
+            { true,  true,  false, false },
+            { true,  false, true,  false },
+            { true,  false, false, false },
+        };
+        for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
+            const Row& row = rows[i];
+            bool got = deleteResultLeavesSessionOpen(
+                row.deleted, row.empty, row.flush);
+            std::fprintf(stdout,
+                "  [7] deleted=%d empty=%d flush=%d -> %d (want %d)\n",
+                row.deleted, row.empty, row.flush, got, row.want);
+            if (got != row.want) {
+                ec = fail("check7: deleteResultLeavesSessionOpen truth-table "
+                          "mismatch", 70 + static_cast<int>(i));
+                return 0;
+            }
+        }
+        std::fprintf(stdout,
+                     "    PASS: delete classification truth table pinned\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }

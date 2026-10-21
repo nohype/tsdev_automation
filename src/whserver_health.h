@@ -44,9 +44,20 @@ struct WhVasStats {
 
 // All pids whose process image name is "WHServer.exe" (case-insensitive), via
 // a single Toolhelp32 process snapshot. Empty when none are running (or the
-// snapshot itself failed — discovery failure is indistinguishable and
+// enumeration failed — discovery failure is indistinguishable and
 // non-fatal for the caller's telemetry path).
 std::vector<DWORD> findWhServerPids();
+
+// snapshotOk variant of the same enumeration: returns false ONLY when the
+// enumeration is inconclusive — the Toolhelp32 snapshot itself failed, or
+// the process walk did not run to clean completion (a Process32FirstW or
+// Process32NextW failure whose GetLastError is not ERROR_NO_MORE_FILES; a
+// truncated set is never evidence). Callers that must distinguish
+// "no WHServer running" from "enumeration inconclusive" — e.g. the census
+// gate's per-poll re-enumeration, where a failed enumeration is never
+// evidence of absence. On true, `pids` is the authoritative pid set
+// (possibly empty). On false, `pids` is cleared.
+bool findWhServerPids(std::vector<DWORD>& pids);
 
 // Measure the user-address-space headroom of process `pid`: walks the target
 // VAS with VirtualQueryEx from address 0 upward, summing MEM_FREE region sizes

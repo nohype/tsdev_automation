@@ -95,6 +95,8 @@ With `--json`, stdout is a JSON array (one element per item); without it stdout 
 - `2` - batch ran, but one or more items failed (per-item details in the JSON array under `--json`, else on stderr)
 - `3` - batch cooperatively cancelled via `--batch-progress-control` (under `--json` the array stays full length; unattempted items are exit-12 `cancelled` markers)
 - `14` - batch aborted by the WHServer VAS-headroom guard (same full-length array + exit-12 not-run markers, `error.message="Batch aborted (WHServer VAS headroom) before this item was attempted"`; the summary gains `aborted=true abort_reason=whserver_vas_free=<N>MB` or `whserver_vas_largest_free=<N>MB`, and a `batch_aborted` / `BATCH ABORTED` event precedes it). Under `serve`, `14` is instead a per-request refusal code (`error.code="whserver_vas_abort"`) on the refused item — the broker process keeps running and non-mutating requests still pass.
+- `18` - WHServer recycled on a guard breach under `--recycle-whserver` (see below): the array is full length (attempted head + exit-12 markers), a `tsdev_resume_<pid>_<ticks>.manifest` covering the tail is written beside the source manifest (or the cwd for `--batch-stdin`), and the `whserver_recycled` event carries its path. Resubmit with `tsdev_cli batch-<op> <resume-file>`; the Python client resubmits automatically (bounded at 3 recycles per batch call).
+- `19` - WHServer recycle refused under `--recycle-whserver` (gate could not confirm a clean recycle, e.g. clients still hold the server): the batch aborts; the tail carries `WHServer recycle refused before this item was attempted` markers.
 
 ### WHServer VAS-headroom guard (batch-* and serve)
 
@@ -105,6 +107,19 @@ WHServer.exe is 32-bit and non-LARGEADDRESSAWARE; a field crash showed it dying 
 - `--no-whserver-vas-guard` - disable the guard entirely
 
 Env mirrors: `TSDEV_WHSERVER_FREE_MB`, `TSDEV_WHSERVER_LARGEST_FREE_MB`, `TSDEV_NO_WHSERVER_VAS_GUARD` (any value but `0` disables). Explicit CLI flags win over env. WHServer not running (lazy singleton not yet spawned) passes; a transient measurement failure warns once and does not abort. Breach semantics: strictly below the threshold aborts (exactly-at-threshold passes). The guard only reads WHServer's address-space layout — it never writes to or signals the process.
+
+### WHServer gated auto-recycle (`--recycle-whserver`, batch-* and serve)
+
+`--recycle-whserver` (env mirror `TSDEV_RECYCLE_WHSERVER`, any value but `0`) authorizes restarting WHServer.exe when the VAS guard trips instead of aborting outright. It is a dangerous-operation opt-in: the CLI prints a prominent one-time stderr warning, and the restart is gated on a zero-client census plus clean close/attach stages — the flag never bypasses the gate. Usage constraints: it is valid only with `batch-*`/`serve` and cannot be combined with `--no-whserver-vas-guard` or `--batch-progress-control` (usage error, exit 1). On a breach the guard outcome changes from abort-14 to:
+
+- **Recycled → exit `18`**: WHServer was recycled — or the recycle was *deferred* to the resumed process (see below). The results array is full length — the attempted head plus exit-12 not-run markers — and a resume manifest `tsdev_resume_<pid>_<ticks>.manifest` covering the marker tail is written beside the source manifest (or the cwd for `--batch-stdin`; a `batch-*-dir` resume likewise goes through the non-dir `batch-<op>` subcommand). Its path rides the `whserver_recycled` stderr event (a non-ASCII path cannot ride the ANSI event channel and is dropped — the file still exists on disk; the client's marker then carries the stderr reason). Resubmit manually with `tsdev_cli batch-<op> <resume-file>`; `TsDevClient` resubmits automatically and deletes the consumed manifest once the resumed batch returns, bounded at **3 recycles per batch call** — bound exhaustion stops deliberately (a re-breach means pathology) and the marker names the retained manifest path.
+- **Refused → exit `19`**: the gate could not confirm a clean recycle (e.g. a foreign client still holds the server). The batch aborts; the tail gets `WHServer recycle refused before this item was attempted` markers; no respawn is attempted.
+
+**Where the engine runs:** the recycle engine only runs in-process at a *never-attached* site — the batch pre-flight gate, or a breach that fires before any op/request has dispatched. A process holding an attached warehouse session contributes +7 to WHServer's `m_nLock` for the process's entire lifetime (`closeWarehouse` cannot release it — only process exit does), so the zero-client census could never pass in-process. A breach at an attached site therefore exits `18` *without* running the engine — the `whserver_recycled` event carries `reason=recycle_deferred_own_session` — and the resumed batch / respawned broker runs the engine at its own never-attached site. In serve mode one effective recycle can thus cost **two** broker respawns (defer → engine), each counting against the 3-recycle bound.
+
+**Trade-off:** if the not-run tail contains an item the manifest schema cannot represent — a name with a line break / leading quote / quote+whitespace, or a pre-validated (`preValid=false`) item whose stored fields came from a failure path — the resume-manifest writer **refuses the whole write before creating any file** (fail-closed: a fabricated or re-tokenized line could retarget a delete). Auto-resume is then forfeited for the entire tail, including representable items; the marker and the stderr diagnostic name the refusing item, and the tail stays manually resubmittable via the printed reasons. A written-but-unreachable-path manifest spares every temp source the batch materialized.
+
+In serve mode each recycle respawns the elevated named-pipe broker — a **non-elevated client pays one UAC prompt per respawn** (unattended runs cannot satisfy it; run the client elevated or expect the batch to raise). The client resubmits bounded by the same 3-recycle bound; a respawn failure (declined UAC, handshake timeout) propagates and ends the batch.
 
 ### Dispatch watchdog (all subcommands)
 
@@ -127,12 +142,14 @@ Line-based text (not JSON). `#` comments and blank lines are skipped. One item p
 - `insert`/`modify`/`upsert`: `<type> <name> <source_file>` (`source_file` is the rest of the line after the second token, so paths with spaces work).
 - `delete`: `<type> <name>`
 
+`<name>` may be double-quoted (`"<name>"`) when it contains whitespace — directory batches derive names verbatim from file stems, and resume manifests are written in that form. **Warning:** an *unquoted* spaced name silently re-parses to a different component — `function my item ./x.el` is read as name `my` with source `item ./x.el`, and on `batch-delete` the extra token is ignored so the delete would hit `my`, not `my item`. Always quote names containing spaces, tabs, or other whitespace. An unterminated quote, or characters fused after the closing quote (`"a"b`), is a pre-validation failure — never re-interpreted.
+
 Example `manifest.txt`:
 
 ```text
 # insert two functions
 function MyFuncA ./src/MyFuncA.el
-function MyFuncB ./src/MyFuncB.el
+function "My Func B" ./src/MyFuncB.el
 ```
 
 ### Batch progress

@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
 
@@ -42,11 +43,14 @@ from tsdev_automation import (
 from tsdev_automation import exceptions as exc
 from tsdev_automation import _pipe
 from tsdev_automation.client import (
+    _RECYCLE_WHSERVER_WARNING,
     _ServeBroker,
     _SHELLEXECUTEINFOW,
     _build_serve_parameters,
     _detect_elevation,
     _is_crash_exit,
+    _recycle_respawn_reap_timeout_ms,
+    _resume_batch_cmd,
     _wait_for_exit,
 )
 from unittest.mock import MagicMock
@@ -626,6 +630,72 @@ class TestBatch:
         with pytest.raises(TsDevError):
             client.batch_insert([BatchItem("strategy", "A", "a;")])
 
+    def test_batch_prevalid_failure_items_return_in_position(
+            self, client: TsDevClient, monkeypatch) -> None:
+        """``BatchItem.prevalid_failure`` items are never dispatched —
+        each becomes a per-item failure result in position (the C++
+        preValid=false shape), while dispatchable items still run."""
+        arr = json.dumps(
+            [json.loads(_success_json("insert", "strategy", "B"))])
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["input"] = kw.get("input", "")
+            return _make_completed(arr, returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert([
+            BatchItem("bogus", "X", prevalid_failure=(
+                2, 'unknown type "bogus" (expected '
+                   "strategy/function/indicator/tradingapp/showme)")),
+            BatchItem("strategy", "B", "b;"),
+            BatchItem("function", "", prevalid_failure=(
+                2, "component name must not be empty")),
+        ])
+        assert len(results) == 3
+        assert results[0].success is False
+        assert results[0].exit_code == 2
+        assert results[0].error is not None
+        assert results[0].error.code == "unknown_type"
+        assert 'unknown type "bogus"' in results[0].error.message
+        assert results[1].success is True
+        assert results[2].success is False
+        assert results[2].exit_code == 2
+        assert results[2].error.code == "unknown_type"
+        # Only the dispatchable item reached the child's stdin manifest.
+        assert seen["input"].count("\n") == 1
+        assert "bogus" not in seen["input"]
+
+    def test_batch_all_prevalid_failures_return_without_spawn(
+            self, client: TsDevClient, monkeypatch) -> None:
+        """When EVERY item is a pre-validation failure there is nothing to
+        dispatch: the client must return the per-item failure results in
+        position instead of spawning the CLI with an empty stdin manifest
+        (which would exit 1 "manifest from stdin is empty" and raise,
+        losing the per-item failures) — matching the serve path, which
+        already returns the failures without a broker request."""
+        def boom(*a, **k):
+            raise AssertionError("subprocess.run must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        results = client.batch_delete([
+            BatchItem("bogus", "X", prevalid_failure=(
+                2, 'unknown type "bogus" (expected '
+                   "strategy/function/indicator/tradingapp/showme)")),
+            BatchItem("function", "", prevalid_failure=(
+                2, "component name must not be empty")),
+        ])
+        assert len(results) == 2
+        assert results[0].success is False
+        assert results[0].exit_code == 2
+        assert results[0].type == "bogus"
+        assert results[0].name == "X"
+        assert results[0].error.code == "unknown_type"
+        assert results[1].success is False
+        assert results[1].exit_code == 2
+        assert results[1].type == "function"
+        assert results[1].error.code == "unknown_type"
+
     def test_batch_delete_no_source(self, client: TsDevClient, monkeypatch) -> None:
         arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: _make_completed(arr))
@@ -836,6 +906,87 @@ class TestBatchStdin:
         assert seen["kw"]["input"] == "", "empty item list must pipe an empty manifest string"
         # The CLI's manifest-level failure message must surface on the exception.
         assert "manifest from stdin is empty" in str(exc_info.value)
+
+    def test_build_manifest_quotes_spaced_names(self, client: TsDevClient) -> None:
+        """Spaced names (the TradeStation norm) emit the quoted form the
+        CLI parser accepts — an unquoted spaced name would re-parse to a
+        DIFFERENT component and a delete would silently retarget."""
+        cleanup: list[Path] = []
+        m = client._build_manifest_string(
+            [BatchItem("strategy", "my item", "x = 1;")],
+            needs_source=True, cleanup=cleanup)
+        line = m.splitlines()[0]
+        assert line.startswith('strategy "my item" '), (
+            f"spaced name must be double-quoted, got: {line!r}")
+        assert line.endswith(".el")
+        # Delete form (2 tokens): quoted name, no source.
+        cleanup2: list[Path] = []
+        m2 = client._build_manifest_string(
+            [BatchItem("strategy", "del me now")],
+            needs_source=False, cleanup=cleanup2)
+        assert m2 == 'strategy "del me now"\n'
+        for p in cleanup + cleanup2:
+            p.unlink(missing_ok=True)
+
+    def test_build_manifest_refuses_unrepresentable_names(self, client: TsDevClient) -> None:
+        """Names that can never round-trip fail closed with ValueError —
+        line break, quote-leading, quote+whitespace — while a bare quote
+        in a whitespace-free name is written unquoted and round-trips."""
+        for bad in ('has "quote', '"leading', "has\nbreak", "has\rbreak"):
+            with pytest.raises(ValueError):
+                client._build_manifest_string(
+                    [BatchItem("strategy", bad)],
+                    needs_source=False, cleanup=[])
+        m = client._build_manifest_string(
+            [BatchItem("strategy", 'has"quote')],
+            needs_source=False, cleanup=[])
+        assert m == 'strategy has"quote\n'
+
+    def test_build_manifest_quotes_vt_ff_names(self, client: TsDevClient) -> None:
+        """'\\v'/'\\f' are manifest whitespace (the C-locale isspace set
+        the C++ parser's trim() uses) — a name containing them must emit
+        the quoted form so re-parsing preserves the SAME component; an
+        unquoted '\\v' at a token edge would silently retarget a delete."""
+        m = client._build_manifest_string(
+            [BatchItem("strategy", "a\vb"), BatchItem("strategy", "\fc"),
+             BatchItem("strategy", "d\v")],
+            needs_source=False, cleanup=[])
+        assert m == 'strategy "a\vb"\nstrategy "\fc"\nstrategy "d\v"\n'
+
+    def test_build_manifest_refuses_quote_plus_vt_ff(
+            self, client: TsDevClient) -> None:
+        """A '\"' combined with '\\v'/'\\f' is unrepresentable exactly like
+        '\"'+space — unquoted it splits at the '\\v', quoted the '\"'
+        terminates the token early.  Refuse fail-closed."""
+        for bad in ('a"\x0bb', 'a"\x0cb'):
+            with pytest.raises(ValueError):
+                client._build_manifest_string(
+                    [BatchItem("strategy", bad)],
+                    needs_source=False, cleanup=[])
+
+    def test_manifest_source_paths_vt_ff_names(self, tmp_path) -> None:
+        """``_manifest_source_paths`` must reproduce the C++ parse for
+        '\\v'/'\\f' names — the C++ line tokenizer treats them as
+        whitespace while Python ``splitlines``/generic whitespace split
+        would diverge and corrupt the carve-out keep-set (a retained
+        manifest's referenced temp source would be deleted)."""
+        from tsdev_automation.client import _manifest_source_paths
+        manifest = tmp_path / "tsdev_resume_1_2.manifest"
+        manifest.write_text(
+            'strategy "a\vb" C:/tmp/x.el\n'
+            'strategy "\fc" C:/tmp/y.el\n'
+            '# comment\n'
+            'strategy "d\v" C:/tmp/z.el\n',
+            encoding="utf-8")
+        assert _manifest_source_paths(str(manifest)) == {
+            "C:/tmp/x.el", "C:/tmp/y.el", "C:/tmp/z.el"}
+
+    def test_manifest_source_paths_unreadable_returns_none(self) -> None:
+        """An unreadable manifest returns None so the caller spares every
+        temp source (the referenced set cannot be enumerated)."""
+        from tsdev_automation.client import _manifest_source_paths
+        assert _manifest_source_paths(
+            "Z:/no/such/resume.manifest") is None
 
 
 class TestBatchUpsert:
@@ -1514,7 +1665,7 @@ class TestVerboseForwarding:
         constructed: dict = {}
 
         class SpyBroker:
-            def __init__(self, cli_path, ts_path=None, verbose=0):
+            def __init__(self, cli_path, ts_path=None, verbose=0, recycle_whserver=False):
                 constructed["cli_path"] = cli_path
                 constructed["ts_path"] = ts_path
                 constructed["verbose"] = verbose
@@ -1540,6 +1691,622 @@ class TestVerboseForwarding:
         sent = fake_broker.call.call_args[0][0]
         assert "verbose" not in sent
         assert sent == {"op": "insert", "type": "strategy", "name": "X", "source": "input(close,1);"}
+
+
+class TestRecycleWhserver:
+    """TVS R2 flag plumbing for ``--recycle-whserver`` (design
+    tmp/RECYCLE_ENGINE_DESIGN.md §6.1/§4.3): env->flag OR-ed forwarding to
+    the serve broker, direct-batch command-line emission, and the
+    ``recycle_whserver`` + ``on_progress`` fail-fast ``ValueError`` (the
+    controlled stdin channel belongs to the dying process)."""
+
+    def test_build_serve_parameters_recycle_forwarding(self, monkeypatch) -> None:
+        """OR-ed: kwarg True OR env set-and-not-"0" -> --recycle-whserver;
+        neither side vetoes the other."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        base = subprocess.list2cmdline(["serve", "--serve-pipe-file", "C:/hs.pipe"])
+        with_flag = subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe", "--recycle-whserver"]
+        )
+        # Neither kwarg nor env -> no flag (byte-identical default).
+        assert _build_serve_parameters(None, "C:/hs.pipe") == base
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == base
+        # Kwarg alone forwards.
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=True) == with_flag
+        # env "0" does NOT veto an explicit kwarg.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "0")
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=True) == with_flag
+        assert _build_serve_parameters(None, "C:/hs.pipe") == base
+        # env set (kwarg False does NOT veto the env var).
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == with_flag
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == with_flag
+
+    def test_ensure_broker_forwards_recycle_whserver(self, fake_cli: Path, monkeypatch) -> None:
+        """``_ensure_broker`` forwards the ctor kwarg to ``_ServeBroker``."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True, recycle_whserver=True)
+        c._is_elevated = False
+        constructed: dict = {}
+
+        class SpyBroker:
+            def __init__(self, cli_path, ts_path=None, verbose=0, recycle_whserver=False):
+                constructed["recycle_whserver"] = recycle_whserver
+
+            def call(self, request):
+                return json.loads(_exists_json("strategy", "X", True, prog_id=3))
+
+        monkeypatch.setattr("tsdev_automation.client._ServeBroker", SpyBroker)
+        c.exists("strategy", "X")
+        assert constructed["recycle_whserver"] is True
+
+    def test_serve_broker_start_forwards_recycle_flag(self, monkeypatch, tmp_path: Path) -> None:
+        """``_ServeBroker(recycle_whserver=True)`` emits ``--recycle-whserver``
+        in the ShellExecuteExW lpParameters."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe, recycle_whserver=True)
+        handshake = tmp_path / "recycle handshake.pipe"
+        pipe_name = r"\\.\pipe\tsdev_test_recycle"
+        fake_handle = 4251
+        captured: dict[str, str] = {}
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            captured["parameters"] = info.lpParameters
+            info.hProcess = fake_handle
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7782)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker.start()
+        assert captured["parameters"] == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", str(handshake), "--recycle-whserver"]
+        )
+
+        broker._started = False
+        broker._pipe_handle = None
+        broker._process_handle = None
+
+    def test_batch_emits_flag_for_ctor_kwarg(self, client: TsDevClient, monkeypatch) -> None:
+        """Direct ``_batch`` appends ``--recycle-whserver`` when the ctor
+        kwarg authorized it."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client._recycle_whserver = True
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" in seen["cmd"]
+        assert seen["cmd"] == [
+            str(client.cli_path), "--json", "--recycle-whserver",
+            "batch-delete", "--batch-stdin",
+        ]
+
+    def test_batch_emits_flag_for_env(self, client: TsDevClient, monkeypatch) -> None:
+        """Env-only ``TSDEV_RECYCLE_WHSERVER`` authorization emits NO
+        literal ``--recycle-whserver`` on the direct path: the child
+        inherits the caller's environment block (subprocess.run passes no
+        env=), so the CLI reads the env var itself — forwarding the flag
+        would flip its authorizedViaEnv attribution off and make a refusal
+        misname the env var's source."""
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            # Pin the inheritance premise: the env var is visible to the
+            # child at spawn time without any argv forwarding.
+            seen["env_at_child"] = os.environ.get("TSDEV_RECYCLE_WHSERVER")
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" not in seen["cmd"]
+        assert seen["env_at_child"] == "1"
+
+    def test_batch_env_only_no_flag_kwarg_still_emits(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """Pin: env-only authorization forwards no flag, but an explicit
+        per-call kwarg in the same environment still emits the literal
+        flag (the explicit arm owns the CLI's attribution)."""
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        results = client._batch("delete", [BatchItem("strategy", "A")],
+                                recycle_whserver=True)
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" in seen["cmd"]
+
+    def test_batch_kwarg_emits_flag(self, client: TsDevClient, monkeypatch) -> None:
+        """The per-call ``_batch(recycle_whserver=True)`` kwarg forwards the
+        flag without the ctor kwarg or env var."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._batch("delete", [BatchItem("strategy", "A")],
+                                recycle_whserver=True)
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" in seen["cmd"]
+
+    def test_batch_no_flag_by_default(self, client: TsDevClient, monkeypatch) -> None:
+        """Default (no kwarg, no ctor kwarg, env unset/"0") emits no flag."""
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "0")
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" not in seen["cmd"]
+
+    def test_recycle_plus_on_progress_raises_before_spawn(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """``recycle_whserver`` + ``on_progress`` raises ValueError before
+        any subprocess is spawned (the --batch-progress-control channel
+        belongs to the dying process)."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+
+        def forbidden(*a, **k):
+            raise AssertionError("subprocess must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        client._recycle_whserver = True
+        with pytest.raises(ValueError, match="recycle_whserver"):
+            client.batch_delete([BatchItem("strategy", "A")], on_progress=lambda p: True)
+
+    def test_recycle_env_plus_on_progress_raises(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """The env-var OR-arm also trips the ValueError — env "0" does not,
+        matching the pinned presence semantics."""
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        monkeypatch.setattr(
+            subprocess, "Popen",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no spawn")),
+        )
+        with pytest.raises(ValueError, match="recycle_whserver"):
+            client._batch("delete", [BatchItem("strategy", "A")],
+                          on_progress=lambda p: True, recycle_whserver=False)
+        # env "0" clears the env arm; without kwarg/ctor the combination is
+        # legal — assert only that the ValueError is NOT raised at the gate
+        # (the controlled run itself is mocked out via _run_batch_controlled).
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "0")
+        monkeypatch.setattr(client, "_run_batch_controlled", lambda *a, **k: [])
+        assert client._batch("delete", [BatchItem("strategy", "A")],
+                             on_progress=lambda p: True) == []
+
+    def test_serve_per_call_recycle_kwarg_raises(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The per-call ``recycle_whserver=True`` kwarg on a serve-path
+        ``_batch``/``_batch_dir`` call raises ValueError — broker
+        authorization is fixed at broker launch, so the kwarg cannot be
+        honored and must not be silently dropped."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        c = _serve_client(tmp_path, _serve_batch_broker([]))
+        with pytest.raises(ValueError, match="fixed at broker launch"):
+            c._batch("delete", [BatchItem("strategy", "A")],
+                     recycle_whserver=True)
+        with pytest.raises(ValueError, match="fixed at broker launch"):
+            c._batch_dir("delete", "strategy", str(tmp_path), None,
+                         recycle_whserver=True)
+
+    def test_serve_recycle_plus_on_progress_allowed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Serve mode ALLOWS recycle + on_progress (design §4.3
+        tagged-progress resume) — the direct-path ValueError must not
+        fire on the serve path."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        fake_broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A",
+             "success": True, "exit_code": 0},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        c._recycle_whserver = True  # ctor-level (launch-time) authorization
+        seen: list = []
+        results = c.batch_delete([BatchItem("strategy", "A")],
+                                 on_progress=lambda p: seen.append(p) or True)
+        assert len(results) == 1 and results[0].success
+        assert len(seen) == 1
+
+    def test_ensure_broker_warns_when_recycle_authorized(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """F2: the broker's §6.3 stderr warning is invisible in serve mode
+        (hidden spawn, stderr discarded) — the client emits a
+        ``warnings.warn`` brief naming the TOCTOU residual instead."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True,
+                        recycle_whserver=True)
+        c._is_elevated = False
+        with pytest.warns(UserWarning, match="TOCTOU"):
+            broker = c._ensure_broker()
+        assert broker is c._broker
+        # The env OR-arm warns too (kwarg False does not veto env).
+        c2 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c2._is_elevated = False
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        with pytest.warns(UserWarning, match="TOCTOU"):
+            c2._ensure_broker()
+
+    def test_batch_direct_warns_when_recycle_authorized(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """The direct path also emits the client-side warning (the CLI's
+        §6.3 text goes to captured child stderr, not surfaced)."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: _make_completed(
+                json.dumps([json.loads(_success_json("delete", "strategy", "A"))])))
+        client._recycle_whserver = True
+        with pytest.warns(UserWarning, match="TOCTOU"):
+            results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_direct_noguard_refused_before_warning(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """Post-validation ordering (mirrors the C++ §6.3 emission): a
+        recycle+``TSDEV_NO_WHSERVER_VAS_GUARD`` combination is refused
+        client-side with ValueError BEFORE the warning can fire and
+        before any child is spawned — the client must not warn about a
+        recycle the CLI would refuse."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+
+        def forbidden(*a, **k):
+            raise AssertionError("subprocess must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        client._recycle_whserver = True
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(
+                ValueError,
+                match="TsDevClient\\(recycle_whserver=True\\)"
+                      ".*TSDEV_NO_WHSERVER_VAS_GUARD",
+            ):
+                client.batch_delete([BatchItem("strategy", "A")])
+        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+
+    def test_batch_direct_no_warning_before_elevation_error(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """A non-elevated ``use_serve=False`` client raises
+        ElevationRequiredError inside ``_run_batch`` before any child
+        exists — no recycle warning may precede it."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False,
+                        recycle_whserver=True)
+        c._is_elevated = False
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("subprocess must not be spawned")))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(exc.ElevationRequiredError):
+                c.batch_delete([BatchItem("strategy", "A")])
+        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+
+    def test_serve_batch_warns_env_set_after_broker_launch(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """F4: ``TSDEV_RECYCLE_WHSERVER`` set after the broker was
+        launched without authorization is silently inert (the flag is
+        fixed on the launch command line; runas does not inherit env) —
+        the serve batch path warns instead of running unrecycled
+        unnoticed."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A",
+             "success": True, "exit_code": 0},
+        ])
+        # Broker already running, launched WITHOUT recycle authorization.
+        broker._started = True
+        broker._recycle_authorized_at_launch = False
+        c = _serve_client(tmp_path, broker)
+        # The env var appears only now — after broker launch.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        with pytest.warns(UserWarning, match="fixed at broker launch"):
+            results = c.batch_delete([BatchItem("strategy", "A")])
+        # The batch still ran — warn (fail-loud), not refuse.
+        assert len(results) == 1 and results[0].success
+
+    def test_serve_batch_no_env_warning_when_authorized_at_launch(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Negative pin for F4: a broker launched WITH authorization does
+        not warn, and an env var set while the broker is unauthorized but
+        NOT yet started is honored at start() — no warning either."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A",
+             "success": True, "exit_code": 0},
+        ])
+        broker._started = True
+        broker._recycle_authorized_at_launch = True
+        c = _serve_client(tmp_path, broker)
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = c.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert not [
+            w for w in caught
+            if "WITHOUT recycle authorization" in str(w.message)
+        ]
+
+    def test_serve_recycle_plus_noguard_refused_prespawn(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """F5: recycle + TSDEV_NO_WHSERVER_VAS_GUARD is refused client-side
+        BEFORE the broker spawn (the broker would exit 1 pre-pipe and
+        surface only as a generic launch failure). Both the kwarg and env
+        authorization sources are named in the message."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+        monkeypatch.setattr(
+            "tsdev_automation.client._ServeBroker",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("broker must not be constructed")))
+
+        # Kwarg-sourced authorization.
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True,
+                        recycle_whserver=True)
+        c._is_elevated = False
+        with pytest.raises(
+            ValueError,
+            match="TsDevClient\\(recycle_whserver=True\\).*TSDEV_NO_WHSERVER_VAS_GUARD",
+        ):
+            c._ensure_broker()
+
+        # Env-sourced authorization names the env var.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        c2 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c2._is_elevated = False
+        with pytest.raises(
+            ValueError,
+            match="TSDEV_RECYCLE_WHSERVER env.*TSDEV_NO_WHSERVER_VAS_GUARD",
+        ):
+            c2._ensure_broker()
+
+    def _started_broker(self, monkeypatch, tmp_path: Path,
+                        recycle_kwarg: bool) -> _ServeBroker:
+        """Drive ``_ServeBroker.start()`` through the mocked runas spawn
+        (same machinery as test_serve_broker_start_forwards_recycle_flag)
+        and return the started broker."""
+        cli_exe = tmp_path / "tsdev_cli.exe"
+        cli_exe.write_bytes(b"")
+        broker = _ServeBroker(cli_exe, recycle_whserver=recycle_kwarg)
+        handshake = tmp_path / "hs.pipe"
+        pipe_name = r"\\.\pipe\tsdev_test_launch_auth"
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            info.hProcess = 4251
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7782)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+        broker.start()
+        return broker
+
+    def test_broker_start_pins_authorization_at_launch(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """F5a: ``_recycle_authorized_at_launch`` is computed by ``start()``
+        at spawn time from the OR-ed kwarg/env — not injected manually.
+        An env var appearing after launch can never reach the immutable
+        broker command line, so the launch-time read is the only one that
+        counts."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+
+        # Kwarg alone -> pinned True at spawn.
+        broker = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=True)
+        assert broker._recycle_authorized_at_launch is True
+
+        # Env alone (kwarg False) -> pinned True at spawn.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        broker2 = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=False)
+        assert broker2._recycle_authorized_at_launch is True
+
+        # Neither -> False at spawn; and a value manually injected before
+        # start() is overwritten by the launch-time computation (the field
+        # is not a settable knob).
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        broker3 = _ServeBroker(tmp_path / "tsdev_cli.exe", recycle_whserver=False)
+        broker3._recycle_authorized_at_launch = True  # stale injected value
+        handshake = tmp_path / "hs3.pipe"
+        pipe_name = r"\\.\pipe\tsdev_test_launch_auth3"
+
+        def fake_mkstemp(*a, **k):
+            fd = os.open(handshake, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake)
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            info.hProcess = 4251
+            handshake.write_text(pipe_name, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr(broker3, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7782)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+        broker3.start()
+        assert broker3._recycle_authorized_at_launch is False
+
+        for b in (broker, broker2, broker3):
+            b._started = False
+            b._pipe_handle = None
+            b._process_handle = None
+
+    def test_batch_dir_noguard_refused_before_spawn(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        """F5b: ``_batch_dir`` runs the same post-validation ordering as
+        ``_batch`` — recycle + ``TSDEV_NO_WHSERVER_VAS_GUARD`` is refused
+        with ValueError before any child spawn and before the warning."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+
+        def forbidden(*a, **k):
+            raise AssertionError("subprocess must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        client._recycle_whserver = True
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(
+                ValueError,
+                match="TsDevClient\\(recycle_whserver=True\\)"
+                      ".*TSDEV_NO_WHSERVER_VAS_GUARD",
+            ):
+                client._batch_dir("delete", "strategy", str(tmp_path), None)
+        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+
+    def test_batch_dir_warns_when_recycle_authorized(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        """F5b: ``_batch_dir``'s warning gate mirrors ``_batch`` — the
+        client-side §6.3 brief fires when authorized AND a child will
+        actually be spawned (elevated or use_serve)."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: _make_completed(
+                json.dumps([json.loads(_success_json("delete", "strategy", "A"))])))
+        client._recycle_whserver = True
+        with pytest.warns(UserWarning, match="TOCTOU"):
+            results = client._batch_dir("delete", "strategy", str(tmp_path), None)
+        assert len(results) == 1 and results[0].success
+
+    def test_batch_dir_env_only_no_flag(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        """F5b: env-only authorization on ``_batch_dir`` emits NO literal
+        ``--recycle-whserver`` (same env-attribution rule as ``_batch`` —
+        the child inherits the env var, and forwarding the flag would
+        flip the CLI's authorizedViaEnv attribution off)."""
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["env_at_child"] = os.environ.get("TSDEV_RECYCLE_WHSERVER")
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        results = client._batch_dir("delete", "strategy", str(tmp_path), None)
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" not in seen["cmd"]
+        assert seen["env_at_child"] == "1"
+
+    def test_batch_dir_kwarg_emits_flag(
+        self, client: TsDevClient, monkeypatch, tmp_path: Path
+    ) -> None:
+        """F5b complement: an explicit arm (per-call kwarg) on
+        ``_batch_dir`` DOES append the literal flag."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._batch_dir("delete", "strategy", str(tmp_path), None,
+                                    recycle_whserver=True)
+        assert len(results) == 1 and results[0].success
+        assert "--recycle-whserver" in seen["cmd"]
+
+    def test_batch_direct_env_sourced_noguard_refused(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """F5c: the env-sourced arm of the direct-path noguard refusal —
+        ``TSDEV_RECYCLE_WHSERVER`` env (no kwarg/ctor) + noguard env
+        raises ValueError naming the env var as the authorization
+        source, before any spawn."""
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+
+        def forbidden(*a, **k):
+            raise AssertionError("subprocess must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(
+                ValueError,
+                match="TSDEV_RECYCLE_WHSERVER env"
+                      ".*TSDEV_NO_WHSERVER_VAS_GUARD",
+            ):
+                client.batch_delete([BatchItem("strategy", "A")])
+        assert not [w for w in caught if "TOCTOU" in str(w.message)]
 
 
 class TestCliMain:
@@ -1764,6 +2531,73 @@ class TestCliNewSubcommands:
         assert "A" in out
         assert "B" in out
 
+    def test_cli_batch_json_stderr_frames_not_echoed(
+            self, monkeypatch, capsys, tmp_path: Path) -> None:
+        """FB: the always-on --json batch protocol writes NDJSON progress
+        frames to the child's stderr.  Echoing that raw dump would trip
+        stderr-nonempty=failed wrappers and duplicate stdout, so a clean
+        batch whose stderr carries only ``{``-leading frames must produce
+        NO stderr echo."""
+        frames = (
+            '{"event":"batch_item_completed","index":0}\n'
+            '{"event":"batch_item_completed","index":1}\n'
+        )
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def batch_delete(self, items):
+                return [
+                    TsDevResult(op="delete", type=it.type, name=it.name,
+                                success=True, exit_code=0, stderr=frames)
+                    for it in items
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        manifest = tmp_path / "manifest.txt"
+        manifest.write_text("strategy A\nstrategy B\n", encoding="utf-8")
+        rc = _main(["batch-delete", str(manifest)])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert captured.err == ""
+
+    def test_cli_batch_stderr_diagnostic_line_echoed(
+            self, monkeypatch, capsys, tmp_path: Path) -> None:
+        """FB: non-``{``-leading stderr lines are real human diagnostics
+        (e.g. a resume-manifest refusal) and must still be surfaced —
+        while the JSON frames on the same stream are filtered out."""
+        diag = "tsdev_cli: refusing to resume batch: manifest digest mismatch"
+        stderr = (
+            '{"event":"whserver_recycled","manifest":null}\n'
+            f"{diag}\n"
+        )
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                pass
+
+            def batch_delete(self, items):
+                return [
+                    TsDevResult(op="delete", type=it.type, name=it.name,
+                                success=False, exit_code=19, stderr=stderr)
+                    for it in items
+                ]
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        manifest = tmp_path / "manifest.txt"
+        manifest.write_text("strategy A\nstrategy B\n", encoding="utf-8")
+        rc = _main(["batch-delete", str(manifest)])
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert diag in captured.err
+        assert "whserver_recycled" not in captured.err
+        assert "{" not in captured.err
+
     def test_cli_batch_insert_dir(self, monkeypatch, capsys) -> None:
         calls: dict = {}
 
@@ -1861,6 +2695,128 @@ class TestCliNewSubcommands:
         rc = _main(["batch-upsert-dir", "strategy", "C:/mydir", "-t", "el", "-t", "txt"])
         assert calls["batch_upsert_dir"][-1] == ("strategy", "C:/mydir", ["el", "txt"])
         assert rc == 0
+
+
+class TestCliReadManifest:
+    """``_cli._read_manifest`` must reproduce the C++ ``parseManifestLines``
+    tokenization — it is the same schema the resume-manifest writer emits,
+    so a divergence (``splitlines`` splitting on ``\\v``/``\\f``, generic
+    Unicode whitespace treating ``\\xa0`` as a delimiter, no quoted-name
+    support) would fail or RETARGET lines the C++ side resumes fine."""
+
+    def test_quoted_name_round_trip(self, tmp_path: Path) -> None:
+        """A spaced name in the quoted form parses to the SAME component —
+        the shape a resume manifest written for a spaced dir-batch stem
+        carries."""
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text(
+            'strategy "my item" ./src/my item.el\n'
+            'function "f \v\x0c" ./f.el\n',  # \v/\f inside quotes preserved
+            encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert [(i.type, i.name, i.source) for i in items] == [
+            ("strategy", "my item", "./src/my item.el"),
+            ("function", "f \v\x0c", "./f.el"),
+        ]
+
+    def test_delete_quoted_name(self, tmp_path: Path) -> None:
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text('strategy "del me now"\n', encoding="utf-8")
+        items = _read_manifest(m, needs_source=False)
+        assert [(i.type, i.name) for i in items] == [("strategy", "del me now")]
+
+    def test_nbsp_is_not_manifest_whitespace(self, tmp_path: Path) -> None:
+        """U+00A0 must NOT split a name — the C-locale isspace set is the
+        only delimiter; treating it as whitespace would retarget."""
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text("strategy a\u00a0b ./x.el\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert [(i.type, i.name, i.source) for i in items] == [
+            ("strategy", "a\u00a0b", "./x.el")]
+
+    def test_vt_does_not_split_lines(self, tmp_path: Path) -> None:
+        """A \\v inside the line does not start a new manifest line —
+        ``str.splitlines`` would split there and turn the tail into a
+        SECOND item. C++ keeps the whole physical line: ONE item whose
+        ``<source_file>`` (the trimmed rest of the line) carries the
+        \\v tail verbatim."""
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text("strategy A ./a.el\vstrategy B ./b.el\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert [(i.type, i.name, i.source) for i in items] == [
+            ("strategy", "A", "./a.el\vstrategy B ./b.el")]
+
+    def test_malformed_quote_per_item_failure(self, tmp_path: Path) -> None:
+        """Unterminated quote and junk fused after the closing quote are
+        per-item pre-validation failures (the C++ preValid=false shape) —
+        never silently re-tokenized, never batch-aborting."""
+        from tsdev_automation._cli import _read_manifest
+        for bad, kind in (('function "broken name ./x.el\n', "unterminated"),
+                          ('strategy "a"b\n', "malformed"),
+                          ('function "a"b ./x.el\n', "malformed")):
+            m = tmp_path / "m.txt"
+            m.write_text(bad, encoding="utf-8")
+            items = _read_manifest(m, needs_source=True)
+            assert len(items) == 1
+            ec, msg = items[0].prevalid_failure or (None, "")
+            assert ec == 2 and "quoted" in msg and kind in msg
+
+    def test_empty_name_per_item_failure(self, tmp_path: Path) -> None:
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text("strategy\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=False)
+        assert len(items) == 1
+        assert items[0].prevalid_failure is not None
+        ec, msg = items[0].prevalid_failure
+        assert ec == 2 and "name" in msg
+
+    def test_missing_source_per_item_failure(self, tmp_path: Path) -> None:
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text("function MyFunc\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert len(items) == 1
+        ec, msg = items[0].prevalid_failure or (None, "")
+        assert ec == 1 and "source_file" in msg
+
+    def test_unknown_type_per_item_failure_type_checked_first(
+            self, tmp_path: Path) -> None:
+        """C++ validates <type> BEFORE <name>: an unknown type with a
+        valid name is a per-item exit-2 failure (not batch-aborting), and
+        a type-only line whose token is unknown reports the type error —
+        not 'name must not be empty'."""
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_text("bogus Name ./x.el\nstrat2\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert len(items) == 2
+        ec, msg = items[0].prevalid_failure or (None, "")
+        assert ec == 2 and 'unknown type "bogus"' in msg
+        assert items[0].name == "Name"
+        ec, msg = items[1].prevalid_failure or (None, "")
+        assert ec == 2 and 'unknown type "strat2"' in msg
+
+    def test_non_utf8_manifest_raises(self, tmp_path: Path) -> None:
+        """Strict UTF-8 decode — a non-UTF-8 manifest must raise loudly
+        (exit 3 via the ValueError handler), never silently corrupt
+        names to U+FFFD."""
+        from tsdev_automation._cli import _read_manifest
+        m = tmp_path / "m.txt"
+        m.write_bytes(b"strategy caf\xe9 ./x.el\n")
+        with pytest.raises(UnicodeDecodeError):
+            _read_manifest(m, needs_source=True)
+
+    def test_manifest_ws_is_the_c_locale_isspace_set(self) -> None:
+        """Python ``_MANIFEST_WS`` must equal the exact 6-char C-locale
+        set the C++ pins as ``kManifestWs`` — a drift retargets names."""
+        from tsdev_automation.client import _MANIFEST_WS
+        assert _MANIFEST_WS == " \t\n\v\f\r"
+        assert len(_MANIFEST_WS) == 6
 
 
 class TestCliVerboseFlag:
@@ -2322,7 +3278,8 @@ class TestServeBrokerStart:
         monkeypatch.setattr(_pipe, "send_request", fake_send)
         monkeypatch.setattr(_pipe, "close", lambda handle: None)
         monkeypatch.setattr(
-            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+            "tsdev_automation.client._wait_for_exit",
+            lambda handle, timeout_ms, terminate=True: True,
         )
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True
@@ -2967,6 +3924,969 @@ class TestServeBatchRouting:
         assert results[1].error.message == (
             "Batch aborted (WHServer VAS headroom) before this item was attempted"
         )
+
+
+class TestServeBatchRecycleBoundary:
+    """Serve-path recycle boundary frames (design §4.3): exit 18 = the
+    broker recycled WHServer and exited — respawn the broker and resubmit
+    from the refused index (the refused item is retried, not marked
+    not-run), bounded by ``max_recycles``; exit 19 = recycle refused —
+    abort with not-run markers and NO respawn. Without the exit-code
+    handling the dead-pipe retry in ``_ServeBroker.call`` would respawn
+    per remaining item (unbounded; one spawn + census + refusal each)."""
+
+    def test_exit18_respawns_and_resubmits_refused_item(self, tmp_path):
+        """An exit-18 frame respawns the broker and retries the REFUSED
+        index on it — the retried item's fresh result replaces the
+        boundary frame (no 18 left in the list, no marker)."""
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 18,
+             "error": {"code": "whserver_recycled",
+                       "message": "WHServer recycled (whserver_vas_free=10MB); resubmit on the respawned broker"}},
+            {"op": "insert", "type": "strategy", "name": "B", "success": True, "exit_code": 0, "prog_id": 2},
+            {"op": "insert", "type": "strategy", "name": "C", "success": True, "exit_code": 0, "prog_id": 3},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_insert([
+            BatchItem(type="strategy", name="A", source="// a"),
+            BatchItem(type="strategy", name="B", source="// b"),
+            BatchItem(type="strategy", name="C", source="// c"),
+        ])
+        # The refused index was resubmitted once on the respawned broker:
+        # request index sequence is 1, 2, 2 (resubmit), 3.
+        indexes = [
+            call[0][0]["batch"]["index"] for call in fake_broker.call.call_args_list
+        ]
+        assert indexes == [1, 2, 2, 3]
+        # The respawn reap goes through the WAIT-ONLY variant, never the
+        # terminating _reset_pipe (killing the mid-teardown broker would
+        # orphan its WHServer m_nLock refs -> census_lock deadlock).
+        assert fake_broker._reset_pipe_for_recycle_respawn.call_count == 1
+        assert fake_broker._reset_pipe.call_count == 0
+        assert fake_broker.start.call_count == 1
+        assert [r.success for r in results] == [True, True, True]
+        # The retried item's real result stands at position 2 — no
+        # exit-18 frame and no not-run marker leaks into the list.
+        assert results[1].exit_code == 0
+        assert results[1].prog_id == 2
+
+    def test_exit19_aborts_without_respawn(self, tmp_path):
+        """An exit-19 frame aborts the batch: the refusal result stands,
+        the remainder becomes exit-12 refusal markers, and the broker is
+        NOT respawned (a refused server is still breached — a respawn per
+        item would pay spawn + census + refusal each)."""
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 19,
+             "error": {"code": "whserver_recycle_refused",
+                       "message": "WHServer recycle refused: census_nonzero (whserver_vas_free=10MB)"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_insert([
+            BatchItem(type="strategy", name="A", source="// a"),
+            BatchItem(type="strategy", name="B", source="// b"),
+            BatchItem(type="strategy", name="C", source="// c"),
+        ])
+        assert fake_broker.call.call_count == 2
+        assert fake_broker.start.call_count == 0
+        assert fake_broker._reset_pipe.call_count == 0
+        assert fake_broker._reset_pipe_for_recycle_respawn.call_count == 0
+        assert len(results) == 3
+        assert results[0].success is True
+        # The refused item keeps its real exit-19 result.
+        assert results[1].exit_code == 19
+        assert results[1].error is not None
+        assert results[1].error.code == "whserver_recycle_refused"
+        # The never-attempted remainder is an exit-12 marker that says WHY.
+        assert results[2].exit_code == 12
+        assert results[2].name == "C"
+        assert results[2].error is not None
+        assert results[2].error.code == "cancelled"
+        assert results[2].error.message == (
+            "WHServer recycle refused before this item was attempted"
+        )
+
+    def test_exit18_bound_exhausted_stops_batch(self, tmp_path):
+        """When the max_recycles bound is hit the exit-18 result stands
+        and the remainder becomes bound-exhaustion markers — the batch
+        stops instead of looping breach->recycle->breach."""
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "A", "success": False, "exit_code": 18,
+             "error": {"code": "whserver_recycled", "message": "WHServer recycled"}},
+            {"op": "insert", "type": "strategy", "name": "A", "success": False, "exit_code": 18,
+             "error": {"code": "whserver_recycled", "message": "WHServer recycled"}},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c._batch_serve(
+            "insert",
+            [
+                BatchItem(type="strategy", name="A", source="// a"),
+                BatchItem(type="strategy", name="B", source="// b"),
+            ],
+            max_recycles=1,
+        )
+        # One resubmit happened, then the bound stopped the batch: the
+        # second 18 frame stands, B becomes a bound marker.
+        assert fake_broker.call.call_count == 2
+        assert fake_broker.start.call_count == 1
+        assert len(results) == 2
+        assert results[0].exit_code == 18
+        assert results[1].exit_code == 12
+        assert results[1].name == "B"
+        assert results[1].error is not None
+        assert results[1].error.message == (
+            "Batch stopped after 1 WHServer recycle(s) before this item was attempted"
+        )
+
+    def test_dir_serve_exit18_resubmits_refused_index(self, tmp_path):
+        """``_batch_dir_serve`` applies the same bounded resubmit: the
+        sorted-position refused index is retried on the respawned broker."""
+        d = tmp_path / "el_dir"
+        d.mkdir()
+        (d / "a.el").write_text("// a")
+        (d / "b.el").write_text("// b")
+        (d / "c.el").write_text("// c")
+        fake_broker = _serve_batch_broker([
+            {"op": "insert", "type": "strategy", "name": "a", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "b", "success": False, "exit_code": 18,
+             "error": {"code": "whserver_recycled", "message": "WHServer recycled"}},
+            {"op": "insert", "type": "strategy", "name": "b", "success": True, "exit_code": 0, "prog_id": 2},
+            {"op": "insert", "type": "strategy", "name": "c", "success": True, "exit_code": 0, "prog_id": 3},
+        ])
+        c = _serve_client(tmp_path, fake_broker)
+        results = c.batch_insert_dir("strategy", str(d))
+        indexes = [
+            call[0][0]["batch"]["index"] for call in fake_broker.call.call_args_list
+        ]
+        assert indexes == [1, 2, 2, 3]
+        assert fake_broker._reset_pipe_for_recycle_respawn.call_count == 1
+        assert fake_broker._reset_pipe.call_count == 0
+        assert fake_broker.start.call_count == 1
+        assert [r.success for r in results] == [True, True, True]
+
+    def test_recycle_warning_documents_bounded_resubmit_and_uac(self):
+        """The client-side §6.3 stand-in warning must document the
+        bounded resubmit and its non-elevated UAC cost (one interactive
+        prompt per respawn — unattended non-elevated runs must not set
+        the flag)."""
+        assert "3 recycles per batch" in _RECYCLE_WHSERVER_WARNING
+        assert "UAC prompt" in _RECYCLE_WHSERVER_WARNING
+        assert "resubmits from the refused index" in _RECYCLE_WHSERVER_WARNING
+
+
+class TestRecycleRespawnWaitOnlyReap:
+    """The exit-18 recycle-respawn reap is WAIT-ONLY.
+
+    An exit-18 broker is mid-graceful-teardown — boundary frame flushed,
+    then ``delete lib`` -> ``OrlibExit`` releasing its +7 WHServer
+    ``m_nLock`` session refs before ExitProcess.  ``TerminateProcess``
+    on it would orphan those refs for minutes: the respawned broker's
+    census then sees lock>0 -> census_lock -> exit 19 — the deadlock the
+    recycle design exists to prevent.  So the reap only waits, bounded
+    by the broker's own dispatch-watchdog window (+margin, floor 360 s)
+    so even a wedged teardown ends the wait; bound expiry raises
+    ``TimeoutError`` — loud, never a silent kill.  Other reap paths
+    (``_reset_pipe`` default, ``shutdown``, ``_close_handles``) keep the
+    pre-existing 5 s + TerminateProcess contract for hung brokers.
+    """
+
+    def test_wait_for_exit_terminate_false_is_wait_only(self, monkeypatch) -> None:
+        """``terminate=False`` returns False on WAIT_TIMEOUT without ever
+        calling TerminateProcess or running a second wait."""
+        wait_calls: list[int] = []
+        terminate_calls: list = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda handle, ms: wait_calls.append(int(ms.value)) or 0x00000102,
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda *args: terminate_calls.append(args) or True,
+        )
+
+        assert _wait_for_exit(222, timeout_ms=360_000, terminate=False) is False
+        assert wait_calls == [360_000]
+        assert terminate_calls == []
+
+    def test_reap_bound_derives_from_dispatch_watchdog_env(self, monkeypatch) -> None:
+        """Bound = broker watchdog window + 60 s margin, floored at
+        360 s; env "0" disables the broker watchdog, leaving the client
+        floor as the ONLY bound on the reap (never unbounded)."""
+        monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
+        # Broker default 300 s -> 300 s + 60 s margin = the 360 s floor.
+        assert _recycle_respawn_reap_timeout_ms() == 360_000
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "300")
+        assert _recycle_respawn_reap_timeout_ms() == 360_000
+        # A larger configured watchdog window widens the bound past it.
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "900")
+        assert _recycle_respawn_reap_timeout_ms() == 960_000
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "86400")
+        assert _recycle_respawn_reap_timeout_ms() == 86_460_000
+        # "0" disables the broker watchdog -> the floor is the only bound.
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "0")
+        assert _recycle_respawn_reap_timeout_ms() == 360_000
+        # Invalid env values are dropped — the broker keeps its default.
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "abc")
+        assert _recycle_respawn_reap_timeout_ms() == 360_000
+        monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "99999")
+        assert _recycle_respawn_reap_timeout_ms() == 360_000
+
+    def test_respawn_reap_uses_wait_only_bounded_wait(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """``_reset_pipe_for_recycle_respawn`` closes the pipe and reaps
+        via ``_wait_for_exit`` with the recycle-respawn bound and
+        ``terminate=False``; a confirmed exit closes the handle."""
+        monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        seen: list[tuple] = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit",
+            lambda handle, timeout_ms, terminate=True: (
+                seen.append((handle, timeout_ms, terminate)) or True
+            ),
+        )
+        close_calls: list = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle",
+            lambda handle: close_calls.append(handle) or True,
+        )
+
+        broker._reset_pipe_for_recycle_respawn()
+
+        assert seen == [(222, 360_000, False)]
+        assert len(close_calls) == 1
+        assert broker._process_handle is None
+        assert broker._pipe_handle is None
+        assert broker._started is False
+
+    def test_respawn_reap_expiry_raises_without_terminating(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """On bound expiry the wait-only reap raises ``TimeoutError``
+        (mid-graceful-teardown diagnosis) and NEVER calls
+        TerminateProcess — the still-running broker finishes teardown."""
+        monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        wait_calls: list[int] = []
+        terminate_calls: list = []
+
+        def fake_wait(handle, ms):
+            wait_calls.append(int(ms.value))
+            return 0x00000102  # WAIT_TIMEOUT — teardown still in flight
+
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject", fake_wait
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda *args: terminate_calls.append(args) or True,
+        )
+
+        with pytest.raises(TimeoutError, match="graceful teardown"):
+            broker._reset_pipe_for_recycle_respawn()
+
+        assert terminate_calls == []
+        # One wait at the recycle-respawn bound — no terminate-confirm wait.
+        assert wait_calls == [360_000]
+        # The live broker handle is retained, not closed or discarded.
+        assert broker._process_handle == 222
+        assert broker._started is False
+
+    def test_non_respawn_reaps_keep_5s_terminate_contract(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """``_reset_pipe``/``shutdown`` keep the existing 5 s +
+        TerminateProcess contract — the wait-only path is confined to
+        the recycle-respawn reap."""
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        monkeypatch.setattr(_pipe, "close", lambda handle: None)
+        seen: list[tuple] = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit",
+            lambda handle, timeout_ms, terminate=True: (
+                seen.append((handle, timeout_ms, terminate)) or True
+            ),
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda h: True
+        )
+
+        broker._reset_pipe()
+        assert seen == [(222, 5000, True)]
+
+        # shutdown() keeps the same 5 s + terminate reap.
+        broker._started = True
+        broker._process_handle = 333
+        broker.shutdown()
+        assert seen == [(222, 5000, True), (333, 5000, True)]
+
+    def test_exit18_respawn_through_batch_serve_never_terminates(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Through ``_batch_serve`` with the real broker class: an exit-18
+        frame drives the wait-only reap — WaitForSingleObject sees the
+        recycle-respawn bound and TerminateProcess is never called."""
+        monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
+        broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
+        broker._started = True
+        broker._pipe_handle = 111
+        broker._process_handle = 222
+        c = _serve_client(tmp_path, broker)
+
+        terminate_calls: list = []
+        wait_calls: list[int] = []
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda *args: terminate_calls.append(args) or True,
+        )
+        # WAIT_OBJECT_0 — the teardown completed inside the bound.
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda handle, ms: wait_calls.append(int(ms.value)) or 0,
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.CloseHandle", lambda h: True
+        )
+        monkeypatch.setattr(_pipe, "close", lambda h: None)
+        start_calls: list = []
+        monkeypatch.setattr(broker, "start", lambda: start_calls.append(1))
+
+        outcomes = iter([
+            {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
+            {"op": "insert", "type": "strategy", "name": "B", "success": False, "exit_code": 18,
+             "error": {"code": "whserver_recycled", "message": "WHServer recycled"}},
+            {"op": "insert", "type": "strategy", "name": "B", "success": True, "exit_code": 0, "prog_id": 2},
+            {"op": "insert", "type": "strategy", "name": "C", "success": True, "exit_code": 0, "prog_id": 3},
+        ])
+
+        def fake_call(request: dict) -> dict:
+            resp = dict(next(outcomes))
+            resp["progress"] = _progress_member(request["batch"])
+            return resp
+
+        monkeypatch.setattr(broker, "call", fake_call)
+
+        results = c.batch_insert([
+            BatchItem(type="strategy", name="A", source="// a"),
+            BatchItem(type="strategy", name="B", source="// b"),
+            BatchItem(type="strategy", name="C", source="// c"),
+        ])
+
+        assert start_calls == [1]
+        assert wait_calls == [360_000]
+        assert terminate_calls == []
+        assert [r.success for r in results] == [True, True, True]
+
+
+def _batch_item_json(op: str, type_: str, name: str, success: bool,
+                     exit_code: int, code: str | None = None,
+                     message: str = "") -> dict:
+    """One results-array element as the CLI emits it."""
+    obj: dict = {"op": op, "type": type_, "name": name,
+                 "success": success, "exit_code": exit_code}
+    if code is not None:
+        obj["error"] = {"code": code, "message": message}
+    return obj
+
+
+def _recycled_marker_json(op: str, type_: str, name: str) -> dict:
+    return _batch_item_json(
+        op, type_, name, False, 12, "cancelled",
+        "WHServer recycled; resubmit remaining items")
+
+
+def _recycled_event(manifest: str | None) -> str:
+    """The ``whserver_recycled`` NDJSON event line for mocked stderr."""
+    obj: dict = {"event": "whserver_recycled",
+                 "reason": "whserver_recycled", "exit_code": 18,
+                 "pid": 4242, "free_mb": 10, "index": 2, "total": 3}
+    if manifest is not None:
+        obj["manifest"] = manifest
+    return json.dumps(obj)
+
+
+class TestDirectBatchRecycleResume:
+    """Direct-path resume contract (design §4.1/§4.2): exit 18 makes the
+    client resubmit the CLI's resume manifest to a fresh ``batch-<op>``
+    invocation — the attempted head is kept, the marker tail is replaced
+    by the resumed results — bounded by ``max_recycles``; the manifest is
+    caller-owned and deleted once the resumed batch has returned."""
+
+    def _direct_cmd(self, cli: Path, sub: str = "batch-insert") -> list[str]:
+        return [str(cli), "--json", "--recycle-whserver", sub,
+                "--batch-stdin"]
+
+    def test_exit18_resubmits_resume_manifest(self, client, monkeypatch,
+                                              tmp_path) -> None:
+        """Exit 18 + manifest event -> one resubmission of the resume
+        manifest; merged results keep the attempted head, the manifest is
+        deleted after the resumed batch returns."""
+        manifest = tmp_path / "tsdev_resume_1_2.manifest"
+        manifest.write_text("strategy B C:/b.el\nstrategy C C:/c.el\n")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                    _recycled_marker_json("insert", "strategy", "C"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            arr = [
+                _batch_item_json("insert", "strategy", "B", True, 0),
+                _batch_item_json("insert", "strategy", "C", True, 0),
+            ]
+            return _make_completed(json.dumps(arr), returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="strategy A C:/a.el\n")
+        assert len(calls) == 2
+        # The resubmission is a manifest-file batch: same head flags, the
+        # non-dir batch-<op> subcommand, the manifest path — no
+        # --batch-stdin.
+        assert calls[1] == calls[0][:-2] + ["batch-insert", str(manifest)]
+        assert "--batch-stdin" not in calls[1]
+        assert not manifest.exists()  # caller-owned cleanup
+        assert [r.name for r in results] == ["A", "B", "C"]
+        assert all(r.success for r in results)
+
+    def test_exit18_dir_batch_resubmits_via_manifest(self, client,
+                                                     monkeypatch,
+                                                     tmp_path) -> None:
+        """A batch-*-dir invocation resubmits the resume manifest through
+        the non-dir ``batch-<op>`` subcommand (the manifest file is the
+        only well-defined resume input)."""
+        manifest = tmp_path / "tsdev_resume_1_3.manifest"
+        manifest.write_text("strategy b C:/d/b.el\n")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "a", True, 0),
+                    _recycled_marker_json("insert", "strategy", "b"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            return _make_completed(json.dumps(
+                [_batch_item_json("insert", "strategy", "b", True, 0)]),
+                returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        cmd = [str(client.cli_path), "--json", "--recycle-whserver",
+               "batch-insert-dir", "strategy", "C:/d", "-t", "el"]
+        results = client._run_batch(cmd, input="")
+        assert len(calls) == 2
+        assert "batch-insert" in calls[1]
+        assert "batch-insert-dir" not in calls[1]
+        assert calls[1][-1] == str(manifest)
+        assert not manifest.exists()
+        assert [r.name for r in results] == ["a", "b"]
+
+    def test_exit18_bound_returns_boundary_array(self, client, monkeypatch,
+                                                 tmp_path) -> None:
+        """Bound exhaustion returns the boundary array as-is — the
+        attempted head plus the marker tail; no further spawn, no item
+        dropped or duplicated."""
+        manifests = []
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            m = tmp_path / f"tsdev_resume_9_{calls}.manifest"
+            m.write_text("strategy B C:/b.el\nstrategy C C:/c.el\n")
+            manifests.append(m)
+            if calls == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                    _recycled_marker_json("insert", "strategy", "C"),
+                ]
+            else:
+                # The resubmitted batch covers only the manifest's tail:
+                # B attempted, C still not-run after a second breach.
+                arr = [
+                    _batch_item_json("insert", "strategy", "B", True, 0),
+                    _recycled_marker_json("insert", "strategy", "C"),
+                ]
+            return _make_completed(
+                json.dumps(arr), stderr=_recycled_event(str(m)),
+                returncode=18)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="", max_recycles=1)
+        assert calls == 2  # initial + exactly one resubmit
+        assert len(results) == 3
+        assert results[0].success is True
+        # The resubmitted run's own boundary stands: its head result plus
+        # the marker tail — the boundary array is returned as-is.
+        assert [r.exit_code for r in results] == [0, 0, 12]
+        # The consumed manifest is deleted once its resumed batch has
+        # returned; the bound-exhausted run's own manifest is caller-owned
+        # forensic/resume data — its tail was never consumed, so it stays.
+        assert not manifests[0].exists()
+        assert manifests[-1].exists()
+
+    def test_exit19_returns_array_as_is(self, client, monkeypatch) -> None:
+        """Exit 19 aborts the batch — the array (head + refusal markers)
+        is returned verbatim; nothing is resubmitted."""
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            arr = [
+                _batch_item_json("insert", "strategy", "A", True, 0),
+                _batch_item_json(
+                    "insert", "strategy", "B", False, 12, "cancelled",
+                    "WHServer recycle refused before this item was attempted"),
+            ]
+            return _make_completed(json.dumps(arr), returncode=19)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        assert calls == 1
+        assert len(results) == 2
+        assert results[1].exit_code == 12
+
+    def test_exit18_without_manifest_returns_boundary(self, client,
+                                                      monkeypatch) -> None:
+        """An exit-18 run whose event carries no manifest path is
+        fail-closed: the boundary array stands (the marker tail pins the
+        resume point for manual resubmission)."""
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            arr = [
+                _batch_item_json("insert", "strategy", "A", True, 0),
+                _recycled_marker_json("insert", "strategy", "B"),
+            ]
+            return _make_completed(
+                json.dumps(arr), stderr=_recycled_event(None),
+                returncode=18)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        assert calls == 1
+        assert [r.exit_code for r in results] == [0, 12]
+        # The marker tail is re-worded: a missing manifest means nothing
+        # can be resubmitted — the generic "resubmit" text would advise
+        # an impossible action.
+        assert results[1].error is not None
+        # Neutral wording: "unavailable", and NO "may exist on disk"
+        # claim — without a stderr diagnostic there is no evidence a
+        # file was written.
+        assert "resume manifest unavailable" in results[1].error.message
+        assert "not re-attempted" in results[1].error.message
+        assert "may exist on disk" not in results[1].error.message
+
+    def test_exit18_path_dropped_retains_all_temp_sources(
+            self, client, monkeypatch, tmp_path) -> None:
+        """A manifest WAS written but its non-ASCII path was dropped from
+        the JSON event (this is an ANSI-codepage build): the marker must
+        carry the stderr diagnostic, and the still-existing file
+        references this batch's temp sources — the sentinel retention
+        spares ALL temps so manual resubmission works."""
+        dropped_diag = (
+            "tsdev_cli: resume manifest path is not representable in "
+            "the JSON event stream (non-ASCII) — automatic resume "
+            "cannot use it; resume the remaining items manually\n")
+        src_paths: list[str] = []
+
+        def fake_run(cmd, **kw):
+            for line in kw.get("input", "").splitlines():
+                if line.strip():
+                    src_paths.append(line.split(None, 2)[2])
+            arr = [
+                _batch_item_json("insert", "strategy", "A", True, 0),
+                _recycled_marker_json("insert", "strategy", "B"),
+            ]
+            return _make_completed(
+                json.dumps(arr),
+                stderr=_recycled_event(None) + "\n" + dropped_diag,
+                returncode=18)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client.batch_insert([
+            BatchItem("strategy", "A", "x = 1;"),
+            BatchItem("strategy", "B", "y = 2;"),
+        ])
+        from tsdev_automation.client import _RETAIN_ALL_TEMP_SOURCES
+        assert client._retained_resume_manifest is _RETAIN_ALL_TEMP_SOURCES
+        marker = results[1].error
+        assert marker is not None
+        assert "resume manifest unavailable" in marker.message
+        assert "not representable" in marker.message
+        # Every materialized temp source survives — the referenced set
+        # cannot be enumerated without the manifest path.
+        assert len(src_paths) == 2
+        assert all(Path(p).exists() for p in src_paths)
+        for p in src_paths:
+            Path(p).unlink(missing_ok=True)
+
+    def test_exit18_writer_refusal_marker_names_item(
+            self, client, monkeypatch) -> None:
+        """Writer refusal (a preValid=false tail item cannot be
+        represented): NO manifest exists — the marker carries the
+        refusal reason verbatim, which names the refusing item and
+        states the remaining items were not re-attempted."""
+        refusal_diag = (
+            'tsdev_cli: resume manifest cannot represent item 2 '
+            '("<unrepresentable filename: X>"): it already failed '
+            'manifest pre-validation (failed to convert) — no manifest '
+            'written (resume the remaining items manually)\n')
+
+        def fake_run(cmd, **kw):
+            arr = [
+                _batch_item_json("insert", "function", "A", True, 0),
+                _recycled_marker_json("insert", "function", "B"),
+            ]
+            return _make_completed(
+                json.dumps(arr),
+                stderr=_recycled_event(None) + "\n" + refusal_diag,
+                returncode=18)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        marker = results[1].error
+        assert marker is not None
+        assert "resume manifest unavailable" in marker.message
+        assert 'cannot represent item 2' in marker.message
+        assert "no manifest written" in marker.message
+        # No file exists — nothing is retained and no "exists on disk"
+        # claim is made.
+        assert client._retained_resume_manifest is None
+        assert "may exist on disk" not in marker.message
+
+    def test_exit19_no_manifest_marker_carries_stderr_reason(
+            self, client, monkeypatch) -> None:
+        """Exit 19 with no manifest on the event: the refusal markers
+        still state WHY via the stderr diagnostic (e.g. a writer
+        refusal names the refusing item)."""
+        refusal_diag = (
+            'tsdev_cli: resume manifest cannot represent item 2 ("N"): '
+            'it already failed manifest pre-validation (bad) — no '
+            'manifest written\n')
+        refused_event = json.dumps(
+            {"event": "whserver_recycle_refused", "reason": "census_lock",
+             "exit_code": 19, "pid": 4242, "free_mb": 10,
+             "index": 2, "total": 2})
+
+        def fake_run(cmd, **kw):
+            arr = [
+                _batch_item_json("insert", "strategy", "A", True, 0),
+                _batch_item_json(
+                    "insert", "strategy", "B", False, 12, "cancelled",
+                    "WHServer recycle refused before this item was attempted"),
+            ]
+            return _make_completed(
+                json.dumps(arr),
+                stderr=refused_event + "\n" + refusal_diag,
+                returncode=19)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        assert results[1].exit_code == 12
+        assert results[1].error is not None
+        assert "WHServer recycle refused" in results[1].error.message
+        assert 'cannot represent item 2' in results[1].error.message
+
+    def test_exit18_raise_attaches_partial_results(
+            self, client, monkeypatch, tmp_path) -> None:
+        """A resumed run that raises must not discard the attempted
+        head — the completed-so-far results ride the exception as
+        ``batch_partial_results``."""
+        manifest = tmp_path / "tsdev_resume_1_9.manifest"
+        manifest.write_text("strategy B C:/b.el\n")
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(TimeoutError) as ei:
+            client._run_batch(self._direct_cmd(client.cli_path), input="")
+        partial = getattr(ei.value, "batch_partial_results", None)
+        assert partial is not None
+        assert [r.name for r in partial] == ["A"]
+        assert partial[0].success
+
+    def test_exit18_resubmit_strips_cache_flags(self, client, monkeypatch,
+                                                tmp_path) -> None:
+        """The resubmission must NOT re-run cache phases — the backup was
+        already taken in the first invocation, and re-running it under the
+        default abort policy exits 17 before the batch (which previously
+        also discarded the pending manifest on the raise).  Cache flags
+        are stripped; other base flags (--ts-path, --json,
+        --recycle-whserver) survive verbatim."""
+        manifest = tmp_path / "tsdev_resume_1_4.manifest"
+        manifest.write_text("strategy B C:/b.el\n")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            return _make_completed(json.dumps(
+                [_batch_item_json("insert", "strategy", "B", True, 0)]),
+                returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        cmd = [
+            str(client.cli_path), "--ts-path", "C:/ts", "--json",
+            "--backup-cache", "--cache-backup-policy=abort",
+            "--restore-cache", "--no-cache-compress",
+            "--recycle-whserver", "batch-insert", "--batch-stdin",
+        ]
+        results = client._run_batch(cmd, input="")
+        assert calls[1] == [
+            str(client.cli_path), "--ts-path", "C:/ts", "--json",
+            "--recycle-whserver", "batch-insert", str(manifest),
+        ]
+        assert all(r.success for r in results)
+
+    def test_resume_batch_cmd_strips_space_form_value(self) -> None:
+        """The space form ``--cache-backup-policy <mode>`` is two argv
+        tokens — the strip must consume the value token too, and must not
+        eat a non-cache flag's value."""
+        assert _resume_batch_cmd(
+            ["cli", "--ts-path", "C:/ts", "--json",
+             "--cache-backup-policy", "abort", "--backup-cache",
+             "batch-delete", "--batch-stdin"],
+            "m.manifest",
+        ) == ["cli", "--ts-path", "C:/ts", "--json",
+              "batch-delete", "m.manifest"]
+        # = forms of the presence flags are stripped too.
+        assert _resume_batch_cmd(
+            ["cli", "--backup-cache=x", "--restore-cache=0",
+             "--no-cache-compress=1", "batch-insert-dir", "f", "d"],
+            "m",
+        ) == ["cli", "batch-insert", "m"]
+
+    def test_exit18_resume_raise_retains_manifest(self, client, monkeypatch,
+                                                  tmp_path) -> None:
+        """When the RESUMED batch raises (here: timeout) the resume
+        manifest is NOT deleted — it was never consumed, so it must
+        survive for manual resubmission/forensics."""
+        manifest = tmp_path / "tsdev_resume_1_5.manifest"
+        manifest.write_text("strategy B C:/b.el\n")
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(TimeoutError):
+            client._run_batch(self._direct_cmd(client.cli_path), input="")
+        assert manifest.exists(), (
+            "the manifest must survive an unconsumed resume (raise), "
+            "not be discarded by a finally")
+
+    def test_exit18_bound_markers_carry_bound_message(self, client,
+                                                      monkeypatch,
+                                                      tmp_path) -> None:
+        """Bound exhaustion re-words the not-run markers to the bound
+        message (same contract as the serve path) — the generic
+        'resubmit' text would advise a resubmission the client
+        deliberately refused to make."""
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            m = tmp_path / f"tsdev_resume_8_{calls}.manifest"
+            m.write_text("strategy B C:/b.el\n")
+            arr = [_recycled_marker_json("insert", "strategy", "B")]
+            return _make_completed(
+                json.dumps(arr), stderr=_recycled_event(str(m)),
+                returncode=18)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="", max_recycles=0)
+        assert calls == 1
+        assert len(results) == 1
+        assert results[0].exit_code == 12
+        assert results[0].error is not None
+        # The bound-exhausted run's own manifest is retained on disk —
+        # the marker names its path (F8: it otherwise only reaches the
+        # child's stderr, invisible to the caller).
+        assert results[0].error.message == (
+            "Batch stopped after 0 WHServer recycle(s) "
+            "before this item was attempted"
+            f" (resume manifest: {tmp_path / 'tsdev_resume_8_1.manifest'})")
+
+    def test_exit18_failed_head_item_kept_before_boundary(self, client,
+                                                          monkeypatch,
+                                                          tmp_path) -> None:
+        """The boundary is the FIRST exit-12 result — a genuinely failed
+        attempted item (any other exit code) before it belongs to the
+        kept head and is never mistaken for the marker tail."""
+        manifest = tmp_path / "tsdev_resume_1_6.manifest"
+        manifest.write_text("strategy C C:/c.el\n")
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _batch_item_json(
+                        "insert", "strategy", "B", False, 8,
+                        "compile_error", "syntax error"),
+                    _recycled_marker_json("insert", "strategy", "C"),
+                ]
+                return _make_completed(
+                    json.dumps(arr), stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            return _make_completed(json.dumps(
+                [_batch_item_json("insert", "strategy", "C", True, 0)]),
+                returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        assert [r.name for r in results] == ["A", "B", "C"]
+        assert results[1].exit_code == 8  # failed head item kept verbatim
+        assert results[1].error.message == "syntax error"
+
+    def test_exit19_marker_names_retained_manifest(self, client,
+                                                   monkeypatch,
+                                                   tmp_path) -> None:
+        """Exit 19: the CLI's refusal markers are re-worded to name the
+        retained resume manifest (F8 — the path otherwise only reaches
+        the child's stderr, invisible to the caller)."""
+        manifest = tmp_path / "tsdev_resume_1_7.manifest"
+        manifest.write_text("strategy B C:/b.el\n")
+        refused_event = json.dumps(
+            {"event": "whserver_recycle_refused",
+             "reason": "census_lock", "exit_code": 19,
+             "pid": 4242, "free_mb": 10, "index": 2, "total": 2,
+             "manifest": str(manifest)})
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            arr = [
+                _batch_item_json("insert", "strategy", "A", True, 0),
+                _batch_item_json(
+                    "insert", "strategy", "B", False, 12, "cancelled",
+                    "WHServer recycle refused before this item was attempted"),
+            ]
+            return _make_completed(json.dumps(arr), stderr=refused_event,
+                                   returncode=19)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        results = client._run_batch(self._direct_cmd(client.cli_path),
+                                    input="")
+        assert calls == 1
+        assert results[1].exit_code == 12
+        assert results[1].error is not None
+        assert results[1].error.message == (
+            "WHServer recycle refused before this item was attempted"
+            f" (resume manifest: {manifest})")
+        assert client._retained_resume_manifest == str(manifest)
+
+    def test_exit18_raise_retains_manifest_temp_sources(
+            self, client, monkeypatch, tmp_path) -> None:
+        """F5: when the resumed batch raises, the retained manifest still
+        references the batch's temp .el sources — _batch's cleanup must
+        spare the paths the manifest names so manual resubmission
+        works."""
+        manifest = tmp_path / "tsdev_resume_1_8.manifest"
+        src_paths: list[str] = []
+        calls = 0
+
+        def fake_run(cmd, **kw):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # The mocked "CLI" writes its resume manifest naming the
+                # temp source the client piped in via stdin.
+                for line in kw["input"].splitlines():
+                    if line.strip():
+                        src_paths.append(line.split(None, 2)[2])
+                manifest.write_text(
+                    f"strategy B {src_paths[1]}\n")
+                arr = [
+                    _batch_item_json("insert", "strategy", "A", True, 0),
+                    _recycled_marker_json("insert", "strategy", "B"),
+                ]
+                return _make_completed(
+                    json.dumps(arr),
+                    stderr=_recycled_event(str(manifest)),
+                    returncode=18)
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(TimeoutError):
+            client.batch_insert([
+                BatchItem("strategy", "A", "x = 1;"),
+                BatchItem("strategy", "B", "y = 2;"),
+            ])
+        assert manifest.exists(), "retained manifest must survive"
+        # The manifest's referenced temp source was carved out of
+        # cleanup — resubmitting the manifest file still works.
+        assert Path(src_paths[1]).exists(), (
+            "temp source referenced by the retained manifest must not "
+            "be deleted")
+        # The head item's temp source (not in the manifest) was cleaned.
+        assert not Path(src_paths[0]).exists()
 
 
 class TestServeBatchDirRouting:
@@ -5259,7 +7179,8 @@ class TestServeBrokerCrashDetection:
         # _reset_pipe should not raise (mock the internals).
         monkeypatch.setattr(_pipe, "close", lambda handle: None)
         monkeypatch.setattr(
-            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+            "tsdev_automation.client._wait_for_exit",
+            lambda handle, timeout_ms, terminate=True: True,
         )
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True
@@ -5293,7 +7214,8 @@ class TestServeBrokerCrashDetection:
         # _reset_pipe + start() must be no-ops.
         monkeypatch.setattr(_pipe, "close", lambda handle: None)
         monkeypatch.setattr(
-            "tsdev_automation.client._wait_for_exit", lambda handle, timeout_ms: True
+            "tsdev_automation.client._wait_for_exit",
+            lambda handle, timeout_ms, terminate=True: True,
         )
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.CloseHandle", lambda handle: True

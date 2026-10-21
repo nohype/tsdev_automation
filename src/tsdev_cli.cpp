@@ -31,6 +31,10 @@
 //                 subcommand; each line carries only the per-item args:
 //                   batch-insert/batch-modify/batch-upsert: <type> <name> <source_file>
 //                   batch-delete:                              <type> <name>
+//                 A <name> containing whitespace must be double-quoted
+//                 ("my name"); a malformed quoted name is a
+//                 pre-validation failure. <source_file> is the rest of
+//                 the line, so it may contain spaces.
 //   --json        Global flag. When present, emit a single JSON object on stdout
 //                 (followed by a newline) describing the operation result, and
 //                 suppress the human-readable stdout messages. Exit codes are
@@ -116,6 +120,16 @@
 // 16 = cache I/O error (backup/restore failure, cache dir or backup root
 // unreachable, restore of a locked cache); 17 = cache backup cancelled
 // (--cache-backup-policy=abort or 'C' at the prompt).
+// 18 = WHServer recycled on a VAS-guard breach under --recycle-whserver;
+// 19 = WHServer recycle refused.
+// 20-24 = own-process fatal-termination containment (P4 gap-e; the silent-
+// death block above vehCrashHandler): 20 = std::terminate (unhandled C++
+// exception / noexcept violation), 21 = abort()/SIGABRT, 22 = CRT
+// invalid-parameter fatal, 23 = pure virtual call, 24 = UEF invoked with
+// no exception record (defensive — unreachable per the API contract).
+// VEH/UEF deaths otherwise exit with the SEH exception code itself
+// (0xC...), never via WER/TSCrashReport and never through ExitProcess's
+// DLL detach.
 // Every direct tsdev_cli subcommand, including serve, requires an elevated
 // administrator process; when the guard runs non-elevated it returns exit 11.
 //
@@ -153,6 +167,40 @@
 // the Python client forwards TSDEV_WHSERVER_* overrides to the serve broker
 // as explicit --whserver-* flags (see _build_serve_parameters).
 //
+// --recycle-whserver (batch-*/serve only) authorizes restarting WHServer.exe
+// when the VAS-headroom guard trips (design: tmp/RECYCLE_ENGINE_DESIGN.md).
+// The flag AUTHORIZES the recycle — it never bypasses the safety gate: the
+// engine still requires a zero-client census, and a gate/stage refusal exits
+// 19 (whserver_recycle_refused); a successful recycle exits 18
+// (whserver_recycled) so the batch resumes in a fresh process (serve: the
+// elevated broker respawns). R1/R2 site rule (PROVEN live findings): the
+// engine only runs in-process at NEVER-ATTACHED sites — an attached
+// process holds +7 m_nLock for its whole lifetime (closeWarehouse cannot
+// release it, and ONLY graceful teardown can — a TerminateProcess corpse
+// orphans it for >=minutes, deadlocking the resumed census; live-proven
+// 2026-10-21), so an attached-site breach exits 18 WITHOUT running the
+// engine (reason=recycle_deferred_own_session) — but FIRST runs the §5
+// bounded close stage so the process exits GRACEFULLY and releases the
+// +7; a failed/uncertain close refuses on the close-stage family (exit
+// 19, TerminateProcess-self). The resumed process/broker runs the engine
+// at its own never-attached guard site. Env mirror: TSDEV_RECYCLE_WHSERVER (any value
+// but "0"; the explicit flag wins over env "0" — OR-ed presence semantics).
+// Conflicts (usage error exit 1): --no-whserver-vas-guard (a recycle can
+// never trigger with the guard disabled) and --batch-progress-control (the
+// stdin control channel belongs to the dying process — a mid-batch recycle
+// exit would strand it). The §6.3 residual-race warning is printed once per
+// process lifetime when the flag is in effect. The recycle boundary is
+// wired at all three guard sites and exits 18/19 are emitted with the
+// recycle not-run markers appended to the results array (the error.code
+// mappings are live). On a recycle exit the CLI also writes a resume manifest
+// (tsdev_resume_<pid>_<ticks>.manifest beside the source manifest, or the
+// cwd for --batch-stdin / the scanned directory for batch-*-dir) covering
+// the not-run tail; resubmitting `batch-<op> <resume-file>` re-attempts
+// exactly that tail. In serve mode the Python client respawns the broker
+// and resubmits from the refused index; on the direct path it resubmits
+// the resume manifest automatically (both bounded: 3 recycles per batch
+// call); exit 19 aborts.
+//
 // Batch progress is always emitted on stderr (independent of -v): one
 // BATCH SUCCESS/BATCH FAILED completion line per attempted item (a FAILED
 // line is followed by the item's full human detail block when present),
@@ -188,6 +236,7 @@
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "dispatch_watchdog.h"  // TVS-3: production bounded-wait dispatch containment
 #include "whserver_health.h" // TVS-1b: WHServer VAS-headroom guard (batch)
+#include "whserver_recycle.h" // R3: gated WHServer recycle engine
 #include "ts_install.h"     // resolveTsCacheDir for the cache phase
 #include "cache_backup.h"   // cache backup/restore engine (--backup-cache/--restore-cache)
 
@@ -212,13 +261,24 @@
 #include <fcntl.h>
 #include <atomic>      // TVS-K.4: std::atomic<bool> for serve quit flag
 #include <chrono>      // cache-phase progress renderer timing/throttle
+#include <csignal>     // signal/SIGABRT — P4 gap-e fatal containment
+#include <exception>   // std::set_terminate — P4 gap-e fatal containment
 #include <cwctype>     // towlower for the cache-backup prompt key read
+#include <new>         // std::nothrow (bounded control-read job alloc, R6)
+#include <process.h>   // _beginthreadex (bounded control-read helper, R6)
 #include <sddl.h>      // TVS-K.4: ConvertStringSecurityDescriptorToSecurityDescriptorW
 
 using namespace tsdev;
 using ordered_json = nlohmann::ordered_json;  // preserves insertion order
 
 namespace {
+
+// P4 gap-e own-process fatal-termination containment. The definitions —
+// with the full rationale and the orlib20 UEF-ordering analysis — live next
+// to vehCrashHandler below; the worker procs precede them in this file, so
+// the two install entry points are forward-declared here.
+void installThreadFatalContainment();
+void installProcessUef();
 
 // --- Helpers ---
 
@@ -320,6 +380,9 @@ void printUsage() {
         "                  '#' comments and blank lines are skipped). Lines:\n"
         "                  insert/modify/upsert: <type> <name> <source_file>\n"
         "                  delete:               <type> <name>\n"
+        "                  A <name> containing whitespace must be double-quoted\n"
+        "                  (\"my name\"); <source_file> is the rest of the line\n"
+        "                  and may contain spaces.\n"
         "  --batch-stdin    read the manifest from stdin instead of <manifest_file>\n"
         "                   (same line format; stdin is read in binary mode).\n"
         "  --batch-progress-control  (batch-* only) cooperative between-items\n"
@@ -334,6 +397,12 @@ void printUsage() {
         "                   input stops before the next item: remaining items\n"
         "                   become exit-12 not-run markers (full-length array)\n"
         "                   and the process exits 3.\n"
+        "  --batch-control-timeout-secs <N>  (batch-* with\n"
+        "                   --batch-progress-control) bound each decision wait:\n"
+        "                   a stalled/open control channel (e.g. a dead parent)\n"
+        "                   cancels the batch after N seconds instead of\n"
+        "                   hanging forever. Default 900; 0 disables the bound;\n"
+        "                   valid range 0..86400.\n"
         "  --whserver-free-mb <N>  (batch-*/serve) WHServer VAS-headroom guard:\n"
         "                   abort the batch (exit 14, remaining items become\n"
         "                   exit-12 not-run markers) before the next item when\n"
@@ -346,6 +415,26 @@ void printUsage() {
         "  --no-whserver-vas-guard  (batch-*/serve) disable the WHServer\n"
         "                   VAS-headroom guard entirely. Env:\n"
         "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
+        "  --recycle-whserver  (batch-*/serve) authorize restarting\n"
+        "                   WHServer.exe when the VAS-headroom guard trips.\n"
+        "                   The restart is still gated on a zero-client\n"
+        "                   census — the flag AUTHORIZES the recycle, it does\n"
+        "                   NOT bypass the census gate: when the gate cannot\n"
+        "                   confirm zero foreign-held objects the batch aborts\n"
+        "                   (exit 19). A successful recycle exits 18 so the\n"
+        "                   batch resumes in a fresh process (serve: the\n"
+        "                   elevated broker respawns — a non-elevated client\n"
+        "                   gets one UAC prompt per respawn). Not valid with\n"
+        "                   --no-whserver-vas-guard or --batch-progress-control.\n"
+        "                   Presence-only: any '=' value is ignored; no\n"
+        "                   negative form — env \"0\" disables the env arm\n"
+        "                   only, never the flag.\n"
+        "                   Env: TSDEV_RECYCLE_WHSERVER (any value but \"0\").\n"
+        "                   (On a recycle exit the CLI writes a resume\n"
+        "                   manifest covering the not-run tail — resubmit\n"
+        "                   `batch-<op> <resume-file>`; the Python client\n"
+        "                   resubmits it automatically, bounded at 3 recycles\n"
+        "                   per batch — exit 19 aborts.)\n"
         "  --traverse-strategy-dependents  (all verify paths: single ops,\n"
         "                   batch-*, serve) restore the legacy per-item\n"
         "                   whole-library reverse-dependent traversal for\n"
@@ -496,6 +585,17 @@ struct CliResult {
     // --json cache payload (the "cache" member object). Null/empty for all
     // other ops (no serialization change).
     ordered_json extraPayload;
+    // §5 teardown flag (whserver_recycle.h close_failed class): true when
+    // the op ended while the warehouse session may still be open with
+    // UNCERTAIN teardown state — i.e. a closeWarehouse that this op owned
+    // did not provably complete (doInsert step 8, or a deleteEntry failure
+    // classified by deleteResultLeavesSessionOpen). The session-owning
+    // worker must then emit pending output + TerminateProcess instead of
+    // `delete lib`/normal exit (singleOpTerminateIfSessionOpen). Never set
+    // for an intact session: a healthy open session + OrlibExit is the
+    // proven normal path (modify/exists/get-source never close at all).
+    // INTERNAL ONLY — never serialized by cliResultToJson.
+    bool        sessionMayBeOpen = false;
 };
 
 // Map an exit code to the machine-readable error.code string (TVS-D.2 §3).
@@ -532,6 +632,13 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // 17 a cancelled backup (policy abort or 'C' at the prompt).
         case 16: return "cache_io_error";
         case 17: return "cache_cancelled";
+        // 18/19 are the recycle boundary codes (design §6.2): 18 = the
+        // engine recycled WHServer (the refused item was never
+        // dispatched — resume in a fresh process / respawned broker);
+        // 19 = the gate or a fail-closed stage refused the recycle and
+        // the batch aborted.
+        case 18: return "whserver_recycled";
+        case 19: return "whserver_recycle_refused";
         default: return "unknown_error";
     }
 }
@@ -1086,6 +1193,21 @@ void pbarLogSink(const char* s) {
     }
 }
 
+// §5 teardown (dispatch_watchdog.cpp:79-88 convention — the proven field
+// incident): a process that may still hold an OPEN warehouse session must
+// NEVER `delete lib` or ExitProcess — orlib20's DLL detach then raises the
+// BLOCKING "WHouse stays in memory" dialog (an INVISIBLE deadlock under
+// the SW_HIDE serve broker, a hard block for a direct CLI). Pending output
+// is emitted by the caller first; this helper flushes both streams and
+// dies via TerminateProcess — the only exit that skips ALL DLL detach.
+[[noreturn]] void terminateSelfNoDetach(unsigned exitCode) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(exitCode));
+    // TerminateProcess does not return; unreachable.
+    std::abort();
+}
+
 // emitOutput renders a CliResult in either human-readable or JSON form.
 //
 // Human mode (jsonMode == false): writes humanStdout to stdout and
@@ -1130,8 +1252,42 @@ void emitOutput(const CliResult& r, bool jsonMode) {
             "\"message\":\"internal error during output serialization\"}}\n";
         std::fwrite(errMsg, 1, std::strlen(errMsg), stdout);
         std::fflush(stdout);
-        std::exit(1);
+        // TerminateProcess(1), NOT std::exit(1)/ExitProcess: emitOutput also
+        // runs on the session-owning worker of a §5 terminate path, where
+        // the warehouse session may still be open — ExitProcess would
+        // DLL-detach into it (the "WHouse stays in memory" modal). On every
+        // other call site the lib is already destructed, so the teardown is
+        // observably identical either way: same error JSON, same exit 1.
+        terminateSelfNoDetach(1);
     }
+}
+
+// §5 teardown for the single-op workers (insert/delete/upsert — the only
+// ops whose per-item flow includes a closeWarehouse). When the result
+// flags a possibly-open session (the close that this op owned did not
+// provably complete — see CliResult::sessionMayBeOpen), emit the pending
+// output ON THIS WORKER — the main thread never runs again — then flush +
+// TerminateProcess with the result's own exit code. NEVER `delete lib` or
+// return into ExitProcess. The emitted bytes are identical to the cmd*
+// tail's: the post-hoc --pbar draw, then emitOutput. On this path the
+// result is always a failure (the flag only rides failure results), so the
+// bar draws the "— 1 failed" form and emitOutput always runs — mirroring
+// the cmd* tail exactly; only the teardown differs. No-op when the flag
+// is unset.
+void singleOpTerminateIfSessionOpen(const CliResult& r,
+                                    const std::string& typeStr,
+                                    const std::string& name,
+                                    bool jsonMode, bool pbar) {
+    if (!r.sessionMayBeOpen) return;
+    if (pbar) {
+        PbarRenderer bar(r.op, 1);
+        bar.itemStarted(typeStr, name);
+        bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
+    emitOutput(r, jsonMode);
+    terminateSelfNoDetach(static_cast<unsigned>(r.exitCode));
 }
 
 // --- --backup-cache / --restore-cache: cache phase ---------------------------
@@ -2645,6 +2801,10 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                          + std::to_string(progId);
         r.humanStderr = std::string("tsdev_cli: closeWarehouse failed for ProgId=")
                         + std::to_string(progId) + "\n";
+        // §5 close_failed class: the SEH-failed close leaves the session
+        // possibly open with uncertain teardown state — the worker must
+        // emit + TerminateProcess, never `delete lib`/ExitProcess into it.
+        r.sessionMayBeOpen = true;
         return r;
     }
 
@@ -2866,6 +3026,28 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     return r;
 }
 
+// §5 teardown classification for the delete result (close_failed class).
+// deleteEntry(flush=true) bundles its closeWarehouse() inside its flow, so
+// a false return with an EMPTY diskCleanupError cannot be split further at
+// this level — it is one of: the entry vanished before the delete
+// (FindExistPos <= 0 inside deleteEntry), the delete orchestrator raised
+// SEH, or the close itself failed. In all three the op's close did not
+// provably complete, so the session may still be open (the first two leave
+// it open and intact — individually `delete lib`-safe — but they cannot be
+// separated from the third at the CliResult level without lib changes, so
+// all take the fail-closed branch; the observable contract is unchanged).
+// A NON-empty diskCleanupError proves the close SUCCEEDED (disk cleanup
+// runs only after it) — the session is properly closed. flush=false
+// (batch/serve) never attempts the close: the session stays open BY
+// DESIGN for the session lifetime and the end-of-session close owns the
+// teardown, so the flag stays clear there. Pure decision (same-TU unit
+// test pins the full truth table).
+bool deleteResultLeavesSessionOpen(bool deleted,
+                                   bool diskCleanupErrorEmpty,
+                                   bool flushPerItem) {
+    return flushPerItem && !deleted && diskCleanupErrorEmpty;
+}
+
 // doDelete: findExistPos (distinct not-found message) -> deleteEntry. When
 // flushPerItem is true (single-item path), deleteEntry calls closeWarehouse()
 // internally as part of its flow. When false (serve/batch path), the
@@ -2902,6 +3084,11 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
     // case.
     std::string diskCleanupError;
     bool deleted = lib.deleteEntry(type, name, flushPerItem, &diskCleanupError);
+    // §5: did the op's own close provably complete? See the helper comment
+    // — true only for a single-op deleteEntry failure with empty
+    // diskCleanupError (close failed or never ran => session possibly open).
+    r.sessionMayBeOpen = deleteResultLeavesSessionOpen(
+        deleted, diskCleanupError.empty(), flushPerItem);
     if (!deleted) {
         r.exitCode = 6;
         r.progId = progId;
@@ -3018,6 +3205,8 @@ struct InsertParams {
     std::string    name;
     std::string    source;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    bool           jsonMode = false;  // cmd* output mode — needed only on
+    bool           pbar = false;      // the §5 terminate path (worker-side emit)
     CliResult      result;          // populated by runInsert
 };
 
@@ -3025,6 +3214,7 @@ struct InsertParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runInsert(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     InsertParams* p = static_cast<InsertParams*>(param);
 
     // Construct TsDevLib.
@@ -3041,9 +3231,17 @@ DWORD WINAPI runInsert(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doInsert(*lib, p->type, p->typeStr, p->name, p->source,
                          /*flushPerItem=*/true);
+
+    // §5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker — never reached otherwise.
+    singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
+                                   p->jsonMode, p->pbar);
 
     delete lib; // calls OrlibExit + destroys EDIT control (same thread)
     return 0;
@@ -3105,6 +3303,8 @@ int cmdInsert(const std::string& typeStr,
     params.name    = name;
     params.source  = source;
     params.tsPathOverride = tsPathOverride;
+    params.jsonMode = jsonMode;
+    params.pbar     = pbar;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runInsert, &params, 0, nullptr);
@@ -3156,6 +3356,7 @@ struct ModifyParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runModify(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     ModifyParams* p = static_cast<ModifyParams*>(param);
 
     // Construct TsDevLib.
@@ -3172,6 +3373,9 @@ DWORD WINAPI runModify(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doModify(*lib, p->type, p->typeStr, p->name, p->source);
 
@@ -3277,6 +3481,8 @@ struct DeleteParams {
     std::string    typeStr;
     std::string    name;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    bool           jsonMode = false;  // cmd* output mode — needed only on
+    bool           pbar = false;      // the §5 terminate path (worker-side emit)
     CliResult      result;          // populated by runDelete
 };
 
@@ -3284,6 +3490,7 @@ struct DeleteParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runDelete(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     DeleteParams* p = static_cast<DeleteParams*>(param);
 
     // Construct TsDevLib.
@@ -3300,8 +3507,16 @@ DWORD WINAPI runDelete(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doDelete(*lib, p->type, p->typeStr, p->name);
+
+    // §5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker — never reached otherwise.
+    singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
+                                   p->jsonMode, p->pbar);
 
     delete lib; // calls OrlibExit + destroys EDIT control (same thread)
     return 0;
@@ -3339,6 +3554,8 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     params.typeStr  = typeStr;
     params.name     = name;
     params.tsPathOverride = tsPathOverride;
+    params.jsonMode = jsonMode;
+    params.pbar     = pbar;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runDelete, &params, 0, nullptr);
@@ -3390,6 +3607,7 @@ struct ExistsParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runExists(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     ExistsParams* p = static_cast<ExistsParams*>(param);
 
     // Construct TsDevLib.
@@ -3406,6 +3624,9 @@ DWORD WINAPI runExists(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doExists(*lib, p->type, p->typeStr, p->name, p->caseInsensitive);
 
@@ -3548,6 +3769,7 @@ struct DependentsParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runDependents(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     DependentsParams* p = static_cast<DependentsParams*>(param);
 
     // Construct TsDevLib.
@@ -3564,6 +3786,9 @@ DWORD WINAPI runDependents(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doDependents(*lib, p->type, p->typeStr, p->name);
 
@@ -3643,6 +3868,8 @@ struct UpsertParams {
     std::string    name;
     std::string    source;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    bool           jsonMode = false;  // cmd* output mode — needed only on
+    bool           pbar = false;      // the §5 terminate path (worker-side emit)
     CliResult      result;          // populated by runUpsert
 };
 
@@ -3650,6 +3877,7 @@ struct UpsertParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runUpsert(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     UpsertParams* p = static_cast<UpsertParams*>(param);
 
     // Construct TsDevLib.
@@ -3666,8 +3894,16 @@ DWORD WINAPI runUpsert(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doUpsert(*lib, p->type, p->typeStr, p->name, p->source);
+
+    // §5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker — never reached otherwise.
+    singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
+                                   p->jsonMode, p->pbar);
 
     delete lib; // calls OrlibExit + destroys EDIT control (same thread)
     return 0;
@@ -3728,6 +3964,8 @@ int cmdUpsert(const std::string& typeStr,
     params.name    = name;
     params.source  = source;
     params.tsPathOverride = tsPathOverride;
+    params.jsonMode = jsonMode;
+    params.pbar     = pbar;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runUpsert, &params, 0, nullptr);
@@ -3831,6 +4069,7 @@ struct GetSourceParams {
 // constructed AND destructed here so the thread-affine EDIT control lives
 // and dies on the same thread that uses it.
 DWORD WINAPI runGetSource(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     GetSourceParams* p = static_cast<GetSourceParams*>(param);
 
     // Construct TsDevLib.
@@ -3847,6 +4086,9 @@ DWORD WINAPI runGetSource(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     p->result = doGetSource(*lib, p->type, p->typeStr, p->name, p->outputPath);
 
@@ -3945,11 +4187,28 @@ struct BatchItem {
     CliResult     result;      // pre-populated for preValid=false items
 };
 
-// trim from both ends (whitespace only).
+// The ONE whitespace class of the manifest line schema: exactly the
+// C-locale std::isspace set (" \t\n\v\f\r"). trim(), token splitting, and
+// the resume-manifest writer's quoting/refusal predicates ALL use this
+// same set, so a name the writer emits can never re-parse to a different
+// component — a '\v'/'\f' adjacent to a token boundary must quote or
+// refuse, never silently retarget (a resumed delete would hit the wrong
+// item).
+const char* const kManifestWs = " \t\n\v\f\r";
+// The kManifestWs subset that can never live on one manifest line — a
+// name containing '\r' or '\n' can never round-trip (a line break ends
+// the record), so the resume-manifest writer refuses it outright.
+const char* const kManifestLineBreaks = "\r\n";
+bool isManifestWs(char c) {
+    return std::isspace(static_cast<unsigned char>(c)) != 0;
+}
+
+// trim from both ends (manifest whitespace only — the kManifestWs class
+// above; std::isspace in the C locale is that same 6-char set).
 std::string trim(const std::string& s) {
     size_t b = 0, e = s.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    while (b < e && isManifestWs(s[b])) ++b;
+    while (e > b && isManifestWs(s[e - 1])) --e;
     return s.substr(b, e - b);
 }
 
@@ -3971,7 +4230,7 @@ void parseManifestLines(const std::string& content, bool needsSource,
         BatchItem item;
 
         // Token 1: <type> (first whitespace-delimited token).
-        size_t sp1 = trimmed.find_first_of(" \t");
+        size_t sp1 = trimmed.find_first_of(kManifestWs);
         std::string typeTok;
         std::string rest1;
         if (sp1 == std::string::npos) {
@@ -3982,16 +4241,53 @@ void parseManifestLines(const std::string& content, bool needsSource,
             rest1 = trim(trimmed.substr(sp1 + 1));
         }
 
-        // Token 2: <name> (first whitespace-delimited token of the remainder).
-        size_t sp2 = rest1.find_first_of(" \t");
+        // Token 2: <name> — first whitespace-delimited token of the
+        // remainder, OR a double-quoted string ("my name") so a resume
+        // manifest can carry names containing whitespace (directory
+        // batches derive the name verbatim from the file stem, which may
+        // contain spaces). An unterminated quote, or a closing quote not
+        // followed by whitespace/end-of-line (junk fused to the quoted
+        // token, e.g. "a"b), is a pre-validation failure — fail-closed:
+        // silently re-tokenizing would address a DIFFERENT component (a
+        // delete would hit the wrong item).
         std::string nameTok;
         std::string rest2;
-        if (sp2 == std::string::npos) {
-            nameTok = rest1;
-            rest2 = "";
+        if (!rest1.empty() && rest1[0] == '"') {
+            const size_t close = rest1.find('"', 1);
+            if (close == std::string::npos) {
+                item.typeStr = typeTok;
+                item.preValid = false;
+                item.result.typeStr = typeTok;
+                item.result.exitCode = 2;
+                item.result.errorMessage =
+                    "unterminated quoted component name in manifest line: \"" +
+                    trimmed + "\"";
+                outItems.push_back(std::move(item));
+                continue;
+            }
+            if (close + 1 < rest1.size() && !isManifestWs(rest1[close + 1])) {
+                item.typeStr = typeTok;
+                item.preValid = false;
+                item.result.typeStr = typeTok;
+                item.result.exitCode = 2;
+                item.result.errorMessage =
+                    "malformed quoted component name in manifest line "
+                    "(characters after the closing quote): \"" + trimmed +
+                    "\"";
+                outItems.push_back(std::move(item));
+                continue;
+            }
+            nameTok = rest1.substr(1, close - 1);
+            rest2 = trim(rest1.substr(close + 1));
         } else {
-            nameTok = rest1.substr(0, sp2);
-            rest2 = trim(rest1.substr(sp2 + 1));
+            size_t sp2 = rest1.find_first_of(kManifestWs);
+            if (sp2 == std::string::npos) {
+                nameTok = rest1;
+                rest2 = "";
+            } else {
+                nameTok = rest1.substr(0, sp2);
+                rest2 = trim(rest1.substr(sp2 + 1));
+            }
         }
 
         item.typeStr = typeTok;
@@ -4093,6 +4389,12 @@ bool parseManifest(const std::string& path, bool needsSource,
 // synchronously after each completed non-final item; "cancel", EOF, or any
 // malformed token stops the batch cooperatively before the next item and
 // fills the rest of the results array with exit-12 not-run markers.
+//
+// R6 (design §5): the decision read is BOUNDED — it runs on a helper
+// thread under a WaitForSingleObject bound (default 900 s,
+// --batch-control-timeout-secs; 0 disables). A dead parent that left the
+// channel open can no longer park the batch in an unbounded orphan wait
+// (the ~40 min orphan incident). A bound expiry yields Error = cancel.
 
 // One between-items decision read from the control channel.
 enum class BatchControlDecision { Continue, Cancel, Error };
@@ -4200,6 +4502,130 @@ BatchControlDecision readBatchControlDecision(FILE* input,
     return BatchControlDecision::Error;
 }
 
+// --- Bounded control wait (R6, design §5 row 3) ------------------------------
+//
+// readBatchControlDecision blocks in fgetc() with no bound. A dead parent
+// that left the control channel OPEN (the pipe writer handle never
+// closed — e.g. inherited by a still-alive grandchild) keeps EOF from
+// ever arriving: the batch waits forever as an orphan (field incident:
+// a ~40 min orphan control-wait that then crashed on exit). The read is
+// therefore run on a helper thread and the caller waits on the thread
+// handle with a bounded WaitForSingleObject (default 900 s;
+// --batch-control-timeout-secs; 0 disables the bound and restores the
+// plain blocking read — documented escape hatch, same convention as
+// --dispatch-timeout-secs). A timeout yields Error, which the existing
+// flow treats as a cooperative cancel — fail-closed, the batch ends.
+//
+// The wait holds no in-flight dispatch marker, so the dispatch watchdog
+// is already exempt during it (dispatch_watchdog.cpp: "idle waits ...
+// carry no in-flight marker and are exempt by construction").
+
+// Heap-allocated job shared with the helper thread: a timing-out wait
+// ABANDONS the blocked reader (fgetc on an open channel cannot be
+// cancelled without closing stdin), so the job must outlive the caller —
+// the abandoned thread still writes decision/error into it. At most one
+// abandoned job per run exists because a timeout cancels the batch.
+struct BatchControlReadJob {
+    BatchControlDecision (*reader)(void* ctx, std::string& error);
+    void*                ctx;
+    BatchControlDecision decision;
+    std::string          error;
+};
+
+unsigned __stdcall batchControlReadProc(void* arg) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
+    BatchControlReadJob* job = static_cast<BatchControlReadJob*>(arg);
+    std::string err;
+    job->decision = job->reader(job->ctx, err);
+    job->error = std::move(err);
+    return 0;
+}
+
+// runBoundedControlRead runs `reader(ctx)` on a helper thread and waits up
+// to `timeoutMs` for it. On completion the reader's decision and error
+// pass through unchanged. On timeout or wait failure the result is Error
+// with a nonempty diagnostic (the caller treats Error as cancel); the
+// still-blocked helper is deliberately abandoned — its handle is closed
+// (closing a thread handle does not kill the thread) and its heap job is
+// leaked, bounded at one per run since a timeout cancels the batch; the
+// thread dies with the process. The reader is injected so unit tests can
+// exercise the real thread+wait machinery without stdin.
+BatchControlDecision runBoundedControlRead(
+    BatchControlDecision (*reader)(void* ctx, std::string& error),
+    void* ctx, DWORD timeoutMs, std::string& error) {
+    BatchControlReadJob* job = new (std::nothrow) BatchControlReadJob();
+    if (!job) {
+        error = "out of memory starting the bounded control reader";
+        return BatchControlDecision::Error;
+    }
+    job->reader   = reader;
+    job->ctx      = ctx;
+    job->decision = BatchControlDecision::Error;
+    // _beginthreadex (not CreateThread): the reader runs CRT calls (fgetc),
+    // so the thread needs the CRT per-thread state that _beginthreadex
+    // sets up and _endthreadex tears down.
+    const uintptr_t th = _beginthreadex(nullptr, 0, batchControlReadProc,
+                                        job, 0, nullptr);
+    if (th == 0) {
+        delete job;
+        error = "could not start the bounded control reader thread";
+        return BatchControlDecision::Error;
+    }
+    const HANDLE hThread = reinterpret_cast<HANDLE>(th);
+    const DWORD w = WaitForSingleObject(hThread, timeoutMs);
+    if (w == WAIT_OBJECT_0) {
+        // The reader exited — the handle wait synchronizes-with its exit,
+        // so decision/error are fully written. Join-complete: safe to
+        // free the job.
+        error = std::move(job->error);
+        const BatchControlDecision d = job->decision;
+        delete job;
+        CloseHandle(hThread);
+        return d;
+    }
+    // WAIT_TIMEOUT / WAIT_FAILED: do NOT join (the reader is still blocked
+    // on the control channel) and do NOT free the job — the abandoned
+    // thread still writes to it.
+    if (w == WAIT_TIMEOUT) {
+        // Report the bound in its true unit (whole seconds when exact —
+        // production bounds are second-valued — else milliseconds so a
+        // sub-second bound never renders as "0 s").
+        const std::string bound = (timeoutMs % 1000 == 0)
+            ? std::to_string(static_cast<unsigned long>(timeoutMs / 1000)) +
+              " s"
+            : std::to_string(static_cast<unsigned long>(timeoutMs)) + " ms";
+        error = "batch control decision wait exceeded the " + bound +
+                " bound (control channel stalled or parent gone)";
+    } else {
+        error = "the bounded batch control wait failed (GetLastError=" +
+                std::to_string(static_cast<unsigned long>(GetLastError())) +
+                ")";
+    }
+    CloseHandle(hThread);
+    return BatchControlDecision::Error;
+}
+
+// FILE* thunk adapting readBatchControlDecision to the injected-reader
+// signature runBoundedControlRead takes.
+BatchControlDecision batchControlFileReader(void* ctx, std::string& error) {
+    return readBatchControlDecision(static_cast<FILE*>(ctx), error);
+}
+
+// readBatchControlDecisionBounded: the production control-read entry —
+// readBatchControlDecision on a helper thread under a bounded wait.
+// timeoutSecs==0 disables the bound (plain blocking read; documented
+// escape hatch). Callers cap the value at 86400, so *1000 cannot
+// overflow DWORD (~4.29e6 s max representable).
+BatchControlDecision readBatchControlDecisionBounded(
+    FILE* input, unsigned timeoutSecs, std::string& error) {
+    if (timeoutSecs == 0) {
+        return readBatchControlDecision(input, error);
+    }
+    return runBoundedControlRead(batchControlFileReader, input,
+                                 static_cast<DWORD>(timeoutSecs) * 1000,
+                                 error);
+}
+
 // Render the batch_control_error diagnostic emitted on stderr before an
 // anomaly-driven cancellation. JSON: exactly {event:"batch_control_error",
 // message, action:"cancel"}. Human:
@@ -4243,6 +4669,13 @@ CliResult cancelledBatchItemResult(
 // array says WHY the item never ran).
 static const char* const kVasAbortMarkerMessage =
     "Batch aborted (WHServer VAS headroom) before this item was attempted";
+
+// Same role for the corpse-abort arm of the guard (P4 gap-a): the batch
+// was aborted because a WHServer pid is a crash-frozen zombie — distinct
+// text so the array does not misreport a zombie as a VAS breach.
+static const char* const kZombieAbortMarkerMessage =
+    "Batch aborted (WHServer crash-frozen zombie) before this item was "
+    "attempted";
 
 // Render the one-shot warning for a transient measureVasFree() failure
 // (emitted once per run — a handle/OpenProcess race must not kill a batch).
@@ -4294,6 +4727,428 @@ std::string whserverVasAbortLine(DWORD pid, const tsdev::WhVasStats& st,
            "); aborting before next item";
 }
 
+// Render the loud abort event emitted when the guard's corpse pre-check
+// fires (P4 gap-a): a WHServer pid that parents a TSCrashReport.exe child
+// is a crash-frozen zombie — it still enumerates and its frozen VAS reads
+// healthy under VirtualQueryEx, but every warehouse dispatch into it
+// wedges (the dispatch_watchdog whserver_crashed convention). Same
+// "batch_aborted" event family as whserverVasAbortLine, with the honest
+// "whserver_zombie" reason instead of a VAS measurement.
+// JSON: {event:"batch_aborted", reason:"whserver_zombie", pid,
+//        action:"abort"}. Human:
+//   BATCH ABORTED: WHServer crash-frozen zombie (pid=N parents a
+//   TSCrashReport.exe child); aborting before next item
+std::string whserverZombieAbortLine(DWORD pid, bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]  = "batch_aborted";
+        j["reason"] = "whserver_zombie";
+        j["pid"]    = static_cast<unsigned long>(pid);
+        j["action"] = "abort";
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return "BATCH ABORTED: WHServer crash-frozen zombie (pid=" +
+           std::to_string(static_cast<unsigned long>(pid)) +
+           " parents a TSCrashReport.exe child); aborting before next item";
+}
+
+// Render the one-shot warning for an inconclusive process enumeration at
+// the guard (P4 g-1 — a failed Toolhelp32 snapshot is INCONCLUSIVE, never
+// "no server"/"no reporters"; see the snapshotOk contracts in
+// whserver_health.h and dispatch_watchdog.h). Emitted once per run per
+// enumeration arm — the same fail-open-with-warning convention as
+// whserverVasMeasureFailedLine: the guard proceeds with the same
+// protection the collapsing overloads gave silently, now honestly
+// reported. `which` selects the enumeration:
+//   "whserver"    the WHServer pid set itself — the whole guard is blind
+//                 this check;
+//   "crashreport" the TSCrashReport parent set behind the zombie
+//                 pre-check — the corpse check is blind this check; the
+//                 VAS measurement still runs.
+// JSON: {event:"whserver_enum_failed"} / {event:"crashreport_enum_failed"}.
+// Human:
+//   tsdev_cli: whserver.enum_failed (guard inconclusive; continuing)
+//   tsdev_cli: crashreport.enum_failed (zombie check inconclusive;
+//              continuing)
+std::string whserverEnumFailedLine(const char* which, bool jsonOutput) {
+    const bool wh = (std::strcmp(which, "crashreport") != 0);
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"] =
+            wh ? "whserver_enum_failed" : "crashreport_enum_failed";
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    return std::string("tsdev_cli: ") +
+           (wh ? "whserver.enum_failed (guard inconclusive; continuing)"
+               : "crashreport.enum_failed (zombie check inconclusive; "
+                  "continuing)");
+}
+
+// The corpse pre-check's pure decision (P4 gap-a): the first WHServer pid
+// that also appears as a TSCrashReport.exe PARENT pid — a crash-frozen
+// zombie — or 0 when the intersection is empty. TSCrash.dll launches the
+// reporter as a child of the crashing process, so parent-in-WHServer-set
+// is exactly the dispatch_watchdog whserver_crashed test. Both sets come
+// from the caller's snapshotOk enumerations; inconclusive enumerations
+// never reach here (they warn and fail open upstream).
+DWORD whserverZombiePid(const std::vector<DWORD>& whPids,
+                        const std::vector<DWORD>& crashParentPids) {
+    for (DWORD parent : crashParentPids) {
+        if (std::find(whPids.begin(), whPids.end(), parent) != whPids.end())
+            return parent;
+    }
+    return 0;
+}
+
+// The honest refusal message for a detected corpse — mirrors the breach
+// message's reason-in-parens convention ("... (whserver_vas_free=NMB);
+// refusing <op> before dispatch"): names the frozen pid + its crash
+// reporter and carries the machine-readable "whserver_zombie" token the
+// batch path reports as abort_reason.
+std::string whserverZombieRefusalMessage(const std::string& op,
+                                         DWORD zombiePid) {
+    return "WHServer crash-frozen zombie: pid=" +
+           std::to_string(static_cast<unsigned long>(zombiePid)) +
+           " parents a TSCrashReport.exe child (whserver_zombie); "
+           "refusing " + op + " before dispatch";
+}
+
+// Not-run marker messages for the recycle paths (design §4.1 — the markers
+// are distinct from kVasAbortMarkerMessage so the array says WHY the item
+// never ran). These are the shipped marker texts — pinned verbatim by the
+// Python client (_RECYCLE_REFUSED_MARKER_MESSAGE mirrors the refusal text;
+// the "resubmit remaining items" text is the resumable-tail marker the
+// client replaces when no resubmission can happen).
+static const char* const kRecycledMarkerMessage =
+    "WHServer recycled; resubmit remaining items";
+static const char* const kRecycleRefusedMarkerMessage =
+    "WHServer recycle refused before this item was attempted";
+
+// The recycle event line emitted on the progress channel when the engine
+// runs (design §4.1 step 3 — full field set: reason/detail/exit_code plus
+// the breaching WHServer pid, measured free_mb, the 1-based resume
+// boundary index/total, and the resume-manifest path; each optional
+// member is emitted only when its caller supplies it — the serve path and
+// the pre-flight continue-in-process event have no boundary/manifest).
+// JSON:
+//   {event:"whserver_recycled"|"whserver_recycle_refused", reason, detail,
+//    exit_code[, pid, free_mb, index, total, manifest]}. Human:
+//   tsdev_cli: whserver.recycled / whserver.recycle_refused reason=... ...
+std::string whserverRecycleEventLine(const tsdev::RecycleResult& rec,
+                                     bool jsonOutput,
+                                     DWORD whPid = 0,
+                                     uint64_t freeMB = 0,
+                                     size_t boundaryIndex = 0,
+                                     size_t total = 0,
+                                     const std::string& manifestPath = "") {
+    const bool recycled =
+        (rec.outcome == tsdev::RecycleOutcome::Recycled);
+    const char* event = recycled ? "whserver_recycled"
+                                 : "whserver_recycle_refused";
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]     = event;
+        j["reason"]    = rec.reason;
+        j["detail"]    = rec.detail;
+        j["exit_code"] = rec.exitCode;
+        if (whPid != 0)   j["pid"]     = static_cast<unsigned long>(whPid);
+        if (freeMB != 0)  j["free_mb"] = freeMB;
+        if (boundaryIndex != 0) {
+            j["index"] = boundaryIndex;
+            j["total"] = total;
+        }
+        if (!manifestPath.empty()) j["manifest"] = manifestPath;
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    std::string s = std::string("tsdev_cli: whserver.") +
+        (recycled ? "recycled" : "recycle_refused") +
+        " reason=" + rec.reason;
+    if (!rec.detail.empty()) s += " " + rec.detail;
+    s += " exit=" + std::to_string(rec.exitCode);
+    if (whPid != 0) {
+        s += " pid=" + std::to_string(static_cast<unsigned long>(whPid));
+    }
+    if (freeMB != 0) s += " free_mb=" + std::to_string(freeMB);
+    if (boundaryIndex != 0) {
+        s += " index=" + std::to_string(boundaryIndex) +
+             " total=" + std::to_string(total);
+    }
+    if (!manifestPath.empty()) s += " manifest=" + manifestPath;
+    return s;
+}
+
+// Resume-manifest writer (design §4.1 step 2): write items[firstIndex, ...)
+// to `tsdev_resume_<pid>_<ticks>.manifest` inside `dir` (empty dir falls
+// back to the cwd) in the exact schema parseManifestLines re-reads —
+// "<type> <name> [<source_file>]" per line, with <name> double-quoted when
+// it contains whitespace (directory batches derive names verbatim from
+// file stems, which may contain spaces — an unquoted spaced name would
+// re-parse to a DIFFERENT component: dropped items, or a delete hitting
+// the wrong target). Only truly unrepresentable names make the writer
+// REFUSE (fail-closed) before creating any file: a name containing a line
+// break can never live on one line, a name STARTING with '"' would
+// re-parse as a quoted token, and a name containing BOTH '"' and
+// whitespace cannot be expressed (unquoted it splits; quoted it
+// terminates early). A bare '"' inside a whitespace-free name IS
+// representable unquoted — it re-parses as a plain token — so it is
+// written, not refused. On refusal no partial manifest may be
+// resubmitted, and the caller's diagnostics state that no manifest
+// exists. The rule in one line: a stored preValid=FALSE item refuses
+// the whole write BEFORE any file exists (fail-closed — no manifest is
+// emitted), while a stored preValid=TRUE item is always written and
+// round-trips. The refusal exists because a preValid=false item's
+// stored fields were produced by a failure path, not by the parser —
+// a fabricated placeholder name (e.g. the non-ANSI-filename item)
+// would otherwise be written as a dispatchable line and a resumed
+// delete could hit a component that never existed in the batch input.
+// Refusing keeps the tail manually resubmittable instead of emitting
+// a manifest that retargets. Note the round-trip case is NOT the same
+// set: only a preValid=true item reaches the line-emission loop, and
+// even degenerate representable fields round-trip — an empty name
+// writes "<type>" alone and re-parses to the same "name must not be
+// empty" pre-validation failure, a missing source_file to "manifest
+// line missing <source_file>", an unknown typeStr to "unknown type" —
+// so the resumed batch reproduces the original per-item failure
+// instead of dropping it.
+// Caller-owned cleanup (§4.1): the file is written once and never deleted
+// by the CLI — it must survive for manual resubmission and crash
+// forensics. Returns false with `err` set on refusal or I/O failure (an
+// I/O failure also removes the partial file, best-effort); on success
+// `outPath` carries the absolute path the event line reports.
+bool writeResumeManifest(const std::string& dir,
+                         const std::vector<BatchItem>& items,
+                         size_t firstIndex, bool needsSource,
+                         std::string& outPath, std::string& err) {
+    std::error_code ec;
+    std::filesystem::path base = dir.empty()
+        ? std::filesystem::current_path(ec)
+        : std::filesystem::path(dir);
+    if (ec) {
+        err = "failed to resolve the resume manifest directory: " +
+              ec.message();
+        return false;
+    }
+    // Representability pre-check BEFORE any file is created (see the
+    // comment above): a preValid=false tail item can never become a
+    // dispatchable line — refuse rather than write a fabricated name —
+    // then line break, leading '"', or '"' combined with whitespace —
+    // refuse with the offending item reported (fail-closed, so no
+    // corrupt/partial manifest can ever be resubmitted). The caller
+    // appends the manual-resume guidance once.
+    for (size_t j = firstIndex; j < items.size(); ++j) {
+        const BatchItem& it = items[j];
+        if (!it.preValid) {
+            err = "resume manifest cannot represent item " +
+                  std::to_string(j + 1) + " (\"" + it.name +
+                  "\"): it already failed manifest pre-validation (" +
+                  it.result.errorMessage + ") — no manifest written";
+            return false;
+        }
+        const std::string& n = it.name;
+        const bool unrepresentable =
+            n.find_first_of(kManifestLineBreaks) != std::string::npos ||
+            (!n.empty() && n[0] == '"') ||
+            (n.find('"') != std::string::npos &&
+             n.find_first_of(kManifestWs) != std::string::npos);
+        if (unrepresentable) {
+            err = "resume manifest cannot represent item name \"" + n +
+                  "\" (a line break, a leading quote, or a quote combined "
+                  "with whitespace) — no manifest written";
+            return false;
+        }
+    }
+
+    const std::string fileName =
+        "tsdev_resume_" + std::to_string(GetCurrentProcessId()) + "_" +
+        std::to_string(GetTickCount64()) + ".manifest";
+    const std::filesystem::path path =
+        std::filesystem::absolute(base / fileName, ec);
+    if (ec) {
+        err = "failed to resolve the resume manifest path: " + ec.message();
+        return false;
+    }
+    // path::string() throws (std::system_error) when the resolved path is
+    // not representable in the ANSI code page — e.g. a --batch-stdin run
+    // from a non-ASCII cwd. Convert ONCE, guarded: an uncaught throw here
+    // would escape into the VEH and kill the process mid-batch; a guarded
+    // conversion fails closed with an honest "no manifest" diagnostic.
+    std::string pathStr;
+    try {
+        pathStr = path.string();
+    } catch (const std::exception&) {
+        err = "failed to convert the resume manifest path to a narrow "
+              "string (non-ANSI path) — no manifest exists";
+        return false;
+    }
+
+    std::ostringstream content;
+    for (size_t j = firstIndex; j < items.size(); ++j) {
+        const BatchItem& it = items[j];
+        content << it.typeStr;
+        if (!it.name.empty()) {
+            // Whitespace in the name (a spaced file stem from a dir
+            // batch) requires the quoted-name form parseManifestLines
+            // re-reads; '"' and line breaks were refused above.
+            const bool needsQuotes =
+                it.name.find_first_of(kManifestWs) != std::string::npos;
+            content << ' ';
+            if (needsQuotes) content << '"';
+            content << it.name;
+            if (needsQuotes) content << '"';
+        }
+        if (needsSource && !it.name.empty() && !it.sourceFile.empty()) {
+            content << ' ' << it.sourceFile;
+        }
+        content << '\n';
+    }
+    const std::string s = content.str();
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        err = "failed to write resume manifest \"" + pathStr +
+              "\" — no manifest exists";
+        return false;
+    }
+    f.write(s.data(), static_cast<std::streamsize>(s.size()));
+    f.close();
+    if (!f) {
+        // Never leave a truncated manifest behind while reporting that
+        // resume is manual — delete the partial file (best-effort).
+        std::error_code rmEc;
+        std::filesystem::remove(path, rmEc);
+        err = "failed to write resume manifest \"" + pathStr +
+              "\" — no manifest exists";
+        return false;
+    }
+    outPath = pathStr;
+    return true;
+}
+
+// Forward declaration: emitBatchOutput is defined below runBatch (same
+// anonymous namespace) but the recycle close_failed path must emit the
+// results array from the WORKER before TerminateProcess-self — the main
+// thread never gets a turn on that path (design §4.1 emission ordering).
+void emitBatchOutput(const std::vector<CliResult>& results);
+
+// Run ONE recycle attempt through the engine (design §2 steps 1-6) with the
+// production seams: the real census/death sampler and the raw-COM attach.
+// `ownSessionExists` is the design-§2 step-2 close-guard conditional — R1
+// rule: every production call site passes FALSE, because an attached site
+// NEVER invokes the engine (see recycleSiteDefers below). The MyWork dir
+// resolves from the lib's discovered MyWork\Bin path; resolution failure
+// refuses attach_failed inside the engine (NEVER WHouseEx Create=1 on an
+// unresolved path, §2 step 4).
+tsdev::RecycleResult runWhserverRecycleCli(TsDevLib* lib,
+                                         bool ownSessionExists) {
+    tsdev::DispatchMarkerSnapshot marker;
+    tsdev::dispatchSnapshot(marker);
+
+    tsdev::WhRecycleSampler sampler;
+    tsdev::ComRecycleAttach attach(
+        tsdev::resolveMyWorkDirFromBinPath(
+            lib ? lib->getMyWorkBinPath() : nullptr));
+
+    tsdev::RecycleParams rp;
+    rp.dispatchInFlight  = marker.inFlight;
+    rp.ownSessionExists  = ownSessionExists;
+    if (ownSessionExists && lib) {
+        rp.closeSession = [lib] { return lib->closeWarehouse(); };
+    }
+    rp.sampler = &sampler;
+    rp.attach  = &attach;
+    return tsdev::runWhserverRecycle(rp);
+}
+
+// --- R1+R2 attached-site defer boundary ---------------------------------------
+//
+// PROVEN live findings: a process holding an attached warehouse session
+// contributes +7 to WHServer's m_nLock for the process's ENTIRE lifetime
+// — closeWarehouse does NOT release it (2026-10-20); and ONLY GRACEFUL
+// process teardown releases it (2026-10-21): the R1 defer exited via
+// TerminateProcess(18) and the dead client's seven references stayed
+// orphaned >=5.6 min with no clients alive, so the resumed process's
+// census refused census_lock -> exit 19 — the resume chain deadlocked.
+// Graceful teardown (closeWarehouse + `delete lib` + ExitProcess) DID
+// release the +7 in the same experiment: graceful clients reached
+// lock==0 at exit and the server self-reaped ~6 s later.
+//
+// R1 rule: the engine may run ONLY at a NEVER-ATTACHED site (own
+// contribution == 0). R2 rule: at an ATTACHED site — a batch
+// between-items breach after any op dispatched, or a serve breach after
+// any warehouse-using request — the recycle boundary STILL exits 18
+// WITHOUT running the engine, but FIRST runs the §5 close stage itself
+// (tsdev::boundedCloseWarehouse — zombie pre-check + monitor-bounded
+// closeWarehouse on THIS session-owning thread) so the process can die
+// GRACEFULLY: `delete lib` + worker return + normal process teardown —
+// the only exit that releases the +7. The caller resumes in a fresh
+// process (direct path: the resume-manifest batch; serve: the respawned
+// broker) whose own contribution is 0, and the re-encountered breach
+// runs the engine there at its never-attached guard site.
+//
+// The exit-18 shape is the pinned resume contract — the results array +
+// marker tail, the resume manifest, and the whserver_recycled event
+// carrying the manifest path (the Python client's _resume_manifest_path
+// matches only that event name and whserver_recycle_refused; exit_code
+// 18 alone drives the serve respawn) — so a GRANTED defer keeps outcome
+// Recycled while reason/detail say WHY the recycle was deferred rather
+// than performed here. A close that FAILS or outlives the bound is a
+// REFUSED defer instead: the §5 close-stage family (close_failed /
+// close_timeout / close_bound_invalid / zombie_*_close), exit 19, the
+// whserver_recycle_refused event, and the terminateSelf teardown — emit
+// + flush + TerminateProcess-self(19), never `delete lib`/ExitProcess
+// into a possibly-open warehouse.
+
+// The shared site gate: true => the site is attached and the breach
+// defers (no engine run); false => never-attached, the engine may run
+// in-process. Both trigger sites use this one rule.
+bool recycleSiteDefers(bool ownSessionExists) {
+    return ownSessionExists;
+}
+
+// The attached-site defer result an attached breach exits on
+// (recycleSiteDefers). R2: runs the §5 close stage FIRST — the shared
+// boundedCloseWarehouse (zombie pre-check + monitor-bounded close on the
+// CALLING/session-owning thread — orlib20 binds CELWHouse per
+// (thread,path), so the close must run where the session lives).
+//   * close ok  -> GRANTED: Recycled-shaped exit-18 (the resume
+//     boundary), safeToDeleteLib — the caller takes the GRACEFUL
+//     post-close teardown (`delete lib` + normal teardown), the only
+//     exit that releases the +7.
+//   * close false / bound fired / zombie gate / bad bound -> REFUSED on
+//     the §5 close-stage family: exit 19 + terminateSelf — the own
+//     session may still be open.
+// onCloseBoundExceeded: EMPTY in production — the helper installs its
+// fatal default (stderr + TerminateProcess(19)) since a wedged close
+// can never return; tests inject a non-fatal stub that records the fire
+// and unblocks the scripted close (the late return is never trusted).
+tsdev::RecycleResult recycleDeferredResult(
+    const std::function<bool()>& closeSession,
+    tsdev::IRecycleSampler* sampler,
+    double closeBoundSecs = tsdev::RecycleParams().closeBoundSecs,
+    const std::function<void()>& onCloseBoundExceeded = nullptr) {
+    std::string cReason, cDetail;
+    if (!tsdev::boundedCloseWarehouse(closeSession, sampler,
+                                    closeBoundSecs, onCloseBoundExceeded,
+                                    &cReason, &cDetail)) {
+        tsdev::RecycleResult r;
+        r.outcome         = tsdev::RecycleOutcome::RefuseCloseFailed;
+        r.exitCode        = 19;
+        r.terminateSelf   = true;   // own session may still be open
+        r.safeToDeleteLib = false;
+        r.reason          = cReason;
+        r.detail          = cDetail;
+        return r;
+    }
+    tsdev::RecycleResult r;
+    r.outcome         = tsdev::RecycleOutcome::Recycled;
+    r.exitCode        = 18;
+    r.terminateSelf   = false;  // close succeeded — GRACEFUL teardown
+    r.safeToDeleteLib = true;   // releases the +7 (never TerminateProcess)
+    r.reason          = "recycle_deferred_own_session";
+    r.detail          = "own warehouse session closed; the resumed "
+                        "process runs the engine never-attached";
+    return r;
+}
+
 // WHServer VAS-headroom guard configuration (batch-* and serve). Defaults
 // the field-crash analysis: 256 MB total-free headroom and 64 MB for the
 // largest contiguous free block (non-LAA 32-bit WHServer dies near ~10 MB
@@ -4305,6 +5160,168 @@ struct VasGuardConfig {
     unsigned freeThresholdMB    = 256;
     unsigned largestThresholdMB = 64;
 };
+
+// One-shot warning latches for the guard's inconclusive outcomes (one
+// emission each per run — a transient failure warns, it never aborts).
+// `measure`   = a per-pid measureVasFree failure;
+// `whEnum`    = the WHServer pid enumeration itself was inconclusive
+//               (a failed Toolhelp32 snapshot is never "no server");
+// `crashEnum` = the TSCrashReport enumeration behind the zombie
+//               pre-check was inconclusive (never "no zombies").
+// runBatch owns one instance for the whole run; runServe keeps one per
+// broker lifetime and passes it by reference into serveVasGuardRefuse.
+struct VasGuardWarns {
+    bool measure   = false;
+    bool whEnum    = false;
+    bool crashEnum = false;
+};
+
+// WHServer gated auto-recycle authorization (design
+// tmp/RECYCLE_ENGINE_DESIGN.md §6.1). `authorized` is the OR-ed presence of
+// the --recycle-whserver flag and the TSDEV_RECYCLE_WHSERVER env mirror
+// (env set-and-not-"0"; there is no negative flag form, so env "0" never
+// vetoes an explicit flag). The flag authorizes the recycle engine (R3+)
+// — it never bypasses the zero-client census gate.
+struct RecycleConfig {
+    bool authorized       = false;
+    // Source attribution for refusal messages: true when authorization
+    // came ONLY from the TSDEV_RECYCLE_WHSERVER env mirror (no explicit
+    // --recycle-whserver flag seen), so a refusal can name the env var
+    // instead of misattributing the flag.
+    bool authorizedViaEnv = false;
+};
+
+// The batch-* subcommand set — single source shared by both flag
+// validations that restrict to batch subcommands:
+// --batch-progress-control (batch-* only) and --recycle-whserver
+// (batch-* + serve). The subcommand dispatch in main() encodes the same
+// names once more, but that is the command table, not a rule — it stays
+// as-is. Pure helper so the -NoTs unit test can pin the set.
+bool isBatchSubcommand(const std::string& sub) {
+    return iequals(sub, "batch-insert")     ||
+           iequals(sub, "batch-modify")     ||
+           iequals(sub, "batch-delete")     ||
+           iequals(sub, "batch-upsert")     ||
+           iequals(sub, "batch-insert-dir") ||
+           iequals(sub, "batch-modify-dir") ||
+           iequals(sub, "batch-delete-dir") ||
+           iequals(sub, "batch-upsert-dir");
+}
+
+// §6.1 subcommand restriction: --recycle-whserver is valid only with the
+// batch-* subcommands and serve.
+bool isRecycleWhserverSubcommand(const std::string& sub) {
+    return isBatchSubcommand(sub) || iequals(sub, "serve");
+}
+
+// §6.1 validation — run AFTER the elevation guard, same convention as
+// --batch-progress-control. Returns true when the combination is legal;
+// on a violation fills `r` (exitCode 1 + errorMessage + humanStderr) and
+// returns false. Checked in the design's order:
+//   1. authorized + VAS guard disabled (--no-whserver-vas-guard /
+//      TSDEV_NO_WHSERVER_VAS_GUARD) -> usage error: recycling can never
+//      trigger with the guard disabled — a user error, not a silent no-op.
+//   2. authorized + --batch-progress-control -> usage error, refused UP
+//      FRONT: the stdin control channel (readBatchControlDecision) belongs
+//      to the DYING process — a mid-batch recycle exit would strand the
+//      open channel and the not-run tail's decision state could not be
+//      replayed into the resumed process.
+//   3. authorized on a single-op/unknown subcommand -> usage error.
+// `authorizedViaEnv` is true when authorization came ONLY from the
+// TSDEV_RECYCLE_WHSERVER env mirror: refusals then name the env source
+// and the remedy (unset the env var / drop the conflicting flag) instead
+// of misattributing an explicit --recycle-whserver flag.
+bool validateRecycleWhserver(bool authorized, bool authorizedViaEnv,
+                             bool vasGuardEnabled,
+                             bool batchControl, const std::string& subcommand,
+                             CliResult& r) {
+    if (!authorized) return true;
+    const std::string envNote =
+        authorizedViaEnv
+            ? " (authorized via TSDEV_RECYCLE_WHSERVER — unset the env var "
+              "or drop the conflicting flag)"
+            : "";
+    if (!vasGuardEnabled) {
+        r.exitCode = 1;
+        r.errorMessage = "--recycle-whserver cannot be combined with "
+                         "--no-whserver-vas-guard" + envNote;
+        r.humanStderr = "tsdev_cli: " + r.errorMessage +
+                        " (the guard is the recycle trigger)\n";
+        return false;
+    }
+    if (batchControl) {
+        r.exitCode = 1;
+        r.errorMessage = "--recycle-whserver cannot be combined with "
+                         "--batch-progress-control" + envNote;
+        r.humanStderr = "tsdev_cli: " + r.errorMessage +
+                        " (the control channel belongs to the dying "
+                        "process)\n";
+        return false;
+    }
+    if (!isRecycleWhserverSubcommand(subcommand)) {
+        r.exitCode = 1;
+        r.errorMessage = "--recycle-whserver is only valid with batch-* "
+                         "subcommands and serve" + envNote;
+        r.humanStderr = "tsdev_cli: " + r.errorMessage + "\n";
+        return false;
+    }
+    return true;
+}
+
+// §6.3 verbatim warning — printed once per process lifetime when the flag
+// is in effect; in serve mode once per BROKER lifetime (each respawned
+// broker is a new process and re-emits it, which is desired: the warning
+// precedes every process that can recycle). Emitted on stderr.
+const char kRecycleWhserverWarning[] =
+    "tsdev_cli: WARNING --recycle-whserver authorizes restarting WHServer.exe\n"
+    "when the VAS guard trips. The restart is gated on a zero-client census\n"
+    "(m_nLock==0 sustained >=3s), but a residual race cannot be eliminated:\n"
+    "a client holding only a class-factory proxy is invisible to the census\n"
+    "and can activate between the census pass and the moment the dying server\n"
+    "revokes its COM class at process exit — a measured ~6-7s window\n"
+    "(ForceShutDown -> exit 5.9/6.0/6.3s; verify bound 15s) during which the\n"
+    "dying server still answers new activations; a client that binds in that\n"
+    "window attaches to the DYING server and dies on its NEXT warehouse call\n"
+    "(field evidence: TSDev.exe crashed ~6s after server death). On a machine\n"
+    "running TS Desktop this can stall or crash the desktop. The gate refuses\n"
+    "(exit 19) whenever it cannot confirm zero foreign-held objects — the flag\n"
+    "does not bypass the gate. If WHServer cannot be recycled cleanly the batch\n"
+    "aborts. In serve mode each recycle respawns the elevated broker — a\n"
+    "non-elevated client faces one UAC prompt per respawn (unattended runs\n"
+    "cannot satisfy it; run the client elevated or expect the batch to raise).\n"
+    "On a recycle exit the batch writes a resume manifest\n"
+    "(tsdev_resume_<pid>_<ticks>.manifest beside the source manifest, or the\n"
+    "cwd for --batch-stdin) covering the not-run tail; resubmit it with\n"
+    "`batch-<op> <resume-file>` (the Python client resubmits it automatically,\n"
+    "bounded at 3 recycles per batch; a refusal, exit 19, aborts the batch).\n"
+    "The file is caller-owned — the CLI never deletes it.\n";
+
+// Emit the §6.3 warning once per process lifetime (the static guard makes
+// the once-per-process/broker-lifetime contract explicit and testable).
+void emitRecycleWhserverWarning() {
+    static bool warned = false;
+    if (warned) return;
+    warned = true;
+    std::fputs(kRecycleWhserverWarning, stderr);
+}
+
+// Presence-semantics env read for the TSDEV_RECYCLE_WHSERVER boolean env
+// mirror (same convention as TSDEV_NO_WHSERVER_VAS_GUARD: set to any value
+// other than "0" enables; unset/empty/"0" does not).
+bool envPresenceEnabled(const char* name) {
+    char envBuf[64] = {};
+    DWORD n = GetEnvironmentVariableA(name, envBuf, sizeof(envBuf));
+    return n > 0 && n < sizeof(envBuf) && !(n == 1 && envBuf[0] == '0');
+}
+
+// OR-ed flag/env composition for --recycle-whserver authorization
+// (design §6.1): the explicit flag OR TSDEV_RECYCLE_WHSERVER
+// set-and-not-"0". The env read lives inside so the whole precedence is
+// pinnable in the same TU — env "0" never vetoes an explicit flag (there
+// is no negative flag form).
+bool resolveRecycleAuthorized(bool flagSeen) {
+    return flagSeen || envPresenceEnabled("TSDEV_RECYCLE_WHSERVER");
+}
 
 // Strict decimal-MB threshold parse shared by the --whserver-*-mb flags and
 // the TSDEV_WHSERVER_*_MB env mirrors. Accepts "0".."1048575" only (fully
@@ -4321,12 +5338,13 @@ bool parseMbThreshold(const std::string& s, unsigned& out) {
     return true;
 }
 
-// Strict decimal-seconds parse for --dispatch-timeout-secs and the
-// TSDEV_DISPATCH_TIMEOUT_SECS env mirror (TVS-3 dispatch watchdog). Accepts
-// "0".."86400" only (fully numeric, no sign/space/junk); 0 is the documented
-// disable value. Anything else returns false so the caller can reject the
-// flag value or keep the env-default respectively.
-bool parseDispatchTimeoutSecs(const std::string& s, unsigned& out) {
+// Strict decimal-seconds parse shared by the seconds-valued timeout flags
+// (--dispatch-timeout-secs, --batch-control-timeout-secs) and the
+// TSDEV_DISPATCH_TIMEOUT_SECS env mirror. Accepts "0".."86400" only (fully
+// numeric, no sign/space/junk); 0 is the documented disable value. Anything
+// else returns false so the caller can reject the flag value or keep the
+// env-default respectively.
+bool parseTimeoutSecs(const std::string& s, unsigned& out) {
     if (s.empty()) return false;
     for (char c : s) {
         if (c < '0' || c > '9') return false;
@@ -4344,10 +5362,24 @@ struct BatchParams {
     const wchar_t*          tsPathOverride;  // nullptr = auto-discover
     bool                    jsonProgress = false;  // --json: NDJSON progress
     bool                    batchControl = false;  // --batch-progress-control
+    // Bounded control wait in seconds (R6, design §5): 0 disables the
+    // bound (plain blocking read — documented escape hatch); applies only
+    // when batchControl is on. Default 900, --batch-control-timeout-secs.
+    unsigned                controlTimeoutSecs = 900;
     bool                    pbar = false;   // --pbar: pinned stderr bar
     VasGuardConfig          vasGuard;       // WHServer VAS-headroom guard
+    RecycleConfig           recycle;        // --recycle-whserver (R3 engine)
+    // Directory the §4.1 resume manifest is written into on a recycle
+    // exit (beside the source manifest / the cwd for --batch-stdin / the
+    // scanned directory for batch-*-dir; empty -> cwd inside the writer).
+    std::string             resumeManifestDir;
     std::vector<CliResult>  results;  // populated by runBatch
-    int                     exitCode = 0;   // 0/2/3/14 (set by worker)
+    int                     exitCode = 0;   // 0/2/3/14/18/19 (set by worker)
+    // Set by the recycle tail-bypass path when it already emitted the JSON
+    // results array on the worker (§4.1 order — emission must precede
+    // `delete lib` on exit-18 and TerminateProcess-self on close_failed);
+    // runBatchAndEmit then skips its own emit — no double-emit.
+    bool                    resultsEmitted = false;
 };
 
 // The batch worker: constructs ONE TsDevLib, loops over items IN ORDER using
@@ -4358,6 +5390,7 @@ struct BatchParams {
 // and init failures; --json additionally precedes it with a started event)
 // plus one batch_completed after the close + result rewrite.
 DWORD WINAPI runBatch(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     BatchParams* p = static_cast<BatchParams*>(param);
     const std::string& op = p->op;
     const size_t total = p->items.size();
@@ -4447,7 +5480,8 @@ DWORD WINAPI runBatch(LPVOID param) {
             if (p->batchControl && index < total) {
                 std::string controlErr;
                 const BatchControlDecision decision =
-                    readBatchControlDecision(stdin, controlErr);
+                    readBatchControlDecisionBounded(
+                        stdin, p->controlTimeoutSecs, controlErr);
                 if (decision == BatchControlDecision::Error) {
                     emitLine(batchControlErrorLine(controlErr,
                                                    p->jsonProgress));
@@ -4476,12 +5510,33 @@ DWORD WINAPI runBatch(LPVOID param) {
         g_pbarLogTarget = nullptr;
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
+    // Source-file column in the manifest schema (3-token ops); drives the
+    // §4.1 resume-manifest lines on a recycle exit.
+    const bool needsSource =
+        (op == "insert" || op == "modify" || op == "upsert");
     bool anyFailed = false;
     bool cancelled = false;
     bool aborted = false;            // WHServer VAS-headroom guard fired
     std::string abortReason;         // e.g. "whserver_vas_free=123MB"
-    bool vasMeasureWarned = false;   // one-shot measure_failed warning
+    // Breaching-server context for the §4.1 recycle event fields (pid,
+    // free_mb) — captured when the guard detects the breach.
+    DWORD abortPid = 0;
+    uint64_t abortFreeMB = 0;
+    // Not-run marker text for the abort arm the guard fired — the VAS
+    // default; the zombie arm substitutes its own message.
+    const char* abortMarkerMsg = kVasAbortMarkerMessage;
+    VasGuardWarns vasWarns;          // one-shot inconclusive warnings
+    // Set once any item reaches a real op dispatch (preValid items only —
+    // pre-validated failures never touch the warehouse, so they never
+    // lazily attach a session). Feeds the R1 recycleSiteDefers gate at
+    // the between-items check: a breach after all-pre-validated items is
+    // still a never-attached site where the engine may run in-process;
+    // a breach after any dispatch is attached and defers (exit 18).
+    bool anyOpDispatched = false;
     size_t index = 0;
     size_t attempted = 0;
 
@@ -4493,12 +5548,63 @@ DWORD WINAPI runBatch(LPVOID param) {
     // loudly: emit the abort event, set `aborted` + `abortReason` — the
     // shared marker/summary machinery below reports truthfully.
     auto vasGuardCheck = [&]() {
-        const std::vector<DWORD> whPids = tsdev::findWhServerPids();
+        // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
+        // INCONCLUSIVE — never "no server". Warn once and pass: the same
+        // fail-open protection the collapsing overload gave silently, now
+        // honestly reported (never an abort on a failed enumeration).
+        std::vector<DWORD> whPids;
+        if (!tsdev::findWhServerPids(whPids)) {
+            if (!vasWarns.whEnum) {
+                vasWarns.whEnum = true;
+                emitLine(whserverEnumFailedLine("whserver",
+                                                p->jsonProgress));
+            }
+            TSDEV_DIAG_LOG("whserver.vas.check",
+                           "result=whserver_enum_inconclusive");
+            return;
+        }
+        // Corpse pre-check (P4 gap-a): a WHServer pid parenting a
+        // TSCrashReport.exe child is a crash-frozen zombie — it still
+        // enumerates and its frozen VAS measures healthy under
+        // VirtualQueryEx, so the measurement loop below would PASS it and
+        // the next dispatch would wedge into the dead session. Abort
+        // BEFORE the next dispatch on the same machinery as a VAS breach,
+        // honestly labeled whserver_zombie (the exit-14 abort family).
+        if (!whPids.empty()) {
+            std::vector<DWORD> crashParents;
+            if (tsdev::findCrashReportParentPids(crashParents)) {
+                const DWORD zombie = whserverZombiePid(whPids, crashParents);
+                if (zombie != 0) {
+                    TSDEV_DIAG_LOG("whserver.vas.check",
+                                   "pid=%lu result=zombie",
+                                   static_cast<unsigned long>(zombie));
+                    emitLine(whserverZombieAbortLine(zombie,
+                                                   p->jsonProgress));
+                    aborted = true;
+                    abortPid = zombie;
+                    abortFreeMB = 0;
+                    abortReason = "whserver_zombie";
+                    abortMarkerMsg = kZombieAbortMarkerMessage;
+                    return;
+                }
+            } else {
+                // Inconclusive — never "no zombies", never an abort on a
+                // failed enumeration alone: warn once and proceed (the
+                // same fail-open-with-warning convention as measure).
+                if (!vasWarns.crashEnum) {
+                    vasWarns.crashEnum = true;
+                    emitLine(whserverEnumFailedLine("crashreport",
+                                                    p->jsonProgress));
+                }
+                TSDEV_DIAG_LOG("whserver.vas.check",
+                               "result=crashreport_enum_inconclusive");
+            }
+        }
         for (DWORD whPid : whPids) {
             tsdev::WhVasStats vst;
             if (!tsdev::measureVasFree(whPid, vst)) {
-                if (!vasMeasureWarned) {
-                    vasMeasureWarned = true;
+                if (!vasWarns.measure) {
+                    vasWarns.measure = true;
                     emitLine(whserverVasMeasureFailedLine(
                         whPid, p->jsonProgress));
                 }
@@ -4529,6 +5635,8 @@ DWORD WINAPI runBatch(LPVOID param) {
                     whPid, vst, p->vasGuard.freeThresholdMB,
                     p->vasGuard.largestThresholdMB, p->jsonProgress));
                 aborted = true;
+                abortPid = whPid;
+                abortFreeMB = freeMB;
                 // Truthful machine-readable reason for the summary:
                 // name the breaching metric + measured MB. Total-free
                 // is checked first; when both breach, report it.
@@ -4542,6 +5650,120 @@ DWORD WINAPI runBatch(LPVOID param) {
         }
     };
 
+    // Recycle exit path (design §2 step-6 tail-bypass): every recycle
+    // outcome that ends the batch runs through here instead of the normal
+    // tail — including the R2 attached-site DEFER result (recycleDeferredResult,
+    // which never ran the engine but DID run the §5 close stage). It
+    // appends the recycle not-run markers
+    // itself (the tail's marker loop would re-append with the wrong
+    // message), SKIPS the tail
+    // closeWarehouse + exit-6 rewrite + batchAggregateExitCode (a failed
+    // SECOND close could never downgrade 18/19), then runs the §5 teardown:
+    // `delete lib` — the identical post-close path a normal batch end runs,
+    // safe because step-2 close already succeeded (or no session ever
+    // existed; R2: the granted defer's bounded close already ran here) —
+    // UNLESS terminateSelf (close_failed, or the REFUSED defer whose own
+    // session may still be open): emit + flush, then
+    // die via TerminateProcess-self(rec.exitCode), never `delete lib`/ExitProcess
+    // into a possibly-open warehouse (§5, dispatch_watchdog convention).
+    // A GRANTED defer takes the `delete lib` + return path — the worker
+    // joins and main exits 18 GRACEFULLY, the only teardown that releases
+    // the +7 (R2, live-proven 2026-10-21).
+    // p->exitCode is set directly to 18/19.
+    auto recycleExit = [&](const tsdev::RecycleResult& rec) -> DWORD {
+        const char* markerMsg =
+            (rec.outcome == tsdev::RecycleOutcome::Recycled)
+                ? kRecycledMarkerMessage
+                : kRecycleRefusedMarkerMessage;
+        for (size_t j = attempted; j < total; ++j) {
+            p->results.push_back(
+                cancelledBatchItemResult(op, p->items[j], markerMsg));
+        }
+        // §4.1 pinned order: results array -> resume manifest -> event
+        // line -> batch_completed summary -> fflush -> exit. The results
+        // array is the sole durable record — emit + flush it HERE on the
+        // worker BEFORE `delete lib` (whose OrlibExit would otherwise
+        // dispatch toward the just-killed/torn server — UNPROVEN shape)
+        // and BEFORE any TerminateProcess-self (the main thread never
+        // runs again on that path). The flag stops runBatchAndEmit from
+        // re-emitting the array.
+        if (p->jsonProgress) {
+            emitBatchOutput(p->results);
+            p->resultsEmitted = true;
+        }
+        // Step 2 — resume manifest: items from the boundary index onward
+        // in the schema parseManifest re-reads, written before the event
+        // that carries its path. Caller-owned cleanup: the CLI never
+        // deletes it. A write failure is loud (stderr line; the event
+        // then carries no manifest member) — the array's marker tail
+        // still pins the boundary (§4.4).
+        std::string manifestPath;
+        if (attempted < total) {
+            std::string manifestErr;
+            if (!writeResumeManifest(p->resumeManifestDir, p->items,
+                                     attempted, needsSource,
+                                     manifestPath, manifestErr)) {
+                emitLine("tsdev_cli: " + manifestErr +
+                         " (resume the remaining items manually)");
+            }
+            // The event carries the path as JSON text; this is an ANSI
+            // (ACP) build, so a non-ASCII path would serialize as U+FFFD
+            // and the client would resubmit a nonexistent file. Fail
+            // closed: report that auto-resume cannot use the path and
+            // emit the event WITHOUT a manifest member (the client then
+            // applies its manifest-absent marker text; the file itself
+            // still exists on disk for forensics).
+            const bool pathIsAscii = std::all_of(
+                manifestPath.begin(), manifestPath.end(),
+                [](char c) {
+                    const unsigned char u = static_cast<unsigned char>(c);
+                    return u >= 0x20 && u <= 0x7E;
+                });
+            if (!manifestPath.empty() && !pathIsAscii) {
+                emitLine("tsdev_cli: resume manifest path is not "
+                         "representable in the JSON event stream "
+                         "(non-ASCII) — automatic resume cannot use it; "
+                         "resume the remaining items manually");
+                manifestPath.clear();
+            }
+        }
+        // Step 3 — the event AFTER the manifest exists (it carries the
+        // path) with the full §4.1 field set: breaching pid, free_mb,
+        // the 1-based resume boundary index, total, manifest path.
+        emitLine(whserverRecycleEventLine(rec, p->jsonProgress,
+                                          abortPid, abortFreeMB,
+                                          attempted + 1, total,
+                                          manifestPath));
+        if (p->pbar) bar.finish();
+        // Final summary — the same batch_completed line the normal tail
+        // emits, carrying the truthful abort context (the recycle follows
+        // a VAS-guard breach). Always printed: a recycle exit is never a
+        // clean run.
+        size_t successes = 0, failures = 0;
+        for (size_t i = 0; i < attempted; ++i) {
+            if (p->results[i].success) ++successes; else ++failures;
+        }
+        emitBatchProgress(batchCompletedLine(
+            op, attempted, total, successes, failures,
+            /*notRun=*/total - attempted, /*cancelled=*/false,
+            /*closeFailed=*/false, rec.exitCode, p->jsonProgress,
+            /*aborted=*/true, abortReason));
+        tsdev_log_set_sink(nullptr);
+        g_pbarLogTarget = nullptr;
+        std::fflush(stdout);
+        std::fflush(stderr);
+        if (rec.terminateSelf) {
+            // close_failed: die WITHOUT DLL detach into a possibly-open
+            // warehouse (§5, dispatch_watchdog convention).
+            TerminateProcess(GetCurrentProcess(),
+                             static_cast<UINT>(rec.exitCode));
+            std::abort();  // TerminateProcess does not return
+        }
+        if (rec.safeToDeleteLib) delete lib;
+        p->exitCode = rec.exitCode;
+        return 0;
+    };
+
     // Pre-flight VAS check (before item 0): the between-items gate only
     // runs after item N completes, so a WHServer already below threshold
     // when the batch starts (the field case — WHServer persisted from a
@@ -4553,6 +5775,30 @@ DWORD WINAPI runBatch(LPVOID param) {
     // already-running (depleted) WHServer breaches here.
     if (p->vasGuard.enabled) {
         vasGuardCheck();
+    }
+
+    // Recycle trigger — pre-flight site (design §1 row 1): never attached
+    // (WHServer lazy-spawns inside item 0), so step-2 close is SKIPPED and
+    // a successful recycle lets the batch CONTINUE in-process — item 0's
+    // lazy attach is a FIRST activation on a fresh server (the ordinary
+    // item-0 path), not the proven-hazardous re-activation-after-close.
+    // R1: this is a NEVER-ATTACHED site — the engine may run in-process
+    // here (see recycleSiteDefers); a between-items attached-site breach
+    // defers via exit 18 and lands back HERE on resume to do the actual
+    // recycle.
+    if (aborted && p->recycle.authorized) {
+        const tsdev::RecycleResult rec =
+            runWhserverRecycleCli(lib, /*ownSessionExists=*/false);
+        if (rec.outcome == tsdev::RecycleOutcome::Recycled) {
+            // Continue-in-process: no boundary/manifest — the event
+            // carries only the breach context (pid, free_mb).
+            emitLine(whserverRecycleEventLine(rec, p->jsonProgress,
+                                              abortPid, abortFreeMB));
+            aborted = false;
+            abortReason.clear();
+        } else {
+            return recycleExit(rec);
+        }
     }
 
     for (auto& item : p->items) {
@@ -4580,17 +5826,26 @@ DWORD WINAPI runBatch(LPVOID param) {
             // stamp the op.
             r = item.result;
             r.op = op;
-        } else if (op == "insert") {
-            r = doInsert(*lib, item.type, item.typeStr, item.name,
-                         item.source, /*flushPerItem=*/false);
-        } else if (op == "modify") {
-            r = doModify(*lib, item.type, item.typeStr, item.name, item.source);
-        } else if (op == "upsert") {
-            r = doUpsert(*lib, item.type, item.typeStr, item.name,
-                         item.source, /*flushPerItem=*/false);
-        } else {  // delete
-            r = doDelete(*lib, item.type, item.typeStr, item.name,
-                         /*flushPerItem=*/false);
+        } else {
+            // Real dispatch — the first op lazily attaches the warehouse
+            // session (WHServer lazy-spawn inside item N's first orlib20
+            // call). Mark before dispatch: on a throw the thread dies
+            // anyway, and the conservative direction is "session may
+            // exist".
+            anyOpDispatched = true;
+            if (op == "insert") {
+                r = doInsert(*lib, item.type, item.typeStr, item.name,
+                             item.source, /*flushPerItem=*/false);
+            } else if (op == "modify") {
+                r = doModify(*lib, item.type, item.typeStr, item.name,
+                             item.source);
+            } else if (op == "upsert") {
+                r = doUpsert(*lib, item.type, item.typeStr, item.name,
+                             item.source, /*flushPerItem=*/false);
+            } else {  // delete
+                r = doDelete(*lib, item.type, item.typeStr, item.name,
+                             /*flushPerItem=*/false);
+            }
         }
 
         // §7.1 diag: per-item completion marker — doubles as the
@@ -4626,7 +5881,8 @@ DWORD WINAPI runBatch(LPVOID param) {
         if (p->batchControl && index < total) {
             std::string controlErr;
             const BatchControlDecision decision =
-                readBatchControlDecision(stdin, controlErr);
+                readBatchControlDecisionBounded(
+                    stdin, p->controlTimeoutSecs, controlErr);
             if (decision == BatchControlDecision::Error) {
                 emitLine(batchControlErrorLine(controlErr,
                                                p->jsonProgress));
@@ -4643,6 +5899,39 @@ DWORD WINAPI runBatch(LPVOID param) {
         // breach aborts loudly and breaks the loop.
         if (p->vasGuard.enabled && index < total) {
             vasGuardCheck();
+            // Recycle trigger — between-items site (design §1 row 2,
+            // R1+R2): a breach here exits 18 + resume through the
+            // tail-bypass path either way, but the ENGINE runs
+            // in-process only at the never-attached edge — a run of
+            // all-pre-validated failures dispatched nothing, so this
+            // process holds no WHServer locks and the census can pass.
+            // Once any op dispatched the site is ATTACHED: this
+            // process's +7 m_nLock contribution lasts its whole
+            // lifetime (closeWarehouse cannot release it — only
+            // GRACEFUL process teardown does, live-proven 2026-10-21),
+            // so an in-process census can never pass and the breach
+            // takes the defer boundary instead: R2 runs the §5 close
+            // stage here on this session-owning worker thread
+            // (recycleDeferredResult -> boundedCloseWarehouse — zombie
+            // pre-check + the 30 s monitor bound), then GRACEFULLY
+            // exits 18 through `delete lib` + worker return (the only
+            // teardown that releases the +7 — the RESUMED process runs
+            // the engine at the never-attached pre-flight site). A
+            // failed/bounded-out close REFUSES the defer on the §5
+            // close-stage family — emit + flush +
+            // TerminateProcess-self(19), the open-session teardown
+            // class.
+            if (aborted && p->recycle.authorized) {
+                tsdev::WhRecycleSampler deferSampler;
+                const tsdev::RecycleResult rec =
+                    recycleSiteDefers(anyOpDispatched)
+                        ? recycleDeferredResult(
+                              [lib] { return lib->closeWarehouse(); },
+                              &deferSampler)
+                        : runWhserverRecycleCli(
+                              lib, /*ownSessionExists=*/false);
+                return recycleExit(rec);
+            }
             if (aborted) break;
         }
     }
@@ -4654,7 +5943,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     for (size_t j = attempted; j < total; ++j) {
         p->results.push_back(cancelledBatchItemResult(
             op, p->items[j],
-            aborted ? kVasAbortMarkerMessage
+            aborted ? abortMarkerMsg
                     : "Batch cancelled before this item was attempted"));
     }
 
@@ -4685,8 +5974,16 @@ DWORD WINAPI runBatch(LPVOID param) {
     }
 
     // Destruct TsDevLib (OrlibExit persists; EDIT control destroyed on this
-    // thread).
-    delete lib;
+    // thread) — SKIPPED on close_failed: the failed close leaves the
+    // session possibly open with uncertain teardown state, so `delete lib`
+    // (OrlibExit) followed by ExitProcess would DLL-detach into it — the
+    // §5 close_failed class ("WHouse stays in memory" modal; an invisible
+    // deadlock under the SW_HIDE broker). The terminate block below runs
+    // the identical tail emission first, so output + exit code are
+    // unchanged; only the teardown differs.
+    if (!closeFailed) {
+        delete lib;
+    }
 
     p->exitCode = batchAggregateExitCode(/*batchStarted=*/true, anyFailed,
                                          cancelled, aborted);
@@ -4719,6 +6016,22 @@ DWORD WINAPI runBatch(LPVOID param) {
     }
     tsdev_log_set_sink(nullptr);
     g_pbarLogTarget = nullptr;
+
+    if (closeFailed) {
+        // §5 teardown (dispatch_watchdog convention, same as recycleExit):
+        // the session may still be open — emit the pending results array
+        // ON THIS WORKER (the main thread never runs again; resultsEmitted
+        // suppresses runBatchAndEmit's re-emit, the same flag the recycle
+        // tail-bypass uses), then flush + TerminateProcess with the
+        // aggregate exit code — never `delete lib`/ExitProcess into a
+        // possibly-open warehouse. The code is the same value the normal
+        // return would have produced (2/3/14 per batchAggregateExitCode).
+        if (p->jsonProgress) {
+            emitBatchOutput(p->results);
+            p->resultsEmitted = true;
+        }
+        terminateSelfNoDetach(static_cast<unsigned>(p->exitCode));
+    }
     return 0;
 }
 
@@ -4745,8 +6058,10 @@ void emitBatchOutput(const std::vector<CliResult>& results) {
 // duplicated.
 int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
                     const wchar_t* tsPathOverride, bool jsonProgress,
-                    bool batchControl, bool pbar,
-                    const VasGuardConfig& vasGuard) {
+                    bool batchControl, unsigned controlTimeoutSecs, bool pbar,
+                    const VasGuardConfig& vasGuard,
+                    const RecycleConfig& recycle,
+                    const std::string& resumeManifestDir) {
     // Launch the batch on a 64 MB-stack worker thread (ONE TsDevLib instance).
     BatchParams params;
     params.op = op;
@@ -4754,8 +6069,11 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     params.tsPathOverride = tsPathOverride;
     params.jsonProgress = jsonProgress;
     params.batchControl = batchControl;
+    params.controlTimeoutSecs = controlTimeoutSecs;
     params.pbar = pbar;
     params.vasGuard = vasGuard;
+    params.recycle = recycle;
+    params.resumeManifestDir = resumeManifestDir;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runBatch, &params, 0, nullptr);
@@ -4769,8 +6087,10 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     CloseHandle(hThread);
 
     // Emit the JSON results array on stdout — only under --json; human and
-    // --pbar modes emit no stdout array.
-    if (jsonProgress) {
+    // --pbar modes emit no stdout array. Recycle paths already emitted it
+    // on the worker (§4.1 order: before `delete lib` / TerminateProcess),
+    // so skip here to avoid a double-emit (params.resultsEmitted).
+    if (jsonProgress && !params.resultsEmitted) {
         emitBatchOutput(params.results);
     }
     return params.exitCode;
@@ -4780,7 +6100,9 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
 // emits the JSON array, returns the batch exit code.
 int cmdBatch(const std::string& op, const std::string& manifestFile,
              bool useStdin, const wchar_t* tsPathOverride, bool jsonProgress,
-             bool batchControl, bool pbar, const VasGuardConfig& vasGuard) {
+             bool batchControl, unsigned controlTimeoutSecs, bool pbar,
+             const VasGuardConfig& vasGuard,
+             const RecycleConfig& recycle) {
     const bool needsSource = (op == "insert" || op == "modify" || op == "upsert");
 
     // Parse the manifest on the main thread (before the worker).
@@ -4837,8 +6159,33 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
         }
     }
 
+    // Resume-manifest directory (§4.1): beside the source manifest; the
+    // cwd for --batch-stdin (no source manifest exists). An unresolvable
+    // path leaves it empty -> the writer falls back to the cwd.
+    std::string resumeDir;
+    {
+        std::error_code ec;
+        const std::filesystem::path base = useStdin
+            ? std::filesystem::current_path(ec)
+            : std::filesystem::absolute(
+                  std::filesystem::path(manifestFile), ec).parent_path();
+        // base.string() throws (std::system_error) on a path the ANSI
+        // code page cannot represent (e.g. a non-ASCII cwd under
+        // --batch-stdin — the client's only direct batch mode). Catch it:
+        // leaving resumeDir empty makes writeResumeManifest fall back to
+        // its own guarded cwd conversion, which fails closed with an
+        // honest "no manifest" diagnostic — an uncaught throw here would
+        // escape into the VEH and TerminateProcess the whole batch.
+        if (!ec) {
+            try {
+                resumeDir = base.string();
+            } catch (const std::exception&) {
+            }
+        }
+    }
     return runBatchAndEmit(op, items, tsPathOverride, jsonProgress,
-                           batchControl, pbar, vasGuard);
+                           batchControl, controlTimeoutSecs, pbar, vasGuard,
+                           recycle, resumeDir);
 }
 
 // --- TVS-I.2: directory batch mode -------------------------------------------
@@ -4854,10 +6201,16 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
 // file: BatchItem with type = the type int, typeStr = the type string,
 // name = file stem (path::stem() strips only the last extension,
 // so my.strategy.el -> my.strategy), sourceFile = the file path string,
-// source = readFile(path) if needsSource is true, else empty string. The
+// source = readFile(path) if needsSource is true, else empty string; a
+// successfully read but EMPTY source file fails the item like a read
+// failure (preValid=false, exit 3, "source file is empty" — the same
+// text parseManifestLines and cmdInsert use). The
 // directory_iterator construction is wrapped in try/catch for
 // filesystem_error — on error, emit stderr and return false (caller emits
-// exit 1 without a second message). Returns true on success (outItems may
+// exit 1 without a second message). The per-entry path::string() narrow
+// conversions are likewise guarded: an ACP-unrepresentable filename fails
+// THAT item (preValid=false, exit 3) instead of throwing out of the scan.
+// Returns true on success (outItems may
 // still be empty if no files matched). Items are sorted by name for
 // deterministic ordering.
 bool parseDirectory(int type, const std::string& typeStr, const std::string& dirPath,
@@ -4896,24 +6249,58 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
         if (!std::filesystem::is_regular_file(entry.status())) continue;
 
         const std::filesystem::path& p = entry.path();
-        // Extract the file extension (includes the leading dot; empty if none).
-        std::string fileExt = p.extension().string();
-        // Lowercase for case-insensitive comparison.
-        std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(),
-            [](char c) { return static_cast<char>(
-                std::tolower(static_cast<unsigned char>(c))); });
-
-        bool matches = false;
-        for (const std::string& acc : acceptedExts) {
-            if (fileExt == acc) { matches = true; break; }
-        }
-        if (!matches) continue;
-
         BatchItem item;
+        // Narrow-convert extension/stem/full path under ONE guard:
+        // path::string() throws std::system_error when a filename is not
+        // representable in the ANSI code page. Only the
+        // directory_iterator ctor is guarded today — an uncaught throw
+        // here would kill the whole batch process (misattributed as an
+        // orlib20 crash). Instead fail THAT item loudly: a preValid=false
+        // entry is reported as a failure and is never dispatched (no
+        // delete can retarget), mirroring the read-failure path below.
+        try {
+            // Extract the file extension (includes the leading dot;
+            // empty if none).
+            std::string fileExt = p.extension().string();
+            // Lowercase for case-insensitive comparison.
+            std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(),
+                [](char c) { return static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c))); });
+
+            bool matches = false;
+            for (const std::string& acc : acceptedExts) {
+                if (fileExt == acc) { matches = true; break; }
+            }
+            if (!matches) continue;
+
+            item.name = p.stem().string();
+            item.sourceFile = p.string();
+        } catch (const std::exception&) {
+            item.type = static_cast<ComponentType>(type);
+            item.typeStr = typeStr;
+            // Render the filename identifiably even though it cannot be
+            // narrowed: the wide form + UTF-8 survives every character
+            // (the JSON emitter replaces anything unrepresentable with
+            // U+FFFD — the error_handler_t::replace convention), so the
+            // diagnostic names WHICH entry failed instead of surfacing
+            // only a placeholder. preValid=false means the name is never
+            // dispatched and the resume writer refuses it outright, so
+            // it can never reach a manifest line.
+            const std::string shown =
+                wideToUtf8Cli(p.filename().wstring());
+            item.name = "<unrepresentable filename: " + shown + ">";
+            item.preValid = false;
+            item.result.typeStr = typeStr;
+            item.result.name = item.name;
+            item.result.exitCode = 3;
+            item.result.errorMessage =
+                "failed to convert the directory entry \"" + shown +
+                "\" path to a narrow string (non-ANSI filename)";
+            outItems.push_back(std::move(item));
+            continue;
+        }
         item.type = static_cast<ComponentType>(type);
         item.typeStr = typeStr;
-        item.name = p.stem().string();
-        item.sourceFile = p.string();
         if (needsSource) {
             if (!readFile(item.sourceFile, item.source)) {
                 // Mirror parseManifestLines: read failure -> preValid false,
@@ -4925,6 +6312,18 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
                 item.result.exitCode = 3;
                 item.result.errorMessage =
                     std::string("failed to read source file \"") + item.sourceFile + "\"";
+                outItems.push_back(std::move(item));
+                continue;
+            }
+            // Mirror parseManifestLines and cmdInsert: an EMPTY source
+            // file is a pre-validation failure too (same exit-3 item,
+            // same message text) — never dispatch empty source.
+            if (item.source.empty()) {
+                item.preValid = false;
+                item.result.typeStr = typeStr;
+                item.result.name = item.name;
+                item.result.exitCode = 3;
+                item.result.errorMessage = "source file is empty";
                 outItems.push_back(std::move(item));
                 continue;
             }
@@ -4949,7 +6348,9 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
 int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
                 const std::string& dirPath, const std::vector<std::string>& extensions,
                 const wchar_t* tsPath, bool jsonProgress, bool batchControl,
-                bool pbar, const VasGuardConfig& vasGuard) {
+                unsigned controlTimeoutSecs, bool pbar,
+                const VasGuardConfig& vasGuard,
+                const RecycleConfig& recycle) {
     // Validate type (unknown -> exit 2, matching existing pattern).
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
@@ -4993,8 +6394,12 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
         // only (read as binary, like --batch-stdin).
         _setmode(_fileno(stdin), _O_BINARY);
     }
+    // Resume-manifest directory (§4.1): the scanned directory — the
+    // manifest file's ".manifest" extension is outside the default
+    // {".el", ".txt"} scan set, so it cannot re-enter a later dir batch.
     return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl,
-                           pbar, vasGuard);
+                           controlTimeoutSecs, pbar, vasGuard, recycle,
+                           dirPath);
 }
 
 // --- TVS-K.3: serve request dispatch -----------------------------------------
@@ -5547,27 +6952,173 @@ int serveConnectExitCode(BOOL connected, DWORD connectError) {
 // item-mutating ops (insert/modify/delete/upsert) are gated — read-only ops
 // (exists/get-source/quit) and parse failures never reach this check.
 // WHServer is a lazy singleton: no pids -> pass. A transient measureVasFree
-// failure warns once per process lifetime (measureWarned flag, runServe
+// failure warns once per process lifetime (VasGuardWarns latches, runServe
 // scope) and does NOT refuse. A breach (either threshold) emits the same
 // batch_aborted event as runBatch and fills `refusal` with an exit-14
 // CliResult — error.code "whserver_vas_abort" via errorCodeString, message
 // carrying the measured headroom + breaching reason — and returns true; the
 // caller writes the refusal response WITHOUT dispatching the op (one request
 // still yields exactly one response frame).
+// P4 additions: the WHServer pid enumeration uses the snapshotOk overload —
+// a failed Toolhelp32 walk is INCONCLUSIVE (never "no server") and warns
+// once instead of silently passing (g-1). And a corpse pre-check runs
+// BEFORE the VAS measurement (gap-a): a WHServer pid parenting a
+// TSCrashReport.exe child is a crash-frozen zombie — still enumerated with
+// a healthy-looking frozen VAS, so the measurement would PASS it and the
+// next dispatch would wedge into the dead session. A detected zombie
+// refuses on the same exit-14 shape (batch_aborted event with
+// reason="whserver_zombie", message naming the frozen pid); a failed
+// crash-report enumeration warns once and proceeds — never a refusal on
+// an inconclusive enumeration.
+// R3 recycle wiring + R1/R2 defer rule: when `recycle` is authorized and
+// `lib` is provided, a breach (or a detected zombie) produces the
+// exit-18/19 recycle-boundary refusal BEFORE the refusal is filled. The
+// ENGINE runs in-process only at the never-attached site
+// (sessionAttached==false — a first request): an attached broker holds
+// +7 m_nLock for the process's whole lifetime (closeWarehouse cannot
+// release it — only GRACEFUL process teardown does, live-proven
+// 2026-10-21), so an in-process census can never pass; the attached
+// breach takes the exit-18 defer boundary instead — R2 runs the §5
+// close stage HERE on this session-owning serve-loop thread
+// (recycleDeferredResult -> boundedCloseWarehouse), so the defer is
+// GRANTED only after a successful bounded close (graceful exit-18 —
+// the only teardown that releases the +7) and REFUSED on the §5
+// close-stage family (exit 19, terminateSelf) when it is not. The
+// client respawns the broker and the resubmitted request reaches this
+// same gate at a never-attached site where the engine then runs. The
+// refusal carries exit 18/19 and `recycleOut`/`recycleRan` report the
+// boundary so runServe can do the §4.3 tail-bypass teardown (respond
+// frame -> flush -> delete lib (granted defer: graceful ExitProcess 18)
+// or TerminateProcess-self -> broker exits;
+// the client respawns and resubmits bounded by max_recycles).
 bool serveVasGuardRefuse(const ServeRequest& req,
                          const VasGuardConfig& vasGuard,
-                         bool& measureWarned, bool jsonProgress,
-                         CliResult& refusal) {
+                         VasGuardWarns& warns, bool jsonProgress,
+                         CliResult& refusal,
+                         const RecycleConfig* recycle = nullptr,
+                         TsDevLib* lib = nullptr,
+                         bool sessionAttached = false,
+                         tsdev::RecycleResult* recycleOut = nullptr,
+                         bool* recycleRan = nullptr) {
+    if (recycleRan) *recycleRan = false;
     if (!vasGuard.enabled) return false;
     const bool mutating = (req.op == "insert" || req.op == "modify" ||
                            req.op == "delete"  || req.op == "upsert");
     if (!mutating) return false;
-    const std::vector<DWORD> whPids = tsdev::findWhServerPids();
+
+    // Shared refusal tail for a tripped guard (breach or corpse): with
+    // recycle authorized the recycle boundary is produced FIRST and its
+    // outcome becomes the response's exit code (18/19 — design §4.3: the
+    // frame carries error.code whserver_recycled / whserver_recycle_refused
+    // via errorCodeString, and the caller does the tail-bypass teardown);
+    // without it the request is refused on the plain exit-14 guard class —
+    // the request is never consumed (no dispatch, no item events).
+    // R1/R2: the boundary is produced by the engine only at the
+    // never-attached site; an attached broker defers — R2 runs the §5
+    // close stage inside recycleDeferredResult BEFORE this refusal is
+    // filled, so the frame + event below ALWAYS carry the truthful
+    // outcome (granted defer 18 / close-refused 19 — the client never
+    // reads a stale "recycled" from a broker whose close failed).
+    auto refuseGuard = [&](const std::string& reason,
+                           const std::string& plainMessage) {
+        if (recycle && recycle->authorized && lib) {
+            const bool deferred = recycleSiteDefers(sessionAttached);
+            tsdev::RecycleResult rec;
+            if (deferred) {
+                tsdev::WhRecycleSampler deferSampler;
+                rec = recycleDeferredResult(
+                    [lib] { return lib->closeWarehouse(); },
+                    &deferSampler);
+            } else {
+                rec = runWhserverRecycleCli(
+                    lib, /*ownSessionExists=*/false);
+            }
+            emitBatchProgress(whserverRecycleEventLine(rec, jsonProgress));
+            if (recycleOut) *recycleOut = rec;
+            if (recycleRan) *recycleRan = true;
+            refusal = CliResult();
+            refusal.op = req.op;
+            refusal.typeStr = req.typeStr;
+            refusal.name = req.name;
+            refusal.success = false;
+            refusal.exitCode = rec.exitCode;
+            if (rec.outcome == tsdev::RecycleOutcome::Recycled) {
+                refusal.errorMessage =
+                    deferred
+                        ? "WHServer recycle deferred (" + reason +
+                          "); resubmit on the respawned broker"
+                        : "WHServer recycled (" + reason +
+                          "); resubmit on the respawned broker";
+            } else {
+                refusal.errorMessage =
+                    "WHServer recycle refused: " + rec.reason +
+                    (rec.detail.empty() ? "" : " " + rec.detail) +
+                    " (" + reason + "); refusing " + req.op +
+                    " before dispatch";
+            }
+            return;
+        }
+        refusal = CliResult();
+        refusal.op = req.op;
+        refusal.typeStr = req.typeStr;
+        refusal.name = req.name;
+        refusal.success = false;
+        refusal.exitCode = 14;
+        refusal.errorMessage = plainMessage;
+    };
+
+    // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
+    // INCONCLUSIVE — never "no server". Warn once and pass: the same
+    // fail-open protection the collapsing overload gave silently, now
+    // honestly reported (never a refusal on a failed enumeration).
+    std::vector<DWORD> whPids;
+    if (!tsdev::findWhServerPids(whPids)) {
+        if (!warns.whEnum) {
+            warns.whEnum = true;
+            emitBatchProgress(whserverEnumFailedLine("whserver",
+                                                   jsonProgress));
+        }
+        TSDEV_DIAG_LOG("whserver.vas.check",
+                       "result=whserver_enum_inconclusive");
+        return false;
+    }
+    // Corpse pre-check (P4 gap-a): a WHServer pid parenting a
+    // TSCrashReport.exe child is a crash-frozen zombie — it still
+    // enumerates and its frozen VAS measures healthy under VirtualQueryEx,
+    // so the loop below would PASS it and the next dispatch would wedge
+    // into the dead session. Refuse BEFORE the dispatch.
+    if (!whPids.empty()) {
+        std::vector<DWORD> crashParents;
+        if (tsdev::findCrashReportParentPids(crashParents)) {
+            const DWORD zombie = whserverZombiePid(whPids, crashParents);
+            if (zombie != 0) {
+                TSDEV_DIAG_LOG("whserver.vas.check",
+                               "pid=%lu result=zombie",
+                               static_cast<unsigned long>(zombie));
+                emitBatchProgress(whserverZombieAbortLine(zombie,
+                                                        jsonProgress));
+                refuseGuard("whserver_zombie",
+                            whserverZombieRefusalMessage(req.op, zombie));
+                return true;
+            }
+        } else {
+            // Inconclusive — never "no zombies", never a refusal on a
+            // failed enumeration alone: warn once and proceed (the same
+            // fail-open-with-warning convention as measure).
+            if (!warns.crashEnum) {
+                warns.crashEnum = true;
+                emitBatchProgress(whserverEnumFailedLine("crashreport",
+                                                       jsonProgress));
+            }
+            TSDEV_DIAG_LOG("whserver.vas.check",
+                           "result=crashreport_enum_inconclusive");
+        }
+    }
     for (DWORD whPid : whPids) {
         tsdev::WhVasStats vst;
         if (!tsdev::measureVasFree(whPid, vst)) {
-            if (!measureWarned) {
-                measureWarned = true;
+            if (!warns.measure) {
+                warns.measure = true;
                 emitBatchProgress(whserverVasMeasureFailedLine(
                     whPid, jsonProgress));
             }
@@ -5602,17 +7153,11 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                 ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
                 : "whserver_vas_largest_free=" +
                       std::to_string(largestMB) + "MB";
-            refusal = CliResult();
-            refusal.op = req.op;
-            refusal.typeStr = req.typeStr;
-            refusal.name = req.name;
-            refusal.success = false;
-            refusal.exitCode = 14;
-            refusal.errorMessage =
-                "WHServer VAS headroom below threshold: free=" +
-                std::to_string(freeMB) + "MB largest=" +
-                std::to_string(largestMB) + "MB (" + reason +
-                "); refusing " + req.op + " before dispatch";
+            refuseGuard(reason,
+                        "WHServer VAS headroom below threshold: free=" +
+                        std::to_string(freeMB) + "MB largest=" +
+                        std::to_string(largestMB) + "MB (" + reason +
+                        "); refusing " + req.op + " before dispatch");
             return true;
         }
     }
@@ -5625,6 +7170,7 @@ struct ServeParams {
     const wchar_t*     tsPathOverride = nullptr;  // nullptr = auto-discover
     bool               jsonProgress = false;      // --json: NDJSON progress
     VasGuardConfig     vasGuard;                  // WHServer VAS-headroom guard
+    RecycleConfig      recycle;                   // --recycle-whserver (R3 engine)
     std::atomic<bool>  quit{false};               // set by worker on 'quit' op
     int                exitCode = 0;              // set by worker
 };
@@ -5637,10 +7183,17 @@ struct ServeParams {
 // and breaks both loops. TsDevLib is constructed AND used on this same
 // thread (thread-affine constraint: the hidden EDIT control is thread-local).
 DWORD WINAPI runServe(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
     ServeParams* p = static_cast<ServeParams*>(param);
     HANDLE pipe = p->pipe;
-    bool vasMeasureWarned = false;  // one-shot measure_failed warning
-                                    // (once per process lifetime)
+    VasGuardWarns vasWarns;         // one-shot inconclusive-warning
+                                    // latches (once per process lifetime)
+    bool sessionAttached = false;   // set once a WAREHOUSE-USING request
+                                    // dispatched (or threw mid-dispatch,
+                                    // conservatively) — feeds the R1
+                                    // recycleSiteDefers gate (attached
+                                    // => defer exit 18; never-attached
+                                    // => engine may run in-process)
 
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
@@ -5651,11 +7204,14 @@ DWORD WINAPI runServe(LPVOID param) {
         p->exitCode = 4;
         return 0;
     }
+    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
 
     // Outer loop: accept connections until the 'quit' op (or a fatal
     // ConnectNamedPipe failure).
     while (!p->quit.load()) {
-        // §7.1 diag (review F3b): mark the pipe wait as an idle-by-design
+        // §7.1 diag (idle-phase marker): mark the pipe wait as an idle-by-design
         // phase. ConnectNamedPipe blocks here for as long as no client
         // connects — healthy for the long-lived serve broker — so the
         // watchdog emits a periodic idle-heartbeat progress record instead
@@ -5737,9 +7293,49 @@ DWORD WINAPI runServe(LPVOID param) {
             // the refusal response frame still carries the tagged
             // "progress" member via writeServeResponse.
             CliResult vasRefusal;
-            if (serveVasGuardRefuse(req, p->vasGuard, vasMeasureWarned,
-                                    p->jsonProgress, vasRefusal)) {
-                if (!writeServeResponse(pipe, vasRefusal, req)) break;
+            tsdev::RecycleResult recycleOutcome;
+            bool recycleRan = false;
+            if (serveVasGuardRefuse(req, p->vasGuard, vasWarns,
+                                    p->jsonProgress, vasRefusal,
+                                    &p->recycle, lib, sessionAttached,
+                                    &recycleOutcome, &recycleRan)) {
+                // Best-effort write (design §4.3 teardown rule): when the recycle ran the broker
+                // MUST tear down regardless of the write result — a broker
+                // left alive after close/skip-close is an open-warehouse
+                // linger / 0x4E re-activation hazard.
+                const bool refusalWritten =
+                    writeServeResponse(pipe, vasRefusal, req);
+                if (recycleRan) {
+                    // §4.3/§5 tail-bypass teardown: flush the pipe, then
+                    // exit the broker — delete lib (post-close teardown)
+                    // where safe, or emit+flush+TerminateProcess-self(19)
+                    // on the close_failed path. The tail closeWarehouse +
+                    // exit-1 downgrade is never reached; the process exit
+                    // code is 18/19 directly.
+                    // R2 granted defer: terminateSelf==false +
+                    // safeToDeleteLib==true — the bounded close already
+                    // ran inside serveVasGuardRefuse (above), so this
+                    // takes the GRACEFUL `delete lib` + worker-return +
+                    // ExitProcess(18) path — the only teardown that
+                    // releases the broker's +7 m_nLock contribution (a
+                    // TerminateProcess corpse orphans it for >=minutes,
+                    // live-proven 2026-10-21). A REFUSED defer
+                    // (terminateSelf) dies the open-session way — never
+                    // `delete lib`/ExitProcess into a possibly-open
+                    // warehouse.
+                    FlushFileBuffers(pipe);
+                    if (recycleOutcome.terminateSelf) {
+                        std::fflush(stdout);
+                        std::fflush(stderr);
+                        TerminateProcess(GetCurrentProcess(),
+                            static_cast<UINT>(recycleOutcome.exitCode));
+                        std::abort();  // TerminateProcess does not return
+                    }
+                    if (recycleOutcome.safeToDeleteLib) delete lib;
+                    p->exitCode = recycleOutcome.exitCode;
+                    return 0;
+                }
+                if (!refusalWritten) break;
                 continue;
             }
 
@@ -5758,9 +7354,27 @@ DWORD WINAPI runServe(LPVOID param) {
             // entry_op_failure (insert/modify/delete/upsert), so an unexpected
             // exception would be misclassified. Exit 1 / internal_error is
             // unambiguous.
+            // Warehouse-using ops only (the R1 recycleSiteDefers gate):
+            // backup-cache/restore-cache are pure filesystem and never
+            // attach — they must NOT set sessionAttached (a breach would
+            // then defer at a site that is really never-attached — a
+            // spurious extra respawn). Every other dispatched op
+            // attaches lazily on first use ('quit' is handled above and
+            // never reaches here).
+            const bool warehouseOp =
+                (req.op != "backup-cache" && req.op != "restore-cache");
             try {
                 r = dispatchServeRequest(*lib, req, p->tsPathOverride);
+                // The first dispatched warehouse request lazily attaches
+                // the session — from here on a recycle breach is an
+                // attached site and defers (R1 recycleSiteDefers).
+                if (warehouseOp) sessionAttached = true;
             } catch (const std::exception& e) {
+                // Conservative-on-throw: a warehouse op may have
+                // attached before throwing — treat the session as
+                // existing so a later breach defers rather than running
+                // the engine at a misclassified never-attached site.
+                if (warehouseOp) sessionAttached = true;
                 r = CliResult();
                 r.op = req.op;
                 r.typeStr = req.typeStr;
@@ -5807,6 +7421,15 @@ DWORD WINAPI runServe(LPVOID param) {
         std::fprintf(stderr,
             "tsdev_cli: closeWarehouse failed at end of serve session\n");
         if (p->exitCode == 0) p->exitCode = 1;
+        // §5 teardown (dispatch_watchdog convention): the failed close
+        // leaves the session possibly open with uncertain teardown state —
+        // `delete lib` (OrlibExit) + ExitProcess would DLL-detach into it,
+        // raising the blocking "WHouse stays in memory" dialog — an
+        // INVISIBLE deadlock under this SW_HIDE broker. All pipe output
+        // was already flushed at the disconnect above and the diagnostic
+        // went to stderr, so die here via TerminateProcess with the same
+        // exit code the return below would have produced.
+        terminateSelfNoDetach(static_cast<unsigned>(p->exitCode));
     }
     delete lib;
     return 0;
@@ -5819,7 +7442,8 @@ DWORD WINAPI runServe(LPVOID param) {
 // waits for it to exit.
 int cmdServe(int argc, char** argv, bool jsonMode,
              const wchar_t* tsPathOverride,
-             const VasGuardConfig& vasGuard) {
+             const VasGuardConfig& vasGuard,
+             const RecycleConfig& recycle) {
     // Parse --serve-pipe-file <path> (optional; survives the global pre-scan
     // because it is serve-specific, like --case-insensitive/--output).
     std::string pipeFile;
@@ -5887,6 +7511,7 @@ int cmdServe(int argc, char** argv, bool jsonMode,
     params.tsPathOverride = tsPathOverride;
     params.jsonProgress = jsonMode;
     params.vasGuard = vasGuard;
+    params.recycle = recycle;
 
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runServe, &params, 0, nullptr);
@@ -5911,17 +7536,225 @@ int cmdServe(int argc, char** argv, bool jsonMode,
 // Python client cannot kill it.
 LONG WINAPI vehCrashHandler(PEXCEPTION_POINTERS ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
-    // Only handle truly fatal exceptions — don't intercept normal C++ exceptions
-    // (which use a different mechanism) or debug breakpoints.
+    // Only handle truly fatal, noncontinuable exceptions — never normal
+    // C++ exceptions (0xE06D7363 — continuable until proven unhandled) or
+    // debug breakpoints (a VEH eat would kill the process instead of
+    // breaking into the debugger). Unhandled codes OUTSIDE this list still
+    // die with the SEH code one dispatch later in uefCrashHandler; this
+    // list exists to die one dispatch earlier and to cover any window in
+    // which orlib20's UEF is the outermost filter (P4 gap-e ordering).
+    // Conservative list — every entry is fatal-by-default, never a
+    // continuable/benign trap: VEH sees EVERY exception in the process, so
+    // adding a benign code here would kill on first occurrence.
     if (code == EXCEPTION_ACCESS_VIOLATION ||       // 0xC0000005
         code == EXCEPTION_STACK_OVERFLOW ||          // 0xC00000FD
         code == STATUS_STACK_BUFFER_OVERRUN ||       // 0xC0000409
-        code == 0xC0000374) {                        // STATUS_HEAP_CORRUPTION (ntstatus.h not included due to winnt.h conflicts)
+        code == 0xC0000374 ||                        // STATUS_HEAP_CORRUPTION (ntstatus.h not included due to winnt.h conflicts)
+        code == EXCEPTION_ILLEGAL_INSTRUCTION ||     // 0xC000001D
+        code == EXCEPTION_PRIV_INSTRUCTION ||        // 0xC0000096
+        code == EXCEPTION_IN_PAGE_ERROR) {           // 0xC0000006
         TerminateProcess(GetCurrentProcess(), code);
         // TerminateProcess doesn't return, but just in case:
         return EXCEPTION_EXECUTE_HANDLER;
     }
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// ---------------------------------------------------------------------------
+// Own-process fatal-termination containment (P4 gap-e hardening)
+//
+// The VEH above converts the most common fatal SEH codes into a
+// TerminateProcess(code) silent death — no dialog, no WerFault, no
+// TSCrashReport.exe. Field evidence (2026-10-19): tsdev_cli.exe crashed 4x
+// WITH TSCrashReport — a fatal path bypassed the VEH. The remaining fatal
+// channels of OUR process, and the mechanism that closes each:
+//
+//   1. C++ exceptions that would kill the process — two delivery paths,
+//      both closed. (a) std::terminate itself — noexcept violations,
+//      exceptions during unwinding, frames that filter to terminate — is
+//      closed by std::set_terminate -> onFatalTerminate ->
+//      TerminateProcess(20). set_terminate is PER-THREAD in the MSVC CRT
+//      (MSDN: "terminate functions are maintained separately for each
+//      thread; each new thread needs its own handler installed"), so every
+//      thread entry point in this file calls
+//      installThreadFatalContainment() first. (b) An exception escaping
+//      every frame: VERIFIED on this CRT — it is delivered to the process
+//      UEF as the MSVC C++ exception code 0xE06D7363, NOT routed through
+//      std::terminate — so channel (4) is what actually closes it (the
+//      UEF dies with 0xE06D7363).
+//   2. abort()/SIGABRT itself (assert-style fatals, and the unreachable
+//      std::abort() tails after TerminateProcess): with _WRITE_ABORT_MSG
+//      and _CALL_REPORTFAULT cleared, abort() emits no message and invokes
+//      no WER — but its tail is still _exit(3) -> ExitProcess -> DLL
+//      detach, which raises the blocking "WHouse stays in memory" dialog
+//      on a possibly-open warehouse session (the §5 teardown hazard; an
+//      invisible deadlock under the SW_HIDE serve broker). The SIGABRT
+//      handler (onFatalSigabrt) -> TerminateProcess(21) dies before that
+//      tail — skipping ALL DLL detach.
+//   3. CRT invalid-parameter calls (the *_s functions rejecting bad args)
+//      and pure virtual calls: both default into _invoke_watson -> WER
+//      (WerFault.exe) UNCONDITIONALLY — the abort-behavior flags do not
+//      gate them. Closed by _set_invalid_parameter_handler ->
+//      TerminateProcess(22) and _set_purecall_handler ->
+//      TerminateProcess(23). Every path here is fatal by CRT contract —
+//      the stock handlers never resume the caller — so only the death
+//      style changes; nothing continuable is suppressed.
+//   4. Unhandled SEH exceptions outside the VEH list — including the
+//      0xE06D7363 C++ escape from ANY frame that has no handler (main or
+//      a raw CreateThread worker — verified delivery: exception escapes
+//      go straight to the process UEF on this CRT) — closed by
+//      uefCrashHandler via SetUnhandledExceptionFilter. A record that
+//      reaches the process UEF is unhandled BY DEFINITION (the process is
+//      already dying); the filter TerminateProcess(ExceptionCode)s every
+//      record it sees and does NOT chain into orlib20's filter (TSCrash.dll
+//      spawns TSCrashReport.exe there and blocks on it — KB §14 —
+//      chaining would re-open the exact channel this closes).
+//
+// UEF ORDERING vs orlib20 — the only part of this hardening that depends
+// on foreign code:
+//   - ALL orlib20 initialization happens inside `new TsDevLib` on the
+//     64 MB-stack worker: LoadLibraryW(orlib20.dll) in the OrlibResolver
+//     ctor (tsdev_lib.cpp), the seven support-DLL pre-loads, the patch
+//     application, and OrlibInit(NULL, 1). Any UEF orlib installs — at
+//     DLL attach or inside OrlibInit (KB §14 proves TSCrash.dll installs
+//     one; its exact install site is not documented) — lands INSIDE that
+//     ctor, on that thread.
+//   - installProcessUef() therefore runs once in main() (covers the
+//     pre-orlib window) and again in every worker IMMEDIATELY after `new
+//     TsDevLib` returns — ours is outermost for the whole warehouse
+//     session that follows. SetUnhandledExceptionFilter is last-writer-
+//     wins on a single process-global slot, so each call is a full
+//     re-assert, idempotent.
+//   - Residual (documented, bounded): an orlib code path that RE-installs
+//     its UEF AFTER construction (lazy attach / first dispatch — not
+//     documented, and unprovable absent without re-running binary
+//     analysis) would supersede ours until the next re-assert. The
+//     1-second re-arm sentry (startUefRearmSentry — same spawn-once /
+//     never-joined lifecycle as the dispatch watchdog) bounds that
+//     window to one poll interval; the VEH list and the CRT guards hold
+//     regardless.
+//
+// Exit codes 20-24 (0-11 CLI ops, 12 client markers, 13 diag watchdog,
+// 14 VAS abort, 15 dispatch watchdog, 16-17 cache, 18-19 recycle — this
+// block takes the next free codes; also documented in the header comment):
+constexpr DWORD kExitFatalTerminate        = 20;  // std::terminate
+constexpr DWORD kExitFatalAbort            = 21;  // abort()/SIGABRT
+constexpr DWORD kExitFatalInvalidParameter = 22;  // CRT invalid parameter
+constexpr DWORD kExitFatalPureCall         = 23;  // pure virtual call
+constexpr DWORD kExitFatalNoException      = 24;  // defensive: UEF invoked
+                                                  // with no exception
+                                                  // record (never per the
+                                                  // API contract)
+
+// Shared non-returning tail for every fatal-containment handler.
+// TerminateProcess is the ONLY exit that skips ALL DLL detach — ExitProcess
+// on a possibly-open warehouse session raises the blocking "WHouse stays in
+// memory" dialog (§5). The _exit tail is unreachable (TerminateProcess does
+// not return) and exists only so no handler falls through into a return
+// that the CRT could interpret as "continue"; it deliberately is NOT
+// std::abort() — that would re-enter onFatalSigabrt.
+[[noreturn]] void terminateFatal(DWORD code) {
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+    _exit(static_cast<int>(code));  // unreachable — TerminateProcess does not return
+}
+
+// std::terminate handler — channel (1).
+[[noreturn]] void onFatalTerminate() {
+    terminateFatal(kExitFatalTerminate);
+}
+
+// SIGABRT handler — channel (2). signal()-installed; abort() reaches it
+// once its message/WER steps are suppressed by _set_abort_behavior, and
+// never returns past it (the _exit(3) tail is skipped entirely).
+void __cdecl onFatalSigabrt(int) {
+    terminateFatal(kExitFatalAbort);
+}
+
+// CRT invalid-parameter handler — channel (3a). The five report strings
+// (expression/function/file/line/reserved) are nullptr/0 in release builds
+// and are unused — the fixed exit code is the whole diagnostic.
+void __cdecl onFatalInvalidParameter(const wchar_t*, const wchar_t*,
+                                     const wchar_t*, unsigned int,
+                                     uintptr_t) {
+    terminateFatal(kExitFatalInvalidParameter);
+}
+
+// Pure virtual call handler — channel (3b).
+void __cdecl onFatalPurecall() {
+    terminateFatal(kExitFatalPureCall);
+}
+
+// Process unhandled-exception filter — channel (4). Installed outermost
+// after orlib init and re-asserted by the sentry (ordering note above).
+// Every record reaching it is unhandled by definition — the process is
+// already dying — so it dies with the SEH code, silently: no TSCrashReport
+// (orlib's filter is never chained), no WerFault, no DLL detach.
+LONG WINAPI uefCrashHandler(PEXCEPTION_POINTERS ep) {
+    DWORD code = kExitFatalNoException;
+    if (ep && ep->ExceptionRecord) {
+        code = ep->ExceptionRecord->ExceptionCode;
+    }
+    terminateFatal(code);
+}
+
+// Per-THREAD CRT guards — MSVC keeps the terminate handler per-thread
+// (MSDN: maintained separately for each thread; each new thread needs its
+// own installed), so every thread entry point calls this first. Threads in
+// OTHER translation units (dispatch watchdog, cache-compress worker)
+// cannot reach this anonymous-namespace helper — an escaped C++ exception
+// there still dies via the process-wide SIGABRT/UEF guards below.
+void installThreadFatalContainment() {
+    std::set_terminate(onFatalTerminate);
+}
+
+// Per-PROCESS CRT guards — install once in main(). This state lives in OUR
+// module's CRT instance (orlib20 links a different, older CRT and cannot
+// overwrite it), so one install is durable. Idempotent; also installs the
+// calling thread's terminate guard so main() needs no second call.
+void installFatalContainment() {
+    // abort() can neither print its message nor invoke WER; SIGABRT then
+    // reaches onFatalSigabrt -> TerminateProcess(21), skipping _exit(3).
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    std::signal(SIGABRT, onFatalSigabrt);
+    _set_invalid_parameter_handler(onFatalInvalidParameter);
+    _set_purecall_handler(onFatalPurecall);
+    installThreadFatalContainment();
+}
+
+// Install (or re-assert) our UEF outermost — last SetUnhandledExceptionFilter
+// wins on the single process-global slot. See the ordering note above.
+void installProcessUef() {
+    SetUnhandledExceptionFilter(uefCrashHandler);
+}
+
+// One-second UEF re-arm (the ordering residual). Also re-asserts
+// SEM_NOGPFAULTERRORBOX — the same process-global exposure (any loaded DLL
+// could clear it). Cannot throw: pure Win32 on a POD body.
+DWORD WINAPI uefRearmSentryProc(LPVOID) {
+    installThreadFatalContainment();
+    for (;;) {
+        installProcessUef();
+        SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
+        Sleep(1000);
+    }
+}
+
+// Spawn-once, never-joined — the thread dies with the process (identical
+// lifecycle to the dispatch watchdog thread). Returns false when already
+// running or CreateThread failed; the post-ctor re-asserts remain in force
+// either way.
+bool startUefRearmSentry() {
+    static std::atomic<bool> started{false};
+    bool expected = false;
+    if (!started.compare_exchange_strong(expected, true)) return false;
+    HANDLE h = CreateThread(nullptr, 0, uefRearmSentryProc, nullptr, 0,
+                            nullptr);
+    if (!h) {
+        started.store(false);
+        return false;
+    }
+    CloseHandle(h);
+    return true;
 }
 
 } // namespace
@@ -5933,7 +7766,7 @@ int main(int argc, char** argv) {
     TSDEV_DIAG_INIT();
 
 #ifdef TSDEV_DIAG
-    // §7.1 diag (review F5a/F8): every run must be identifiable from its log
+    // §7.1 diag (run-identifiability record): every run must be identifiable from its log
     // alone — the 2026-09-02 incident run could only be identified as
     // `serve` by parsing the preserved minidump's PEB. Log the argv values
     // as-is (this is a local diagnostic tool run by the user themselves),
@@ -5965,6 +7798,15 @@ int main(int argc, char** argv) {
     // Also suppress WerFault.exe as belt-and-suspenders (won't suppress TSCrashReport
     // but prevents the standard Windows crash dialog too).
     SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
+    // P4 gap-e: the remaining fatal channels of OUR process — C++ terminate
+    // (per-thread in the MSVC CRT), abort/SIGABRT, CRT invalid-parameter +
+    // purecall WER paths, and the process UEF. orlib20's own UEF
+    // (TSCrash.dll -> TSCrashReport.exe) is superseded here and re-asserted
+    // outermost after every `new TsDevLib` + once a second by the sentry.
+    // See the containment block comment above vehCrashHandler.
+    installFatalContainment();
+    installProcessUef();
+    startUefRearmSentry();
 
     // --- Global flag pre-scan: --ts-path, --json, --pbar and -v/--verbose ---
     // Scan argv[1..argc-1] for the optional global flags and remove them
@@ -5996,6 +7838,11 @@ int main(int argc, char** argv) {
     bool pbar = false;        // --pbar (stderr progress bar)
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
+    // R6: bounded batch-control decision wait in seconds (0 disables —
+    // documented escape hatch). Default 900 s. Only meaningful with
+    // --batch-progress-control; a lone flag is a usage error.
+    unsigned batchControlTimeoutSecs = 900;
+    bool batchControlTimeoutFlagSet = false;  // --batch-control-timeout-secs seen
     int verboseCount = 0;   // accumulated -v/--verbose occurrences
     // TVS-1b: WHServer VAS-headroom guard flags (honored by batch-* and serve;
     // parsing is global like the other position-free switches).
@@ -6003,6 +7850,11 @@ int main(int argc, char** argv) {
     bool vasFreeFlagSet = false;     // --whserver-free-mb seen
     bool vasLargestFlagSet = false;  // --whserver-largest-free-mb seen
     bool traverseStrategyDependents = false;  // --traverse-strategy-dependents
+    // WHServer gated auto-recycle (design tmp/RECYCLE_ENGINE_DESIGN.md §6.1):
+    // presence boolean parsed in the global pre-scan like --json; the
+    // TSDEV_RECYCLE_WHSERVER env mirror is OR-ed in below (env "0" never
+    // vetoes an explicit flag — no negative flag form exists).
+    RecycleConfig recycle;
     // TVS-3: dispatch watchdog bound in seconds (0 disables). Default 300 —
     // far above the ~3.4 s legit max single-dispatch duration, far below
     // forever. --dispatch-timeout-secs / TSDEV_DISPATCH_TIMEOUT_SECS.
@@ -6140,6 +7992,13 @@ int main(int argc, char** argv) {
             // Boolean switch like --json: presence disables the guard; a
             // '=' value is ignored; repeats are harmless (idempotent).
             vasGuard.enabled = false;
+        } else if (arg == "--recycle-whserver" ||
+                   arg.rfind("--recycle-whserver=", 0) == 0) {
+            // Boolean switch like --json: presence authorizes the gated
+            // WHServer recycle; a '=' value is ignored; repeats are
+            // harmless (idempotent). Valid only with batch-*/serve —
+            // validated after the elevation guard below.
+            recycle.authorized = true;
         } else if (arg == "--traverse-strategy-dependents" ||
                    arg.rfind("--traverse-strategy-dependents=", 0) == 0) {
             // Boolean switch like --json: presence restores the legacy
@@ -6151,7 +8010,7 @@ int main(int argc, char** argv) {
                    arg.rfind("--dispatch-timeout-secs=", 0) == 0) {
             // Space ("--dispatch-timeout-secs <N>") or equals form; strict
             // decimal seconds 0..86400 (0 disables the watchdog). Invalid ->
-            // usage error (see parseDispatchTimeoutSecs).
+            // usage error (see parseTimeoutSecs).
             std::string v;
             if (arg == "--dispatch-timeout-secs") {
                 if (i + 1 >= argc) {
@@ -6166,7 +8025,7 @@ int main(int argc, char** argv) {
             } else {
                 v = arg.substr(std::strlen("--dispatch-timeout-secs="));
             }
-            if (!parseDispatchTimeoutSecs(v, dispatchTimeoutSecs)) {
+            if (!parseTimeoutSecs(v, dispatchTimeoutSecs)) {
                 CliResult r;
                 r.exitCode = 1;
                 r.errorMessage = "invalid --dispatch-timeout-secs value \"" + v + "\"";
@@ -6175,6 +8034,36 @@ int main(int argc, char** argv) {
                 return 1;
             }
             dispatchTimeoutFlagSet = true;
+        } else if (arg == "--batch-control-timeout-secs" ||
+                   arg.rfind("--batch-control-timeout-secs=", 0) == 0) {
+            // Space ("--batch-control-timeout-secs <N>") or equals form;
+            // strict decimal seconds 0..86400 (0 disables the bound — the
+            // documented unbounded-wait escape hatch). Invalid -> usage
+            // error (see parseTimeoutSecs). Requires
+            // --batch-progress-control (validated post-elevation).
+            std::string v;
+            if (arg == "--batch-control-timeout-secs") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--batch-control-timeout-secs requires a value in seconds";
+                    r.humanStderr = "Error: --batch-control-timeout-secs requires a value in seconds\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--batch-control-timeout-secs="));
+            }
+            if (!parseTimeoutSecs(v, batchControlTimeoutSecs)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --batch-control-timeout-secs value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --batch-control-timeout-secs value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            batchControlTimeoutFlagSet = true;
         } else if (arg == "--backup-cache" ||
                    arg.rfind("--backup-cache=", 0) == 0) {
             // Boolean switch like --json: presence requests the backup step;
@@ -6264,6 +8153,17 @@ int main(int argc, char** argv) {
             !(n == 1 && envBuf[0] == '0')) {
             traverseStrategyDependents = true;
         }
+        // TSDEV_RECYCLE_WHSERVER: any value other than "0" authorizes the
+        // gated WHServer recycle (same presence semantics; OR-ed — env "0"
+        // does NOT veto an explicit --recycle-whserver flag, pinned in
+        // design §6.1/§4.3). authorizedViaEnv records flag-vs-env source
+        // so refusals attribute the right arm (env-only authorization
+        // names TSDEV_RECYCLE_WHSERVER, not the flag).
+        {
+            const bool recycleFlagSeen = recycle.authorized;
+            recycle.authorized = resolveRecycleAuthorized(recycleFlagSeen);
+            recycle.authorizedViaEnv = recycle.authorized && !recycleFlagSeen;
+        }
         // TVS-3: TSDEV_DISPATCH_TIMEOUT_SECS env mirror for the dispatch
         // watchdog bound; the explicit --dispatch-timeout-secs flag wins
         // (same convention as TSDEV_WHSERVER_*; a garbage/missing value
@@ -6273,7 +8173,7 @@ int main(int argc, char** argv) {
                                     sizeof(envBuf));
         if (!dispatchTimeoutFlagSet && n > 0 && n < sizeof(envBuf)) {
             unsigned v = 0;
-            if (parseDispatchTimeoutSecs(envBuf, v)) {
+            if (parseTimeoutSecs(envBuf, v)) {
                 dispatchTimeoutSecs = v;
             }
         }
@@ -6423,17 +8323,23 @@ int main(int argc, char** argv) {
         emitOutput(r, jsonMode);
         return 1;
     }
+    // --batch-control-timeout-secs only tunes the --batch-progress-control
+    // decision wait — a lone flag is a user error, not a silent no-op
+    // (same convention as the --recycle-whserver combination refusals).
+    if (batchControlTimeoutFlagSet && !batchControl) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--batch-control-timeout-secs requires "
+                         "--batch-progress-control";
+        r.humanStderr = "Error: --batch-control-timeout-secs requires "
+                        "--batch-progress-control\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
     if (batchControl) {
-        const bool isBatchSub =
-            iequals(subcommand, "batch-insert") ||
-            iequals(subcommand, "batch-modify") ||
-            iequals(subcommand, "batch-delete") ||
-            iequals(subcommand, "batch-upsert") ||
-            iequals(subcommand, "batch-insert-dir") ||
-            iequals(subcommand, "batch-modify-dir") ||
-            iequals(subcommand, "batch-delete-dir") ||
-            iequals(subcommand, "batch-upsert-dir");
-        if (!isBatchSub) {
+        // Shared batch-* subcommand list (isBatchSubcommand) — same set
+        // the --recycle-whserver restriction builds on.
+        if (!isBatchSubcommand(subcommand)) {
             CliResult r;
             r.exitCode = 1;
             r.errorMessage = "--batch-progress-control is only valid with "
@@ -6448,6 +8354,36 @@ int main(int argc, char** argv) {
             }
             return 1;
         }
+    }
+
+    // --recycle-whserver (design §6.1): validated here, AFTER the unchanged
+    // elevation guard (a non-elevated caller still gets exit 11 first) —
+    // same convention as --batch-progress-control. Refuses up front the
+    // --no-whserver-vas-guard and --batch-progress-control combinations and
+    // any non-batch/non-serve subcommand.
+    {
+        CliResult r;
+        if (!validateRecycleWhserver(recycle.authorized,
+                                     recycle.authorizedViaEnv,
+                                     vasGuard.enabled,
+                                     batchControl, subcommand, r)) {
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                std::fprintf(stderr, "%s", r.humanStderr.c_str());
+            }
+            return 1;
+        }
+    }
+
+    // §6.3: emit the residual-race warning once per process lifetime when
+    // the flag is in effect (in serve mode once per broker lifetime — a
+    // respawned broker is a new process that re-emits it). Emitted after
+    // validation so a refused invocation does not warn about a recycle
+    // that cannot happen, and before any subcommand dispatch so it
+    // precedes every process that can recycle.
+    if (recycle.authorized) {
+        emitRecycleWhserverWarning();
     }
 
     // Cache phase (--backup-cache / --restore-cache): runs after ALL
@@ -6470,7 +8406,7 @@ int main(int argc, char** argv) {
     // other subcommands so it is dispatched first.
     if (iequals(subcommand, "serve")) {
         return cmdServe(reducedArgc, reducedArgvPtr, jsonMode, tsPathWidePtr,
-                        vasGuard);
+                        vasGuard, recycle);
     }
 
     if (iequals(subcommand, "insert")) {
@@ -6683,10 +8619,12 @@ int main(int argc, char** argv) {
         std::string arg2 = reducedArgvPtr[2];
         if (arg2 == "--batch-stdin") {
             return cmdBatch(op, std::string(), true, tsPathWidePtr, jsonMode,
-                            batchControl, pbar, vasGuard);
+                            batchControl, batchControlTimeoutSecs, pbar,
+                            vasGuard, recycle);
         }
         return cmdBatch(op, arg2, false, tsPathWidePtr, jsonMode,
-                        batchControl, pbar, vasGuard);
+                        batchControl, batchControlTimeoutSecs, pbar,
+                        vasGuard, recycle);
     }
 
     // --- TVS-I.2: directory batch subcommands ---
@@ -6753,8 +8691,9 @@ int main(int argc, char** argv) {
         int typeInt = static_cast<int>(ctype);
 
         return cmdBatchDir(op, typeInt, typeStr, dirPath, extensions,
-                           tsPathWidePtr, jsonMode, batchControl, pbar,
-                           vasGuard);
+                           tsPathWidePtr, jsonMode, batchControl,
+                           batchControlTimeoutSecs, pbar,
+                           vasGuard, recycle);
     }
 
     {

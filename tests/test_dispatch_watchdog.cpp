@@ -2,8 +2,10 @@
 //
 // Unit test for src/dispatch_watchdog.cpp (TVS-3 production bounded-wait
 // containment): the in-flight dispatch marker (enter/leave/snapshot), the
-// DispatchInFlightGuard RAII form (including exception-path cleanup), and
-// every branch of the pure fire decision decideDispatchFire().
+// DispatchInFlightGuard RAII form (including exception-path cleanup),
+// every branch of the pure fire decision decideDispatchFire(), and the
+// pure per-poll WHServer-sample accounting accountWhServerSample()
+// (an inconclusive Toolhelp32 snapshot never counts toward whserver_gone).
 //
 // The fire() side effect (stderr + TerminateProcess(15)) is NOT exercised —
 // it cannot be unit-tested by design; the decision is pure and the fire
@@ -320,6 +322,114 @@ int runTests() {
         if (s.inFlight)
             return fail("marker left in-flight after churn", 71);
         std::fprintf(stdout, "    PASS: group 7 (marker overhead)\n");
+    }
+
+    // -------------------------------------------------------------------
+    // Group 8: findCrashReportParentPids snapshotOk overload — a live
+    // Toolhelp32 snapshot must report ok=true. The fail-closed direction
+    // (a failed walk returning not-ok) needs a Toolhelp32 failure
+    // injection seam that does not exist; the inconclusive-poll contract
+    // is covered through the recycle deathPoll seam in
+    // test_whserver_recycle.
+    // -------------------------------------------------------------------
+    {
+        std::vector<DWORD> parents;
+        if (!tsdev::findCrashReportParentPids(parents))
+            return fail("live crash-report snapshot must be ok", 80);
+        std::fprintf(stdout,
+                     "    PASS: group 8 (crash enum snapshotOk contract)\n");
+    }
+
+    // -------------------------------------------------------------------
+    // Group 9: accountWhServerSample — an inconclusive WHServer snapshot
+    // never advances emptyWhSamples and never fires whserver_gone (the
+    // P4 gap-(f)(iii) fix). The Toolhelp32 call itself is NOT injectable
+    // (watchdogProc is anonymous-namespace and calls the snapshot
+    // directly), so the per-poll accounting is factored into the pure
+    // accountWhServerSample seam — same style as decideDispatchFire —
+    // and driven here with scripted poll outcomes.
+    // -------------------------------------------------------------------
+    {
+        const uint64_t t0 = 5ull * 10000000ull;
+        const std::vector<DWORD> one{1234};
+        const std::vector<DWORD> none;
+        bool whSeen;
+        unsigned emptyWhSamples;
+
+        // (a) Conclusive non-empty poll: observes WHServer, clears streak.
+        whSeen = false; emptyWhSamples = 7;
+        tsdev::accountWhServerSample(true, one, whSeen, emptyWhSamples);
+        if (!whSeen || emptyWhSamples != 0)
+            return fail("conclusive non-empty poll misaccounted", 90);
+
+        // (b) Inconclusive poll: streak RESETS to 0, whSeen untouched —
+        //     and the pid set is not consulted (a failed enumeration
+        //     carries no set; a non-empty set proves it is ignored).
+        whSeen = true; emptyWhSamples = 2;
+        tsdev::accountWhServerSample(false, one, whSeen, emptyWhSamples);
+        if (emptyWhSamples != 0 || !whSeen)
+            return fail("inconclusive poll misaccounted (seen)", 91);
+        whSeen = false; emptyWhSamples = 2;
+        tsdev::accountWhServerSample(false, none, whSeen, emptyWhSamples);
+        if (emptyWhSamples != 0 || whSeen)
+            return fail("inconclusive poll misaccounted (unseen)", 92);
+
+        // (c) Confirmed-empty polls accumulate the streak.
+        whSeen = true; emptyWhSamples = 0;
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        if (emptyWhSamples != 2 || !whSeen)
+            return fail("confirmed-empty polls did not accumulate", 93);
+
+        // (d) Scripted flight replay — the exact P4 (f)(iii) scenario:
+        //     seen -> empty -> empty -> SNAPSHOT FAILURE -> empty ->
+        //     empty. Under the old collapsing overload the failure
+        //     counted as a third consecutive empty and fired
+        //     whserver_gone on a HEALTHY dispatch. Now the inconclusive
+        //     poll breaks consecutiveness: after six polls the streak is
+        //     only 2 and decideDispatchFire must NOT fire.
+        whSeen = false; emptyWhSamples = 0;
+        tsdev::accountWhServerSample(true, one,  whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(false, none, whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        if (emptyWhSamples != 2)
+            return fail("post-gap empty streak must restart, got != 2", 94);
+        {
+            tsdev::DispatchMarkerSnapshot m =
+                makeMarker(true, "Ord28", 3, t0);
+            tsdev::DispatchFireReason r = tsdev::decideDispatchFire(
+                m, t0 + 6ull * 10000000ull /* +6s */, kFreq, 300.0,
+                none, whSeen, emptyWhSamples, std::vector<DWORD>{});
+            if (r == tsdev::DispatchFireReason::WhServerGone)
+                return fail("inconclusive gap fired whserver_gone "
+                            "(the P4 false-fire)", 95);
+            if (r != tsdev::DispatchFireReason::None)
+                return fail("unexpected fire reason in gap replay", 96);
+        }
+
+        // (e) The gate still works fail-safe: one more CONSECUTIVE
+        //     confirmed-empty poll completes the streak and
+        //     whserver_gone DOES fire — the fast path is preserved, not
+        //     disabled.
+        tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
+        if (emptyWhSamples != tsdev::kWhServerGoneConfirmSamples)
+            return fail("streak did not reach confirm count", 97);
+        {
+            tsdev::DispatchMarkerSnapshot m =
+                makeMarker(true, "Ord28", 3, t0);
+            tsdev::DispatchFireReason r = tsdev::decideDispatchFire(
+                m, t0 + 7ull * 10000000ull /* +7s */, kFreq, 300.0,
+                none, whSeen, emptyWhSamples, std::vector<DWORD>{});
+            if (r != tsdev::DispatchFireReason::WhServerGone)
+                return fail("3 consecutive confirmed empties did not "
+                            "fire whserver_gone", 98);
+        }
+        std::fprintf(stdout,
+                     "    PASS: group 9 (inconclusive wh-snapshot never "
+                     "counts toward whserver_gone)\n");
     }
 
     return 0;

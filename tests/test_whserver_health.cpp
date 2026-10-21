@@ -16,10 +16,12 @@
 #include "../src/whserver_health.h"
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -151,6 +153,61 @@ int runTests() {
         if (!tsdev::vasBreach(440, 400, 5000, 64))
             return fail("vasBreach(440,400,5000,64) passed vs 5000MB", 56);
         std::fprintf(stdout, "    PASS: group 5 (vasBreach decision)\n");
+    }
+
+    // -------------------------------------------------------------------
+    // Group 6: findWhServerPids snapshotOk overload — the success arm
+    // yields the authoritative set. A real snapshot must report true; the
+    // returned set must equal an independent Toolhelp enumeration taken
+    // here (the walk ran to clean completion — not a truncated set), and
+    // every listed pid must independently verify as a WHServer.exe image
+    // via OpenProcess + QueryFullProcessImageNameW. The false arm is NOT
+    // exercisable here: the Toolhelp calls are direct with no seam, so a
+    // snapshot or mid-walk failure cannot be injected from a unit test.
+    // The consumer side of the fail-closed contract (snapshotOk=false is
+    // inconclusive, never absent) is covered by test_whserver_census.
+    // -------------------------------------------------------------------
+    {
+        std::vector<DWORD> pids;
+        if (!tsdev::findWhServerPids(pids))
+            return fail("findWhServerPids(snapshotOk) failed on a real snapshot", 60);
+
+        // Independent enumeration of the same pid class for comparison.
+        std::vector<DWORD> expected;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == INVALID_HANDLE_VALUE)
+            return fail("independent Toolhelp snapshot failed", 61);
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof(pe);
+        if (Process32FirstW(snap, &pe)) {
+            do {
+                if (_wcsicmp(pe.szExeFile, L"WHServer.exe") == 0)
+                    expected.push_back(pe.th32ProcessID);
+            } while (Process32NextW(snap, &pe));
+        }
+        CloseHandle(snap);
+        if (pids.size() != expected.size())
+            return fail("findWhServerPids set differs from independent walk", 62);
+
+        for (DWORD p : pids) {
+            if (p == 0) return fail("findWhServerPids returned pid 0", 63);
+            HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                   FALSE, p);
+            if (h == nullptr)
+                return fail("findWhServerPids pid not openable", 64);
+            wchar_t img[MAX_PATH];
+            DWORD len = MAX_PATH;
+            const BOOL got = QueryFullProcessImageNameW(h, 0, img, &len);
+            CloseHandle(h);
+            if (!got)
+                return fail("QueryFullProcessImageNameW on returned pid failed", 65);
+            const wchar_t* base = wcsrchr(img, L'\\');
+            if (_wcsicmp(base ? base + 1 : img, L"WHServer.exe") != 0)
+                return fail("returned pid image is not WHServer.exe", 66);
+        }
+        std::fprintf(stdout,
+            "    PASS: group 6 (snapshotOk overload: %zu authoritative pid(s))\n",
+            pids.size());
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

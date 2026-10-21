@@ -91,6 +91,8 @@ Read this file first. Read the following on demand:
 
 The PM keeps this list current and identifies the next step toward 100% acceptance; update it as project state changes.
 
+**Current (2026-10-21):** WHServer gated auto-recycle (`--recycle-whserver`) is fully implemented and live-verified end-to-end on this machine — refuse arm (`census_lock` exit 19) and commit arm (exit-18 defer → resume → ForceShutDown → SCM respawn) through CLI + Python surfaces, in a user-authorized desktop-closed window. Details: `docs/HANDOFF_WHServer_VAS_recovery.md` §8, KB §21. Live recycle tests still require the desktop CLOSED (foreign clients hold `m_nLock`). Machine remains offline-mode TS. Live ledger: `docs/WORKING_MEMORY.md`.
+
 - Keep it clean, minimal and relevant:
    - DO NOT keep history/records that are not critically relevant for future development (e.g. decision history, list of completed work)
    - DO NOT keep plan ore than one TVS ahead

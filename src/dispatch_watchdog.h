@@ -30,12 +30,15 @@
 //        flight but has now vanished -> fire (whserver_gone). WHServer
 //        absent between dispatches is normal (lazy singleton); the
 //        whServerSeenDuringFlight gate prevents false fires before the
-//        server has ever spawned. Additionally, findWhServerPids() cannot
-//        distinguish a Toolhelp32 snapshot FAILURE from a genuine empty
-//        result, so a single empty poll is inconclusive: whserver_gone only
-//        fires after kWhServerGoneConfirmSamples CONSECUTIVE empty samples
-//        (same "transient failure warns, doesn't abort" convention as the
-//        VAS-headroom guard).
+//        server has ever spawned. The watchdog uses the snapshotOk
+//        findWhServerPids() overload: a failed Toolhelp32 snapshot is
+//        INCONCLUSIVE — never evidence of absence — so whserver_gone only
+//        fires after kWhServerGoneConfirmSamples CONSECUTIVE
+//        CONFIRMED-empty samples. accountWhServerSample resets the streak
+//        on an inconclusive poll (the "inconclusive never counts"
+//        discipline of the census/deathPoll re-enumeration streaks), which
+//        is also the "transient failure warns, doesn't abort" convention
+//        of the VAS-headroom guard.
 //      Idle waits (the serve broker blocked in ConnectNamedPipe) carry no
 //      in-flight marker, so they are exempt automatically.
 //
@@ -106,12 +109,13 @@ enum class DispatchFireReason {
 
 const char* dispatchFireReasonString(DispatchFireReason reason);
 
-// Consecutive empty findWhServerPids() samples required before
-// whserver_gone may fire. A single empty poll is inconclusive — a
-// Toolhelp32 snapshot failure is indistinguishable from "WHServer absent"
-// (findWhServerPids() returns empty in both cases), so the watchdog
-// confirms the absence across this many consecutive polls before feeding
-// `empty` to the decision as a fire condition.
+// Consecutive CONFIRMED-empty findWhServerPids() samples required before
+// whserver_gone may fire. The watchdog feeds this counter through
+// accountWhServerSample using the snapshotOk overload: a failed
+// Toolhelp32 snapshot is inconclusive — it is NOT an empty sample and
+// RESETS the streak — so the absence must be re-enumeration-confirmed on
+// this many consecutive polls before `empty` reaches the decision as a
+// fire condition.
 constexpr unsigned kWhServerGoneConfirmSamples = 3;
 
 // Pure decision: which (if any) containment condition holds right now.
@@ -120,12 +124,13 @@ constexpr unsigned kWhServerGoneConfirmSamples = 3;
 // `whServerSeenDuringFlight` is the caller's memory of WHServer having been
 // observed at least once since THIS flight began (prevents the lazy-
 // singleton window — WHServer not yet spawned — from firing whserver_gone);
-// `whServerEmptySamples` is the caller's count of CONSECUTIVE empty
-// whServerPids samples during this flight (whserver_gone requires >=
-// kWhServerGoneConfirmSamples so a transient snapshot failure cannot
-// false-fire); `crashReportParentPids` is findCrashReportParentPids()
-// (parent pid of each TSCrashReport.exe instance). Evaluation order:
-// timeout (primary), then crashed, then gone.
+// `whServerEmptySamples` is the caller's count of CONSECUTIVE
+// CONFIRMED-empty whServerPids samples during this flight
+// (accountWhServerSample increments it only on snapshotOk-empty polls and
+// resets it on inconclusive ones, so a transient snapshot failure cannot
+// false-fire whserver_gone); `crashReportParentPids` is
+// findCrashReportParentPids() (parent pid of each TSCrashReport.exe
+// instance). Evaluation order: timeout (primary), then crashed, then gone.
 DispatchFireReason decideDispatchFire(
     const DispatchMarkerSnapshot& marker,
     uint64_t nowQpc, double qpcFreq, double thresholdSecs,
@@ -134,11 +139,37 @@ DispatchFireReason decideDispatchFire(
     unsigned whServerEmptySamples,
     const std::vector<DWORD>& crashReportParentPids);
 
+// Pure per-poll WHServer-sample accounting for the watchdog loop, factored
+// out so unit tests can pin the inconclusive-poll contract without
+// injecting Toolhelp32 failures (same seam style as decideDispatchFire
+// above and the census's decideCensus sample stream):
+//   snapshotOk=false: the poll is INCONCLUSIVE — evidence in neither
+//     direction. emptyWhSamples RESETS to 0 (whserver_gone requires
+//     consecutive CONFIRMED-empty polls; a confirmation gap breaks the
+//     streak) and whSeen is left unchanged.
+//   snapshotOk=true, non-empty set: whSeen=true, emptyWhSamples=0.
+//   snapshotOk=true, empty set: ++emptyWhSamples (a confirmed absence).
+// The pid set is not consulted when snapshotOk is false (a failed
+// enumeration carries no set).
+void accountWhServerSample(bool snapshotOk,
+                           const std::vector<DWORD>& whServerPids,
+                           bool& whSeen, unsigned& emptyWhSamples);
+
 // Parent pid of every running TSCrashReport.exe instance, via one Toolhelp32
 // process snapshot (the same mechanism whserver_health.cpp uses; the
 // PROCESSENTRY32 parent-pid field needs no extra APIs). Empty when none are
-// running or the snapshot fails.
+// running or the enumeration failed — callers that must distinguish "no
+// reporters running" from "enumeration inconclusive" use the snapshotOk
+// overload; a failed enumeration is NEVER evidence of no reporters.
 std::vector<DWORD> findCrashReportParentPids();
+
+// snapshotOk variant of the same enumeration: returns false ONLY when the
+// enumeration is inconclusive — the Toolhelp32 snapshot itself failed, or
+// the process walk did not run to clean completion (a Process32FirstW or
+// Process32NextW failure whose GetLastError is not ERROR_NO_MORE_FILES; a
+// truncated set is never evidence). On true, `parents` is the authoritative
+// parent-pid set (possibly empty). On false, `parents` is cleared.
+bool findCrashReportParentPids(std::vector<DWORD>& parents);
 
 // --- Watchdog thread ---------------------------------------------------------
 // Start the 1-second polling watchdog. `thresholdSecs` is the in-flight

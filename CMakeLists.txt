@@ -107,6 +107,8 @@ add_library(tsdev_lib STATIC
     src/delete_disk_cleanup.cpp
     src/whserver_health.cpp
     src/dispatch_watchdog.cpp
+    src/whserver_census.cpp
+    src/whserver_recycle.cpp
     src/ts_install.cpp
     src/cache_backup.cpp
     src/vss_snapshot.cpp)
@@ -146,6 +148,8 @@ add_library(tsdev_lib_diag STATIC
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
     src/dispatch_watchdog.cpp
+    src/whserver_census.cpp
+    src/whserver_recycle.cpp
     src/ts_install.cpp
     src/cache_backup.cpp
     src/vss_snapshot.cpp)
@@ -456,6 +460,45 @@ add_executable(test_whserver_health
     src/whserver_health.cpp)
 target_include_directories(test_whserver_health PRIVATE src)
 
+# --- WHServer census gate unit test (R1 census core) ---------------------------
+# Pure unit test for src/whserver_census.cpp: decideCensus() is exercised over
+# scripted CensusPoll streams (every contract branch — sustained-zero Pass,
+# Indeterminate on listed-pid open/rpm errors, re-enumerated absent arm,
+# appearing-pid window reset, failed-snapshot inconclusiveness, multi-pid);
+# readWhLockSample() runs a REAL OpenProcess+ReadProcessMemory against the
+# test process's own statics (zero TS contact). src/whserver_health.cpp is
+# compiled in for the findWhServerPids snapshotOk variant. The .cpps are
+# compiled directly into the test (same pattern as test_whserver_health) —
+# pure Win32, NO new .lib deps; WHServer is never required to run. -NoTs.
+add_executable(test_whserver_census
+    tests/test_whserver_census.cpp
+    src/whserver_census.cpp
+    src/whserver_health.cpp)
+target_include_directories(test_whserver_census PRIVATE src)
+
+# --- WHServer recycle engine unit test (R3 engine skeleton) --------------------
+# Pure unit test for src/whserver_recycle.cpp: runWhserverRecycle (design §2
+# steps 1-6) is driven by injected fakes — scripted census/death poll streams
+# through the IRecycleSampler seam and scripted results through the
+# IRecycleAttach seam — covering stage ordering (close -> census -> attach ->
+# verify -> release) and fail-closed coverage at every stage boundary
+# (quiesce / close_failed -> terminateSelf / census lock+indeterminate /
+# attach_failed / forceshutdown_failed / zombie / inert / absent arm /
+# multi-pid / verify bound). The production ComRecycleAttach is compiled in
+# and exercised ONLY on the empty-MyWork refuse path, which must fail before
+# any COM call. dispatch_watchdog.cpp is compiled in for the in-flight
+# marker (DispatchInFlightGuard inside ComRecycleAttach) and
+# findCrashReportParentPids (used by WhRecycleSampler::deathPoll).
+# Ole32/OleAut32 resolve the raw-COM attach TU — never invoked under -NoTs.
+add_executable(test_whserver_recycle
+    tests/test_whserver_recycle.cpp
+    src/whserver_recycle.cpp
+    src/whserver_census.cpp
+    src/whserver_health.cpp
+    src/dispatch_watchdog.cpp)
+target_include_directories(test_whserver_recycle PRIVATE src)
+target_link_libraries(test_whserver_recycle PRIVATE Ole32 OleAut32)
+
 # --- Dispatch watchdog unit test (TVS-3, TDD GREEN) ----------------------------
 # Pure unit test for src/dispatch_watchdog.cpp: in-flight marker
 # enter/leave/snapshot semantics, DispatchInFlightGuard RAII on exception
@@ -616,6 +659,42 @@ add_executable(test_cache_cli_units tests/test_cache_cli_units.cpp)
 target_include_directories(test_cache_cli_units PRIVATE third_party)
 target_link_libraries(test_cache_cli_units tsdev_lib)
 add_dependencies(test_cache_cli_units siggen)
+
+# --- --recycle-whserver flag surface unit test (R2 flag plumbing) -------------
+# Pure unit test for the --recycle-whserver helpers in src/tsdev_cli.cpp:
+# isRecycleWhserverSubcommand (the §6.1 batch-*/serve set),
+# validateRecycleWhserver (the §6.1 usage-error refusals),
+# envPresenceEnabled (TSDEV_RECYCLE_WHSERVER presence semantics), and
+# emitRecycleWhserverWarning + kRecycleWhserverWarning (the §6.3 verbatim
+# warning, emitted once per process lifetime — stderr captured via a dup2'd
+# tmpfile like test_pbar check 16). The helpers live inside the anonymous
+# namespace in src/tsdev_cli.cpp (internal linkage), so the test #includes
+# the .cpp directly (same TU) and #defines TSDEV_CLI_TEST to exclude its
+# main() — the same mechanism used by test_pbar. The test needs the
+# third_party include dir (nlohmann/json) because the included tsdev_cli.cpp
+# uses it, and links tsdev_lib for the TsDevLib symbols referenced by the
+# included CLI code. It is a PURE UNIT TEST (no orlib20 access, no TS
+# contact — only pure helpers + an env-var probe), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_recycle_whserver_flag tests/test_recycle_whserver_flag.cpp)
+target_include_directories(test_recycle_whserver_flag PRIVATE third_party)
+target_link_libraries(test_recycle_whserver_flag tsdev_lib)
+add_dependencies(test_recycle_whserver_flag siggen)
+
+# --- R4 batch resume contract unit test ---------------------------------------
+# Pure unit test for the §4.1 resume contract in src/tsdev_cli.cpp:
+# whserverRecycleEventLine full field set (JSON + human),
+# writeResumeManifest <-> parseManifest round-trip (needsSource + delete
+# ops, tail slicing, pre-validation-failure reproduction), the recycle
+# not-run marker shape, and the aborted batch_completed summary. Same
+# include-the-.cpp mechanism as test_recycle_whserver_flag (TSDEV_CLI_TEST
+# excludes main()); scratch files live under %TEMP% only. PURE UNIT TEST —
+# no orlib20, no TS contact — so it is NOT in TSDEV_ADMIN_TARGETS and runs
+# under -NoTs.
+add_executable(test_recycle_resume tests/test_recycle_resume.cpp)
+target_include_directories(test_recycle_resume PRIVATE third_party)
+target_link_libraries(test_recycle_resume tsdev_lib)
+add_dependencies(test_recycle_resume siggen)
 
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
@@ -1296,9 +1375,13 @@ add_dependencies(test_regression
     test_close_warehouse
     test_diag_log
     test_whserver_health
+    test_whserver_census
+    test_whserver_recycle
     test_dispatch_watchdog
     test_cache_backup
     test_cache_cli_units
+    test_recycle_whserver_flag
+    test_recycle_resume
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
