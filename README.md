@@ -1,335 +1,135 @@
 # TSDev Automation
 
-Automates TradeStation **9.5** Development Environment (TSDev) Library management - insert, modify, upsert, delete, query existence, and retrieve source - for EasyLanguage items, without the TSDev UI.
+Manage your TradeStation EasyLanguage library — insert, update, delete, check, and retrieve items — from the command line or a script, **without opening the TSDev window**.
 
-Two front-ends: a native CLI executable `tsdev_cli` and a companion Python wrapper `TsDevClient`.
+## Before you start
 
-## Supported types
+You need three things:
 
-`strategy`, `function`, `indicator`, `tradingapp`, `showme` (case-insensitive). ActivityBar, PaintBar, and ProbabilityMap are not supported.
+1. **TradeStation 9.5 installed** on this machine (TradeStation 10 is *not* supported). The tool finds the standard installation at `C:\Program Files (x86)\TradeStation 9.5` by itself. If yours lives elsewhere, add `--ts-path "<install folder>"` to every command. TradeStation itself does **not** need to be running.
+2. **The tool.** Download the `tsdev_automation_*.zip` release and unzip it anywhere. Inside you find `tsdev_cli.exe` (the program) and a `tsdev_automation` folder (a Python package — only needed if you script in Python).
+3. **An administrator command prompt.** Every `tsdev_cli.exe` command must run from an elevated terminal. To open one: press **Start**, type `cmd` or `powershell`, right-click the result, choose **Run as administrator**. If you forget, the tool just prints that it needs administrator privileges and stops — nothing breaks.
 
-## Prerequisites
+## Getting started
 
-- TradeStation 9.5 installed. Default root: `C:\Program Files (x86)\TradeStation 9.5`; override with `--ts-path <dir>` (CLI) or `ts_path=<dir>` (Python).
-   - Note: TS 10.0 is *not supported*.
-- `tsdev_cli` is 32-bit (loads `orlib20.dll`).
-- TS Desktop does not need to be running.
+In your administrator terminal, `cd` into the folder where you unzipped the bundle, then run `.\tsdev_cli.exe` (in PowerShell the `.\` prefix is required; in cmd.exe plain `tsdev_cli` works too).
 
-## Elevation
+Your EasyLanguage code lives in ordinary text files (`.el` or `.txt`).
 
-- Direct `tsdev_cli` calls (including `serve`) must run elevated. Non-elevated direct CLI exits with code `11`.
-- Two options:
-  1. Run `tsdev_cli` from an elevated terminal (or run Python elevated).
-  2. `TsDevClient(use_serve=True)` (default): starts an elevated `tsdev_cli serve` broker with a single UAC prompt for the whole session.
-- `TsDevClient(use_serve=False)` from a non-elevated Python session raises `ElevationRequiredError` before launching.
-
-## Native CLI (`tsdev_cli`)
-
-### Subcommands
-
-Positional arguments: `<type>`, `<name>`, `<source_file>`
-
-- `insert <type> <name> <source_file>`
-- `modify <type> <name> <source_file>`
-- `upsert <type> <name> <source_file>`
-- `delete <type> <name>`
-- `exists <type> <name> [--case-insensitive]`
-- `get-source <type> <name> [--output <file>]`
-
-### Flags
-
-- Global:
-  - `--json` - emit a single JSON result object on stdout. For batch subcommands it emits the JSON results array on stdout (the only mode that produces one - without `--json` batch stdout is empty) and selects the stderr progress rendering: one JSON event object per line instead of human-readable `BATCH` lines.
-  - `--pbar` - render an aesthetic visual progress bar on stderr. Position-free and idempotent; `--pbar=<value>` is accepted and the value ignored. The bar redraws in place on the last stderr line and is quiet on success: successful items emit nothing else, and a successful single mutation op's `SUCCESS:` stdout line is suppressed (query ops still print their stdout answer); failures and library warnings scroll above the bar. Usage error (exit 1) when combined with `--json` or used with `serve`.
-  - `--ts-path <dir>` - override TradeStation install directory.
-  - `--backup-cache` / `--restore-cache` - back up `<TS>\Program\Cache` to `%LOCALAPPDATA%\tsdev_cli\cache-backup` / restore it, before the subcommand runs (fixed order backup -> restore -> op; a failure aborts before the subcommand). Usable standalone with no subcommand (`tsdev_cli --backup-cache`), printing a stdout result. Not valid with `serve`.
-  - `--cache-backup-policy <prompt|overwrite|skip|abort>` - what `--backup-cache` does when a backup already exists (default `prompt`; a non-interactive prompt behaves as `skip`; `abort` cancels with exit 17). Requires `--backup-cache`.
-  - `--no-cache-compress` - suppress the background NTFS in-place compression of the backup tree that otherwise starts after a successful backup phase (fresh or kept-existing; detached lowest-priority thread, files >= 64 KB). Transparent to restore; only the backup dir is compressed, never the live cache. Position-free boolean. Only meaningful alongside `--backup-cache`; a standalone run exits right after the kickoff, so compression there is best-effort (long-lived serve broker sessions benefit fully).
-  - `-v` / `--verbose` - raise the stderr log level. Position-free and repeatable; each occurrence raises the level one step: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals. Additional occurrences clamp at debug. Accepted forms: `-v`, `-vv`, `-vvv` (bundled), `--verbose`, `--verbose=<value>` (value ignored, counts as one occurrence). Log output goes to stderr only; stdout (results and JSON) is unaffected.
-- `exists`:
-  - `--case-insensitive` (default: case-sensitive exact match).
-- `get-source`:
-  - `--output <file>` - write source to file; internally encrypted items are decrypted automatically.
-
-### Exit codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | Invalid command-line usage or arguments |
-| `2` | Unknown component type |
-| `3` | Could not read the source file, or could not write the output file (`get-source`) |
-| `4` | Failed to initialize the TSDev Library (check TradeStation install / `--ts-path`) |
-| `5` | Item not found (modify/delete/get-source), item already exists (insert), or no cache backup found (`--restore-cache`) |
-| `6` | The item operation could not be completed |
-| `7` | Failed to save the source text to the library |
-| `8` | The EasyLanguage source failed to compile |
-| `9` | The item's compiled library file is missing |
-| `10` | Internal error: failed to start a required worker thread |
-| `11` | Not running as administrator (elevation required) |
-| `16` | Cache backup/restore I/O error (incl. restore of a locked cache) |
-| `17` | Cache backup cancelled (`--cache-backup-policy=abort` or `C` at the prompt) |
-
-### Batch operations
-
-File batch subcommands take a `<manifest_file>` or `--batch-stdin`:
-
-- `batch-insert <manifest_file>` / `batch-insert --batch-stdin`
-- `batch-modify <manifest_file>` / `batch-modify --batch-stdin`
-- `batch-upsert <manifest_file>` / `batch-upsert --batch-stdin`
-- `batch-delete <manifest_file>` / `batch-delete --batch-stdin`
-
-Directory batch subcommands operate on a directory of `.el`/`.txt` files:
-
-- `batch-insert-dir <dir>`
-- `batch-modify-dir <dir>`
-- `batch-upsert-dir <dir>`
-- `batch-delete-dir <dir>`
-
-Use `-t <ext>` (repeatable) to filter extensions. File stem (without the last extension) = item name.
-
-With `--json`, stdout is a JSON array (one element per item); without it stdout is empty. Exit codes:
-
-- `0` - all succeeded
-- `1` - usage error, manifest not found, or manifest empty (batch did not run)
-- `2` - batch ran, but one or more items failed (per-item details in the JSON array under `--json`, else on stderr)
-- `3` - batch cooperatively cancelled via `--batch-progress-control` (under `--json` the array stays full length; unattempted items are exit-12 `cancelled` markers)
-- `14` - batch aborted by the WHServer VAS-headroom guard (same full-length array + exit-12 not-run markers, `error.message="Batch aborted (WHServer VAS headroom) before this item was attempted"`; the summary gains `aborted=true abort_reason=whserver_vas_free=<N>MB` or `whserver_vas_largest_free=<N>MB`, and a `batch_aborted` / `BATCH ABORTED` event precedes it). Under `serve`, `14` is instead a per-request refusal code (`error.code="whserver_vas_abort"`) on the refused item — the broker process keeps running and non-mutating requests still pass.
-- `18` - WHServer recycled on a guard breach under `--recycle-whserver` (see below): the array is full length (attempted head + exit-12 markers), a `tsdev_resume_<pid>_<ticks>.manifest` covering the tail is written beside the source manifest (or the cwd for `--batch-stdin`), and the `whserver_recycled` event carries its path. Resubmit with `tsdev_cli batch-<op> <resume-file>`; the Python client resubmits automatically (bounded at 3 recycles per batch call).
-- `19` - WHServer recycle refused under `--recycle-whserver` (gate could not confirm a clean recycle, e.g. clients still hold the server): the batch aborts; the tail carries `WHServer recycle refused before this item was attempted` markers.
-
-### WHServer VAS-headroom guard (batch-* and serve)
-
-WHServer.exe is 32-bit and non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free user address space. After each completed non-final batch item — and in `serve` before dispatching each mutating request — the guard measures WHServer's free user address space and aborts loudly when headroom drops below the thresholds, so a runaway batch can never push WHServer over the cliff. A `serve` breach refuses that request with exit `14` / `error.code="whserver_vas_abort"` (the Python client stops the batch there and marks the unattempted remainder not-run); a direct `batch-*` breach aborts the whole run with process exit `14`:
-
-- `--whserver-free-mb <N>` - abort when total free VAS falls below N MB (default `256`)
-- `--whserver-largest-free-mb <N>` - abort when the largest contiguous free block falls below N MB (default `64`; fragmentation kills contiguous allocations even while total free looks ample)
-- `--no-whserver-vas-guard` - disable the guard entirely
-
-Env mirrors: `TSDEV_WHSERVER_FREE_MB`, `TSDEV_WHSERVER_LARGEST_FREE_MB`, `TSDEV_NO_WHSERVER_VAS_GUARD` (any value but `0` disables). Explicit CLI flags win over env. WHServer not running (lazy singleton not yet spawned) passes; a transient measurement failure warns once and does not abort. Breach semantics: strictly below the threshold aborts (exactly-at-threshold passes). The guard only reads WHServer's address-space layout — it never writes to or signals the process.
-
-### WHServer gated auto-recycle (`--recycle-whserver`, batch-* and serve)
-
-`--recycle-whserver` (env mirror `TSDEV_RECYCLE_WHSERVER`, any value but `0`) authorizes restarting WHServer.exe when the VAS guard trips instead of aborting outright. It is a dangerous-operation opt-in: the CLI prints a prominent one-time stderr warning, and the restart is gated on a zero-client census plus clean close/attach stages — the flag never bypasses the gate. Usage constraints: it is valid only with `batch-*`/`serve` and cannot be combined with `--no-whserver-vas-guard` or `--batch-progress-control` (usage error, exit 1). On a breach the guard outcome changes from abort-14 to:
-
-- **Recycled → exit `18`**: WHServer was recycled — or the recycle was *deferred* to the resumed process (see below). The results array is full length — the attempted head plus exit-12 not-run markers — and a resume manifest `tsdev_resume_<pid>_<ticks>.manifest` covering the marker tail is written beside the source manifest (or the cwd for `--batch-stdin`; a `batch-*-dir` resume likewise goes through the non-dir `batch-<op>` subcommand). Its path rides the `whserver_recycled` stderr event (a non-ASCII path cannot ride the ANSI event channel and is dropped — the file still exists on disk; the client's marker then carries the stderr reason). Resubmit manually with `tsdev_cli batch-<op> <resume-file>`; `TsDevClient` resubmits automatically and deletes the consumed manifest once the resumed batch returns, bounded at **3 recycles per batch call** — bound exhaustion stops deliberately (a re-breach means pathology) and the marker names the retained manifest path.
-- **Refused → exit `19`**: the gate could not confirm a clean recycle (e.g. a foreign client still holds the server). The batch aborts; the tail gets `WHServer recycle refused before this item was attempted` markers; no respawn is attempted.
-
-**Where the engine runs:** the recycle engine only runs in-process at a *never-attached* site — the batch pre-flight gate, or a breach that fires before any op/request has dispatched. A process holding an attached warehouse session contributes +7 to WHServer's `m_nLock` for the process's entire lifetime (`closeWarehouse` cannot release it — only process exit does), so the zero-client census could never pass in-process. A breach at an attached site therefore exits `18` *without* running the engine — the `whserver_recycled` event carries `reason=recycle_deferred_own_session` — and the resumed batch / respawned broker runs the engine at its own never-attached site. In serve mode one effective recycle can thus cost **two** broker respawns (defer → engine), each counting against the 3-recycle bound.
-
-**Trade-off:** if the not-run tail contains an item the manifest schema cannot represent — a name with a line break / leading quote / quote+whitespace, or a pre-validated (`preValid=false`) item whose stored fields came from a failure path — the resume-manifest writer **refuses the whole write before creating any file** (fail-closed: a fabricated or re-tokenized line could retarget a delete). Auto-resume is then forfeited for the entire tail, including representable items; the marker and the stderr diagnostic name the refusing item, and the tail stays manually resubmittable via the printed reasons. A written-but-unreachable-path manifest spares every temp source the batch materialized.
-
-In serve mode each recycle respawns the elevated named-pipe broker — a **non-elevated client pays one UAC prompt per respawn** (unattended runs cannot satisfy it; run the client elevated or expect the batch to raise). The client resubmits bounded by the same 3-recycle bound; a respawn failure (declined UAC, handshake timeout) propagates and ends the batch.
-
-### Dispatch watchdog (all subcommands)
-
-Every orlib20 warehouse dispatch raises an in-flight marker; a watchdog thread polls the marker once per second and aborts the process when a dispatch exceeds the bound (`--dispatch-timeout-secs`, 300 s by default). If WHServer.exe wedges or crashes, orlib20's synchronous COM wait never returns — the watchdog then aborts truthfully instead of hanging forever:
-
-- in-flight dispatch older than `--dispatch-timeout-secs <N>` (default `300`, range `0..86400`, `0` disables; env mirror `TSDEV_DISPATCH_TIMEOUT_SECS`, flag wins) → `dispatch_timeout`
-- a `TSCrashReport.exe` running as a child of a WHServer.exe pid while a dispatch is in-flight → `whserver_crashed` (immediate; a TSCrashReport parented by any other process never fires)
-- WHServer.exe seen during the flight then vanished → `whserver_gone` (the absence must persist across 3 consecutive 1 s polls — a single empty poll is inconclusive because a Toolhelp32 snapshot failure looks identical)
-
-The timeout is the sole *guaranteed* backstop: a wedged-but-alive WHServer that keeps running is only detected when the dispatch exceeds `--dispatch-timeout-secs` (300 s by default). The `whserver_crashed`/`whserver_gone` checks are best-effort fast paths that can abort earlier when the crash is externally visible.
-
-On fire the process prints `tsdev_cli: WATCHDOG ABORT: warehouse dispatch '<site>' aux=<aux> in-flight <N>s (bound <T>s) [reason: ...]; exiting with code 15` on **stderr** and terminates itself with exit code `15` (`TerminateProcess` — never `ExitProcess`/DLL detach, never `closeWarehouse`). **No JSON frame is emitted for the in-flight item** — under `--json` the abort produces no result line for that item; it is the "uncertain state" item whose true outcome is unknown. What survives of the already-completed items depends on the path: under `serve` each completed request already returned its JSON frame to the client, so those results are safe; on the direct `batch-*` path the stdout JSON array is emitted only after the worker finishes the whole batch, so a mid-batch abort loses every item's result — the stderr abort line is the only output besides the streamed progress events (the per-item `BATCH SUCCESS`/`BATCH FAILED` lines — or `batch_item_completed` events under `--json` — stream to stderr as items complete and do survive; under `--pbar` successes emit no line). Idle waits (e.g. the `serve` broker blocked in `ConnectNamedPipe`) carry no in-flight marker and are exempt.
-
-Under `TsDevClient(use_serve=True)` the broker is spawned hidden with no stderr capture, so the `WATCHDOG ABORT` line and its site/reason detail are **not observable** on that path — exit code `15`, surfaced as `TsDevWatchdogAbortError`, is the only machine-readable signal. On watchdog abort the correct operator action is to recycle/restart WHServer (e.g. restart the TradeStation desktop, or let WHServer SCM-respawn once no clients hold it) before retrying the batch — never blindly retry into the same server (the Python client already refuses the retry).
-
-### Manifest format
-
-Line-based text (not JSON). `#` comments and blank lines are skipped. One item per line.
-
-- `insert`/`modify`/`upsert`: `<type> <name> <source_file>` (`source_file` is the rest of the line after the second token, so paths with spaces work).
-- `delete`: `<type> <name>`
-
-`<name>` may be double-quoted (`"<name>"`) when it contains whitespace — directory batches derive names verbatim from file stems, and resume manifests are written in that form. **Warning:** an *unquoted* spaced name silently re-parses to a different component — `function my item ./x.el` is read as name `my` with source `item ./x.el`, and on `batch-delete` the extra token is ignored so the delete would hit `my`, not `my item`. Always quote names containing spaces, tabs, or other whitespace. An unterminated quote, or characters fused after the closing quote (`"a"b`), is a pre-validation failure — never re-interpreted.
-
-Example `manifest.txt`:
-
-```text
-# insert two functions
-function MyFuncA ./src/MyFuncA.el
-function "My Func B" ./src/MyFuncB.el
-```
-
-### Batch progress
-
-Every batch that runs emits progress on **stderr** (always on, independent of `-v`), one line per event:
-
-- `BATCH SUCCESS [i/n] op=<op> type="<type>" name="<name>" exit_code=0` / `BATCH FAILED [i/n] op=<op> type="<type>" name="<name>" exit_code=<n> message="<msg>"` - after each attempted item's result, in input order (including items rejected at manifest parse/pre-validation and TsDevLib-init failures; `message=` is omitted only when the error message is empty; quoted values are JSON-escaped so one event is always one line). A `BATCH FAILED` line is followed by the item's full detail block - compiler errors etc., the same text a single-op failure prints.
-- `BATCH COMPLETE op=<op> completed=<n> total=<n> successes=<n> failures=<n> not_run=<n> cancelled=<bool> close_failed=<bool> exit_code=<n>` - once, always last, after the end-of-batch warehouse close and any retroactive result rewrite
-
-With `--json`, each stderr line is one compact JSON object instead: `batch_item_started` before each attempted item, `batch_item_completed` (carrying the exact per-item result object), then `batch_completed`. Started events exist only in this NDJSON protocol and on tagged serve requests - human mode has no `BATCH START` lines. `--json` is also what produces the stdout JSON results array; without it batch stdout is empty.
-
-Under `--json` the stdout array remains the authoritative result: a failed end-of-batch warehouse close rewrites still-successful items to failures, and `BATCH COMPLETE`/`batch_completed` is emitted after that rewrite (`close_failed=true`).
-
-`--pbar` pins a visual progress bar to the last stderr line - redrawn in place via `\r` (no ANSI escapes), `█`/`░` blocks on a real console, UTF-8 bytes when stderr is piped. The bar fills 0→N as items complete and gains a `— <n> failed` suffix once items have failed; while items succeed the bar is the only output - a failed item's `BATCH FAILED` marker and full detail block scroll above it, as do library warnings/errors as event lines. `BATCH COMPLETE` prints only when the run was not fully clean (failures, not-run items, cancellation, or a close failure). For single-item mutation subcommands the bar fills 0→1 (`— 1 failed` on failure) and a success prints only the bar - the `SUCCESS: ... ProgId=N` stdout line is suppressed while failures still print their stderr detail. Query ops (`exists`/`get-source`/`dependents`) are unchanged: the stdout answer always prints. The exact rendering is a visual aid, not a contract; `--pbar` can coexist with `--batch-progress-control`.
-
-### Cooperative batch control (`--batch-progress-control`)
-
-`--batch-progress-control` is a batch-only, position-free flag (repeating it is a usage error) that turns **stdin** into a cooperative between-items control channel. After each completed item except the last, the batch synchronously reads exactly one LF-terminated decision line before attempting the next item:
-
-- `continue\n` - proceed to the next item
-- `cancel\n` - stop cooperatively: the batch closes the warehouse once, fills the remaining positions with not-run markers, and exits `3`
-
-Any other input — EOF before the line terminator, a read error, or a malformed token — emits a `batch_control_error` (JSON mode) / `BATCH CONTROL ERROR: <message>; cancelling before next item` (human mode) diagnostic on stderr, then cancels the same way. Cancelling fills every unattempted position with a marker result (`success=false`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`), so under `--json` the stdout array stays **full length**. The summary reports `completed` = attempted items, `not_run` = markers, `cancelled=true`, and exit `3` dominates even when items failed or the end-of-batch close failed.
-
-Stdin layout depends on how the manifest is supplied:
-
-- `batch-* --batch-stdin --batch-progress-control`: stdin begins with a framed manifest — the exact ASCII header `TSDEV_BATCH_CONTROL/1 <decimal byte length>\n` (digits only, 64 MiB cap) followed by exactly that many manifest bytes — then decision lines on the same stream. A malformed frame is a pre-run failure (exit 1, no array).
-- `batch-* <manifest_file> --batch-progress-control` and `batch-*-dir ... --batch-progress-control`: the manifest/directory still comes from its normal source; stdin carries decision lines only.
-
-### Batch progress in serve mode
-
-`tsdev_cli serve` accepts an optional `"batch":{"id":"<nonempty string>","index":<1-based>,"total":<n>}` member on `insert`/`modify`/`delete`/`upsert` requests. The object is all-or-none and closed - exactly those three members, `1 <= index <= total`; anything else rejects the request. For tagged requests the broker emits the same started/completed progress lines on its own stderr (human, or JSON under `--json`) and appends `"progress":{"batch_id":"<id>","index":<i>,"total":<t>,"phase":"completed"}` to the ordinary response - still exactly one response frame per request. This also holds when a request with *valid* batch metadata fails later validation or dispatch (unknown type, missing source, item already exists): the started/completed pair is still emitted and the failure response still carries `progress`. Only a request rejected for invalid `batch` metadata itself is an untagged failure with no progress. Untagged requests are byte-identical to before.
-
-### Examples
+**Insert a new item** (adds it and compiles it; if the code does not compile, nothing is added and the compiler errors are printed):
 
 ```powershell
-# insert a function
-tsdev_cli insert function MyFn ./src/MyFn.el
-
-# case-insensitive exists check, JSON output
-tsdev_cli --json exists function MyFn --case-insensitive
-
-# retrieve source to a file
-tsdev_cli get-source function MyFn --output MyFn.el
-
-# batch from a file
-tsdev_cli batch-insert manifest.txt
+.\tsdev_cli.exe insert function MyFunction .\MyFunction.el
 ```
 
-## Python wrapper (`TsDevClient`)
+**Check whether an item exists:**
 
-### Import
+```powershell
+.\tsdev_cli.exe exists function MyFunction
+```
+
+prints `exists=1` plus the stored name and ProgId, or `exists=0` when absent. The name must match exactly; add `--case-insensitive` to ignore letter case.
+
+**Get an item's source back out:**
+
+```powershell
+.\tsdev_cli.exe get-source function MyFunction --output backup.el
+```
+
+Without `--output` the source is printed to the console. Items stored encrypted are decrypted automatically, exactly like TSDev does.
+
+**Update or delete:**
+
+```powershell
+.\tsdev_cli.exe modify function MyFunction .\MyFunction.el   # replace source, recompile
+.\tsdev_cli.exe upsert function MyFunction .\MyFunction.el   # modify if present, else insert
+.\tsdev_cli.exe delete function MyFunction
+```
+
+**See which library items use a given item:**
+
+```powershell
+.\tsdev_cli.exe dependents function MyFunction
+```
+
+## Item types
+
+`<type>` is one of `function`, `indicator`, `showme`, `strategy`, `tradingapp` (letter case does not matter). The TSDev types ActivityBar, PaintBar, and ProbabilityMap are not supported.
+
+## Doing many items at once (batch)
+
+Batch commands take a manifest file — a plain text file with one item per line; lines starting with `#` are comments. Insert/modify/upsert lines are `<type> <name> <source_file>`; delete lines are `<type> <name>`. A name containing spaces must be in double quotes.
+
+```text
+# manifest.txt
+function MyFuncA .\src\MyFuncA.el
+indicator "My Indicator" .\src\MyIndicator.el
+strategy MyStrat .\src\MyStrat.el
+```
+
+```powershell
+.\tsdev_cli.exe batch-insert manifest.txt    # also batch-modify / batch-upsert / batch-delete
+```
+
+To process a whole folder of `.el`/`.txt` files at once (file name becomes the item name, all of one type):
+
+```powershell
+.\tsdev_cli.exe batch-insert-dir function .\src    # also batch-modify-dir / batch-upsert-dir / batch-delete-dir
+```
+
+Each item is reported as it completes; a failed item does not stop the rest.
+
+## Useful flags
+
+- `--json` — print the result as JSON, for scripts.
+- `--ts-path "<dir>"` — point at a non-standard TradeStation install.
+- `--backup-cache` / `--restore-cache` — back up (or restore) TradeStation's internal cache before the command runs; can also be run on its own: `.\tsdev_cli.exe --backup-cache`.
+- `--pbar` — show a progress bar during batch runs.
+- `-v` / `-vv` — more detailed logging (repeatable).
+- `--case-insensitive` (`exists` only), `--output <file>` (`get-source` only) — see above.
+
+Run `.\tsdev_cli.exe` with no arguments to print the full command list.
+
+## If something goes wrong
+
+The tool is designed to be fail-safe: every operation is checked, and when TradeStation is in a bad state it **refuses, prints the reason, and stops** instead of risking your library. A refusal is safe — unprocessed items simply did not run. Common cases:
+
+| What you see | What it means | What to do |
+|---|---|---|
+| "requires administrator privileges" | Terminal is not elevated | Re-open it via **Run as administrator** |
+| "not found in the warehouse" | Wrong name or type | Check the exact name with `exists` |
+| Compile errors printed | The EasyLanguage source has errors | Fix the source and run again |
+| "init failed: ..." | TradeStation 9.5 not found | Install TS 9.5, or pass `--ts-path` |
+| A run aborts midway with a watchdog or safety message | TradeStation's background process is in a bad state | Close TradeStation/TSDev (restart the PC if it persists), then re-run; already-completed items are fine |
+
+If a TradeStation error or crash window pops up while a command runs, the operation did **not** succeed — read the message, close the popup, close TradeStation/TSDev, and try again.
+
+## Using it from Python
+
+The bundled `tsdev_automation` package wraps the CLI. Python 3.14+, standard library only. `TsDevClient` elevates itself automatically — you get **one UAC prompt** per session (none if Python is already running as administrator), no administrator terminal needed:
 
 ```python
-from tsdev_automation import TsDevClient, BatchItem
-```
+from tsdev_automation import TsDevClient
 
-### Constructor
+client = TsDevClient()          # auto-elevation on by default
 
-```python
-client = TsDevClient(
-    cli_path=None,   # path to tsdev_cli.exe; auto-discovered if None
-    ts_path=None,    # forwarded as --ts-path
-    timeout=None,    # subprocess timeout in seconds; None = no timeout
-    use_serve=True,  # auto-elevate via serve broker (one UAC prompt)
-)
-```
-
-### Single-item methods
-
-All return a `TsDevResult` dataclass. `insert`/`modify`/`upsert`/`delete`/`get_source` raise a `TsDevError` subclass on failure; `exists` does not raise on not-found (not-found is a successful query).
-
-`TsDevResult` fields:
-
-- `.success: bool`, `.exit_code: int`, `.op: str`, `.type: str | None`, `.name: str | None`
-- `.prog_id: int | None`, `.ell_path: str | None` — populated by insert/modify/upsert/delete
-- `.exists: bool`, `.stored_name: str`, `.prog_id: int` — populated by `exists` (`.prog_id == 0` and `.stored_name == ""` when not found)
-- `.source: str` — populated by `get_source` (empty string on failure)
-- `.error: TsDevErrorInfo | None` — set when `success` is False; carries `.code: str`, `.message: str`, plus `.compile_errors: str | None` (exit 8) and `.existing_prog_id: int | None` (insert, exit 5)
-- `.cache: dict | None` — populated by `backup_cache`/`restore_cache`/`cache_maintenance` results (the phase's own `"cache"` payload). `None` on ordinary op results, including ops run with the `backup_cache`/`restore_cache`/`cache_backup_policy` kwargs (combined mode). The raw CLI's two-flag standalone `--backup-cache --restore-cache` object carries `{"backup": ..., "restore": ...}` instead; `cache_maintenance` splits that shape into one result per phase, so it never surfaces through the Python API.
-
-Methods:
-- `insert(type, name, source)`
-- `modify(type, name, source)`
-- `upsert(type, name, source)`
-
-`source` may be a file path or an EasyLanguage source string (auto-written to a temp `.el` file).
-
-- `delete(type, name)`
-- `exists(type, name, *, case_insensitive=False)`
-- `get_source(type, name, output_file=None)` — if `output_file` is given, the source is also written to disk.
-
-### Cache maintenance
-
-- `backup_cache(on_existing="abort")` — standalone `--backup-cache`. `on_existing` ∈ `{"prompt","overwrite","skip","abort"}` (`ValueError` otherwise). The Python default is `abort` (fail-safe; the direct CLI flag default stays `prompt`). `prompt` can never prompt under a pipe (degrades to keep-existing + warning on the direct path); on the serve path it raises `ValueError` client-side (the broker has no console). A serve `backup-cache` request without a `policy` field defaults to `abort`.
-- `restore_cache()` — standalone `--restore-cache`; raises `NotFoundError` when no backup exists.
-- `cache_maintenance(*, backup=False, restore=False, on_existing="abort")` — standalone backup+restore in one call. Direct mode spawns ONE `tsdev_cli` process carrying both flags (fixed order backup -> restore); serve mode sends the two broker requests sequentially in the same order. Returns one `TsDevResult` per requested phase, in run order, each with its own `.cache` payload. A phase failure raises the typed exception and suppresses the later phase.
-- Combined: every single-item and batch method also accepts `backup_cache=False`, `restore_cache=False`, `cache_backup_policy=None` keyword args. Direct path appends `--backup-cache`/`--restore-cache`/`--cache-backup-policy=...` to the same argv (cache phase runs before the op, fixed order backup -> restore -> op); serve path sends `{"op":"backup-cache","policy":...}` / `{"op":"restore-cache"}` requests before the op request, and a failed pre-request suppresses the op. `cache_backup_policy` implies `backup_cache` even when `backup_cache=False` is passed explicitly. When `backup_cache=True` is given without a policy, Python emits `--cache-backup-policy=abort` — the API default is `abort` on every path. Combined-mode op results never carry a `.cache` payload (`.cache is None`).
-- Exit 16 -> `TsDevCacheError`, exit 17 -> `TsDevCacheCancelledError`, exit 5 -> `NotFoundError` (restore: no backup found) — all exported at package top level.
-
-### Batch methods
-
-- `batch_insert(items, *, on_progress=None)` / `batch_modify(items, *, on_progress=None)` / `batch_upsert(items, *, on_progress=None)` / `batch_delete(items, *, on_progress=None)`
-  - `items`: `Sequence[BatchItem]` -> `list[TsDevResult]`
-- `batch_insert_dir(type, dir_path, extensions=None, *, on_progress=None)`
-- `batch_modify_dir(type, dir_path, extensions=None, *, on_progress=None)`
-- `batch_delete_dir(type, dir_path, extensions=None, *, on_progress=None)`
-- `batch_upsert_dir(type, dir_path, extensions=None, *, on_progress=None)`
-
-Per-item failures are returned in the list. Manifest/directory-level failures raise `TsDevError`.
-
-### `BatchProgress` / `on_progress`
-
-All eight batch methods accept the keyword-only `on_progress: BatchProgressCallback | None` argument, with the same public semantics on the serve path and the direct elevated path:
-
-```python
-from tsdev_automation import BatchProgress, BatchProgressCallback
-# BatchProgress: frozen dataclass with .index (1-based), .total, .result (TsDevResult)
-# BatchProgressCallback = Callable[[BatchProgress], bool | None]
-```
-
-- The callback is invoked synchronously, in input order, once per **attempted** item after its actual `TsDevResult` is available — success or failure. For directory batches the position is the sorted entry-list position; a local source-read failure is an actual result (`.error.code == "source_file_error"`) that also invokes the callback.
-- Only a return value of `False` cancels, and only before the final item (`True`/`None`/`0`/anything else continue; `False` on the last item is ignored). On cancellation the returned list stays **full length**: attempted items keep their results and each unattempted item is a synthetic `TsDevResult` with `success=False`, `exit_code=12`, `error.code="cancelled"`, `error.message="Batch cancelled before this item was attempted"`. Markers never invoke the callback and cause no broker request or file read.
-- A callback exception aborts the batch: the original exception propagates unchanged, no marker list is returned, and the serve broker stays alive and usable.
-- Serve path (default non-elevated `use_serve=True`): every batch call tags each broker request with `"batch":{"id":<uuid4 hex>,"index":<i>,"total":<n>}` (one id per call) and validates the response's `"progress":{"batch_id","index","total","phase":"completed"}` member before parsing — a missing, malformed, or mismatched `progress` raises `TsDevError` without invoking the callback. This happens with or without a callback.
-- Direct path (elevated session): the batch runs as a single `tsdev_cli` child with `--json` + `--batch-progress-control` on binary pipes — manifest batches stream the manifest as a framed `TSDEV_BATCH_CONTROL/1` block over stdin (no temp manifest file), directory batches keep the native argv with stdin carrying decisions only. The client validates the stderr progress events strictly (started/completed pairing, contiguous indexes, stable total/op/type/name, nested-result consistency, one coherent `batch_completed`), writes `continue`/`cancel` after each non-final item, and returns the authoritative final stdout array — close-rewrite and exit-12 markers included. Malformed/missing events raise `TsDevError` (after a cooperative `cancel` when a decision is pending); exit `1` is a batch-level `TsDevError`, NTSTATUS exits map to `TsDevCrashError`, exit `15` (dispatch watchdog) maps to `TsDevWatchdogAbortError`, and a `timeout` terminates the child and raises `TimeoutError`. A non-elevated `use_serve=False` session still raises `ElevationRequiredError` before launch; no-callback direct batches are unchanged.
-
-### `BatchItem`
-
-```python
-from dataclasses import dataclass
-from os import PathLike
-
-@dataclass
-class BatchItem:
-    type: str
-    name: str
-    source: str | PathLike | None  # required for insert/modify/upsert; None for delete
-```
-
-`source` may be a file path or an EasyLanguage source string.
-
-### Install
-
-```shell
-pip install .
-```
-
-Requires Python `>=3.14`. `TsDevClient` uses only the standard library.
-
-### Example
-
-```python
-from tsdev_automation import TsDevClient, BatchItem
-
-client = TsDevClient()  # use_serve=True by default; one UAC prompt if not elevated
-
-src = '{ name = MyFn }  { user function }  Value1 = 1;'
-
-ins = client.insert('function', 'MyFn', src)
-# ins: TsDevResult -> .success=True, .prog_id, .ell_path
-r = client.exists('function', 'MyFn', case_insensitive=True)
-# r: TsDevResult -> .exists, .stored_name, .prog_id
-print(r.exists, r.stored_name, r.prog_id)
-g = client.get_source('function', 'MyFn')
-# g: TsDevResult -> .source (str)
-print(g.source)
+client.insert('function', 'MyFn', '.\\MyFn.el')
+r = client.exists('function', 'MyFn')
+print(r.exists, r.stored_name)  # True 'MyFn'
+src = client.get_source('function', 'MyFn')
 client.delete('function', 'MyFn')
-
-# batch
-items = [
-    BatchItem('function', 'FnA', 'Value1 = 1;'),
-    BatchItem('indicator', 'IndA', 'Plot(Close, "C");'),
-]
-results = client.batch_insert(items)
-# results: list[TsDevResult], one per item in order; per-item failures stay in the list
 ```
 
-## Notes
+Methods: `insert`, `modify`, `upsert`, `delete`, `exists`, `get_source`, plus `batch_insert`/`batch_modify`/`batch_upsert`/`batch_delete` (and `*_dir` variants). Full details: `docs/BUNDLE_README.md`.
 
-- TradeStation install path: use `--ts-path <dir>` or `ts_path=<dir>` when the default registry auto-discovery is wrong.
-- A TradeStation popup or crash dialog during an operation means the operation failed. Read the message, dismiss it, and make sure you have the right TS version and followed the usage guidelines. When in doubt, try again.
+---
 
+## Advanced / technical
+
+*Everything below this line is for developers and curious users — not needed to use the tool.*
+
+- **Building from source:** C++, Visual Studio Build Tools, CMake — `cmake -S . -B build -A Win32`, then `cmake --build build --config Release`. The build assembles the `dist/` bundle and a timestamped zip in `artifacts/` (`tools/create_bundle_zip.ps1`). CI (`.github/workflows/ci.yml`) builds, tests, and attaches the bundle zip to `v*` releases.
+- **How it works:** `tsdev_cli.exe` is 32-bit and drives the same `orlib20.dll`/WHServer machinery `TSDev.exe` uses — no UI automation. Built-in guards watch WHServer's health and abort rather than let a runaway batch damage the library.
+- **Deep documentation:** project rules and process in `AGENTS.md`; reverse-engineered facts about TSDev/orlib20 in `docs/KNOWLEDGE_BASE.md`; WHServer internals and recovery design in `docs/HANDOFF_WHServer_VAS_recovery.md`; the complete flag/exit-code/Python reference in `docs/BUNDLE_README.md`.
+- **Tests:** `tests\run_regression.ps1` (use `-NoTs` on machines without TradeStation); C++ unit-test inventory in `tests\run_unit_tests.ps1`.
+- **Exit codes:** `0` success; `11` not elevated; `8` compile failure; `5` not found / already exists; `14`/`15`/`18`/`19` safety-abort family (the run stopped before it could do harm — see `docs/BUNDLE_README.md` for the full table).
