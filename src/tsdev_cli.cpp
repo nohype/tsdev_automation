@@ -187,7 +187,12 @@
 //
 // --recycle-whserver (batch-*/serve only) authorizes restarting WHServer.exe
 // when the VAS-headroom guard trips (design: tmp/RECYCLE_ENGINE_DESIGN.md).
-// The flag AUTHORIZES the recycle — it never bypasses the safety gate: the
+// Authorization is TRI-STATE: Off (--no-recycle-whserver / TSDEV_NO_RECYCLE_WHSERVER)
+// = today's plain-abort behavior; RescueOnly (DEFAULT) = the band always
+// continues and only a below-floor breach attempts the boundary (the
+// rescue); Full (the explicit flag / TSDEV_RECYCLE_WHSERVER) = band
+// recycles too, plus the 5-line warning. Any mode never bypasses the
+// safety gate: the
 // engine still requires a zero-client census, and a gate/stage refusal exits
 // 19 (whserver_recycle_refused); a successful recycle exits 18
 // (whserver_recycled) so the batch resumes in a fresh process (serve: the
@@ -201,13 +206,17 @@
 // bounded close stage so the process exits GRACEFULLY and releases the
 // +7; a failed/uncertain close refuses on the close-stage family (exit
 // 19, TerminateProcess-self). The resumed process/broker runs the engine
-// at its own never-attached guard site. Env mirror: TSDEV_RECYCLE_WHSERVER (any value
-// but "0"; the explicit flag wins over env "0" — OR-ed presence semantics).
-// Conflicts (usage error exit 1): --no-whserver-vas-guard (a recycle can
-// never trigger with the guard disabled) and --batch-progress-control (the
-// stdin control channel belongs to the dying process — a mid-batch recycle
-// exit would strand it). The §6.3 residual-race warning is printed once per
-// process lifetime when the flag is in effect. The recycle boundary is
+// at its own never-attached guard site. Env mirrors: TSDEV_RECYCLE_WHSERVER
+// and TSDEV_NO_RECYCLE_WHSERVER (presence-not-"0"; an explicit flag wins
+// over an opposite-polarity env; env-vs-env conflict -> negative wins).
+// Conflicts (usage error exit 1) apply to EXPLICIT Full authorization only:
+// --no-whserver-vas-guard (a recycle can never trigger with the guard
+// disabled) and --batch-progress-control (the stdin control channel belongs
+// to the dying process — a mid-batch recycle exit would strand it;
+// RescueOnly + control is silently downgraded to Off with a NOTE). The
+// §6.3 residual-race warning is printed once per process lifetime under
+// explicit Full; the RescueOnly default prints a one-line NOTE instead.
+// The recycle boundary is
 // wired at all three guard sites and exits 18/19 are emitted with the
 // recycle not-run markers appended to the results array (the error.code
 // mappings are live). On a recycle exit the CLI also writes a resume manifest
@@ -423,12 +432,14 @@ void printUsage() {
         "                   valid range 0..86400.\n"
         "  --whserver-free-mb <N>  (batch-*/serve) WHServer VAS-headroom guard:\n"
         "                   the RECYCLE TRIGGER on total free user address\n"
-        "                   space -- a breach asks for a server restart (with\n"
-        "                   --recycle-whserver), it is NOT a danger level.\n"
-        "                   Below the trigger but above the abort floor the\n"
-        "                   batch keeps working in-process whenever the restart\n"
-        "                   cannot happen (unauthorized, or another\n"
-        "                   TradeStation program holds the server). Default 256.\n"
+        "                   space -- a breach asks for a server restart only\n"
+        "                   with explicit --recycle-whserver; it is NOT a\n"
+        "                   danger level. Below the trigger but above the\n"
+        "                   abort floor the batch keeps working in-process\n"
+        "                   unless the restart happens (the default recycles\n"
+        "                   only near the abort floor, and another\n"
+        "                   TradeStation program holding the server always\n"
+        "                   blocks it). Default 256.\n"
         "                   Env: TSDEV_WHSERVER_FREE_MB.\n"
         "  --whserver-largest-free-mb <N>  (batch-*/serve) same trigger on the\n"
         "                   largest contiguous free block (fragmentation kills\n"
@@ -437,8 +448,10 @@ void printUsage() {
         "  --whserver-abort-free-mb <N>  (batch-*/serve) the actual abort floor\n"
         "                   on total free user address space: below N MB the\n"
         "                   batch aborts (exit 14, remaining items become\n"
-        "                   exit-12 not-run markers) unless an authorized\n"
-        "                   recycle boundary resolves it. Default 64.\n"
+        "                   exit-12 not-run markers) unless the recycle\n"
+        "                   boundary resolves it (the default RescueOnly mode\n"
+        "                   rescues here; --no-recycle-whserver disables even\n"
+        "                   that). Default 64.\n"
         "                   Env: TSDEV_WHSERVER_ABORT_FREE_MB.\n"
         "  --whserver-abort-largest-free-mb <N>  (batch-*/serve) same abort\n"
         "                   floor on the largest contiguous free block.\n"
@@ -446,21 +459,37 @@ void printUsage() {
         "  --no-whserver-vas-guard  (batch-*/serve) disable the WHServer\n"
         "                   VAS-headroom guard entirely. Env:\n"
         "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
-        "  --recycle-whserver  (batch-*/serve) authorize restarting\n"
-        "                   WHServer.exe when the VAS-headroom guard trips.\n"
-        "                   The restart is still gated on a zero-client\n"
-        "                   census -- the flag AUTHORIZES the recycle, it does\n"
-        "                   NOT bypass the census gate: when the gate cannot\n"
-        "                   confirm zero foreign-held objects the batch aborts\n"
-        "                   (exit 19). A successful recycle exits 18 so the\n"
-        "                   batch resumes in a fresh process (serve: the\n"
-        "                   elevated broker respawns -- a non-elevated client\n"
-        "                   gets one UAC prompt per respawn). Not valid with\n"
-        "                   --no-whserver-vas-guard or --batch-progress-control.\n"
-        "                   Presence-only: any '=' value is ignored; no\n"
-        "                   negative form -- env \"0\" disables the env arm\n"
-        "                   only, never the flag.\n"
+        "  --recycle-whserver  (batch-*/serve) EXPLICITLY authorize\n"
+        "                   restarting WHServer.exe on ANY guard breach\n"
+        "                   (the trigger band included). The restart is\n"
+        "                   still gated on a zero-client census -- the flag\n"
+        "                   AUTHORIZES the recycle, it does NOT bypass the\n"
+        "                   census gate: when the gate cannot confirm zero\n"
+        "                   foreign-held objects the batch aborts (exit 19).\n"
+        "                   A successful recycle exits 18 so the batch\n"
+        "                   resumes in a fresh process (serve: the elevated\n"
+        "                   broker respawns -- a non-elevated client gets one\n"
+        "                   UAC prompt per respawn). Not valid with\n"
+        "                   --no-whserver-vas-guard or\n"
+        "                   --batch-progress-control.\n"
+        "                   Presence-only: any '=' value is ignored.\n"
         "                   Env: TSDEV_RECYCLE_WHSERVER (any value but \"0\").\n"
+        "  --no-recycle-whserver  (batch-*/serve) EXPLICITLY disable the\n"
+        "                   WHServer recycle: a trigger-band breach keeps\n"
+        "                   working in-process and a breach below the abort\n"
+        "                   floor hard-aborts (exit 14) instead of\n"
+        "                   attempting the auto-restart rescue. Presence-\n"
+        "                   only: any '=' value is ignored; beats the\n"
+        "                   opposite-polarity TSDEV_RECYCLE_WHSERVER env.\n"
+        "                   Env: TSDEV_NO_RECYCLE_WHSERVER (any value but\n"
+        "                   \"0\").\n"
+        "                   Default (neither flag/env): RescueOnly -- the\n"
+        "                   recycle is reserved for the abort-floor rescue\n"
+        "                   (a below-floor breach attempts the restart; a\n"
+        "                   trigger-band breach always continues\n"
+        "                   in-process). Both polarity flags together are a\n"
+        "                   usage error; two conflicting env vars resolve to\n"
+        "                   the negative arm.\n"
         "                   (On a recycle exit the CLI writes a resume\n"
         "                   manifest covering the not-run tail -- resubmit\n"
         "                   `batch-<op> <resume-file>`; the Python client\n"
@@ -5335,18 +5364,27 @@ struct VasGuardWarns {
     bool continued = false;
 };
 
-// WHServer gated auto-recycle authorization (design
-// tmp/RECYCLE_ENGINE_DESIGN.md §6.1). `authorized` is the OR-ed presence of
-// the --recycle-whserver flag and the TSDEV_RECYCLE_WHSERVER env mirror
-// (env set-and-not-"0"; there is no negative flag form, so env "0" never
-// vetoes an explicit flag). The flag authorizes the recycle engine (R3+)
-// — it never bypasses the zero-client census gate.
+// WHServer gated auto-recycle authorization, tri-state (design
+// tmp/RECYCLE_ENGINE_DESIGN.md Section 6.1 + the tri-state recycle-authorization
+// addendum). `mode` is resolved once per process by resolveRecycleMode()
+// from the --recycle-whserver / --no-recycle-whserver flags and the
+// TSDEV_RECYCLE_WHSERVER / TSDEV_NO_RECYCLE_WHSERVER env mirrors:
+//   RescueOnly (DEFAULT) the recycle is reserved for the abort-floor
+//                        rescue -- a below-floor breach attempts the
+//                        recycle boundary, a trigger-band breach always
+//                        continues in-process;
+//   Full                 explicit opt-in: the full gated-recycle
+//                        behavior (band + floor arms, conflict refusals,
+//                        5-line warning);
+//   Off                  explicit opt-out: today's unauthorized behavior
+//                        (band continue, below-floor hard abort exit 14).
+// The mode never bypasses the zero-client census gate.
 struct RecycleConfig {
-    bool authorized       = false;
-    // Source attribution for refusal messages: true when authorization
-    // came ONLY from the TSDEV_RECYCLE_WHSERVER env mirror (no explicit
-    // --recycle-whserver flag seen), so a refusal can name the env var
-    // instead of misattributing the flag.
+    RecycleMode mode      = RecycleMode::RescueOnly;
+    // Source attribution for refusal messages: true when Full
+    // authorization came ONLY from the TSDEV_RECYCLE_WHSERVER env mirror
+    // (no explicit --recycle-whserver flag seen), so a refusal can name
+    // the env var instead of misattributing the flag.
     bool authorizedViaEnv = false;
 };
 
@@ -5373,28 +5411,34 @@ bool isRecycleWhserverSubcommand(const std::string& sub) {
     return isBatchSubcommand(sub) || iequals(sub, "serve");
 }
 
-// §6.1 validation — run AFTER the elevation guard, same convention as
-// --batch-progress-control. Returns true when the combination is legal;
-// on a violation fills `r` (exitCode 1 + errorMessage + humanStderr) and
-// returns false. Checked in the design's order:
-//   1. authorized + VAS guard disabled (--no-whserver-vas-guard /
-//      TSDEV_NO_WHSERVER_VAS_GUARD) -> usage error: recycling can never
-//      trigger with the guard disabled — a user error, not a silent no-op.
-//   2. authorized + --batch-progress-control -> usage error, refused UP
+// Section 6.1 validation -- scoped to EXPLICIT Full authorization only. The
+// default RescueOnly mode and an explicit Off opt-out are never refused:
+// RescueOnly's recycle is inert outside the abort-floor rescue (a band
+// breach always continues), and Off disables it entirely, so the
+// --no-whserver-vas-guard / --batch-progress-control / single-op
+// combinations cannot produce the broken states the refusals exist for.
+// Returns true when the combination is legal; on a violation fills `r`
+// (exitCode 1 + errorMessage + humanStderr) and returns false. Checked in
+// the design's order (Full mode only):
+//   1. Full + VAS guard disabled (--no-whserver-vas-guard /
+//      TSDEV_NO_WHSERVER_VAS_GUARD) -> usage error: neither the band
+//      recycle nor the floor rescue can ever trigger with the guard
+//      disabled -- a user error, not a silent no-op.
+//   2. Full + --batch-progress-control -> usage error, refused UP
 //      FRONT: the stdin control channel (readBatchControlDecision) belongs
-//      to the DYING process — a mid-batch recycle exit would strand the
+//      to the DYING process -- a mid-batch recycle exit would strand the
 //      open channel and the not-run tail's decision state could not be
 //      replayed into the resumed process.
-//   3. authorized on a single-op/unknown subcommand -> usage error.
-// `authorizedViaEnv` is true when authorization came ONLY from the
+//   3. Full on a single-op/unknown subcommand -> usage error.
+// `authorizedViaEnv` is true when Full authorization came ONLY from the
 // TSDEV_RECYCLE_WHSERVER env mirror: refusals then name the env source
 // and the remedy (unset the env var / drop the conflicting flag) instead
 // of misattributing an explicit --recycle-whserver flag.
-bool validateRecycleWhserver(bool authorized, bool authorizedViaEnv,
+bool validateRecycleWhserver(RecycleMode mode, bool authorizedViaEnv,
                              bool vasGuardEnabled,
                              bool batchControl, const std::string& subcommand,
                              CliResult& r) {
-    if (!authorized) return true;
+    if (mode != RecycleMode::Full) return true;
     const std::string envNote =
         authorizedViaEnv
             ? " (authorized via TSDEV_RECYCLE_WHSERVER -- unset the env var "
@@ -5440,6 +5484,26 @@ const char kRecycleWhserverWarning[] =
     "another TradeStation program is using the server -- and writes a\n"
     "resume file for the remaining items. See docs/BUNDLE_README.md.\n";
 
+// Tri-state default NOTE -- one line, once per process/broker lifetime,
+// emitted for batch-*/serve runs in the DEFAULT RescueOnly mode (Full
+// prints the 5-line warning above; Off prints nothing). Tells the user the
+// floor-rescue auto-restart is on by default and how to disable it.
+const char kRecycleRescueDefaultNote[] =
+    "tsdev_cli: NOTE WHServer auto-restart near the abort floor is on by "
+    "default -- disable with --no-recycle-whserver or "
+    "TSDEV_NO_RECYCLE_WHSERVER=1\n";
+
+// Tri-state suppression NOTE -- one line, once per process/broker
+// lifetime, emitted for a RescueOnly batch run under
+// --batch-progress-control (which is NOT refused in this mode): names the
+// suppression instead of the default NOTE (the rescue cannot fire in this
+// run -- the control channel belongs to the dying process -- so claiming
+// it is "on" would be false).
+const char kRecycleControlSuppressedNote[] =
+    "tsdev_cli: NOTE WHServer auto-restart near the abort floor is "
+    "suppressed for this run by --batch-progress-control (the control "
+    "channel belongs to the dying process)\n";
+
 // Emit the §6.3 warning once per process lifetime (the static guard makes
 // the once-per-process/broker-lifetime contract explicit and testable).
 void emitRecycleWhserverWarning() {
@@ -5447,6 +5511,26 @@ void emitRecycleWhserverWarning() {
     if (warned) return;
     warned = true;
     std::fputs(kRecycleWhserverWarning, stderr);
+}
+
+// Emit the tri-state default NOTE once per process lifetime (same
+// once-per-process/broker-lifetime contract as the Section 6.3 warning; a
+// respawned serve broker is a new process and re-emits it).
+void emitRecycleRescueDefaultNote() {
+    static bool noted = false;
+    if (noted) return;
+    noted = true;
+    std::fputs(kRecycleRescueDefaultNote, stderr);
+}
+
+// Emit the tri-state suppression NOTE once per process lifetime (same
+// latch contract; mutually exclusive with the default NOTE by the
+// emission-site condition -- batchControl present or not).
+void emitRecycleControlSuppressedNote() {
+    static bool noted = false;
+    if (noted) return;
+    noted = true;
+    std::fputs(kRecycleControlSuppressedNote, stderr);
 }
 
 // Presence-semantics env read for the TSDEV_RECYCLE_WHSERVER boolean env
@@ -5458,13 +5542,53 @@ bool envPresenceEnabled(const char* name) {
     return n > 0 && n < sizeof(envBuf) && !(n == 1 && envBuf[0] == '0');
 }
 
-// OR-ed flag/env composition for --recycle-whserver authorization
-// (design §6.1): the explicit flag OR TSDEV_RECYCLE_WHSERVER
-// set-and-not-"0". The env read lives inside so the whole precedence is
-// pinnable in the same TU — env "0" never vetoes an explicit flag (there
-// is no negative flag form).
-bool resolveRecycleAuthorized(bool flagSeen) {
-    return flagSeen || envPresenceEnabled("TSDEV_RECYCLE_WHSERVER");
+// Tri-state flag/env composition for the WHServer recycle authorization
+// (design Section 6.1 + the tri-state addendum). The whole precedence is
+// pinnable
+// in the same TU -- the env reads live inside. Returns false ONLY for the
+// both-flags conflict (rule a), filling `err`; otherwise writes `out`:
+//   a. both polarity FLAGS present -> usage error (main exits 1);
+//   b. an explicit flag beats the opposite-polarity env var
+//      (--recycle-whserver beats TSDEV_NO_RECYCLE_WHSERVER and vice versa);
+//   c. env-vs-env conflict -> the NEGATIVE arm wins (conservative);
+//   d. else TSDEV_RECYCLE_WHSERVER presence -> Full;
+//      TSDEV_NO_RECYCLE_WHSERVER presence -> Off; else RescueOnly.
+// An env value of "0" only NEUTRALIZES ITS OWN ENV ARM (presence-not-"0"
+// fails): TSDEV_RECYCLE_WHSERVER="0" does not opt out of the RescueOnly
+// default and never vetoes an explicit flag.
+bool resolveRecycleMode(bool flagSeen, bool noFlagSeen, RecycleMode& out,
+                        std::string& err) {
+    if (flagSeen && noFlagSeen) {
+        err = "--recycle-whserver and --no-recycle-whserver cannot be "
+              "combined";
+        return false;
+    }
+    if (flagSeen) {           // (b) explicit opt-in beats the negative env
+        out = RecycleMode::Full;
+        return true;
+    }
+    if (noFlagSeen) {         // (b) explicit opt-out beats the positive env
+        out = RecycleMode::Off;
+        return true;
+    }
+    const bool envOn =
+        envPresenceEnabled("TSDEV_RECYCLE_WHSERVER");
+    const bool envOff =
+        envPresenceEnabled("TSDEV_NO_RECYCLE_WHSERVER");
+    if (envOn && envOff) {    // (c) conflict -> negative wins
+        out = RecycleMode::Off;
+        return true;
+    }
+    if (envOn) {              // (d)
+        out = RecycleMode::Full;
+        return true;
+    }
+    if (envOff) {             // (d)
+        out = RecycleMode::Off;
+        return true;
+    }
+    out = RecycleMode::RescueOnly;  // (d) the default
+    return true;
 }
 
 // Effective --log-file path composition: the explicit flag wins over the
@@ -5815,7 +5939,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                 p->vasGuard.largestThresholdMB,
                 p->vasGuard.abortFreeMB,
                 p->vasGuard.abortLargestFreeMB,
-                foreignClients, p->recycle.authorized);
+                foreignClients, p->recycle.mode);
             const char* decision = "pass";
             switch (act) {
             case tsdev::VasGuardAction::Continue:
@@ -5869,14 +5993,20 @@ DWORD WINAPI runBatch(LPVOID param) {
                     tsdev::vasBreach(freeMB, largestMB,
                                      p->vasGuard.abortFreeMB,
                                      p->vasGuard.abortLargestFreeMB);
-                // Truthful machine-readable reason for the summary:
-                // name the breaching metric + measured MB. Total-free
-                // is checked first; when both breach, report it.
-                abortReason =
-                    (freeMB < p->vasGuard.freeThresholdMB)
-                    ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
-                    : "whserver_vas_largest_free=" +
-                          std::to_string(largestMB) + "MB";
+                // Truthful machine-readable reason for the summary: name
+                // the metric that crossed the threshold that FIRED this
+                // boundary -- the abort floor below the floor, the
+                // restart trigger for an authorized above-floor recycle
+                // boundary (vasGuardAction's own split). vasAbortReason
+                // picks the deeper relative breach when both crossed;
+                // equal ratios report the largest block (fragmentation
+                // is the sharper danger).
+                abortReason = tsdev::vasAbortReason(
+                    freeMB, largestMB,
+                    abortBelowFloor ? p->vasGuard.abortFreeMB
+                                    : p->vasGuard.freeThresholdMB,
+                    abortBelowFloor ? p->vasGuard.abortLargestFreeMB
+                                    : p->vasGuard.largestThresholdMB);
                 return;
             }
         }
@@ -6027,8 +6157,9 @@ DWORD WINAPI runBatch(LPVOID param) {
     // R1: this is a NEVER-ATTACHED site — the engine may run in-process
     // here (see recycleSiteDefers); a between-items attached-site breach
     // defers via exit 18 and lands back HERE on resume to do the actual
-    // recycle.
-    if (aborted && p->recycle.authorized) {
+    // recycle. Tri-state: every mode except Off takes the boundary here
+    // (the default RescueOnly includes the below-floor rescue).
+    if (aborted && p->recycle.mode != tsdev::RecycleMode::Off) {
         const tsdev::RecycleResult rec =
             runWhserverRecycleCli(lib, /*ownSessionExists=*/false);
         if (rec.outcome == tsdev::RecycleOutcome::Recycled) {
@@ -6185,8 +6316,10 @@ DWORD WINAPI runBatch(LPVOID param) {
             // failed/bounded-out close REFUSES the defer on the §5
             // close-stage family — emit + flush +
             // TerminateProcess-self(19), the open-session teardown
-            // class.
-            if (aborted && p->recycle.authorized) {
+            // class. Tri-state: every mode except Off takes the boundary
+            // here (the default RescueOnly includes the below-floor
+            // rescue; a band breach can only reach it in Full mode).
+            if (aborted && p->recycle.mode != tsdev::RecycleMode::Off) {
                 tsdev::WhRecycleSampler deferSampler;
                 const tsdev::RecycleResult rec =
                     recycleSiteDefers(anyOpDispatched)
@@ -7331,7 +7464,10 @@ bool serveVasGuardRefuse(const ServeRequest& req,
     auto refuseGuard = [&](const std::string& reason,
                            const std::string& plainMessage,
                            bool belowAbortFloor) -> bool {
-        if (recycle && recycle->authorized && lib) {
+        // Tri-state: the boundary runs in RescueOnly and Full (Off keeps
+        // today's plain exit-14 refusal); a null config (unit-test
+        // callers) never runs the boundary either.
+        if (recycle && recycle->mode != tsdev::RecycleMode::Off && lib) {
             const bool deferred = recycleSiteDefers(sessionAttached);
             tsdev::RecycleResult rec;
             if (deferred) {
@@ -7457,7 +7593,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
             freeMB, largestMB, vasGuard.freeThresholdMB,
             vasGuard.largestThresholdMB, vasGuard.abortFreeMB,
             vasGuard.abortLargestFreeMB, foreignLatched,
-            recycle && recycle->authorized);
+            recycle ? recycle->mode : tsdev::RecycleMode::RescueOnly);
         const char* decision = "pass";
         switch (act) {
         case tsdev::VasGuardAction::Continue:
@@ -7498,18 +7634,22 @@ bool serveVasGuardRefuse(const ServeRequest& req,
             emitBatchProgress(whserverVasAbortLine(
                 whPid, vst, vasGuard.freeThresholdMB,
                 vasGuard.largestThresholdMB, jsonProgress));
-            // Same truthfulness rule as runBatch: name the breaching metric
-            // + measured MB (total-free is checked first; when both breach,
-            // report it).
-            const std::string reason =
-                (freeMB < vasGuard.freeThresholdMB)
-                ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
-                : "whserver_vas_largest_free=" +
-                      std::to_string(largestMB) + "MB";
             const bool belowFloor =
                 (act == tsdev::VasGuardAction::Abort) ||
                 tsdev::vasBreach(freeMB, largestMB, vasGuard.abortFreeMB,
                                  vasGuard.abortLargestFreeMB);
+            // Same truthfulness rule as runBatch: name the metric that
+            // crossed the threshold that fired this refusal -- the abort
+            // floor below the floor, the restart trigger for an
+            // authorized above-floor recycle boundary. vasAbortReason
+            // picks the deeper relative breach when both crossed; equal
+            // ratios report the largest block.
+            const std::string reason = tsdev::vasAbortReason(
+                freeMB, largestMB,
+                belowFloor ? vasGuard.abortFreeMB
+                           : vasGuard.freeThresholdMB,
+                belowFloor ? vasGuard.abortLargestFreeMB
+                           : vasGuard.largestThresholdMB);
             if (!refuseGuard(reason,
                              "WHServer VAS headroom below threshold: free=" +
                              std::to_string(freeMB) + "MB largest=" +
@@ -8236,11 +8376,14 @@ int main(int argc, char** argv) {
     bool vasAbortFreeFlagSet = false;    // --whserver-abort-free-mb seen
     bool vasAbortLargestFlagSet = false; // --whserver-abort-largest-free-mb seen
     bool traverseStrategyDependents = false;  // --traverse-strategy-dependents
-    // WHServer gated auto-recycle (design tmp/RECYCLE_ENGINE_DESIGN.md §6.1):
-    // presence boolean parsed in the global pre-scan like --json; the
-    // TSDEV_RECYCLE_WHSERVER env mirror is OR-ed in below (env "0" never
-    // vetoes an explicit flag — no negative flag form exists).
+    // WHServer gated auto-recycle, tri-state (design
+    // tmp/RECYCLE_ENGINE_DESIGN.md Section 6.1 + the tri-state addendum):
+    // mode resolved once below from the two
+    // polarity flags and the TSDEV_RECYCLE_WHSERVER /
+    // TSDEV_NO_RECYCLE_WHSERVER env mirrors.
     RecycleConfig recycle;
+    bool recycleFlagSeen = false;    // --recycle-whserver seen
+    bool recycleNoFlagSeen = false;  // --no-recycle-whserver seen
     // TVS-3: dispatch watchdog bound in seconds (0 disables). Default 300 —
     // far above the ~3.4 s legit max single-dispatch duration, far below
     // forever. --dispatch-timeout-secs / TSDEV_DISPATCH_TIMEOUT_SECS.
@@ -8467,11 +8610,18 @@ int main(int argc, char** argv) {
             vasGuard.enabled = false;
         } else if (arg == "--recycle-whserver" ||
                    arg.rfind("--recycle-whserver=", 0) == 0) {
-            // Boolean switch like --json: presence authorizes the gated
-            // WHServer recycle; a '=' value is ignored; repeats are
-            // harmless (idempotent). Valid only with batch-*/serve —
-            // validated after the elevation guard below.
-            recycle.authorized = true;
+            // Presence switch: EXPLICIT Full authorization (the full
+            // gated-recycle behavior); a '=' value is ignored; repeats
+            // are harmless (idempotent). Valid only with batch-*/serve --
+            // validated after the elevation guard below (Full mode only).
+            recycleFlagSeen = true;
+        } else if (arg == "--no-recycle-whserver" ||
+                   arg.rfind("--no-recycle-whserver=", 0) == 0) {
+            // Presence switch: EXPLICIT Off opt-out (today's unauthorized
+            // behavior -- band continue, below-floor hard abort exit 14);
+            // a '=' value is ignored; repeats are harmless (idempotent).
+            // Beats the opposite-polarity TSDEV_RECYCLE_WHSERVER env var.
+            recycleNoFlagSeen = true;
         } else if (arg == "--traverse-strategy-dependents" ||
                    arg.rfind("--traverse-strategy-dependents=", 0) == 0) {
             // Boolean switch like --json: presence restores the legacy
@@ -8665,17 +8815,18 @@ int main(int argc, char** argv) {
             !(n == 1 && envBuf[0] == '0')) {
             traverseStrategyDependents = true;
         }
-        // TSDEV_RECYCLE_WHSERVER: any value other than "0" authorizes the
-        // gated WHServer recycle (same presence semantics; OR-ed — env "0"
-        // does NOT veto an explicit --recycle-whserver flag, pinned in
-        // design §6.1/§4.3). authorizedViaEnv records flag-vs-env source
-        // so refusals attribute the right arm (env-only authorization
-        // names TSDEV_RECYCLE_WHSERVER, not the flag).
-        {
-            const bool recycleFlagSeen = recycle.authorized;
-            recycle.authorized = resolveRecycleAuthorized(recycleFlagSeen);
-            recycle.authorizedViaEnv = recycle.authorized && !recycleFlagSeen;
-        }
+        // Tri-state WHServer recycle resolution: the two polarity flags
+        // and the TSDEV_RECYCLE_WHSERVER / TSDEV_NO_RECYCLE_WHSERVER env
+        // mirrors (both presence-not-"0"). Precedence pinned in
+        // resolveRecycleMode: both flags -> usage error; an explicit flag
+        // beats the opposite-polarity env; env-vs-env conflict -> the
+        // negative arm wins; else the env arms, else the RescueOnly
+        // default. authorizedViaEnv records the flag-vs-env source for
+        // Full so refusals attribute the right arm (env-only
+        // authorization names TSDEV_RECYCLE_WHSERVER, not the flag).
+        // Resolved AFTER the elevation guard (below, next to the Section
+        // 6.1 validation) so a non-elevated caller still gets exit 11
+        // first -- same convention as the other recycle-flag usage errors.
         // TVS-3: TSDEV_DISPATCH_TIMEOUT_SECS env mirror for the dispatch
         // watchdog bound; the explicit --dispatch-timeout-secs flag wins
         // (same convention as TSDEV_WHSERVER_*; a garbage/missing value
@@ -8897,12 +9048,33 @@ int main(int argc, char** argv) {
 
     // --recycle-whserver (design §6.1): validated here, AFTER the unchanged
     // elevation guard (a non-elevated caller still gets exit 11 first) —
-    // same convention as --batch-progress-control. Refuses up front the
-    // --no-whserver-vas-guard and --batch-progress-control combinations and
-    // any non-batch/non-serve subcommand.
+    // same convention as --batch-progress-control. EXPLICIT Full mode only:
+    // refuses up front the --no-whserver-vas-guard and
+    // --batch-progress-control combinations and any non-batch/non-serve
+    // subcommand. The RescueOnly default and an explicit Off opt-out are
+    // never refused (the recycle is inert or absent in those modes).
+    // The tri-state resolution (flags + both env mirrors -> RecycleMode)
+    // runs here too, so its both-flags usage error also follows the
+    // elevation guard.
+    {
+        RecycleMode resolvedMode = RecycleMode::RescueOnly;
+        std::string modeErr;
+        if (!resolveRecycleMode(recycleFlagSeen, recycleNoFlagSeen,
+                                resolvedMode, modeErr)) {
+            CliResult r;
+            r.exitCode = 1;
+            r.errorMessage = modeErr;
+            r.humanStderr = "Error: " + modeErr + "\n";
+            emitOutput(r, jsonMode);
+            return 1;
+        }
+        recycle.mode = resolvedMode;
+        recycle.authorizedViaEnv =
+            recycle.mode == RecycleMode::Full && !recycleFlagSeen;
+    }
     {
         CliResult r;
-        if (!validateRecycleWhserver(recycle.authorized,
+        if (!validateRecycleWhserver(recycle.mode,
                                      recycle.authorizedViaEnv,
                                      vasGuard.enabled,
                                      batchControl, subcommand, r)) {
@@ -8915,14 +9087,34 @@ int main(int argc, char** argv) {
         }
     }
 
-    // §6.3: emit the residual-race warning once per process lifetime when
-    // the flag is in effect (in serve mode once per broker lifetime — a
-    // respawned broker is a new process that re-emits it). Emitted after
-    // validation so a refused invocation does not warn about a recycle
-    // that cannot happen, and before any subcommand dispatch so it
-    // precedes every process that can recycle.
-    if (recycle.authorized) {
+    // Tri-state notice emission, once per process lifetime (in serve mode
+    // once per broker lifetime -- a respawned broker is a new process that
+    // re-emits). Emitted after validation so a refused invocation does not
+    // warn about a recycle that cannot happen, and before any subcommand
+    // dispatch so it precedes every process that can recycle:
+    //   Full       the full 5-line Section 6.3 warning (explicit opt-in);
+    //   RescueOnly one NOTE line for batch-*/serve runs -- the suppression
+    //              NOTE under --batch-progress-control (the rescue cannot
+    //              fire in that run), else the default NOTE;
+    //   Off        nothing.
+    if (recycle.mode == RecycleMode::Full) {
         emitRecycleWhserverWarning();
+    } else if (recycle.mode == RecycleMode::RescueOnly &&
+               isRecycleWhserverSubcommand(subcommand)) {
+        if (batchControl) emitRecycleControlSuppressedNote();
+        else              emitRecycleRescueDefaultNote();
+    }
+    // Section 6.1 tri-state suppression: a RescueOnly batch run under
+    // --batch-progress-control cannot take a mid-batch recycle boundary
+    // (the stdin control channel belongs to the DYING process -- an
+    // exit-18 boundary would strand it and the not-run tail's decision
+    // state could not be replayed), so the floor rescue is SUPPRESSED and
+    // the run behaves exactly as Off (band continue, below-floor hard
+    // abort exit 14). Full + batchControl is still refused above; the
+    // NOTE above names this suppression. batchControl is batch-* only
+    // (validated), so serve is unaffected.
+    if (recycle.mode == RecycleMode::RescueOnly && batchControl) {
+        recycle.mode = RecycleMode::Off;
     }
 
     // Cache phase (--backup-cache / --restore-cache): runs after ALL

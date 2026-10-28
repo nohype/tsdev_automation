@@ -9,6 +9,8 @@
 //         outPath, err)                               — §4.1 step-2 writer
 //   - cancelledBatchItemResult(op, item, message)     — marker shape
 //   - batchCompletedLine(..., aborted, abortReason)   — recycle summary
+//   - RecycleConfig tri-state defaults + mode->vasGuardAction wiring
+//     (check 16, tri-state authorization addendum)
 //
 // Round-trip guarantee under test: a resume manifest written by
 // writeResumeManifest is re-read by parseManifest() with the SAME schema,
@@ -1349,6 +1351,62 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout, "    PASS: two-threshold continuation policy "
                              "(config defaults, census_lock classification, "
                              "notice renderings)\n");
+    }
+
+    // -------------------------------------------------------------------
+    // Check 16: the tri-state recycle-authorization config (design
+    // addendum) -- RecycleConfig defaults to RescueOnly (the recycle is
+    // reserved for the abort-floor rescue) with no env attribution, and
+    // the mode feeds vasGuardAction exactly as pinned in
+    // test_whserver_health group 7 (wired here through the config type
+    // the batch/serve guards actually hold).
+    // -------------------------------------------------------------------
+    {
+        // Defaults pin: RescueOnly, no env attribution.
+        RecycleConfig cfg;
+        if (cfg.mode != tsdev::RecycleMode::RescueOnly ||
+            cfg.authorizedViaEnv) {
+            ec = fail("check16: RecycleConfig defaults drifted", 170);
+            return 0;
+        }
+
+        // The config's mode drives the guard decision: below the abort
+        // floor the default config attempts the rescue; an Off config
+        // hard-aborts; a Full config attempts in the band too (latch
+        // permitting) while RescueOnly never does.
+        auto act = [](const RecycleConfig& rc, uint64_t freeMB,
+                      uint64_t largestMB, bool foreign) {
+            return tsdev::vasGuardAction(
+                freeMB, largestMB, /*triggerTotalMB=*/256,
+                /*triggerContigMB=*/64, /*floorTotalMB=*/64,
+                /*floorContigMB=*/32, foreign, rc.mode);
+        };
+        if (act(RecycleConfig(), 10, 200, false) !=
+                tsdev::VasGuardAction::AttemptRecycle) {
+            ec = fail("check16: default config did not rescue below floor",
+                      171);
+            return 0;
+        }
+        if (act(RecycleConfig(), 246, 135, false) !=
+                tsdev::VasGuardAction::Continue) {
+            ec = fail("check16: default config attempted a band recycle",
+                      172);
+            return 0;
+        }
+        RecycleConfig off; off.mode = tsdev::RecycleMode::Off;
+        if (act(off, 10, 200, false) != tsdev::VasGuardAction::Abort) {
+            ec = fail("check16: Off config did not hard-abort below floor",
+                      173);
+            return 0;
+        }
+        RecycleConfig full; full.mode = tsdev::RecycleMode::Full;
+        if (act(full, 246, 135, false) !=
+                tsdev::VasGuardAction::AttemptRecycle) {
+            ec = fail("check16: Full config did not attempt in the band",
+                      174);
+            return 0;
+        }
+        std::fprintf(stdout, "    PASS: tri-state recycle config pins\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

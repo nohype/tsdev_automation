@@ -470,7 +470,10 @@ Implemented in `src\whserver_recycle.{h,cpp}` + `src\whserver_census.h`,
 wired in `src\tsdev_cli.cpp`; Python respawn/resubmit in
 `src\tsdev_automation\client.py`. Authorization = `--recycle-whserver` /
 `TSDEV_RECYCLE_WHSERVER` (batch-* and serve only; conflicts refuse exit
-1) -- it never bypasses the census gate. **Live-verified end-to-end
+1) -- it never bypasses the census gate. *2026-10-28: the binary
+authorization became the tri-state RecycleMode -- Section 8.4
+supersedes the authorization paragraphs below; the engine/census/defer
+machinery and exit codes are unchanged.* **Live-verified end-to-end
 2026-10-21 on this machine in a user-authorized desktop-closed window:**
 refuse arm (`census_lock`, exit 19) and commit arm (exit-18 defer ->
 resume -> ForceShutDown -> SCM respawn -> exit 0) on both the direct CLI
@@ -552,9 +555,10 @@ death zone remains ~10 MB free.
 - **`vasGuardAction()`** (`whserver_health.h`) is the single pure
   decision shared by the batch and serve gates: Pass / Continue /
   AttemptRecycle / Abort. Above the floor the Continue arms are:
-  recycling unauthorized, or the foreign-client latch true. Below the
-  floor authorized still attempts the recycle boundary; unauthorized
-  still aborts (batch exit 14 / serve exit-14 refusal).
+  mode not Full (RescueOnly default or Off), or the foreign-client
+  latch true. Below the floor mode != Off still attempts the recycle
+  boundary (RescueOnly rescue + Full); Off still aborts (batch exit 14 /
+  serve exit-14 refusal).
 - **Foreign-client latch**: `whServerHasForeignClients()`
   (`whserver_census.h`, injected enumerate/image/readLock seams) probes
   `m_nLock` once per probed-build WHServer pid; it is sampled in both
@@ -576,3 +580,66 @@ death zone remains ~10 MB free.
 - **`abortBelowFloor` context** in `runBatch` records whether the
   boundary breach also dropped below the floor; the zombie pre-check
   arm always sets it (a corpse is a hard stop, never a continue).
+
+### 8.4 Tri-state recycle authorization addendum (2026-10-28)
+
+The binary authorized/unauthorized split became a tri-state
+`tsdev::RecycleMode { Off, RescueOnly, Full }` (`whserver_health.h`),
+resolved once per process by `resolveRecycleMode()` (`tsdev_cli.cpp`)
+into `RecycleConfig.mode`:
+
+- **RescueOnly (DEFAULT):** the recycle is reserved for the abort-floor
+  rescue -- a below-floor breach attempts the boundary (the 8.3 arms
+  unchanged), a trigger-band breach ALWAYS continues in-process. This
+  makes the field fix's fail-closed floor the only place a default run
+  can stop for a restart, without asking any band-level opt-in.
+- **Full (explicit `--recycle-whserver` / `TSDEV_RECYCLE_WHSERVER`
+  presence-not-"0"):** today's full gated-recycle behavior -- band
+  breaches attempt too (latch permitting), the 5-line Section 6.3 warning, and
+  the exit-1 conflict refusals (guard-off / batch-progress-control /
+  non-batch subcommand), which are scoped to this mode only.
+- **Off (explicit `--no-recycle-whserver` / `TSDEV_NO_RECYCLE_WHSERVER`
+  presence-not-"0"):** the pre-tri-state unauthorized behavior -- band
+  continue, below-floor hard abort exit 14. `TSDEV_RECYCLE_WHSERVER="0"`
+  keeps its pinned neutralize-env-arm-only semantics: it does NOT opt
+  out of the RescueOnly default and never vetoes an explicit flag.
+- **Precedence** (pinned in `test_recycle_whserver_flag` check 3b):
+  both polarity flags -> usage error exit 1; an explicit flag beats the
+  opposite-polarity env var; env-vs-env conflict -> the NEGATIVE arm
+  wins (conservative); else the env arms; else RescueOnly.
+- **Conflict scoping:** the Section 6.1 refusals apply to Full only. The
+  RescueOnly default + `--no-whserver-vas-guard` is legal (guard-off
+  disables the whole guard INCLUDING the rescue -- no trigger can fire);
+  default + `--batch-progress-control` is legal but the floor rescue is
+  SUPPRESSED for that run (a mid-batch exit-18 boundary would strand the
+  stdin control channel -- the run behaves as Off) and a one-line NOTE
+  names the suppression; default + single-op subcommands are naturally
+  inert (the guard only runs for batch-*/serve).
+- **Warning scoping:** Full -> the 5-line `kRecycleWhserverWarning`
+  (unchanged); RescueOnly -> one line per process/broker for batch-*/serve
+  runs (`kRecycleRescueDefaultNote`: "tsdev_cli: NOTE WHServer
+  auto-restart near the abort floor is on by default -- disable with
+  --no-recycle-whserver or TSDEV_NO_RECYCLE_WHSERVER=1"), replaced by
+  `kRecycleControlSuppressedNote` under `--batch-progress-control`; Off ->
+  nothing.
+- **Python client:** `TsDevClient(recycle_whserver=...)` is tri-state
+  (None = follow CLI default/env, forward nothing; True = forward
+  `--recycle-whserver`; False = forward `--no-recycle-whserver` on batch
+  command lines AND the broker launch -- runas drops env, so the
+  negative arm cannot reach the broker otherwise). The client
+  `UserWarning` fires only on explicit authorization (kwarg True or the
+  env var); the noguard/on_progress ValueErrors key on explicit
+  authorization only; a per-call `recycle_whserver=True` next to an
+  explicit ctor opt-out is refused client-side (both polarity flags
+  would be a CLI usage error).
+- **Serve E2E note:** `test_serve_vas_guard_abort` phase 2 (floor ->
+  exit-14) now constructs the client with the explicit
+  `recycle_whserver=False` opt-out to keep pinning the exit-14 refusal;
+  phase 3 (band -> continue) runs on the RescueOnly default. A
+  default-rescue phase (floor breach -> exit-18 boundary + broker
+  respawn) is mechanically possible with the runner's UAC-disabled
+  setup (the respawn auto-elevates; the client respawn+resubmit
+  machinery is live-verified) but recycles the real WHServer up to 3x
+  and requires the desktop-closed window (foreign clients hold
+  `m_nLock` -> `census_lock` refuse arm instead) -- NOT added; add it
+  as an opt-in phase only in an authorized desktop-closed window.

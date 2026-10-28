@@ -1,29 +1,36 @@
 // test_recycle_whserver_flag.cpp
 //
-// Pure unit test for the --recycle-whserver flag surface in
-// src/tsdev_cli.cpp (TVS R2 — flag plumbing only; the recycle engine call
-// sites are R3):
+// Pure unit test for the --recycle-whserver / --no-recycle-whserver flag
+// surface in src/tsdev_cli.cpp (TVS R2 -- flag plumbing only; the recycle
+// engine call sites are R3; tri-state authorization addendum):
 //
-//   - bool isBatchSubcommand(const std::string&)             — shared
+//   - bool isBatchSubcommand(const std::string&)             -- shared
 //     batch-* SSOT list (both flag validations)
-//   - bool isRecycleWhserverSubcommand(const std::string&)   — §6.1 set
-//   - bool validateRecycleWhserver(authorized, authorizedViaEnv,
+//   - bool isRecycleWhserverSubcommand(const std::string&)   -- Section 6.1 set
+//   - bool validateRecycleWhserver(RecycleMode, authorizedViaEnv,
 //         vasGuardEnabled, batchControl, subcommand, CliResult&)
-//                                                           — §6.1 refusals
-//   - bool envPresenceEnabled(const char*)                    — env mirror
+//                                                     -- Section 6.1 refusals
+//   - bool envPresenceEnabled(const char*)                    -- env mirror
 //     presence semantics (set-and-not-"0")
+//   - bool resolveRecycleMode(flagSeen, noFlagSeen, RecycleMode&, err)
+//     -- the tri-state precedence matrix (flags beat env, negative env
+//     wins env-vs-env, default RescueOnly, both flags -> usage error)
 //   - const char kRecycleWhserverWarning[] + emitRecycleWhserverWarning()
-//     -- §6.3 warning text, emitted once per process lifetime
+//     -- Section 6.3 warning text (Full mode), emitted once per process
+//     lifetime
+//   - kRecycleRescueDefaultNote / kRecycleControlSuppressedNote + their
+//     emitters -- the one-line RescueOnly NOTEs (default / suppressed by
+//     --batch-progress-control), each once per process lifetime
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch
 // the TradeStation installation, and performs no privileged I/O (the only
 // environment mutation is SetEnvironmentVariableA on the test's own
-// TSDEV_RECYCLE_WHSERVER probe var, restored afterwards; the only fd
+// TSDEV_*_WHSERVER probe vars, restored afterwards; the only fd
 // redirection is a tmpfile() capture of stderr, restored afterwards).
 // The body runs on a 64 MB-stack worker thread only to match the project's
 // test-harness convention.
 //
-// Linkage mechanism: identical to test_pbar.cpp — the helpers live inside
+// Linkage mechanism: identical to test_pbar.cpp -- the helpers live inside
 // tsdev_cli.cpp's anonymous namespace (internal linkage), so the test
 // #defines TSDEV_CLI_TEST and #includes the .cpp directly (same TU; the
 // file's main() is excluded by the TSDEV_CLI_TEST guard).
@@ -32,26 +39,32 @@
 //   1. isRecycleWhserverSubcommand: all 8 batch-* subcommands + serve pass
 //      (case-insensitive); every single-op subcommand, "", and unknown
 //      tokens fail.
-//   2. validateRecycleWhserver: not-authorized always passes (any other
-//      combination); authorized + batch-* passes; authorized + serve
-//      passes; authorized + guard disabled -> exit-1 refusal;
-//      authorized + --batch-progress-control -> exit-1 refusal; authorized
-//      + a single-op/empty subcommand -> exit-1 refusal. Refusal order:
-//      vasGuard wins over batchControl wins over subcommand. When
-//      authorizedViaEnv is set the refusal names TSDEV_RECYCLE_WHSERVER
-//      and states the remedy (unset env / drop flag) instead of
-//      misattributing an explicit flag.
+//   1b. isBatchSubcommand: exactly the 8 batch-* names.
+//   2. validateRecycleWhserver: RescueOnly and Off NEVER refuse (any other
+//      combination -- the conflicts are scoped to explicit Full
+//      authorization); Full + batch-* passes; Full + serve passes; Full +
+//      guard disabled -> exit-1 refusal; Full + --batch-progress-control
+//      -> exit-1 refusal; Full + a single-op/empty subcommand -> exit-1
+//      refusal. Refusal order: vasGuard wins over batchControl wins over
+//      subcommand. When authorizedViaEnv is set the refusal names
+//      TSDEV_RECYCLE_WHSERVER and states the remedy (unset env / drop
+//      flag) instead of misattributing an explicit flag.
 //   3. envPresenceEnabled: unset -> false, "" -> false, "0" -> false, "1"
 //      -> true, arbitrary -> true.
-//   3b. resolveRecycleAuthorized: the OR-ed flag/env composition itself
-//      (env read inside the helper) — flag alone -> true, env alone ->
-//      true, neither -> false, env "0" never vetoes an explicit flag.
-//      (main()'s pre-scan calls this helper; the env var is the real
-//      TSDEV_RECYCLE_WHSERVER, snapshotted and restored.)
+//   3b. resolveRecycleMode: the tri-state precedence matrix (env reads
+//      inside the helper) -- both flags -> false + error; an explicit
+//      flag beats the opposite-polarity env; env-vs-env conflict -> the
+//      negative arm wins; TSDEV_RECYCLE_WHSERVER presence -> Full;
+//      TSDEV_NO_RECYCLE_WHSERVER presence -> Off; neither -> RescueOnly;
+//      an env "0" only neutralizes its own arm. (main()'s post-scan calls
+//      this helper; the real TSDEV_* vars are snapshotted and restored.)
 //   4. emitRecycleWhserverWarning: emits kRecycleWhserverWarning verbatim
-//      to stderr exactly once (second call emits nothing — the once-per-
+//      to stderr exactly once (second call emits nothing -- the once-per-
 //      process-lifetime guard); the text is the short user-facing warning
 //      (ASCII, <= 5 lines, names the flag/server/resume file/docs).
+//   4b. The RescueOnly NOTEs: each emitter writes its one-line NOTE
+//      verbatim exactly once (second call emits nothing), ASCII only,
+//      and the two texts are distinct.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -154,28 +167,44 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 2: validateRecycleWhserver — every §6.1 arm.
+    // Check 2: validateRecycleWhserver -- every Section 6.1 arm, scoped to
+    // EXPLICIT Full authorization (the RescueOnly default and an explicit
+    // Off opt-out are never refused).
     // ------------------------------------------------------------------
     {
         CliResult r;
 
-        // Not authorized: always passes regardless of the other inputs.
-        if (!validateRecycleWhserver(false, false, false, true, "", r)) {
-            ec = fail("check2: not-authorized should pass", 20);
+        // RescueOnly (the default) and Off: always pass regardless of the
+        // other inputs -- the conflicts cannot produce broken states in
+        // these modes (the recycle is inert outside the floor rescue /
+        // disabled entirely).
+        if (!validateRecycleWhserver(tsdev::RecycleMode::RescueOnly, false,
+                                     false, true, "", r) ||
+            !validateRecycleWhserver(tsdev::RecycleMode::Off, false,
+                                     false, true, "", r) ||
+            !validateRecycleWhserver(tsdev::RecycleMode::RescueOnly, true,
+                                     false, true, "insert", r) ||
+            !validateRecycleWhserver(tsdev::RecycleMode::Off, false,
+                                     true, true, "bogus", r)) {
+            ec = fail("check2: non-Full mode was refused", 20);
             return 0;
         }
 
-        // Authorized + valid subcommands pass.
-        if (!validateRecycleWhserver(true, false, true, false, "batch-insert", r) ||
-            !validateRecycleWhserver(true, false, true, false, "batch-upsert-dir", r) ||
-            !validateRecycleWhserver(true, false, true, false, "serve", r)) {
+        // Full + valid subcommands pass.
+        if (!validateRecycleWhserver(tsdev::RecycleMode::Full, false, true,
+                                     false, "batch-insert", r) ||
+            !validateRecycleWhserver(tsdev::RecycleMode::Full, false, true,
+                                     false, "batch-upsert-dir", r) ||
+            !validateRecycleWhserver(tsdev::RecycleMode::Full, false, true,
+                                     false, "serve", r)) {
             ec = fail("check2: authorized + valid subcommand refused", 21);
             return 0;
         }
 
         // Guard disabled -> refusal naming --no-whserver-vas-guard.
         r = CliResult();
-        if (validateRecycleWhserver(true, false, false, false, "batch-insert", r)) {
+        if (validateRecycleWhserver(tsdev::RecycleMode::Full, false, false,
+                                    false, "batch-insert", r)) {
             ec = fail("check2: vas-guard conflict not refused", 22);
             return 0;
         }
@@ -189,7 +218,8 @@ DWORD WINAPI runTest(LPVOID param) {
 
         // --batch-progress-control -> refusal naming the control flag.
         r = CliResult();
-        if (validateRecycleWhserver(true, false, true, true, "batch-insert", r)) {
+        if (validateRecycleWhserver(tsdev::RecycleMode::Full, false, true,
+                                    true, "batch-insert", r)) {
             ec = fail("check2: progress-control conflict not refused", 24);
             return 0;
         }
@@ -204,7 +234,8 @@ DWORD WINAPI runTest(LPVOID param) {
         // Single-op / empty / unknown subcommand -> refusal.
         for (const char* s : {"insert", "exists", "", "bogus"}) {
             r = CliResult();
-            if (validateRecycleWhserver(true, false, true, false, s, r)) {
+            if (validateRecycleWhserver(tsdev::RecycleMode::Full, false,
+                                        true, false, s, r)) {
                 ec = fail("check2: single-op subcommand not refused", 26);
                 return 0;
             }
@@ -217,14 +248,16 @@ DWORD WINAPI runTest(LPVOID param) {
         // Refusal order: vasGuard conflict is reported before the
         // batchControl conflict, which precedes the subcommand check.
         r = CliResult();
-        if (validateRecycleWhserver(true, false, false, true, "insert", r) ||
+        if (validateRecycleWhserver(tsdev::RecycleMode::Full, false, false,
+                                    true, "insert", r) ||
             r.errorMessage.find("--no-whserver-vas-guard") ==
                 std::string::npos) {
             ec = fail("check2: refusal order (guard first) wrong", 28);
             return 0;
         }
         r = CliResult();
-        if (validateRecycleWhserver(true, false, true, true, "insert", r) ||
+        if (validateRecycleWhserver(tsdev::RecycleMode::Full, false, true,
+                                    true, "insert", r) ||
             r.errorMessage.find("--batch-progress-control") ==
                 std::string::npos) {
             ec = fail("check2: refusal order (control before subcommand) "
@@ -238,7 +271,7 @@ DWORD WINAPI runTest(LPVOID param) {
         for (int arm = 0; arm < 3; arm++) {
             r = CliResult();
             const bool refused = !validateRecycleWhserver(
-                true, /*authorizedViaEnv=*/true,
+                tsdev::RecycleMode::Full, /*authorizedViaEnv=*/true,
                 /*vasGuardEnabled=*/arm != 0,
                 /*batchControl=*/arm == 1,
                 /*subcommand=*/arm == 2 ? "insert" : "batch-insert", r);
@@ -256,8 +289,8 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         // Flag-sourced refusals do NOT name the env var.
         r = CliResult();
-        if (validateRecycleWhserver(true, false, false, false,
-                                    "batch-insert", r) ||
+        if (validateRecycleWhserver(tsdev::RecycleMode::Full, false, false,
+                                    false, "batch-insert", r) ||
             r.errorMessage.find("TSDEV_RECYCLE_WHSERVER") !=
                 std::string::npos) {
             ec = fail("check2: flag-sourced refusal names env var", 38);
@@ -309,44 +342,122 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 3b: resolveRecycleAuthorized — the OR-ed flag/env composition
-    // itself (the env read is inside the helper, so the precedence rule is
-    // pinnable in this TU). Uses the REAL TSDEV_RECYCLE_WHSERVER var,
-    // snapshotted and restored.
+    // Check 3b: resolveRecycleMode -- the tri-state precedence matrix
+    // (the env reads are inside the helper, so the whole rule set is
+    // pinnable in this TU). Uses the REAL TSDEV_RECYCLE_WHSERVER and
+    // TSDEV_NO_RECYCLE_WHSERVER vars, snapshotted and restored.
     // ------------------------------------------------------------------
     {
-        const char* var = "TSDEV_RECYCLE_WHSERVER";
-        char saved[256] = {};
-        DWORD savedLen = GetEnvironmentVariableA(var, saved, sizeof(saved));
-        const bool hadSaved = savedLen > 0 && savedLen < sizeof(saved);
+        const char* varOn = "TSDEV_RECYCLE_WHSERVER";
+        const char* varOff = "TSDEV_NO_RECYCLE_WHSERVER";
+        char savedOn[256] = {};
+        char savedOff[256] = {};
+        DWORD savedOnLen = GetEnvironmentVariableA(varOn, savedOn,
+                                                   sizeof(savedOn));
+        DWORD savedOffLen = GetEnvironmentVariableA(varOff, savedOff,
+                                                    sizeof(savedOff));
+        const bool hadOn = savedOnLen > 0 && savedOnLen < sizeof(savedOn);
+        const bool hadOff = savedOffLen > 0 && savedOffLen < sizeof(savedOff);
+        auto restore = [&]() {
+            if (hadOn) SetEnvironmentVariableA(varOn, savedOn);
+            else       SetEnvironmentVariableA(varOn, nullptr);
+            if (hadOff) SetEnvironmentVariableA(varOff, savedOff);
+            else        SetEnvironmentVariableA(varOff, nullptr);
+        };
+        using tsdev::RecycleMode;
+        RecycleMode m = RecycleMode::Full;  // sentinel != any expected default
+        std::string err;
 
-        SetEnvironmentVariableA(var, nullptr);          // env unset
-        if (!resolveRecycleAuthorized(true)) {          // flag alone
-            ec = fail("check3b: flag alone -> false", 50);
+        // (a) both polarity flags -> usage error (false + err), whatever
+        // the env vars say. The message names both flags (finding
+        // "--no-recycle-whserver" implies the full pinned sentence).
+        SetEnvironmentVariableA(varOn, nullptr);
+        SetEnvironmentVariableA(varOff, nullptr);
+        if (resolveRecycleMode(true, true, m, err) ||
+            err.find("--no-recycle-whserver") == std::string::npos ||
+            err.find("cannot be combined") == std::string::npos) {
+            restore();
+            ec = fail("check3b: both flags not a usage error", 50);
             return 0;
         }
-        if (resolveRecycleAuthorized(false)) {          // neither
-            ec = fail("check3b: neither flag nor env -> true", 51);
+
+        // (b) explicit flag beats the opposite-polarity env.
+        SetEnvironmentVariableA(varOff, "1");
+        if (!resolveRecycleMode(true, false, m, err) ||
+            m != RecycleMode::Full) {
+            restore();
+            ec = fail("check3b: flag did not beat negative env", 51);
             return 0;
         }
-        SetEnvironmentVariableA(var, "1");              // env alone
-        if (!resolveRecycleAuthorized(false)) {
-            ec = fail("check3b: env alone -> false", 52);
+        SetEnvironmentVariableA(varOn, "1");
+        SetEnvironmentVariableA(varOff, nullptr);
+        if (!resolveRecycleMode(false, true, m, err) ||
+            m != RecycleMode::Off) {
+            restore();
+            ec = fail("check3b: negative flag did not beat positive env", 52);
             return 0;
         }
-        SetEnvironmentVariableA(var, "0");              // env "0" + flag
-        if (!resolveRecycleAuthorized(true)) {          // env "0" no veto
-            ec = fail("check3b: env \"0\" vetoed the flag", 53);
+
+        // (c) env-vs-env conflict -> the negative arm wins.
+        SetEnvironmentVariableA(varOn, "1");
+        SetEnvironmentVariableA(varOff, "1");
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::Off) {
+            restore();
+            ec = fail("check3b: env conflict did not resolve negative", 53);
             return 0;
         }
-        if (resolveRecycleAuthorized(false)) {          // env "0" alone
-            ec = fail("check3b: env \"0\" alone -> true", 54);
+
+        // (d) single env arms; "0" neutralizes only its own arm.
+        SetEnvironmentVariableA(varOn, "1");
+        SetEnvironmentVariableA(varOff, nullptr);
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::Full) {
+            restore();
+            ec = fail("check3b: positive env alone not Full", 54);
             return 0;
         }
-        // Restore.
-        if (hadSaved) SetEnvironmentVariableA(var, saved);
-        else          SetEnvironmentVariableA(var, nullptr);
-        std::fprintf(stdout, "    PASS: flag/env OR composition\n");
+        SetEnvironmentVariableA(varOn, nullptr);
+        SetEnvironmentVariableA(varOff, "1");
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::Off) {
+            restore();
+            ec = fail("check3b: negative env alone not Off", 55);
+            return 0;
+        }
+        // "0" neutralizes its own arm only: positive "0" + negative set
+        // -> Off (the negative arm still applies).
+        SetEnvironmentVariableA(varOn, "0");
+        SetEnvironmentVariableA(varOff, "1");
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::Off) {
+            restore();
+            ec = fail("check3b: positive \"0\" did not neutralize its arm",
+                      56);
+            return 0;
+        }
+        // TSDEV_RECYCLE_WHSERVER="0" alone does NOT opt out of the
+        // RescueOnly default (it only neutralizes the env arm).
+        SetEnvironmentVariableA(varOn, "0");
+        SetEnvironmentVariableA(varOff, nullptr);
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::RescueOnly) {
+            restore();
+            ec = fail("check3b: positive env \"0\" opted out of the default",
+                      57);
+            return 0;
+        }
+        // Neither flag nor env -> the RescueOnly default.
+        SetEnvironmentVariableA(varOn, nullptr);
+        SetEnvironmentVariableA(varOff, nullptr);
+        if (!resolveRecycleMode(false, false, m, err) ||
+            m != RecycleMode::RescueOnly) {
+            restore();
+            ec = fail("check3b: default is not RescueOnly", 58);
+            return 0;
+        }
+        restore();
+        std::fprintf(stdout, "    PASS: tri-state precedence matrix\n");
     }
 
     // ------------------------------------------------------------------
@@ -426,6 +537,90 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         std::fprintf(stdout, "    PASS: verbatim warning emitted once\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 4b: the RescueOnly NOTEs -- each emitter writes its one-line
+    // NOTE verbatim to stderr exactly once (the second call is a no-op),
+    // ASCII only, and the two texts are distinct. Same dup2'd-tmpfile
+    // capture as check 4.
+    // ------------------------------------------------------------------
+    {
+        auto capture = [&](void (*emit)(), const char* text,
+                           const char* what, int code) -> int {
+            FILE* tmp = std::tmpfile();
+            if (!tmp) return fail(what, code);
+            int savedFd = _dup(_fileno(stderr));
+            if (savedFd < 0) {
+                std::fclose(tmp);
+                return fail(what, code + 1);
+            }
+            if (_dup2(_fileno(tmp), _fileno(stderr)) != 0) {
+                _close(savedFd);
+                std::fclose(tmp);
+                return fail(what, code + 2);
+            }
+            _setmode(_fileno(stderr), _O_BINARY);
+            emit();
+            emit();  // must not re-emit
+            std::fflush(stderr);
+            if (_dup2(savedFd, _fileno(stderr)) != 0) {
+                _close(savedFd);
+                std::fclose(tmp);
+                return fail(what, code + 3);
+            }
+            _close(savedFd);
+            _setmode(_fileno(stderr), _O_TEXT);
+            std::string got;
+            std::fseek(tmp, 0, SEEK_SET);
+            char buf[512];
+            size_t n = 0;
+            while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
+                got.append(buf, n);
+            std::fclose(tmp);
+            if (got != text) return fail(what, code + 4);
+            const bool asciiOnly = std::all_of(
+                got.begin(), got.end(),
+                [](char c) {
+                    return static_cast<unsigned char>(c) <= 0x7F;
+                });
+            if (!asciiOnly || got.find('\n', got.find('\n') + 1)
+                    != std::string::npos) {
+                return fail(what, code + 5);  // not one ASCII line
+            }
+            return 0;
+        };
+        int bad = capture(emitRecycleRescueDefaultNote,
+                          kRecycleRescueDefaultNote,
+                          "check4b: default NOTE bytes wrong", 60);
+        if (bad) { ec = bad; return 0; }
+        bad = capture(emitRecycleControlSuppressedNote,
+                      kRecycleControlSuppressedNote,
+                      "check4b: suppression NOTE bytes wrong", 70);
+        if (bad) { ec = bad; return 0; }
+        // The two NOTEs are distinct texts (a reader must be able to tell
+        // the suppressed run from the default one).
+        if (std::string(kRecycleRescueDefaultNote) ==
+                std::string(kRecycleControlSuppressedNote)) {
+            ec = fail("check4b: NOTE texts collide", 80);
+            return 0;
+        }
+        // Content pins: the default NOTE names the default state and both
+        // opt-out levers; the suppression NOTE names the suppressing flag.
+        const std::string d = kRecycleRescueDefaultNote;
+        if (d.find("on by default") == std::string::npos ||
+            d.find("--no-recycle-whserver") == std::string::npos ||
+            d.find("TSDEV_NO_RECYCLE_WHSERVER=1") == std::string::npos) {
+            ec = fail("check4b: default NOTE misses pinned content", 81);
+            return 0;
+        }
+        const std::string s = kRecycleControlSuppressedNote;
+        if (s.find("--batch-progress-control") == std::string::npos ||
+            s.find("suppressed") == std::string::npos) {
+            ec = fail("check4b: suppression NOTE misses pinned content", 82);
+            return 0;
+        }
+        std::fprintf(stdout, "    PASS: RescueOnly NOTEs emitted once\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

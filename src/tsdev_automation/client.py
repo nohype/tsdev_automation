@@ -776,20 +776,25 @@ _shell32.ShellExecuteExW.restype = wintypes.BOOL
 
 
 def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: int = 0,
-                            recycle_whserver: bool = False) -> str:
+                            recycle_whserver: bool | None = None) -> str:
     """Build the broker command line using Windows-compatible argv quoting.
 
     ``verbose`` (the client's already-clamped level) appends that many
     ``-v`` flags; the CLI pre-scans them position-free before subcommand
     parsing, so placement is arbitrary (they go last, matching _base_cmd).
 
-    ``recycle_whserver`` forwards the gated WHServer-recycle authorization
-    to the broker as an explicit ``--recycle-whserver`` flag.  Forwarding is
-    OR-ed (design tmp/RECYCLE_ENGINE_DESIGN.md §4.3/§6.1): the flag is
-    appended when the kwarg is True OR ``TSDEV_RECYCLE_WHSERVER`` is set to
-    any value other than ``"0"`` — kwarg ``False`` does NOT veto a set env
-    var (there is no negative flag form, and ``runas`` does not inherit the
-    caller's environment block).
+    ``recycle_whserver`` is the tri-state WHServer-recycle authorization
+    (design tmp/RECYCLE_ENGINE_DESIGN.md Section 6.1/4.3 + the tri-state
+    addendum): ``True`` forwards the explicit ``--recycle-whserver`` flag
+    (Full mode), ``False`` forwards the explicit ``--no-recycle-whserver``
+    opt-out (Off mode), and ``None`` (the default) forwards nothing -- the
+    broker then follows the CLI's own default (RescueOnly) plus whatever
+    ``TSDEV_RECYCLE_WHSERVER`` / ``TSDEV_NO_RECYCLE_WHSERVER`` env vars
+    reach it.  The env forwarding below mirrors the CLI's precedence: an
+    env-vs-env conflict resolves to the negative arm, and an explicit
+    kwarg beats the opposite-polarity env var (runas does not inherit the
+    caller's environment block, so the env vars would never reach the
+    broker without this forwarding).
 
     WHServer VAS-headroom guard: ``TSDEV_WHSERVER_*`` env overrides do NOT
     reach the elevated broker — ``ShellExecuteExW`` ``runas`` spawns the
@@ -831,10 +836,27 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     # other than "0" restores the legacy traversal in the broker.
     if os.environ.get("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS") not in (None, "", "0"):
         args.append("--traverse-strategy-dependents")
-    # Same env->flag forwarding for the gated WHServer recycle; OR-ed with
-    # the kwarg per the pinned precedence rule (see the docstring above).
-    if recycle_whserver or os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0"):
+    # Tri-state WHServer-recycle forwarding (runas drops the caller's env,
+    # so the env arms must ride the command line as explicit flags).
+    # Precedence mirrors the CLI's resolveRecycleMode: an explicit kwarg
+    # beats the opposite-polarity env var; with kwarg None an env-vs-env
+    # conflict resolves to the negative arm; an env value of "0"
+    # neutralizes only its own arm.
+    if recycle_whserver is True:
         args.append("--recycle-whserver")
+    elif recycle_whserver is False:
+        args.append("--no-recycle-whserver")
+    else:
+        recycle_env = os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
+        no_recycle_env = (
+            os.environ.get("TSDEV_NO_RECYCLE_WHSERVER") not in (None, "", "0")
+        )
+        if recycle_env and no_recycle_env:
+            args.append("--no-recycle-whserver")
+        elif recycle_env:
+            args.append("--recycle-whserver")
+        elif no_recycle_env:
+            args.append("--no-recycle-whserver")
     # Same env->flag forwarding for the debug log file: TSDEV_LOG_FILE does
     # not reach the elevated broker (runas default env), so it is forwarded
     # as an explicit --log-file flag. Any non-empty value forwards verbatim
@@ -885,15 +907,25 @@ class _ServeBroker:
     """
 
     def __init__(self, cli_path: Path, ts_path: str | None = None, verbose: int = 0,
-                 recycle_whserver: bool = False) -> None:
+                 recycle_whserver: bool | None = None) -> None:
         self._cli_path = cli_path
         self._ts_path = ts_path
         self._verbose = verbose
-        self._recycle_whserver = bool(recycle_whserver)
-        # The launch-time effective authorization (kwarg OR env at spawn):
-        # the flag lives on the broker's command line and runas does not
-        # inherit the caller's env, so TSDEV_RECYCLE_WHSERVER set after the
-        # broker started is silently inert — the batch paths warn on it.
+        # Tri-state WHServer-recycle authorization (design Section 6.1/4.3 +
+        # the tri-state addendum): True forwards --recycle-whserver (Full),
+        # False forwards --no-recycle-whserver (Off), None forwards nothing
+        # (the broker follows the CLI default + its own env).
+        self._recycle_whserver = recycle_whserver
+        # True when the ctor kwarg EXPLICITLY opted out (False): the
+        # forwarded --no-recycle-whserver beats the opposite-polarity
+        # TSDEV_RECYCLE_WHSERVER env, so a later env var is shadowed by
+        # design and must not trigger the env-after-launch warning.
+        self._recycle_explicit_optout = recycle_whserver is False
+        # The launch-time effective Full authorization (kwarg True, or the
+        # env read at spawn when the kwarg is None): the flag lives on the
+        # broker's command line and runas does not inherit the caller's
+        # env, so TSDEV_RECYCLE_WHSERVER set after the broker started is
+        # silently inert -- the batch paths warn on it.
         self._recycle_authorized_at_launch = False
         self._process_handle: int | None = None
         self._pipe_handle: int | None = None
@@ -944,14 +976,21 @@ class _ServeBroker:
             #    rules rather than interpolating them into the string.
             params = _build_serve_parameters(self._ts_path, tmp_path, self._verbose,
                                              recycle_whserver=self._recycle_whserver)
-            # Pin the launch-time effective authorization BEFORE the spawn:
-            # this is the same OR-ed env read _build_serve_parameters just
-            # applied — afterwards the broker's command line is immutable,
-            # so an env var appearing later cannot reach it.
-            self._recycle_authorized_at_launch = (
-                self._recycle_whserver
-                or os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
-            )
+            # Pin the launch-time effective Full authorization BEFORE the
+            # spawn: this is the same precedence _build_serve_parameters
+            # just applied -- afterwards the broker's command line is
+            # immutable, so an env var appearing later cannot reach it.
+            # An explicit ctor opt-out (False) shadows the opposite-polarity
+            # env by design (the forwarded --no-recycle-whserver beats it).
+            if self._recycle_whserver is True:
+                self._recycle_authorized_at_launch = True
+            elif self._recycle_whserver is False:
+                self._recycle_authorized_at_launch = False
+            else:
+                self._recycle_authorized_at_launch = (
+                    os.environ.get("TSDEV_RECYCLE_WHSERVER")
+                    not in (None, "", "0")
+                )
             sei = _SHELLEXECUTEINFOW()
             sei.cbSize = ctypes.sizeof(sei)
             sei.fMask = _SEE_MASK_NOCLOSEPROCESS
@@ -1301,17 +1340,30 @@ class TsDevClient:
         broker stderr is not captured (the broker is launched hidden) and
         the serve protocol has no per-request verbosity control.
     recycle_whserver:
-        When ``True``, forward the gated WHServer-recycle authorization to
-        the CLI as ``--recycle-whserver`` on batch-* command lines and to
-        the serve broker at launch (design tmp/RECYCLE_ENGINE_DESIGN.md
-        §6.1/§4.3).  The flag AUTHORIZES the recycle — the zero-client
-        census gate still applies.  Forwarding is OR-ed with the
-        ``TSDEV_RECYCLE_WHSERVER`` env var (set to any value but ``"0"``):
-        ``False`` here never vetoes a set env var.  On the DIRECT path
-        ``recycle_whserver`` combined with a batch ``on_progress``
-        callback raises ``ValueError`` before spawn (the
+        Tri-state WHServer-recycle authorization (design
+        tmp/RECYCLE_ENGINE_DESIGN.md Section 6.1/4.3 + the tri-state
+        addendum).
+        ``None`` (the default) forwards nothing: every batch command line
+        and the serve broker follow the CLI's own default (RescueOnly --
+        the recycle is reserved for the abort-floor rescue) plus whatever
+        ``TSDEV_RECYCLE_WHSERVER`` / ``TSDEV_NO_RECYCLE_WHSERVER`` env
+        vars are visible.  ``True`` forwards the explicit
+        ``--recycle-whserver`` flag (Full mode: the recycle may also fire
+        on a trigger-band breach) on batch-* command lines and to the
+        serve broker at launch; ``False`` forwards the explicit
+        ``--no-recycle-whserver`` opt-out (Off mode: a below-floor breach
+        hard-aborts with exit 14) the same way -- the explicit flag is
+        forwarded even on the broker launch because ``runas`` does not
+        inherit the caller's environment block, so the negative
+        ``TSDEV_NO_RECYCLE_WHSERVER`` env var could not reach the broker
+        otherwise, and an explicit kwarg beats the opposite-polarity env
+        var (the CLI's pinned precedence).  The flag AUTHORIZES the
+        recycle -- the zero-client census gate still applies.  On the
+        DIRECT path an explicit authorization (``True`` here or the
+        ``TSDEV_RECYCLE_WHSERVER`` env var) combined with a batch
+        ``on_progress`` callback raises ``ValueError`` before spawn (the
         ``--batch-progress-control`` channel belongs to the dying
-        process); in SERVE mode ``recycle_whserver`` + ``on_progress`` is
+        process); in SERVE mode authorization + ``on_progress`` is
         allowed — progress is tagged per-response and a recycle resumes
         the batch on a respawned broker (design §4.3): on an exit-18
         boundary frame the client respawns the broker and resubmits from
@@ -1325,13 +1377,16 @@ class TsDevClient:
         broker starts.  The broker's own §6.3 warning is written to broker
         stderr, which is discarded (the broker is spawned hidden), so
         serve-mode users never see it — the client surfaces a brief
-        equivalent via :mod:`warnings` whenever effective authorization is
-        on.  A machine/user-level ``TSDEV_RECYCLE_WHSERVER`` set outside
-        this process reaches the broker through the broker's own
-        environment block — the client cannot veto it.  In serve mode each
-        recycle respawns the elevated broker — a non-elevated client faces
-        one UAC prompt per respawn (unattended non-elevated runs must not
-        set this).
+        equivalent via :mod:`warnings` ONLY when authorization is
+        explicit (this kwarg ``True`` or the ``TSDEV_RECYCLE_WHSERVER``
+        env var), never for the RescueOnly default.  A machine/user-level
+        ``TSDEV_RECYCLE_WHSERVER`` set outside this process reaches the
+        broker through the broker's own environment block -- the client
+        cannot veto it (an explicit ``False`` kwarg does shadow it on the
+        broker's command line, by the CLI's flag-beats-env precedence).
+        In serve mode each recycle respawns the elevated broker -- a
+        non-elevated client faces one UAC prompt per respawn (unattended
+        non-elevated runs must not set this).
     """
 
     def __init__(
@@ -1341,7 +1396,7 @@ class TsDevClient:
         timeout: float | None = None,
         use_serve: bool = True,
         verbose: int = 0,
-        recycle_whserver: bool = False,
+        recycle_whserver: bool | None = None,
     ) -> None:
         resolved = _resolve_cli_path(cli_path)
         # Fast-fail only for the auto-discovered default; explicit paths are
@@ -1366,12 +1421,16 @@ class TsDevClient:
         # raise ElevationRequiredError before launching the CLI.
         self._use_serve = use_serve
         self._is_elevated = _detect_elevation()
-        # Gated WHServer-recycle authorization (design §6.1/§4.3). Forwarded
-        # to batch-* command lines and to the serve broker as the explicit
-        # --recycle-whserver flag; OR-ed with the TSDEV_RECYCLE_WHSERVER env
-        # var (this kwarg=False never vetoes a set env var). The flag
-        # authorizes the recycle — the zero-client census gate still applies.
-        self._recycle_whserver = bool(recycle_whserver)
+        # Tri-state gated WHServer-recycle authorization (design
+        # Section 6.1/4.3 + the tri-state addendum). None forwards nothing
+        # (the CLI's RescueOnly default + its own env apply); True forwards
+        # the explicit --recycle-whserver flag (Full); False forwards the
+        # explicit --no-recycle-whserver opt-out (Off) -- on batch-*
+        # command lines and on the serve broker launch (runas drops env,
+        # so the negative env cannot reach the broker otherwise). The flag
+        # authorizes the recycle -- the zero-client census gate still
+        # applies.
+        self._recycle_whserver = recycle_whserver
         self._broker: _ServeBroker | None = None  # lazy-init on first op
 
     # -- public API --------------------------------------------------------
@@ -1944,17 +2003,25 @@ class TsDevClient:
             # broker would exit 1 before writing the pipe file and surface
             # only as a generic "exited before writing the pipe file".
             # Mirror the on_progress fail-fast convention (ValueError).
+            # Scoped to EXPLICIT Full authorization (ctor kwarg True or
+            # the TSDEV_RECYCLE_WHSERVER env var): the RescueOnly default
+            # and an explicit ctor opt-out are never refused (an explicit
+            # opt-out also beats the opposite-polarity env var, so it
+            # cannot create the conflict).
             recycle_from_env = (
                 os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
             )
             noguard_from_env = (
                 os.environ.get("TSDEV_NO_WHSERVER_VAS_GUARD") not in (None, "", "0")
             )
-            if (self._recycle_whserver or recycle_from_env) and noguard_from_env:
+            if noguard_from_env and (
+                self._recycle_whserver is True
+                or (self._recycle_whserver is None and recycle_from_env)
+            ):
                 sources = []
-                if self._recycle_whserver:
+                if self._recycle_whserver is True:
                     sources.append("TsDevClient(recycle_whserver=True)")
-                if recycle_from_env:
+                if self._recycle_whserver is None and recycle_from_env:
                     sources.append("TSDEV_RECYCLE_WHSERVER env")
                 raise ValueError(
                     "recycle_whserver (" + " + ".join(sources) + ") cannot "
@@ -1964,9 +2031,14 @@ class TsDevClient:
                     "TSDEV_NO_WHSERVER_VAS_GUARD or drop the recycle "
                     "authorization."
                 )
-            if self._recycle_whserver or recycle_from_env:
+            if self._recycle_whserver is True or (
+                self._recycle_whserver is None and recycle_from_env
+            ):
                 # The broker's §6.3 stderr warning is invisible here (hidden
                 # spawn, stderr discarded) -- surface the client-side brief.
+                # Explicit authorization only: the RescueOnly default is
+                # silent (the CLI prints its own one-line NOTE to the
+                # broker's discarded stderr).
                 _warn_recycle_whserver()
             self._broker = _ServeBroker(self.cli_path, self.ts_path, verbose=self.verbose,
                                         recycle_whserver=self._recycle_whserver)
@@ -2090,19 +2162,54 @@ class TsDevClient:
         return result
 
     def _recycle_whserver_requested(self, kwarg: bool = False) -> bool:
-        """OR-ed effective ``--recycle-whserver`` authorization.
+        """EXPLICIT Full ``--recycle-whserver`` authorization.
 
-        Pinned precedence (design tmp/RECYCLE_ENGINE_DESIGN.md §6.1/§4.3):
-        the per-call kwarg, the ``TsDevClient(recycle_whserver=...)`` ctor
-        kwarg, and the ``TSDEV_RECYCLE_WHSERVER`` env var (set to any value
-        other than ``"0"``) are OR-ed — a ``False`` kwarg does NOT veto the
-        env var, and env ``"0"`` does NOT veto an explicit request.
+        Pinned precedence (design tmp/RECYCLE_ENGINE_DESIGN.md
+        Section 6.1/4.3 + the tri-state addendum): the per-call kwarg, the
+        ``TsDevClient(recycle_whserver=...)`` ctor kwarg, and the
+        ``TSDEV_RECYCLE_WHSERVER`` env var (set to any value other than
+        ``"0"``).  An explicit ctor opt-out (``False``) beats the
+        opposite-polarity env var, so it is never requested; the
+        RescueOnly default (ctor ``None``, no env) is never requested
+        either -- the default's below-floor rescue needs no per-call
+        authorization.
         """
-        return bool(
-            kwarg
-            or self._recycle_whserver
-            or os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
-        )
+        if kwarg or self._recycle_whserver is True:
+            return True
+        if self._recycle_whserver is False:
+            return False
+        return os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
+
+    def _recycle_flag_args(self, kwarg: bool = False) -> list[str]:
+        """Tri-state recycle flag emission for a direct batch command line.
+
+        An explicit ctor opt-out (``False``) forwards
+        ``--no-recycle-whserver``: the flag makes the opt-out explicit and
+        beats the opposite-polarity ``TSDEV_RECYCLE_WHSERVER`` env var
+        (the CLI's pinned precedence).  The literal
+        ``--recycle-whserver`` goes out only for the explicit arms
+        (per-call kwarg / ctor kwarg) -- env-only authorization rides the
+        inherited environment block so the CLI's ``authorizedViaEnv``
+        attribution stays truthful.  The RescueOnly default forwards
+        nothing.
+        """
+        if self._recycle_whserver is False:
+            return ["--no-recycle-whserver"]
+        if kwarg or self._recycle_whserver is True:
+            return ["--recycle-whserver"]
+        return []
+
+    def _check_recycle_polarity_conflict(self, kwarg: bool) -> None:
+        """Refuse a per-call ``recycle_whserver=True`` on a client whose
+        ctor kwarg EXPLICITLY opted out (``False``): the emitted command
+        line would carry both polarity flags, which the CLI refuses with
+        a usage error -- fail here, before any spawn."""
+        if kwarg and self._recycle_whserver is False:
+            raise ValueError(
+                "recycle_whserver=True cannot be combined with the "
+                "explicit TsDevClient(recycle_whserver=False) opt-out: "
+                "the CLI refuses both polarity flags"
+            )
 
     def _check_recycle_whserver_noguard(self, kwarg: bool = False) -> None:
         """§6.1 recycle+``--no-whserver-vas-guard`` conflict, refused
@@ -2117,10 +2224,14 @@ class TsDevClient:
         sources = []
         if kwarg:
             sources.append("recycle_whserver=True")
-        if self._recycle_whserver:
+        if self._recycle_whserver is True:
             sources.append("TsDevClient(recycle_whserver=True)")
-        if os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0"):
+        if self._recycle_whserver is None and (
+            os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
+        ):
             sources.append("TSDEV_RECYCLE_WHSERVER env")
+        if not sources:
+            return
         raise ValueError(
             "recycle_whserver (" + " + ".join(sources) + ") cannot "
             "be combined with TSDEV_NO_WHSERVER_VAS_GUARD env: the "
@@ -2138,10 +2249,14 @@ class TsDevClient:
         ``runas`` does not inherit the caller's environment block, so an
         env var set after the broker started can never reach it — the
         batch would run unrecycled and silently so.  Warn (do not fail):
-        the batch still ran is the honest outcome."""
+        the batch still ran is the honest outcome.  An explicit ctor
+        opt-out is exempt: the forwarded ``--no-recycle-whserver`` beats
+        the opposite-polarity env by the CLI's pinned precedence, so the
+        later env var is shadowed by design, not lost."""
         if (
             getattr(broker, "_started", False)
             and not getattr(broker, "_recycle_authorized_at_launch", True)
+            and not getattr(broker, "_recycle_explicit_optout", False)
             and os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0")
         ):
             warnings.warn(
@@ -2149,7 +2264,9 @@ class TsDevClient:
                 "broker was launched WITHOUT --recycle-whserver: broker "
                 "recycle authorization is fixed at broker launch (runas "
                 "does not inherit the caller's environment), so this "
-                "batch runs WITHOUT recycle authorization. Set the env "
+                "batch runs in the RescueOnly default (floor rescue "
+                "only) and the later-set Full authorization never "
+                "reaches the broker. Set the env "
                 "var or TsDevClient(recycle_whserver=True) before the "
                 "broker starts, or call client._broker.shutdown() -- the "
                 "next operation auto-restarts the broker (_ServeBroker."
@@ -2221,6 +2338,7 @@ class TsDevClient:
             # TSDEV_RECYCLE_WHSERVER env are the serve-mode levers.
             # (recycle + on_progress IS allowed in serve mode — design
             # §4.3 tagged-progress resume; only this kwarg is refused.)
+            self._check_recycle_polarity_conflict(recycle_whserver)
             if recycle_whserver:
                 raise ValueError(
                     "per-call recycle_whserver=True is not supported on the "
@@ -2232,6 +2350,7 @@ class TsDevClient:
                                      backup_cache=backup_cache,
                                      restore_cache=restore_cache,
                                      cache_backup_policy=cache_backup_policy)
+        self._check_recycle_polarity_conflict(recycle_whserver)
         recycle = self._recycle_whserver_requested(recycle_whserver)
         if recycle and on_progress is not None:
             # §6.1: the on_progress path runs --batch-progress-control whose
@@ -2255,17 +2374,18 @@ class TsDevClient:
                 # The CLI's §6.3 warning goes to captured child stderr
                 # (not surfaced by default) — emit the client-side brief.
                 _warn_recycle_whserver()
-        # Forward the literal flag ONLY for the explicit arms (per-call
-        # kwarg / ctor kwarg).  Env-only authorization reaches the direct
-        # child through the inherited environment block (subprocess.run
-        # passes no env=) — appending the flag would flip the CLI's
-        # authorizedViaEnv attribution off, so a refusal would misname the
-        # env var's source as an explicit --recycle-whserver.
-        recycle_args = (
-            ["--recycle-whserver"]
-            if (recycle_whserver or self._recycle_whserver)
-            else []
-        )
+        # Tri-state flag emission.  An explicit ctor opt-out (False)
+        # forwards --no-recycle-whserver: on the direct path the flag
+        # makes the opt-out explicit and beats the opposite-polarity
+        # TSDEV_RECYCLE_WHSERVER env (the CLI's pinned precedence).
+        # The literal --recycle-whserver goes out ONLY for the explicit
+        # arms (per-call kwarg / ctor kwarg): env-only authorization
+        # reaches the direct child through the inherited environment
+        # block (subprocess.run passes no env=) -- appending the flag
+        # would flip the CLI's authorizedViaEnv attribution off, so a
+        # refusal would misname the env var's source as an explicit
+        # --recycle-whserver.  The RescueOnly default forwards nothing.
+        recycle_args = self._recycle_flag_args(recycle_whserver)
         needs_source = op in ("insert", "modify", "upsert")
         # Reset the retained-manifest record BEFORE this call's cleanup
         # runs — the controlled path never reaches _run_batch, so a stale
@@ -2288,8 +2408,10 @@ class TsDevClient:
             else:
                 # --batch-progress-control: the manifest goes to stdin as a
                 # framed TSDEV_BATCH_CONTROL/1 block and stdin stays open
-                # for per-item continue/cancel decisions.
-                cmd = self._base_cmd() + ["--json"] + cache_args + [
+                # for per-item continue/cancel decisions. recycle_args is
+                # [] or the explicit --no-recycle-whserver opt-out here
+                # (explicit authorization + on_progress is refused above).
+                cmd = self._base_cmd() + ["--json"] + cache_args + recycle_args + [
                     sub, "--batch-stdin", "--batch-progress-control"
                 ]
                 results = self._run_batch_controlled(
@@ -2485,6 +2607,7 @@ class TsDevClient:
             # Same drop-guard as _batch: the per-call kwarg cannot reach an
             # already-defined broker command line — authorization is fixed
             # at broker launch (ctor kwarg / env are the serve-mode levers).
+            self._check_recycle_polarity_conflict(recycle_whserver)
             if recycle_whserver:
                 raise ValueError(
                     "per-call recycle_whserver=True is not supported on the "
@@ -2496,6 +2619,7 @@ class TsDevClient:
                                          backup_cache=backup_cache,
                                          restore_cache=restore_cache,
                                          cache_backup_policy=cache_backup_policy)
+        self._check_recycle_polarity_conflict(recycle_whserver)
         recycle = self._recycle_whserver_requested(recycle_whserver)
         if recycle and on_progress is not None:
             # Same §6.1 restriction as _batch: on_progress implies
@@ -2517,15 +2641,15 @@ class TsDevClient:
             if not isinstance(e, str) or not e:
                 raise ValueError(f"invalid extension {e!r}: must be a non-empty string")
         # --json: see _batch — keeps captured stderr progress machine-readable.
-        # Same env-attribution rule as _batch: the literal flag is emitted
-        # only for explicit (kwarg/ctor) authorization — env-only auth
-        # reaches the child through the inherited environment block.
+        # Same tri-state emission rule as _batch (see _recycle_flag_args):
+        # the explicit ctor opt-out forwards --no-recycle-whserver, the
+        # explicit arms forward --recycle-whserver, env-only authorization
+        # rides the inherited env block, the default forwards nothing.
         cmd = (
             self._base_cmd()
             + ["--json"]
             + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
-            + (["--recycle-whserver"]
-               if (recycle_whserver or self._recycle_whserver) else [])
+            + self._recycle_flag_args(recycle_whserver)
             + [f"batch-{op}-dir", t, str(dir_path)]
         )
         for e in exts:

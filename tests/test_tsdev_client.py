@@ -1735,42 +1735,69 @@ class TestVerboseForwarding:
 
 class TestRecycleWhserver:
     """TVS R2 flag plumbing for ``--recycle-whserver`` (design
-    tmp/RECYCLE_ENGINE_DESIGN.md §6.1/§4.3): env->flag OR-ed forwarding to
-    the serve broker, direct-batch command-line emission, and the
-    ``recycle_whserver`` + ``on_progress`` fail-fast ``ValueError`` (the
-    controlled stdin channel belongs to the dying process)."""
+    tmp/RECYCLE_ENGINE_DESIGN.md Section 6.1/4.3, tri-state addendum): the
+    tri-state ctor kwarg (None = follow the CLI default/env, True =
+    --recycle-whserver, False = --no-recycle-whserver), env->flag
+    forwarding to the serve broker, direct-batch command-line emission,
+    the explicit-authorization-only ``recycle_whserver`` + ``on_progress``
+    fail-fast ``ValueError`` (the controlled stdin channel belongs to the
+    dying process), and the explicit-only client warning."""
 
     def test_build_serve_parameters_recycle_forwarding(self, monkeypatch) -> None:
-        """OR-ed: kwarg True OR env set-and-not-"0" -> --recycle-whserver;
-        neither side vetoes the other."""
+        """Tri-state: kwarg True -> --recycle-whserver, kwarg False ->
+        --no-recycle-whserver, kwarg None (default) -> env-driven with the
+        CLI's precedence (explicit kwarg beats the opposite-polarity env;
+        env-vs-env conflict -> the negative arm; env "0" neutralizes only
+        its own arm)."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
         base = subprocess.list2cmdline(["serve", "--serve-pipe-file", "C:/hs.pipe"])
         with_flag = subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe", "--recycle-whserver"]
         )
+        with_optout = subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe", "--no-recycle-whserver"]
+        )
         # Neither kwarg nor env -> no flag (byte-identical default).
         assert _build_serve_parameters(None, "C:/hs.pipe") == base
-        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == base
-        # Kwarg alone forwards.
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=None) == base
+        # Kwarg True alone forwards the positive flag.
         assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=True) == with_flag
-        # env "0" does NOT veto an explicit kwarg.
+        # Kwarg False alone forwards the explicit opt-out.
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == with_optout
+        # env "0" does NOT veto an explicit kwarg (either polarity).
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "0")
         assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=True) == with_flag
         assert _build_serve_parameters(None, "C:/hs.pipe") == base
-        # env set (kwarg False does NOT veto the env var).
+        monkeypatch.setenv("TSDEV_NO_RECYCLE_WHSERVER", "0")
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == with_optout
+        assert _build_serve_parameters(None, "C:/hs.pipe") == base
+        # env set (kwarg None follows the env arm).
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
         assert _build_serve_parameters(None, "C:/hs.pipe") == with_flag
-        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == with_flag
+        # Explicit kwarg beats the opposite-polarity env.
+        monkeypatch.setenv("TSDEV_NO_RECYCLE_WHSERVER", "1")
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=True) == with_flag
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
+        assert _build_serve_parameters(None, "C:/hs.pipe", recycle_whserver=False) == with_optout
+        # env-vs-env conflict -> the negative arm wins.
+        monkeypatch.setenv("TSDEV_NO_RECYCLE_WHSERVER", "1")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == with_optout
 
     def test_ensure_broker_forwards_recycle_whserver(self, fake_cli: Path, monkeypatch) -> None:
-        """``_ensure_broker`` forwards the ctor kwarg to ``_ServeBroker``."""
+        """``_ensure_broker`` forwards the ctor kwarg verbatim (tri-state)
+        to ``_ServeBroker``."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True, recycle_whserver=True)
         c._is_elevated = False
         constructed: dict = {}
 
         class SpyBroker:
-            def __init__(self, cli_path, ts_path=None, verbose=0, recycle_whserver=False):
+            def __init__(self, cli_path, ts_path=None, verbose=0,
+                         recycle_whserver=None):
                 constructed["recycle_whserver"] = recycle_whserver
 
             def call(self, request):
@@ -1779,11 +1806,26 @@ class TestRecycleWhserver:
         monkeypatch.setattr("tsdev_automation.client._ServeBroker", SpyBroker)
         c.exists("strategy", "X")
         assert constructed["recycle_whserver"] is True
+        # Explicit opt-out and the None default forward verbatim too.
+        c2 = TsDevClient(cli_path=str(fake_cli), use_serve=True,
+                         recycle_whserver=False)
+        c2._is_elevated = False
+        constructed.clear()
+        monkeypatch.setattr("tsdev_automation.client._ServeBroker", SpyBroker)
+        c2.exists("strategy", "X")
+        assert constructed["recycle_whserver"] is False
+        c3 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c3._is_elevated = False
+        constructed.clear()
+        c3.exists("strategy", "X")
+        assert constructed["recycle_whserver"] is None
 
     def test_serve_broker_start_forwards_recycle_flag(self, monkeypatch, tmp_path: Path) -> None:
-        """``_ServeBroker(recycle_whserver=True)`` emits ``--recycle-whserver``
-        in the ShellExecuteExW lpParameters."""
+        """``_ServeBroker(recycle_whserver=True/False)`` emits the matching
+        polarity flag in the ShellExecuteExW lpParameters (None emits
+        neither -- pinned by the forwarding test above)."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
         cli_exe = tmp_path / "tsdev_cli.exe"
         cli_exe.write_bytes(b"")
         broker = _ServeBroker(cli_exe, recycle_whserver=True)
@@ -1818,6 +1860,39 @@ class TestRecycleWhserver:
         broker._pipe_handle = None
         broker._process_handle = None
 
+        # The explicit opt-out forwards --no-recycle-whserver (runas drops
+        # env, so the flag is the only way the negative arm reaches the
+        # broker).
+        broker2 = _ServeBroker(cli_exe, recycle_whserver=False)
+        handshake2 = tmp_path / "recycle optout.pipe"
+        pipe_name2 = r"\\.\pipe\tsdev_test_recycle_off"
+
+        def fake_mkstemp2(*a, **k):
+            fd = os.open(handshake2, os.O_CREAT | os.O_RDWR)
+            return fd, str(handshake2)
+
+        def fake_shell_execute2(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            captured["parameters2"] = info.lpParameters
+            info.hProcess = fake_handle
+            handshake2.write_text(pipe_name2, encoding="utf-8")
+            return True
+
+        monkeypatch.setattr("tsdev_automation.client.tempfile.mkstemp", fake_mkstemp2)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute2)
+        monkeypatch.setattr(broker2, "_process_exited", lambda: False)
+        monkeypatch.setattr(_pipe, "connect", lambda name, timeout_ms=5000: 7783)
+        monkeypatch.setattr("tsdev_automation.client.atexit.register", lambda func: None)
+
+        broker2.start()
+        assert captured["parameters2"] == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", str(handshake2), "--no-recycle-whserver"]
+        )
+
+        broker2._started = False
+        broker2._pipe_handle = None
+        broker2._process_handle = None
+
     def test_batch_emits_flag_for_ctor_kwarg(self, client: TsDevClient, monkeypatch) -> None:
         """Direct ``_batch`` appends ``--recycle-whserver`` when the ctor
         kwarg authorized it."""
@@ -1839,6 +1914,56 @@ class TestRecycleWhserver:
             str(client.cli_path), "--json", "--recycle-whserver",
             "batch-delete", "--batch-stdin",
         ]
+
+    def test_batch_emits_optout_flag_for_ctor_false(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """Tri-state: the explicit ctor opt-out (False) forwards
+        ``--no-recycle-whserver`` on the direct batch command line -- the
+        flag makes the opt-out explicit and beats the opposite-polarity
+        TSDEV_RECYCLE_WHSERVER env (the CLI's pinned precedence)."""
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            arr = json.dumps([json.loads(_success_json("delete", "strategy", "A"))])
+            return _make_completed(arr)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client._recycle_whserver = False
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert seen["cmd"] == [
+            str(client.cli_path), "--json", "--no-recycle-whserver",
+            "batch-delete", "--batch-stdin",
+        ]
+        # The opt-out beats the opposite-polarity env var.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert "--no-recycle-whserver" in seen["cmd"]
+        assert "--recycle-whserver" not in seen["cmd"]
+
+    def test_batch_polarity_conflict_ctor_false_kwarg_true(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """A per-call ``recycle_whserver=True`` on a client whose ctor kwarg
+        EXPLICITLY opted out is refused before spawn: the emitted command
+        line would carry both polarity flags, which the CLI refuses with a
+        usage error."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+
+        def forbidden(*a, **k):
+            raise AssertionError("subprocess must not be spawned")
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        client._recycle_whserver = False
+        with pytest.raises(ValueError, match="both polarity flags"):
+            client._batch("delete", [BatchItem("strategy", "A")],
+                          recycle_whserver=True)
 
     def test_batch_emits_flag_for_env(self, client: TsDevClient, monkeypatch) -> None:
         """Env-only ``TSDEV_RECYCLE_WHSERVER`` authorization emits NO
@@ -1997,26 +2122,53 @@ class TestRecycleWhserver:
     ) -> None:
         """F2: the broker's Section 6.3 stderr warning is invisible in serve mode
         (hidden spawn, stderr discarded) -- the client emits a
-        ``warnings.warn`` brief naming what the flag authorizes instead."""
+        ``warnings.warn`` brief naming what the flag authorizes instead.
+        Tri-state scoping: the warning fires ONLY on explicit
+        authorization (ctor kwarg True or the TSDEV_RECYCLE_WHSERVER env
+        var) -- the RescueOnly default and an explicit opt-out are
+        silent."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True,
                         recycle_whserver=True)
         c._is_elevated = False
         with pytest.warns(UserWarning, match="background library server"):
             broker = c._ensure_broker()
         assert broker is c._broker
-        # The env OR-arm warns too (kwarg False does not veto env).
+        # The env OR-arm warns too (ctor None follows the env arm).
         c2 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c2._is_elevated = False
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
         with pytest.warns(UserWarning, match="background library server"):
             c2._ensure_broker()
+        # Default (ctor None, env unset) is SILENT -- the RescueOnly
+        # default must not warn.
+        c3 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c3._is_elevated = False
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            c3._ensure_broker()
+        assert not [w for w in caught
+                    if "background library server" in str(w.message)]
+        # An explicit opt-out (ctor False) is silent too -- even with the
+        # opposite-polarity env var set (the opt-out beats it).
+        c4 = TsDevClient(cli_path=str(fake_cli), use_serve=True,
+                         recycle_whserver=False)
+        c4._is_elevated = False
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            c4._ensure_broker()
+        assert not [w for w in caught
+                    if "background library server" in str(w.message)]
 
     def test_batch_direct_warns_when_recycle_authorized(
         self, client: TsDevClient, monkeypatch
     ) -> None:
         """The direct path also emits the client-side warning (the CLI's
-        Section 6.3 text goes to captured child stderr, not surfaced)."""
+        Section 6.3 text goes to captured child stderr, not surfaced).
+        Tri-state: the RescueOnly DEFAULT batch is silent."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
         monkeypatch.setattr(
@@ -2027,6 +2179,15 @@ class TestRecycleWhserver:
         with pytest.warns(UserWarning, match="background library server"):
             results = client.batch_delete([BatchItem("strategy", "A")])
         assert len(results) == 1 and results[0].success
+        # Default batch (ctor None, env unset): no warning.
+        client._recycle_whserver = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert not [w for w in caught
+                    if "background library server" in str(w.message)]
+        client._recycle_whserver = False
 
     def test_batch_direct_noguard_refused_before_warning(
         self, client: TsDevClient, monkeypatch
@@ -2054,6 +2215,21 @@ class TestRecycleWhserver:
             ):
                 client.batch_delete([BatchItem("strategy", "A")])
         assert not [w for w in caught if "background library server" in str(w.message)]
+
+        # Tri-state carve-out: an explicit ctor OPT-OUT (False) is never
+        # refused with the noguard env -- the opt-out beats the recycle
+        # arms, so there is no conflict to refuse (the run is Off).
+        client._recycle_whserver = False
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: _make_completed(
+                json.dumps([json.loads(_success_json("delete", "strategy", "A"))])))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = client.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert not [w for w in caught if "background library server" in str(w.message)]
+        client._recycle_whserver = None
 
     def test_batch_direct_no_warning_before_elevation_error(
         self, fake_cli: Path, monkeypatch
@@ -2099,6 +2275,34 @@ class TestRecycleWhserver:
             results = c.batch_delete([BatchItem("strategy", "A")])
         # The batch still ran — warn (fail-loud), not refuse.
         assert len(results) == 1 and results[0].success
+
+    def test_serve_batch_no_env_warning_when_explicit_optout(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Tri-state carve-out for F4: a broker launched with the EXPLICIT
+        ``recycle_whserver=False`` opt-out (the forwarded
+        ``--no-recycle-whserver`` beats the opposite-polarity env by the
+        CLI's pinned precedence) does NOT warn when
+        ``TSDEV_RECYCLE_WHSERVER`` appears later -- the env var is
+        shadowed by design, not silently lost."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        broker = _serve_batch_broker([
+            {"op": "delete", "type": "strategy", "name": "A",
+             "success": True, "exit_code": 0},
+        ])
+        broker._started = True
+        broker._recycle_authorized_at_launch = False
+        broker._recycle_explicit_optout = True
+        c = _serve_client(tmp_path, broker)
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = c.batch_delete([BatchItem("strategy", "A")])
+        assert len(results) == 1 and results[0].success
+        assert not [
+            w for w in caught
+            if "WITHOUT recycle authorization" in str(w.message)
+        ]
 
     def test_serve_batch_no_env_warning_when_authorized_at_launch(
         self, tmp_path: Path, monkeypatch
@@ -2158,8 +2362,24 @@ class TestRecycleWhserver:
         ):
             c2._ensure_broker()
 
+    def test_serve_explicit_optout_plus_noguard_allowed(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """Tri-state carve-out for F5: an explicit ctor OPT-OUT (False) is
+        never refused next to ``TSDEV_NO_WHSERVER_VAS_GUARD`` -- the
+        opt-out beats the opposite-polarity env var, so the broker
+        legitimately launches Off (the recycle is disabled; there is no
+        conflict to refuse)."""
+        monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True,
+                        recycle_whserver=False)
+        c._is_elevated = False
+        broker = c._ensure_broker()  # must not raise
+        assert broker._recycle_explicit_optout is True
+
     def _started_broker(self, monkeypatch, tmp_path: Path,
-                        recycle_kwarg: bool) -> _ServeBroker:
+                        recycle_kwarg: bool | None) -> _ServeBroker:
         """Drive ``_ServeBroker.start()`` through the mocked runas spawn
         (same machinery as test_serve_broker_start_forwards_recycle_flag)
         and return the started broker."""
@@ -2191,26 +2411,29 @@ class TestRecycleWhserver:
         self, monkeypatch, tmp_path: Path
     ) -> None:
         """F5a: ``_recycle_authorized_at_launch`` is computed by ``start()``
-        at spawn time from the OR-ed kwarg/env — not injected manually.
-        An env var appearing after launch can never reach the immutable
-        broker command line, so the launch-time read is the only one that
-        counts."""
+        at spawn time from the tri-state kwarg/env precedence -- not
+        injected manually.  An env var appearing after launch can never
+        reach the immutable broker command line, so the launch-time read
+        is the only one that counts.  An explicit ctor opt-out (False)
+        pins False too -- the forwarded --no-recycle-whserver beats the
+        opposite-polarity env by design."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
+        monkeypatch.delenv("TSDEV_NO_RECYCLE_WHSERVER", raising=False)
 
-        # Kwarg alone -> pinned True at spawn.
+        # Kwarg True -> pinned True at spawn.
         broker = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=True)
         assert broker._recycle_authorized_at_launch is True
 
-        # Env alone (kwarg False) -> pinned True at spawn.
+        # Env alone (kwarg None) -> pinned True at spawn.
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
-        broker2 = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=False)
+        broker2 = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=None)
         assert broker2._recycle_authorized_at_launch is True
 
         # Neither -> False at spawn; and a value manually injected before
         # start() is overwritten by the launch-time computation (the field
         # is not a settable knob).
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
-        broker3 = _ServeBroker(tmp_path / "tsdev_cli.exe", recycle_whserver=False)
+        broker3 = _ServeBroker(tmp_path / "tsdev_cli.exe", recycle_whserver=None)
         broker3._recycle_authorized_at_launch = True  # stale injected value
         handshake = tmp_path / "hs3.pipe"
         pipe_name = r"\\.\pipe\tsdev_test_launch_auth3"
@@ -2233,7 +2456,16 @@ class TestRecycleWhserver:
         broker3.start()
         assert broker3._recycle_authorized_at_launch is False
 
-        for b in (broker, broker2, broker3):
+        # Explicit ctor opt-out (False): pinned False even with the
+        # opposite-polarity env var set (the forwarded
+        # --no-recycle-whserver beats it), and the opt-out flag is
+        # recorded for the env-after-launch warning carve-out.
+        monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
+        broker4 = self._started_broker(monkeypatch, tmp_path, recycle_kwarg=False)
+        assert broker4._recycle_authorized_at_launch is False
+        assert broker4._recycle_explicit_optout is True
+
+        for b in (broker, broker2, broker3, broker4):
             b._started = False
             b._pipe_handle = None
             b._process_handle = None
@@ -3673,6 +3905,12 @@ def _serve_batch_broker(outcomes: list[dict]) -> MagicMock:
     response enrichment.
     """
     broker = MagicMock()
+    # Real _ServeBroker instances always carry these booleans from
+    # __init__; pin them on the fake so truthy MagicMock auto-attributes
+    # cannot masquerade as an explicit opt-out in the env-after-launch
+    # warning check.
+    broker._recycle_explicit_optout = False
+    broker._recycle_authorized_at_launch = False
     calls: list[dict] = []
     seen_ids: list[str] = []
 

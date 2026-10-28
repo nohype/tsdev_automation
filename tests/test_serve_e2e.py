@@ -2131,8 +2131,11 @@ class TestServeE2E:
         the 256/64 MB pair is the RECYCLE TRIGGER, the 64/32 MB pair
         (``--whserver-abort-free-mb`` / ``--whserver-abort-largest-free-mb``)
         is the hard ABORT FLOOR. A trigger breach still above the floor
-        with recycling unauthorized CONTINUES -- the request dispatches;
-        only a FLOOR breach aborts.
+        CONTINUES in every mode except an explicit Full authorization --
+        the request dispatches; only a FLOOR breach aborts (and only in
+        the Off mode -- the default RescueOnly rescues below the floor
+        via the exit-18 boundary, so phase 2 pins the abort with the
+        explicit opt-out).
 
         Phase 1 (default thresholds): a 2-item ``batch_upsert`` succeeds --
         the guard passes with normal WHServer headroom.
@@ -2141,18 +2144,24 @@ class TestServeE2E:
         as explicit ``--whserver-*`` flags because ``runas`` does not
         inherit env; the trigger is raised together with the floor because
         ``vasThresholdsInverted`` rejects a trigger below the floor with
-        exit 1 before the pipe file is written). Every mutating request is
-        refused with ``exit_code=14`` / ``error.code ==
-        "whserver_vas_abort"`` without executing the op; the client aborts
-        the batch -- refusal recorded, remaining items become exit-12
-        markers carrying the abort message, no further requests are sent.
-        Read-only ``exists`` is NOT gated and still answers; nothing is
-        written.
+        exit 1 before the pipe file is written). The client is constructed
+        with the EXPLICIT ``recycle_whserver=False`` opt-out (forwarded as
+        ``--no-recycle-whserver`` on the broker launch): the tri-state
+        default is RescueOnly, whose below-floor rescue would take the
+        exit-18 recycle boundary instead of refusing -- the opt-out pins
+        the Off mode so every mutating request is still refused with
+        ``exit_code=14`` / ``error.code == "whserver_vas_abort"`` without
+        executing the op; the client aborts the batch -- refusal recorded,
+        remaining items become exit-12 markers carrying the abort message,
+        no further requests are sent. Read-only ``exists`` is NOT gated and
+        still answers; nothing is written.
         Phase 3 (trigger-only breach): ``TSDEV_WHSERVER_FREE_MB=5000`` with
-        the floor at its default -- above the floor, recycling unauthorized
-        -> CONTINUE: both requests dispatch and succeed (exit 0) and the
-        items are really written (``exists`` answers true), so this phase
-        carries its own delete cleanup. The broker's one-shot
+        the floor at its default -- above the floor, so the band ALWAYS
+        continues (RescueOnly default: the recycle is reserved for the
+        abort-floor rescue; no explicit --recycle-whserver): both requests
+        dispatch and succeed (exit 0) and the items are really written
+        (``exists`` answers true), so this phase carries its own delete
+        cleanup. The broker's one-shot
         ``whserver_vas_continue`` notice rides the BROKER's stderr, which
         the hidden ``runas`` spawn discards (the response frame carries no
         diagnostics lane), so it is not client-observable here; its JSON
@@ -2211,9 +2220,14 @@ class TestServeE2E:
         # raised with it (6000 >= 5000): vasThresholdsInverted rejects a
         # trigger below the floor outright (exit 1 before the pipe file is
         # written), so the floor cannot be breached alone.
+        # Tri-state: the explicit recycle_whserver=False opt-out is
+        # forwarded as --no-recycle-whserver on the broker launch (runas
+        # drops env, so the flag is the only way the negative arm reaches
+        # the broker) -- the default RescueOnly would attempt the exit-18
+        # rescue below the floor instead of refusing.
         monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "6000")
         monkeypatch.setenv("TSDEV_WHSERVER_ABORT_FREE_MB", "5000")
-        client2 = TsDevClient(cli_path=cli_path)
+        client2 = TsDevClient(cli_path=cli_path, recycle_whserver=False)
         try:
             assert client2._serve_active()
             # Warm-up: a read-only exists is NOT gated, but it is a
@@ -2252,13 +2266,15 @@ class TestServeE2E:
                     pass
 
         # --- Phase 3: trigger-only breach -> CONTINUE, request dispatches ---
-        # New two-threshold policy: TSDEV_WHSERVER_FREE_MB=5000 breaches the
+        # Two-threshold policy: TSDEV_WHSERVER_FREE_MB=5000 breaches the
         # RECYCLE TRIGGER (any non-LAA 32-bit free VAS is below it) while the
         # abort floor stays at its 64/32 default -- a survivable headroom.
-        # Recycling is unauthorized (no --recycle-whserver), so vasGuardAction
-        # returns Continue: the requests DISPATCH instead of being refused.
-        # The phase-2 abort env vars are dropped first (monkeypatch keeps
-        # them otherwise).
+        # Tri-state: the client default (recycle_whserver=None) forwards no
+        # flag, so the broker runs the RescueOnly DEFAULT, whose band arm
+        # ALWAYS continues (the recycle is reserved for the abort-floor
+        # rescue) -- vasGuardAction returns Continue: the requests DISPATCH
+        # instead of being refused. The phase-2 abort env vars are dropped
+        # first (monkeypatch keeps them otherwise).
         monkeypatch.delenv("TSDEV_WHSERVER_ABORT_FREE_MB", raising=False)
         monkeypatch.delenv("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB", raising=False)
         monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
