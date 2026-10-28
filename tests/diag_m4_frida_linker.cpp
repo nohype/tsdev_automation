@@ -385,7 +385,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         ok70 ? "OK" : "SEH", r70.result);
         }
     } else {
-        std::printf("    [linker returned no record — nothing to read]\n");
+        std::printf("    [linker returned no record -- nothing to read]\n");
     }
 
     // --- Step 7: cleanup. ---

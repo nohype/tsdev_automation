@@ -170,7 +170,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos(\"%s\") = %d\n", kTestName, progId);
 
     if (progId <= 0) {
-        std::fprintf(stdout, "    Component not found — inserting...\n");
+        std::fprintf(stdout, "    Component not found -- inserting...\n");
 
         // createEntry
         int errCode = 0;
@@ -351,7 +351,7 @@ DWORD WINAPI runTest(LPVOID param) {
                      xmlPath.c_str());
     } else {
         std::fprintf(stdout,
-                     "    WARNING: .xml file still exists (%s) — "
+                     "    WARNING: .xml file still exists (%s) -- "
                      "non-fatal (standalone mode may not produce .xml)\n",
                      xmlPath.c_str());
         cleanFile(xmlPath);

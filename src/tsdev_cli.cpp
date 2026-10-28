@@ -94,6 +94,14 @@
 //                 (value ignored, counts as ONE occurrence). "Space + value"
 //                 (--verbose 2) is NOT supported. All log output goes to
 //                 stderr only; stdout (results and JSON) is unaffected.
+//   --log-file <path>   Global, position-free flag (space or = form; the
+//                 env mirror TSDEV_LOG_FILE applies when the flag is
+//                 absent). Open the debug log-file sink: every tsdev_lib log
+//                 message is appended to <path> as a one-line record at
+//                 EVERY level -- independent of the -v level and of --pbar
+//                 sink routing -- so console output stays user-facing while
+//                 the file keeps the complete diagnostics. An open failure
+//                 warns once and continues (never fatal). OFF by default.
 //   --ts-path <directory>  Override the TradeStation install directory
 //                          (default: auto-discovered from registry)
 //
@@ -150,18 +158,28 @@
 // and non-LARGEADDRESSAWARE; a field crash showed it dying at ~10 MB free
 // user address space (std::bad_alloc inside a COM handler). After each
 // completed non-final item the batch measures WHServer's free VAS (see
-// whserver_health.h); when the total free MB drops below --whserver-free-mb
-// (default 256) or the largest contiguous free block drops below
-// --whserver-largest-free-mb (default 64) the batch aborts LOUDLY before
-// dispatching the next item: remaining items become exit-12 not-run markers
-// and the process exits 14. On the serve path the same gate runs before
-// dispatching each mutating request (insert/modify/delete/upsert): a breach
-// returns an exit-14 refusal response (error.code "whserver_vas_abort")
-// without executing the op — the client treats it as a batch abort.
+// whserver_health.h). TWO threshold pairs (the 2026-10 field fix): the
+// --whserver-free-mb (256) / --whserver-largest-free-mb (64) pair is the
+// RECYCLE TRIGGER -- a breach asks for a server restart, it is NOT a
+// danger level; the --whserver-abort-free-mb (64) /
+// --whserver-abort-largest-free-mb (32) pair is the real floor where the
+// batch dies. Between trigger and floor the batch CONTINUES in-process
+// whenever the restart cannot happen: recycling not authorized, or the
+// pre-activation foreign-client latch (m_nLock sampled before this
+// process's own orlib attach, KB Section 21) says another TradeStation
+// program holds the server -- one `whserver_vas_continue` notice per run,
+// no markers/manifest/nonzero exit. Below the floor the old abort stands:
+// remaining items become exit-12 not-run markers and the process exits 14.
+// On the serve path the same gate runs before dispatching each mutating
+// request (insert/modify/delete/upsert): a continuation dispatches the
+// request; a true below-floor breach returns an exit-14 refusal response
+// (error.code "whserver_vas_abort") without executing the op -- the client
+// treats it as a batch abort.
 // WHServer not running (lazy singleton not yet spawned) = pass; a transient
 // measurement failure warns once and does NOT abort/refuse.
 // --no-whserver-vas-guard disables the guard. Env mirrors:
 // TSDEV_WHSERVER_FREE_MB / TSDEV_WHSERVER_LARGEST_FREE_MB /
+// TSDEV_WHSERVER_ABORT_FREE_MB / TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB /
 // TSDEV_NO_WHSERVER_VAS_GUARD (explicit CLI flags win over env). NOTE:
 // ShellExecuteExW runas does NOT inherit the caller's environment block, so
 // the Python client forwards TSDEV_WHSERVER_* overrides to the serve broker
@@ -404,37 +422,50 @@ void printUsage() {
         "                   hanging forever. Default 900; 0 disables the bound;\n"
         "                   valid range 0..86400.\n"
         "  --whserver-free-mb <N>  (batch-*/serve) WHServer VAS-headroom guard:\n"
-        "                   abort the batch (exit 14, remaining items become\n"
-        "                   exit-12 not-run markers) before the next item when\n"
-        "                   WHServer.exe total free user address space drops\n"
-        "                   below N MB. Default 256. Env: TSDEV_WHSERVER_FREE_MB.\n"
-        "  --whserver-largest-free-mb <N>  (batch-*/serve) same guard on the\n"
+        "                   the RECYCLE TRIGGER on total free user address\n"
+        "                   space -- a breach asks for a server restart (with\n"
+        "                   --recycle-whserver), it is NOT a danger level.\n"
+        "                   Below the trigger but above the abort floor the\n"
+        "                   batch keeps working in-process whenever the restart\n"
+        "                   cannot happen (unauthorized, or another\n"
+        "                   TradeStation program holds the server). Default 256.\n"
+        "                   Env: TSDEV_WHSERVER_FREE_MB.\n"
+        "  --whserver-largest-free-mb <N>  (batch-*/serve) same trigger on the\n"
         "                   largest contiguous free block (fragmentation kills\n"
         "                   contiguous allocations). Default 64.\n"
         "                   Env: TSDEV_WHSERVER_LARGEST_FREE_MB.\n"
+        "  --whserver-abort-free-mb <N>  (batch-*/serve) the actual abort floor\n"
+        "                   on total free user address space: below N MB the\n"
+        "                   batch aborts (exit 14, remaining items become\n"
+        "                   exit-12 not-run markers) unless an authorized\n"
+        "                   recycle boundary resolves it. Default 64.\n"
+        "                   Env: TSDEV_WHSERVER_ABORT_FREE_MB.\n"
+        "  --whserver-abort-largest-free-mb <N>  (batch-*/serve) same abort\n"
+        "                   floor on the largest contiguous free block.\n"
+        "                   Default 32. Env: TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB.\n"
         "  --no-whserver-vas-guard  (batch-*/serve) disable the WHServer\n"
         "                   VAS-headroom guard entirely. Env:\n"
         "                   TSDEV_NO_WHSERVER_VAS_GUARD (any value but \"0\").\n"
         "  --recycle-whserver  (batch-*/serve) authorize restarting\n"
         "                   WHServer.exe when the VAS-headroom guard trips.\n"
         "                   The restart is still gated on a zero-client\n"
-        "                   census — the flag AUTHORIZES the recycle, it does\n"
+        "                   census -- the flag AUTHORIZES the recycle, it does\n"
         "                   NOT bypass the census gate: when the gate cannot\n"
         "                   confirm zero foreign-held objects the batch aborts\n"
         "                   (exit 19). A successful recycle exits 18 so the\n"
         "                   batch resumes in a fresh process (serve: the\n"
-        "                   elevated broker respawns — a non-elevated client\n"
+        "                   elevated broker respawns -- a non-elevated client\n"
         "                   gets one UAC prompt per respawn). Not valid with\n"
         "                   --no-whserver-vas-guard or --batch-progress-control.\n"
         "                   Presence-only: any '=' value is ignored; no\n"
-        "                   negative form — env \"0\" disables the env arm\n"
+        "                   negative form -- env \"0\" disables the env arm\n"
         "                   only, never the flag.\n"
         "                   Env: TSDEV_RECYCLE_WHSERVER (any value but \"0\").\n"
         "                   (On a recycle exit the CLI writes a resume\n"
-        "                   manifest covering the not-run tail — resubmit\n"
+        "                   manifest covering the not-run tail -- resubmit\n"
         "                   `batch-<op> <resume-file>`; the Python client\n"
         "                   resubmits it automatically, bounded at 3 recycles\n"
-        "                   per batch — exit 19 aborts.)\n"
+        "                   per batch -- exit 19 aborts.)\n"
         "  --traverse-strategy-dependents  (all verify paths: single ops,\n"
         "                   batch-*, serve) restore the legacy per-item\n"
         "                   whole-library reverse-dependent traversal for\n"
@@ -482,8 +513,8 @@ void printUsage() {
         "                 restore; only the backup dir is touched, never the\n"
         "                 live cache.\n"
         "                 Output placement: standalone (no subcommand) prints\n"
-        "                 BACKUP COMPLETE / BACKUP KEPT / RESTORE COMPLETE — or\n"
-        "                 the --json object — on stdout; combined with a\n"
+        "                 BACKUP COMPLETE / BACKUP KEPT / RESTORE COMPLETE -- or\n"
+        "                 the --json object -- on stdout; combined with a\n"
         "                 subcommand the cache phase emits stderr lines only.\n"
         "                 Standalone --json object: \"op\" plus a \"cache\"\n"
         "                 payload for a single flag, or \"backup\"+\"restore\"\n"
@@ -504,6 +535,10 @@ void printUsage() {
         "                 one occurrence). Log output goes to stderr only; "
         "stdout (results\n"
         "                 and JSON) is unaffected.\n"
+        "  --log-file <path>  Append every log message to <path> as one-line\n"
+        "                 records at every level (independent of -v and\n"
+        "                 --pbar); console output is unchanged.\n"
+        "                 Env: TSDEV_LOG_FILE (flag wins).\n"
         "  --output <file>  (get-source only) Write the retrieved EasyLanguage "
         "source to <file>\n"
         "                   instead of stdout. Internally encrypted items are "
@@ -881,16 +916,16 @@ void emitBatchProgress(const std::string& line) {
 //   - Draw: '\r' returns to column 0, the line text is written, then spaces
 //     pad out to the widest line drawn so far (maxCells), so a shorter
 //     redraw fully overwrites a longer previous line.
-//   - Erase: '\r' + maxCells spaces + '\r' — leaves the cursor at column 0
+//   - Erase: '\r' + maxCells spaces + '\r' -- leaves the cursor at column 0
 //     of a blank line so an event line can be written on it and scroll up.
-//   - Cell width: every emitted glyph (ASCII, U+2588 '█', U+2591 '░',
-//     U+2014 '—') occupies exactly one console cell; width is counted in
-//     display cells as bytes with (b & 0xC0) != 0x80 (UTF-8 continuation
-//     bytes don't count).
+//   - Cell width: every emitted glyph occupies exactly one console cell;
+//     width is counted in display cells as bytes with (b & 0xC0) != 0x80
+//     (UTF-8 continuation bytes don't count -- user-supplied item names may
+//     still carry multibyte characters inside the optional label).
 //   - Write path: when stderr is a real console (_isatty(_fileno) AND
 //     GetConsoleMode(STD_ERROR_HANDLE) both succeed), text is converted
 //     UTF-8 -> UTF-16 via MultiByteToWideChar and written via WriteConsoleW
-//     (required for the block/shade/em-dash glyphs to render); stderr is
+//     (so a non-ASCII item name in the label still renders); stderr is
 //     fflushed FIRST so buffered C-stdio output can never overtake the
 //     direct console writes. Otherwise (pipe/file redirect) the UTF-8 bytes
 //     go through fwrite. stderr is fflushed after every write.
@@ -904,12 +939,11 @@ void emitBatchProgress(const std::string& line) {
 const size_t kPbarMaxCells = 79;
 const size_t kPbarBarCells = 30;
 
-// UTF-8 encodings of the bar/failure glyphs, spelled as \x escapes so the
-// string literals stay ASCII-only regardless of the compiler source charset
-// (no /utf-8 flag); literal glyphs in comments are harmless.
-const char* const kPbarFullGlyph  = "\xE2\x96\x88";  // U+2588 FULL BLOCK
-const char* const kPbarShadeGlyph = "\xE2\x96\x91";  // U+2591 LIGHT SHADE
-const char* const kPbarEmDash     = "\xE2\x80\x94";  // U+2014 EM DASH
+// The bar/failure glyphs -- strictly ASCII so every emitted byte renders on
+// any console code page and in any redirected stream.
+const char* const kPbarFullGlyph  = "#";  // filled bar cell
+const char* const kPbarShadeGlyph = "-";  // empty bar cell
+const char* const kPbarEmDash     = "-";  // separator dash
 
 // Display-cell width of a UTF-8 string under the pinned rule: count bytes
 // that are not UTF-8 continuation bytes.
@@ -946,15 +980,15 @@ std::string pbarTruncCells(const std::string& s, size_t maxCells) {
 // Returns the complete bar line text as UTF-8 (no '\r', no '\n', no ANSI,
 // no trailing spaces). The line NEVER exceeds kPbarMaxCells display cells.
 // Pinned format:
-//   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ — <n> failed]
-// <bar> is exactly kPbarBarCells cells: U+2588 '█' repeated
+//   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ - <n> failed]
+// <bar> is exactly kPbarBarCells cells: '#' repeated
 // floor(30*done/total) — clamped to a full bar when done > total — then
-// U+2591 '░' fill; total == 0 -> all '░' and pct 0. <pct> is
+// '-' fill; total == 0 -> all '-' and pct 0. <pct> is
 // done*100/total integer, right-aligned to width 3 + '%' (the field widens
 // naturally past 999). The label is `<type> "<name>"` with the name through
 // the existing jsonQuote() helper — empty when type and name are both
 // empty, and truncated with a trailing "..." so the whole line stays within
-// kPbarMaxCells. The ` — <n> failed` suffix (U+2014 em dash) appears only
+// kPbarMaxCells. The ` - <n> failed` suffix appears only
 // when failures > 0 and is part of the width budget.
 std::string pbarLine(const std::string& op, size_t done, size_t total,
                      const std::string& type, const std::string& name,
@@ -1271,7 +1305,7 @@ void emitOutput(const CliResult& r, bool jsonMode) {
 // return into ExitProcess. The emitted bytes are identical to the cmd*
 // tail's: the post-hoc --pbar draw, then emitOutput. On this path the
 // result is always a failure (the flag only rides failure results), so the
-// bar draws the "— 1 failed" form and emitOutput always runs — mirroring
+// bar draws the " - 1 failed" form and emitOutput always runs -- mirroring
 // the cmd* tail exactly; only the teardown differs. No-op when the flag
 // is unset.
 void singleOpTerminateIfSessionOpen(const CliResult& r,
@@ -1338,10 +1372,10 @@ std::string cacheElapsedFormat(double elapsedSecs) {
 
 // Determinate console frame (pure, no '\r'/'\n', never wider than
 // kPbarMaxCells display cells):
-//   <OP> [<30-cell bar>] <pct>% <elapsed>[ — <current file basename>]
-// Same bar geometry as pbarLine: kPbarBarCells of '█'/'░', pct = done*100/
+//   <OP> [<30-cell bar>] <pct>% <elapsed>[ - <current file basename>]
+// Same bar geometry as pbarLine: kPbarBarCells of '#'/'-', pct = done*100/
 // total right-aligned to width 3 + '%', elapsed via cacheElapsedFormat. The
-// " — <file>" suffix (U+2014 em dash) is truncated on a code-point boundary
+// " - <file>" suffix is truncated on a code-point boundary
 // to fit, and dropped entirely when fewer than 4 cells remain.
 std::string cacheProgressLine(const std::string& op, uint64_t done,
                               uint64_t total, double elapsedSecs,
@@ -1376,7 +1410,7 @@ std::string cacheProgressLine(const std::string& op, uint64_t done,
                 line += ' ';
                 line += fileBase;
             } else if (budget >= 4) {
-                // Minimum useful form: " — " + a truncated basename.
+                // Minimum useful form: " - " + a truncated basename.
                 line += ' ';
                 line += kPbarEmDash;
                 line += ' ';
@@ -1869,7 +1903,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         const std::string msg =
             "cannot determine the cache backup root "
             "(LOCALAPPDATA is unavailable)";
-        std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+        std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n", msg.c_str());
         emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
         return 16;
     }
@@ -1882,7 +1916,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         const std::string msg =
             "cannot locate TradeStation cache directory (looked for " +
             wideToUtf8Cli(cacheDir) + ")";
-        std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+        std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n", msg.c_str());
         emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
         return 16;
     }
@@ -1899,7 +1933,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 names += wideToUtf8Cli(p);
             }
             std::fprintf(stderr,
-                "tsdev_cli: WARNING — TradeStation is running (%s); the "
+                "tsdev_cli: WARNING -- TradeStation is running (%s); the "
                 "backup may capture a live cache.\n", names.c_str());
         }
 
@@ -1911,8 +1945,8 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         if (info.exists && !info.complete &&
             action != BackupAction::Cancel) {
             std::fprintf(stderr,
-                "tsdev_cli: WARNING — existing cache backup is incomplete "
-                "(created=%s) — replacing it with a fresh backup\n",
+                "tsdev_cli: WARNING -- existing cache backup is incomplete "
+                "(created=%s) -- replacing it with a fresh backup\n",
                 info.created.empty() ? "unknown" : info.created.c_str());
         }
         char decision = 'o';
@@ -1929,8 +1963,8 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 // a warning (interactive Prompt never reaches this case).
                 if (policy == CacheBackupPolicy::Prompt && !interactive) {
                     std::fprintf(stderr,
-                        "tsdev_cli: WARNING — keeping existing backup "
-                        "(created=%s) — continuing without a new backup\n",
+                        "tsdev_cli: WARNING -- keeping existing backup "
+                        "(created=%s) -- continuing without a new backup\n",
                         info.created.c_str());
                 }
                 break;
@@ -1940,7 +1974,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         }
         if (decision == 'c') {
             std::fprintf(stderr,
-                "tsdev_cli: cache backup cancelled — %s\n",
+                "tsdev_cli: cache backup cancelled -- %s\n",
                 tail.c_str());
             // Serve mode carries the "session continues" notion inside the
             // error message itself: the broker's stderr is not captured by
@@ -1964,11 +1998,11 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 uint64_t avail = 0;
                 if (!tsdev::queryVolumeFreeSpace(backupRoot, avail)) {
                     std::fprintf(stderr,
-                        "tsdev_cli: WARNING — could not determine free "
+                        "tsdev_cli: WARNING -- could not determine free "
                         "space on the backup volume\n");
                 } else if (avail < en.totalBytes) {
                     std::fprintf(stderr,
-                        "tsdev_cli: WARNING — low disk space on the backup "
+                        "tsdev_cli: WARNING -- low disk space on the backup "
                         "volume (needed=%llu bytes, available=%llu bytes); "
                         "the backup may fail\n",
                         static_cast<unsigned long long>(en.totalBytes),
@@ -1990,10 +2024,10 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                     std::to_string(
                         static_cast<unsigned long>(backupRes.win32Error)) +
                     ")";
-                std::fprintf(stderr, "tsdev_cli: ERROR — %s\n",
+                std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n",
                              msg.c_str());
                 std::fprintf(stderr,
-                    "tsdev_cli: cache backup failed — %s\n",
+                    "tsdev_cli: cache backup failed -- %s\n",
                     tail.c_str());
                 emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
                 return 16;
@@ -2042,7 +2076,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             if (!restoreRes.message.empty()) {
                 msg += ": " + restoreRes.message;
             }
-            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n", msg.c_str());
             emitCacheErrorJson(cacheOp, 5, msg, jsonMode, serveResult);
             return 5;
         }
@@ -2052,7 +2086,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 wideToUtf8Cli(restoreRes.errorPath) + " is locked. "
                 "Close TradeStation Desktop (orchart.exe, WHServer.exe, "
                 "TSDev.exe) and retry.";
-            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n", msg.c_str());
             emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
             return 16;
         }
@@ -2064,9 +2098,9 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                 std::to_string(
                     static_cast<unsigned long>(restoreRes.win32Error)) +
                 ")";
-            std::fprintf(stderr, "tsdev_cli: ERROR — %s\n", msg.c_str());
+            std::fprintf(stderr, "tsdev_cli: ERROR -- %s\n", msg.c_str());
             std::fprintf(stderr,
-                "tsdev_cli: cache restore failed — %s\n",
+                "tsdev_cli: cache restore failed -- %s\n",
                 tail.c_str());
             emitCacheErrorJson(cacheOp, 16, msg, jsonMode, serveResult);
             return 16;
@@ -2079,7 +2113,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
             static_cast<unsigned long long>(restoreRes.bytes),
             static_cast<unsigned long long>(restoreRes.elapsedSecs));
         std::fprintf(stderr,
-            "tsdev_cli: cache restored — TradeStation Desktop will "
+            "tsdev_cli: cache restored -- TradeStation Desktop will "
             "revalidate it on next start.\n");
     }
 
@@ -2438,7 +2472,7 @@ bool applyPersistenceIntegrityCheck(CliResult& r,
     const char* reason = (v == IntegrityVerdict::InvalidInput)
         ? "persistence integrity check could not evaluate the artifacts "
           "(unreadable/unparseable .ell or .xml, or GUID missing from .xml)"
-        : "persistence integrity check FAILED — stale .ell (Fault A): the "
+        : "persistence integrity check FAILED -- stale .ell (Fault A): the "
           ".ell hash is unchanged or the post-op XML GUID is not present "
           "exactly once (mixed-endian) in the .ell; the artifacts are "
           "inconsistent and the item is runtime-unlinkable";
@@ -2539,7 +2573,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
     }
 
     std::string note = std::string("tsdev_cli: create-path failed at ")
-        + stageLabel + " after successful createEntry — cleaning up partial "
+        + stageLabel + " after successful createEntry -- cleaning up partial "
         + typeStr + " \"" + name + "\" (ProgId=" + std::to_string(progId)
         + ")\n";
 
@@ -2573,7 +2607,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
                              "already been removed or FindExistPos missed "
                              "it)";
             } else {
-                cleanupErr = "deleteEntry returned false — disk cleanup "
+                cleanupErr = "deleteEntry returned false -- disk cleanup "
                              "failed; residual artifact(s): "
                              + diskCleanupError;
             }
@@ -2585,7 +2619,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
     }
 
     if (cleanupOk) {
-        note += "tsdev_cli: cleanup succeeded — partial entry + .ell/.xml removed\n";
+        note += "tsdev_cli: cleanup succeeded -- partial entry + .ell/.xml removed\n";
         r.humanStderr += note;
     } else {
         // Attach the cleanup failure SECONDARY. The primary diagnostic
@@ -2596,7 +2630,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
         r.cleanupError = std::string("create-path cleanup (stage=")
             + stageLabel + ") failed: " + cleanupErr;
         r.humanStderr += note;
-        r.humanStderr += std::string("tsdev_cli: WARNING — create-path cleanup of \"")
+        r.humanStderr += std::string("tsdev_cli: WARNING -- create-path cleanup of \"")
             + name + "\" (ProgId=" + std::to_string(progId)
             + ") failed: " + cleanupErr + "\n";
     }
@@ -2627,7 +2661,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         r.existingProgId = existing;
         r.errorMessage = typeStr + " \"" + name + "\" already exists (ProgId="
                          + std::to_string(existing) + "). Use modify instead.";
-        r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
+        r.humanStderr = std::string("tsdev_cli: ERROR -- ") + typeStr + " \""
                         + name + "\" already exists (ProgId=" + std::to_string(existing)
                         + "). Use modify instead.\n";
         return r;
@@ -2741,10 +2775,10 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         r.progId = progId;
         r.errorMessage = "compilation succeeded but .xml file not found at "
                         + lib.getXmlPath(type, progId)
-                        + " — finalization may be incomplete";
+                        + " -- finalization may be incomplete";
         r.humanStderr = std::string("tsdev_cli: compilation succeeded but .xml file not found at ")
                         + lib.getXmlPath(type, progId)
-                        + " — finalization may be incomplete\n";
+                        + " -- finalization may be incomplete\n";
         // TVS-L.11: createEntry + verify succeeded (progId > 0) but the .xml
         // artifact is missing on disk — route through the SAME L.10 single
         // owner. Cleanup errors attach secondarily; the primary exit-9
@@ -2901,7 +2935,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
                     r.progId = preProgId;
                     r.errorMessage = std::string("pre-operation ") + artifactLabel
                         + " artifact exists but cannot be hashed (unreadable"
-                        " or hash error) — refusing to treat as a new file"
+                        " or hash error) -- refusing to treat as a new file"
                         + " [type=" + typeStr
                         + ", name=\"" + name + "\""
                         + ", ProgId=" + std::to_string(preProgId)
@@ -2910,7 +2944,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
                         + artifactLabel + " artifact exists but cannot be"
                         " hashed at " + artifactPath
                         + " (ProgId=" + std::to_string(preProgId)
-                        + ") — aborting modify before mutation"
+                        + ") -- aborting modify before mutation"
                         " (detect-and-fail; no rollback/retry attempted)\n";
                     return false;
             }
@@ -2954,7 +2988,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
             r.exitCode = 5;
             r.errorMessage = typeStr + " \"" + name
                              + "\" not found in the warehouse.";
-            r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
+            r.humanStderr = std::string("tsdev_cli: ERROR -- ") + typeStr + " \""
                             + name + "\" not found in the warehouse. "
                             "Use insert to create it.\n";
         } else {
@@ -2975,10 +3009,10 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
         r.progId = res.progId;
         r.errorMessage = "compilation succeeded but .ell file not found at "
                         + lib.getEllPath(type, res.progId)
-                        + " — finalization may be incomplete";
+                        + " -- finalization may be incomplete";
         r.humanStderr = std::string("tsdev_cli: compilation succeeded but .ell file not found at ")
                         + lib.getEllPath(type, res.progId)
-                        + " — finalization may be incomplete\n";
+                        + " -- finalization may be incomplete\n";
         return r;
     }
     if (!lib.xmlFileExists(type, res.progId)) {
@@ -2986,10 +3020,10 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
         r.progId = res.progId;
         r.errorMessage = "compilation succeeded but .xml file not found at "
                         + lib.getXmlPath(type, res.progId)
-                        + " — finalization may be incomplete";
+                        + " -- finalization may be incomplete";
         r.humanStderr = std::string("tsdev_cli: compilation succeeded but .xml file not found at ")
                         + lib.getXmlPath(type, res.progId)
-                        + " — finalization may be incomplete\n";
+                        + " -- finalization may be incomplete\n";
         return r;
     }
 
@@ -3068,7 +3102,7 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
         r.exitCode = 5;
         r.errorMessage = typeStr + " \"" + name
                          + "\" not found in the warehouse.";
-        r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
+        r.humanStderr = std::string("tsdev_cli: ERROR -- ") + typeStr + " \""
                         + name + "\" not found in the warehouse.\n";
         return r;
     }
@@ -3096,11 +3130,11 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
             r.errorMessage = std::string("deleteEntry partially failed for ")
                 + typeStr + " \"" + name + "\" (ProgId="
                 + std::to_string(progId) + "): warehouse entry was removed, "
-                "but disk cleanup failed — " + diskCleanupError;
+                "but disk cleanup failed -- " + diskCleanupError;
             r.humanStderr = std::string("tsdev_cli: deleteEntry partially "
                 "failed for ") + typeStr + " \"" + name + "\" (ProgId="
                 + std::to_string(progId) + "): warehouse entry was removed, "
-                "but disk cleanup failed — " + diskCleanupError + "\n";
+                "but disk cleanup failed -- " + diskCleanupError + "\n";
         } else {
             r.errorMessage = std::string("deleteEntry failed for ") + typeStr
                              + " \"" + name + "\" (ProgId="
@@ -4023,7 +4057,7 @@ CliResult doGetSource(TsDevLib& lib, ComponentType type,
         r.exitCode = 5;
         r.errorMessage = typeStr + " \"" + name
                          + "\" not found or source unavailable.";
-        r.humanStderr = std::string("tsdev_cli: ERROR — ") + typeStr + " \""
+        r.humanStderr = std::string("tsdev_cli: ERROR -- ") + typeStr + " \""
                         + name + "\" not found or source unavailable.\n";
         return r;
     }
@@ -4784,6 +4818,100 @@ std::string whserverEnumFailedLine(const char* which, bool jsonOutput) {
                   "continuing)");
 }
 
+// The once-per-run continuation notice: the guard measured WHServer below
+// the recycle trigger but still above the abort floor, and work CONTINUES
+// in-process because the restart cannot happen. `cause` reports why
+// (unauthorized / foreign-client latch / a census_lock refusal that just
+// demonstrated another client holds the server). Human text and the JSON
+// event share the builder; the JSON event name `whserver_vas_continue`
+// deliberately matches neither pinned recycle event name, so client
+// resume semantics are untouched (the event rides the same diagnostics
+// lane as batch_control_error objects -- retained, never lifecycle).
+enum class VasContinueCause {
+    NotAuthorized,
+    ForeignClients,
+    CensusLock,
+};
+
+inline const char* vasContinueCauseName(VasContinueCause c) {
+    switch (c) {
+    case VasContinueCause::NotAuthorized:  return "recycle_not_authorized";
+    case VasContinueCause::ForeignClients: return "foreign_clients";
+    case VasContinueCause::CensusLock:     return "census_lock";
+    }
+    return "unknown";
+}
+
+// JSON: {event:"whserver_vas_continue", pid, free_mb, largest_free_mb,
+//        cause, action:"continue"}. Human:
+//   tsdev_cli: NOTE WHServer memory low (free=246MB largest=135MB);
+//   continuing -- the server can keep working (the 256MB restart
+//   threshold is not a danger level)[ -- another TradeStation program
+//   is using the server so it cannot be restarted]
+std::string whserverVasContinueLine(DWORD pid, uint64_t freeMB,
+                                    uint64_t largestMB,
+                                    unsigned triggerFreeMB,
+                                    VasContinueCause cause,
+                                    bool jsonOutput) {
+    if (jsonOutput) {
+        ordered_json j;
+        j["event"]           = "whserver_vas_continue";
+        j["pid"]             = static_cast<unsigned long>(pid);
+        j["free_mb"]         = freeMB;
+        j["largest_free_mb"] = largestMB;
+        j["cause"]           = vasContinueCauseName(cause);
+        j["action"]          = "continue";
+        return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    }
+    const char* suffix = "";
+    if (cause != VasContinueCause::NotAuthorized) {
+        suffix = " -- another TradeStation program is using the "
+                 "server so it cannot be restarted";
+    }
+    std::ostringstream oss;
+    oss << "tsdev_cli: NOTE WHServer memory low (free=" << freeMB
+        << "MB largest=" << largestMB
+        << "MB); continuing -- the server can keep working (the "
+        << triggerFreeMB << "MB restart threshold is not a danger level)"
+        << suffix;
+    return oss.str();
+}
+
+// Refused-recycle classification for the continuation policy: a
+// census_lock refusal ABOVE the abort floor is live proof a foreign
+// client holds the server -- the run continues instead of dying on the
+// refusal. Every other refuse reason (close-stage family, unverifiable
+// census, ambiguous death...) stays fail-closed, as does ANY refuse below
+// the floor.
+inline bool vasRefuseAllowsContinue(const char* refuseReason,
+                                    bool belowAbortFloor) {
+    return !belowAbortFloor && refuseReason != nullptr &&
+           std::strcmp(refuseReason, "census_lock") == 0;
+}
+
+// Production binding for the pre-activation foreign-client latch -- one
+// lightweight m_nLock probe per probed-build WHServer pid (never the
+// full sustained-zero census; a positive lock only has to be observed
+// once). Every inconclusive direction returns false, the conservative
+// outcome: the recycle attempt then proceeds and the engine's own
+// fail-closed census decides.
+bool detectForeignWhServerClients() {
+    return tsdev::whServerHasForeignClients(
+        [](std::vector<DWORD>& pids) -> bool {
+            return tsdev::findWhServerPids(pids);
+        },
+        [](DWORD pid) -> bool {
+            return tsdev::whServerPidImageIsKnown(pid);
+        },
+        [](DWORD pid, tsdev::WhLockSample& sample) -> bool {
+            tsdev::CensusTarget t;
+            t.pid = pid;
+            t.lockVa = tsdev::kWhLockVa;
+            t.activityVa = 0;
+            return tsdev::readWhLockSample(t, sample);
+        });
+}
+
 // The corpse pre-check's pure decision (P4 gap-a): the first WHServer pid
 // that also appears as a TSCrashReport.exe PARENT pid — a crash-frozen
 // zombie — or 0 when the intersection is empty. TSCrash.dll launches the
@@ -4824,6 +4952,24 @@ static const char* const kRecycledMarkerMessage =
 static const char* const kRecycleRefusedMarkerMessage =
     "WHServer recycle refused before this item was attempted";
 
+// Free-text detail for recycle events/messages. The reason tokens
+// ("census_lock" etc.) are pinned protocol tokens parsed nowhere as text
+// -- but a bare token reads as jargon, so a census_lock refusal gets a
+// plain-English lead-in naming the real-world cause (another TradeStation
+// program is using the server) with the engine's diagnostic detail kept
+// appended for diagnosability.
+std::string recycleDetailText(const tsdev::RecycleResult& rec) {
+    if (rec.reason == "census_lock") {
+        const std::string explain =
+            "another TradeStation program (such as TradeStation Desktop "
+            "or TSDev) is using the server -- close it and run the batch "
+            "again";
+        return rec.detail.empty() ? explain
+                                  : explain + " -- " + rec.detail;
+    }
+    return rec.detail;
+}
+
 // The recycle event line emitted on the progress channel when the engine
 // runs (design §4.1 step 3 — full field set: reason/detail/exit_code plus
 // the breaching WHServer pid, measured free_mb, the 1-based resume
@@ -4845,11 +4991,12 @@ std::string whserverRecycleEventLine(const tsdev::RecycleResult& rec,
         (rec.outcome == tsdev::RecycleOutcome::Recycled);
     const char* event = recycled ? "whserver_recycled"
                                  : "whserver_recycle_refused";
+    const std::string detail = recycleDetailText(rec);
     if (jsonOutput) {
         ordered_json j;
         j["event"]     = event;
         j["reason"]    = rec.reason;
-        j["detail"]    = rec.detail;
+        j["detail"]    = detail;
         j["exit_code"] = rec.exitCode;
         if (whPid != 0)   j["pid"]     = static_cast<unsigned long>(whPid);
         if (freeMB != 0)  j["free_mb"] = freeMB;
@@ -4863,7 +5010,7 @@ std::string whserverRecycleEventLine(const tsdev::RecycleResult& rec,
     std::string s = std::string("tsdev_cli: whserver.") +
         (recycled ? "recycled" : "recycle_refused") +
         " reason=" + rec.reason;
-    if (!rec.detail.empty()) s += " " + rec.detail;
+    if (!detail.empty()) s += " " + detail;
     s += " exit=" + std::to_string(rec.exitCode);
     if (whPid != 0) {
         s += " pid=" + std::to_string(static_cast<unsigned long>(whPid));
@@ -4941,7 +5088,7 @@ bool writeResumeManifest(const std::string& dir,
             err = "resume manifest cannot represent item " +
                   std::to_string(j + 1) + " (\"" + it.name +
                   "\"): it already failed manifest pre-validation (" +
-                  it.result.errorMessage + ") — no manifest written";
+                  it.result.errorMessage + ") -- no manifest written";
             return false;
         }
         const std::string& n = it.name;
@@ -4953,7 +5100,7 @@ bool writeResumeManifest(const std::string& dir,
         if (unrepresentable) {
             err = "resume manifest cannot represent item name \"" + n +
                   "\" (a line break, a leading quote, or a quote combined "
-                  "with whitespace) — no manifest written";
+                  "with whitespace) -- no manifest written";
             return false;
         }
     }
@@ -4977,7 +5124,7 @@ bool writeResumeManifest(const std::string& dir,
         pathStr = path.string();
     } catch (const std::exception&) {
         err = "failed to convert the resume manifest path to a narrow "
-              "string (non-ANSI path) — no manifest exists";
+              "string (non-ANSI path) -- no manifest exists";
         return false;
     }
 
@@ -5005,7 +5152,7 @@ bool writeResumeManifest(const std::string& dir,
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) {
         err = "failed to write resume manifest \"" + pathStr +
-              "\" — no manifest exists";
+              "\" -- no manifest exists";
         return false;
     }
     f.write(s.data(), static_cast<std::streamsize>(s.size()));
@@ -5016,7 +5163,7 @@ bool writeResumeManifest(const std::string& dir,
         std::error_code rmEc;
         std::filesystem::remove(path, rmEc);
         err = "failed to write resume manifest \"" + pathStr +
-              "\" — no manifest exists";
+              "\" -- no manifest exists";
         return false;
     }
     outPath = pathStr;
@@ -5149,16 +5296,25 @@ tsdev::RecycleResult recycleDeferredResult(
     return r;
 }
 
-// WHServer VAS-headroom guard configuration (batch-* and serve). Defaults
-// the field-crash analysis: 256 MB total-free headroom and 64 MB for the
-// largest contiguous free block (non-LAA 32-bit WHServer dies near ~10 MB
-// free; 64 MB of contiguous headroom is the fragmentation tripwire).
-// Overridable via --whserver-free-mb / --whserver-largest-free-mb /
+// WHServer VAS-headroom guard configuration (batch-* and serve). TWO
+// threshold pairs (the 2026-10 field fix): the free/largest pair is the
+// RESTART TRIGGER -- a breach below it asks for a recycle, it is NOT a
+// danger level (the observed WHServer death zone is ~10 MB free; a field
+// batch saw a ~435 MB library plateau ride below the 256 MB trigger for
+// hundreds of inserts). The abort pair is the real floor: the run only
+// dies when total free drops below abortFreeMB OR the largest contiguous
+// block drops below abortLargestFreeMB. Between trigger and floor the
+// guard CONTINUES in-process whenever the recycle cannot happen
+// (unauthorized, or foreign clients hold the server). Overridable via
+// --whserver-free-mb / --whserver-largest-free-mb /
+// --whserver-abort-free-mb / --whserver-abort-largest-free-mb /
 // --no-whserver-vas-guard and the TSDEV_WHSERVER_* env mirrors.
 struct VasGuardConfig {
     bool     enabled            = true;
-    unsigned freeThresholdMB    = 256;
-    unsigned largestThresholdMB = 64;
+    unsigned freeThresholdMB    = 256;  // recycle trigger: total free
+    unsigned largestThresholdMB = 64;   // recycle trigger: largest block
+    unsigned abortFreeMB        = 64;   // hard-abort floor: total free
+    unsigned abortLargestFreeMB = 32;   // hard-abort floor: largest block
 };
 
 // One-shot warning latches for the guard's inconclusive outcomes (one
@@ -5167,13 +5323,16 @@ struct VasGuardConfig {
 // `whEnum`    = the WHServer pid enumeration itself was inconclusive
 //               (a failed Toolhelp32 snapshot is never "no server");
 // `crashEnum` = the TSCrashReport enumeration behind the zombie
-//               pre-check was inconclusive (never "no zombies").
+//               pre-check was inconclusive (never "no zombies");
+// `continued` = the once-per-run "still working below the restart
+//               trigger" continuation notice (any cause).
 // runBatch owns one instance for the whole run; runServe keeps one per
 // broker lifetime and passes it by reference into serveVasGuardRefuse.
 struct VasGuardWarns {
     bool measure   = false;
     bool whEnum    = false;
     bool crashEnum = false;
+    bool continued = false;
 };
 
 // WHServer gated auto-recycle authorization (design
@@ -5238,7 +5397,7 @@ bool validateRecycleWhserver(bool authorized, bool authorizedViaEnv,
     if (!authorized) return true;
     const std::string envNote =
         authorizedViaEnv
-            ? " (authorized via TSDEV_RECYCLE_WHSERVER — unset the env var "
+            ? " (authorized via TSDEV_RECYCLE_WHSERVER -- unset the env var "
               "or drop the conflicting flag)"
             : "";
     if (!vasGuardEnabled) {
@@ -5268,33 +5427,18 @@ bool validateRecycleWhserver(bool authorized, bool authorizedViaEnv,
     return true;
 }
 
-// §6.3 verbatim warning — printed once per process lifetime when the flag
-// is in effect; in serve mode once per BROKER lifetime (each respawned
-// broker is a new process and re-emits it, which is desired: the warning
-// precedes every process that can recycle). Emitted on stderr.
+// Section 6.3 warning -- printed once per process lifetime when the flag is in
+// effect; in serve mode once per BROKER lifetime (each respawned broker is
+// a new process and re-emits it, which is desired: the warning precedes
+// every process that can recycle). Emitted on stderr. Deliberately short
+// and user-facing -- the flag contract is in docs/BUNDLE_README.md; the
+// full rationale lives in docs/HANDOFF_WHServer_VAS_recovery.md.
 const char kRecycleWhserverWarning[] =
-    "tsdev_cli: WARNING --recycle-whserver authorizes restarting WHServer.exe\n"
-    "when the VAS guard trips. The restart is gated on a zero-client census\n"
-    "(m_nLock==0 sustained >=3s), but a residual race cannot be eliminated:\n"
-    "a client holding only a class-factory proxy is invisible to the census\n"
-    "and can activate between the census pass and the moment the dying server\n"
-    "revokes its COM class at process exit — a measured ~6-7s window\n"
-    "(ForceShutDown -> exit 5.9/6.0/6.3s; verify bound 15s) during which the\n"
-    "dying server still answers new activations; a client that binds in that\n"
-    "window attaches to the DYING server and dies on its NEXT warehouse call\n"
-    "(field evidence: TSDev.exe crashed ~6s after server death). On a machine\n"
-    "running TS Desktop this can stall or crash the desktop. The gate refuses\n"
-    "(exit 19) whenever it cannot confirm zero foreign-held objects — the flag\n"
-    "does not bypass the gate. If WHServer cannot be recycled cleanly the batch\n"
-    "aborts. In serve mode each recycle respawns the elevated broker — a\n"
-    "non-elevated client faces one UAC prompt per respawn (unattended runs\n"
-    "cannot satisfy it; run the client elevated or expect the batch to raise).\n"
-    "On a recycle exit the batch writes a resume manifest\n"
-    "(tsdev_resume_<pid>_<ticks>.manifest beside the source manifest, or the\n"
-    "cwd for --batch-stdin) covering the not-run tail; resubmit it with\n"
-    "`batch-<op> <resume-file>` (the Python client resubmits it automatically,\n"
-    "bounded at 3 recycles per batch; a refusal, exit 19, aborts the batch).\n"
-    "The file is caller-owned — the CLI never deletes it.\n";
+    "tsdev_cli: WARNING --recycle-whserver authorizes restarting\n"
+    "TradeStation's background library server (WHServer.exe) when its\n"
+    "memory runs low. The batch may still stop safely -- for example when\n"
+    "another TradeStation program is using the server -- and writes a\n"
+    "resume file for the remaining items. See docs/BUNDLE_README.md.\n";
 
 // Emit the §6.3 warning once per process lifetime (the static guard makes
 // the once-per-process/broker-lifetime contract explicit and testable).
@@ -5321,6 +5465,27 @@ bool envPresenceEnabled(const char* name) {
 // is no negative flag form).
 bool resolveRecycleAuthorized(bool flagSeen) {
     return flagSeen || envPresenceEnabled("TSDEV_RECYCLE_WHSERVER");
+}
+
+// Effective --log-file path composition: the explicit flag wins over the
+// TSDEV_LOG_FILE env mirror (same flag-over-env convention as the
+// TSDEV_WHSERVER_* mirrors). Returns true when a log file is configured
+// and writes the path into `out`. An empty env value is treated as unset;
+// an env value that does not fit the probe buffer is ignored (a
+// garbage/oversized value keeps the default: file logging OFF).
+bool resolveLogFilePath(const char* flagValue, std::string& out) {
+    if (flagValue != nullptr && flagValue[0] != '\0') {
+        out = flagValue;
+        return true;
+    }
+    char envBuf[8192] = {};
+    const DWORD n = GetEnvironmentVariableA("TSDEV_LOG_FILE", envBuf,
+                                            sizeof(envBuf));
+    if (n > 0 && n < sizeof(envBuf)) {
+        out.assign(envBuf, n);
+        return true;
+    }
+    return false;
 }
 
 // Strict decimal-MB threshold parse shared by the --whserver-*-mb flags and
@@ -5437,6 +5602,23 @@ DWORD WINAPI runBatch(LPVOID param) {
     TSDEV_DIAG_LOG("batch.start", "op=%s items=%zu", op.c_str(),
                    p->items.size());
 
+    // Foreign-client latch (KB Section 21): sample m_nLock on any
+    // probed-build WHServer BEFORE this process's own activation could
+    // contribute a lock. The process's own +7 lands at its first
+    // warehouse dispatch (live-proven: a never-attached census passes),
+    // but `new TsDevLib` below starts the COM/orlib machinery, so
+    // sampling before it is the conservative point -- a lock observed
+    // after that could be our own, so "another
+    // TradeStation program is already using the server" must be captured
+    // here. Read-only; every inconclusive direction latches false (the
+    // conservative outcome -- the engine's fail-closed census stays the
+    // authority for a recycle attempt). Dead state when the guard is
+    // off. Mutable: a census_lock refuse above the floor is the same
+    // fact proven late -- latching it makes later breaches take the cheap
+    // Continue arm instead of re-running the doomed census per item.
+    bool foreignClients =
+        p->vasGuard.enabled ? detectForeignWhServerClients() : false;
+
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
     try {
@@ -5526,6 +5708,11 @@ DWORD WINAPI runBatch(LPVOID param) {
     // free_mb) — captured when the guard detects the breach.
     DWORD abortPid = 0;
     uint64_t abortFreeMB = 0;
+    uint64_t abortLargestMB = 0;
+    // True only when the breach ALSO dropped below the hard-abort floor --
+    // the restart trigger alone is not a danger level. A census_lock
+    // refuse continues the run above the floor, never below it.
+    bool abortBelowFloor = false;
     // Not-run marker text for the abort arm the guard fired — the VAS
     // default; the zombie arm substitutes its own message.
     const char* abortMarkerMsg = kVasAbortMarkerMessage;
@@ -5540,13 +5727,16 @@ DWORD WINAPI runBatch(LPVOID param) {
     size_t index = 0;
     size_t attempted = 0;
 
-    // WHServer VAS-headroom guard (TVS-1b/1d): ONE check shared by the
-    // pre-flight (below) and the between-items gate (in the loop). Samples
-    // WHServer's free VAS; WHServer is a lazy singleton so no pids means
-    // nothing to exhaust -> pass. A transient measureVasFree failure warns
-    // once per run and does NOT abort. A breach (either threshold) aborts
-    // loudly: emit the abort event, set `aborted` + `abortReason` — the
-    // shared marker/summary machinery below reports truthfully.
+    // WHServer VAS-headroom guard (TVS-1b/1d, two-threshold field fix):
+    // ONE check shared by the pre-flight (below) and the between-items
+    // gate (in the loop). Samples WHServer's free VAS; WHServer is a lazy
+    // singleton so no pids means nothing to exhaust -> pass. A transient
+    // measureVasFree failure warns once per run and does NOT abort.
+    // vasGuardAction splits a trigger breach: CONTINUE in-process when
+    // still above the abort floor and the recycle cannot happen
+    // (unauthorized or foreign clients latched), ATTEMPT-RECYCLE/
+    // ABORT otherwise -- the latter two raise `aborted` and the
+    // aborted&&authorized / aborted arms below split them.
     auto vasGuardCheck = [&]() {
         // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
         // INCONCLUSIVE — never "no server". Warn once and pass: the same
@@ -5583,6 +5773,8 @@ DWORD WINAPI runBatch(LPVOID param) {
                     aborted = true;
                     abortPid = zombie;
                     abortFreeMB = 0;
+                    abortLargestMB = 0;
+                    abortBelowFloor = true;  // hard stop, never a continue
                     abortReason = "whserver_zombie";
                     abortMarkerMsg = kZombieAbortMarkerMessage;
                     return;
@@ -5617,26 +5809,66 @@ DWORD WINAPI runBatch(LPVOID param) {
                 vst.totalFreeBytes / (1024 * 1024);
             const uint64_t largestMB =
                 vst.largestFreeBlockBytes / (1024 * 1024);
-            const bool breach = tsdev::vasBreach(
-                freeMB, largestMB, p->vasGuard.freeThresholdMB,
-                p->vasGuard.largestThresholdMB);
+            const tsdev::VasGuardAction act = tsdev::vasGuardAction(
+                freeMB, largestMB,
+                p->vasGuard.freeThresholdMB,
+                p->vasGuard.largestThresholdMB,
+                p->vasGuard.abortFreeMB,
+                p->vasGuard.abortLargestFreeMB,
+                foreignClients, p->recycle.authorized);
+            const char* decision = "pass";
+            switch (act) {
+            case tsdev::VasGuardAction::Continue:
+                decision = "continue"; break;
+            case tsdev::VasGuardAction::AttemptRecycle:
+                decision = "recycle"; break;
+            case tsdev::VasGuardAction::Abort:
+                decision = "abort"; break;
+            default: break;
+            }
             TSDEV_DIAG_LOG("whserver.vas.check",
                            "pid=%lu freeMB=%llu largestMB=%llu "
                            "thresholdFreeMB=%u thresholdLargestMB=%u "
-                           "decision=%s",
+                           "abortFreeMB=%u abortLargestMB=%u "
+                           "foreignClients=%d decision=%s",
                            static_cast<unsigned long>(whPid),
                            (unsigned long long)freeMB,
                            (unsigned long long)largestMB,
                            p->vasGuard.freeThresholdMB,
                            p->vasGuard.largestThresholdMB,
-                           breach ? "abort" : "pass");
-            if (breach) {
+                           p->vasGuard.abortFreeMB,
+                           p->vasGuard.abortLargestFreeMB,
+                           foreignClients ? 1 : 0, decision);
+            if (act == tsdev::VasGuardAction::Continue) {
+                // Survivable headroom below the restart trigger but the
+                // recycle cannot happen -- keep working in-process.
+                // Once per run, same lane as the other guard warnings.
+                if (!vasWarns.continued) {
+                    vasWarns.continued = true;
+                    emitLine(whserverVasContinueLine(
+                        whPid, freeMB, largestMB,
+                        p->vasGuard.freeThresholdMB,
+                        foreignClients ? VasContinueCause::ForeignClients
+                                       : VasContinueCause::NotAuthorized,
+                        p->jsonProgress));
+                }
+                continue;
+            }
+            if (act != tsdev::VasGuardAction::Pass) {
+                // AttemptRecycle or Abort -- both raise the boundary; the
+                // aborted&&authorized / aborted arms below split them.
                 emitLine(whserverVasAbortLine(
                     whPid, vst, p->vasGuard.freeThresholdMB,
                     p->vasGuard.largestThresholdMB, p->jsonProgress));
                 aborted = true;
                 abortPid = whPid;
                 abortFreeMB = freeMB;
+                abortLargestMB = largestMB;
+                abortBelowFloor =
+                    (act == tsdev::VasGuardAction::Abort) ||
+                    tsdev::vasBreach(freeMB, largestMB,
+                                     p->vasGuard.abortFreeMB,
+                                     p->vasGuard.abortLargestFreeMB);
                 // Truthful machine-readable reason for the summary:
                 // name the breaching metric + measured MB. Total-free
                 // is checked first; when both breach, report it.
@@ -5722,7 +5954,7 @@ DWORD WINAPI runBatch(LPVOID param) {
             if (!manifestPath.empty() && !pathIsAscii) {
                 emitLine("tsdev_cli: resume manifest path is not "
                          "representable in the JSON event stream "
-                         "(non-ASCII) — automatic resume cannot use it; "
+                         "(non-ASCII) -- automatic resume cannot use it; "
                          "resume the remaining items manually");
                 manifestPath.clear();
             }
@@ -5734,6 +5966,16 @@ DWORD WINAPI runBatch(LPVOID param) {
                                           abortPid, abortFreeMB,
                                           attempted + 1, total,
                                           manifestPath));
+        // Step 3b -- plain-English next step whenever the event can carry
+        // the manifest path (write succeeded AND the path is ASCII): tell
+        // a direct-CLI user the exact resubmission command. The Python
+        // client resubmits automatically; it parses the event's manifest
+        // member, not this line.
+        if (!manifestPath.empty()) {
+            emitLine("tsdev_cli: to continue the remaining items, run: "
+                     "tsdev_cli batch-" + op + " \"" + manifestPath +
+                     "\"");
+        }
         if (p->pbar) bar.finish();
         // Final summary — the same batch_completed line the normal tail
         // emits, carrying the truthful abort context (the recycle follows
@@ -5796,6 +6038,29 @@ DWORD WINAPI runBatch(LPVOID param) {
                                               abortPid, abortFreeMB));
             aborted = false;
             abortReason.clear();
+        } else if (vasRefuseAllowsContinue(rec.reason.c_str(),
+                                           abortBelowFloor)) {
+            // census_lock above the abort floor: a FOREIGN client just
+            // proved it holds the server -- the restart is impossible
+            // but the memory is survivable, so keep working in-process.
+            // No manifest, no markers, no nonzero exit (the field fix).
+            // The refuse IS the latch: later breaches take the cheap
+            // Continue arm instead of re-running the census.
+            foreignClients = true;
+            if (!vasWarns.continued) {
+                vasWarns.continued = true;
+                emitLine(whserverVasContinueLine(
+                    abortPid, abortFreeMB, abortLargestMB,
+                    p->vasGuard.freeThresholdMB,
+                    VasContinueCause::CensusLock, p->jsonProgress));
+            }
+            aborted = false;
+            abortReason.clear();
+            abortPid = 0;
+            abortFreeMB = 0;
+            abortLargestMB = 0;
+            abortBelowFloor = false;
+            abortMarkerMsg = kVasAbortMarkerMessage;
         } else {
             return recycleExit(rec);
         }
@@ -5930,7 +6195,36 @@ DWORD WINAPI runBatch(LPVOID param) {
                               &deferSampler)
                         : runWhserverRecycleCli(
                               lib, /*ownSessionExists=*/false);
-                return recycleExit(rec);
+                if (vasRefuseAllowsContinue(rec.reason.c_str(),
+                                            abortBelowFloor)) {
+                    // census_lock above the abort floor -- reachable ONLY
+                    // at the never-attached edge (an attached site took
+                    // the defer, whose refuse reasons are the close-stage
+                    // family and still abort here): a FOREIGN client just
+                    // proved it holds the server but the memory is
+                    // survivable -- keep working in-process. No manifest,
+                    // no not-run markers, no nonzero exit (the field fix).
+                    // The refuse IS the latch: later breaches take the
+                    // cheap Continue arm instead of re-running the census.
+                    foreignClients = true;
+                    if (!vasWarns.continued) {
+                        vasWarns.continued = true;
+                        emitLine(whserverVasContinueLine(
+                            abortPid, abortFreeMB, abortLargestMB,
+                            p->vasGuard.freeThresholdMB,
+                            VasContinueCause::CensusLock,
+                            p->jsonProgress));
+                    }
+                    aborted = false;
+                    abortReason.clear();
+                    abortPid = 0;
+                    abortFreeMB = 0;
+                    abortLargestMB = 0;
+                    abortBelowFloor = false;
+                    abortMarkerMsg = kVasAbortMarkerMessage;
+                } else {
+                    return recycleExit(rec);
+                }
             }
             if (aborted) break;
         }
@@ -6559,7 +6853,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
             r.op = op;
             r.errorMessage =
                 "invalid 'policy' value '" + pv + "' (expected 'skip', "
-                "'overwrite', or 'abort'; 'prompt' is unavailable — the "
+                "'overwrite', or 'abort'; 'prompt' is unavailable -- the "
                 "broker has no console)";
             return r;
         }
@@ -6891,7 +7185,7 @@ HANDLE createServePipe(const std::string& pipeName) {
         // (visible by default; log levels are runtime-gated) so this is
         // diagnosable if it ever occurs.
         tsdev_log_message(TsDevLogLevel::Warning,
-                          "tsdev_cli: WARNING — failed to retrieve user SID "
+                          "tsdev_cli: WARNING -- failed to retrieve user SID "
                           "for pipe security descriptor; falling back to OW-based "
                           "SDDL (unelevated clients may be unable to connect)\n");
         sddl = L"D:P(A;;GA;;;BA)(A;;GWGR;;;SY)(A;;GWGR;;;OW)S:(ML;;NW;;;ME)";
@@ -6991,6 +7285,13 @@ int serveConnectExitCode(BOOL connected, DWORD connectError) {
 // frame -> flush -> delete lib (granted defer: graceful ExitProcess 18)
 // or TerminateProcess-self -> broker exits;
 // the client respawns and resubmits bounded by max_recycles).
+// Field fix: `foreignClients` points at runServe's pre-activation latch
+// (sampled BEFORE `new TsDevLib`; nullptr = no latch) -- vasGuardAction
+// uses it to downgrade an authorized recycle attempt to CONTINUE above
+// the abort floor, and a census_lock refuse above the floor returns
+// false (no refusal: the request is DISPATCHED, exactly one response
+// frame either way) after SETTING the latch so later requests take the
+// cheap Continue arm instead of re-running the doomed census.
 bool serveVasGuardRefuse(const ServeRequest& req,
                          const VasGuardConfig& vasGuard,
                          VasGuardWarns& warns, bool jsonProgress,
@@ -6998,9 +7299,14 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                          const RecycleConfig* recycle = nullptr,
                          TsDevLib* lib = nullptr,
                          bool sessionAttached = false,
+                         bool* foreignClients = nullptr,
                          tsdev::RecycleResult* recycleOut = nullptr,
                          bool* recycleRan = nullptr) {
     if (recycleRan) *recycleRan = false;
+    // Latch value for this call: a live pointer carries runServe's
+    // pre-activation sample (and gets SET by a census_lock continue so
+    // later requests skip the doomed engine run); nullptr = none.
+    const bool foreignLatched = (foreignClients && *foreignClients);
     if (!vasGuard.enabled) return false;
     const bool mutating = (req.op == "insert" || req.op == "modify" ||
                            req.op == "delete"  || req.op == "upsert");
@@ -7019,8 +7325,12 @@ bool serveVasGuardRefuse(const ServeRequest& req,
     // filled, so the frame + event below ALWAYS carry the truthful
     // outcome (granted defer 18 / close-refused 19 — the client never
     // reads a stale "recycled" from a broker whose close failed).
+    // Returns TRUE when the request is refused (recycle boundary or
+    // exit-14); FALSE when a census_lock refuse above the abort floor
+    // continued instead -- the caller dispatches the request.
     auto refuseGuard = [&](const std::string& reason,
-                           const std::string& plainMessage) {
+                           const std::string& plainMessage,
+                           bool belowAbortFloor) -> bool {
         if (recycle && recycle->authorized && lib) {
             const bool deferred = recycleSiteDefers(sessionAttached);
             tsdev::RecycleResult rec;
@@ -7032,6 +7342,17 @@ bool serveVasGuardRefuse(const ServeRequest& req,
             } else {
                 rec = runWhserverRecycleCli(
                     lib, /*ownSessionExists=*/false);
+            }
+            if (vasRefuseAllowsContinue(rec.reason.c_str(),
+                                        belowAbortFloor)) {
+                // census_lock above the abort floor (never-attached site
+                // only -- the defer's refuse reasons are the close-stage
+                // family): foreign clients hold the server but the memory
+                // is survivable. No boundary, no refusal, no respawn --
+                // and the refuse IS the latch: later requests take the
+                // cheap Continue arm instead of re-running the census.
+                if (foreignClients) *foreignClients = true;
+                return false;
             }
             emitBatchProgress(whserverRecycleEventLine(rec, jsonProgress));
             if (recycleOut) *recycleOut = rec;
@@ -7050,13 +7371,14 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                         : "WHServer recycled (" + reason +
                           "); resubmit on the respawned broker";
             } else {
+                const std::string recDetail = recycleDetailText(rec);
                 refusal.errorMessage =
                     "WHServer recycle refused: " + rec.reason +
-                    (rec.detail.empty() ? "" : " " + rec.detail) +
+                    (recDetail.empty() ? "" : " " + recDetail) +
                     " (" + reason + "); refusing " + req.op +
                     " before dispatch";
             }
-            return;
+            return true;
         }
         refusal = CliResult();
         refusal.op = req.op;
@@ -7065,6 +7387,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
         refusal.success = false;
         refusal.exitCode = 14;
         refusal.errorMessage = plainMessage;
+        return true;
     };
 
     // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
@@ -7098,7 +7421,8 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                 emitBatchProgress(whserverZombieAbortLine(zombie,
                                                         jsonProgress));
                 refuseGuard("whserver_zombie",
-                            whserverZombieRefusalMessage(req.op, zombie));
+                            whserverZombieRefusalMessage(req.op, zombie),
+                            /*belowAbortFloor=*/true);  // hard stop
                 return true;
             }
         } else {
@@ -7129,19 +7453,48 @@ bool serveVasGuardRefuse(const ServeRequest& req,
         }
         const uint64_t freeMB    = vst.totalFreeBytes        / (1024 * 1024);
         const uint64_t largestMB = vst.largestFreeBlockBytes / (1024 * 1024);
-        const bool breach = tsdev::vasBreach(freeMB, largestMB,
-                                             vasGuard.freeThresholdMB,
-                                             vasGuard.largestThresholdMB);
+        const tsdev::VasGuardAction act = tsdev::vasGuardAction(
+            freeMB, largestMB, vasGuard.freeThresholdMB,
+            vasGuard.largestThresholdMB, vasGuard.abortFreeMB,
+            vasGuard.abortLargestFreeMB, foreignLatched,
+            recycle && recycle->authorized);
+        const char* decision = "pass";
+        switch (act) {
+        case tsdev::VasGuardAction::Continue:
+            decision = "continue"; break;
+        case tsdev::VasGuardAction::AttemptRecycle:
+            decision = "recycle"; break;
+        case tsdev::VasGuardAction::Abort:
+            decision = "abort"; break;
+        default: break;
+        }
         TSDEV_DIAG_LOG("whserver.vas.check",
                        "pid=%lu freeMB=%llu largestMB=%llu "
-                       "thresholdFreeMB=%u thresholdLargestMB=%u decision=%s",
+                       "thresholdFreeMB=%u thresholdLargestMB=%u "
+                       "abortFreeMB=%u abortLargestMB=%u "
+                       "foreignClients=%d decision=%s",
                        static_cast<unsigned long>(whPid),
                        (unsigned long long)freeMB,
                        (unsigned long long)largestMB,
                        vasGuard.freeThresholdMB,
                        vasGuard.largestThresholdMB,
-                       breach ? "refuse" : "pass");
-        if (breach) {
+                       vasGuard.abortFreeMB,
+                       vasGuard.abortLargestFreeMB,
+                       foreignLatched ? 1 : 0, decision);
+        if (act == tsdev::VasGuardAction::Continue) {
+            // Survivable headroom below the restart trigger but the
+            // recycle cannot happen -- dispatch the request anyway.
+            if (!warns.continued) {
+                warns.continued = true;
+                emitBatchProgress(whserverVasContinueLine(
+                    whPid, freeMB, largestMB, vasGuard.freeThresholdMB,
+                    foreignLatched ? VasContinueCause::ForeignClients
+                                   : VasContinueCause::NotAuthorized,
+                    jsonProgress));
+            }
+            continue;
+        }
+        if (act != tsdev::VasGuardAction::Pass) {
             emitBatchProgress(whserverVasAbortLine(
                 whPid, vst, vasGuard.freeThresholdMB,
                 vasGuard.largestThresholdMB, jsonProgress));
@@ -7153,11 +7506,28 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                 ? "whserver_vas_free=" + std::to_string(freeMB) + "MB"
                 : "whserver_vas_largest_free=" +
                       std::to_string(largestMB) + "MB";
-            refuseGuard(reason,
-                        "WHServer VAS headroom below threshold: free=" +
-                        std::to_string(freeMB) + "MB largest=" +
-                        std::to_string(largestMB) + "MB (" + reason +
-                        "); refusing " + req.op + " before dispatch");
+            const bool belowFloor =
+                (act == tsdev::VasGuardAction::Abort) ||
+                tsdev::vasBreach(freeMB, largestMB, vasGuard.abortFreeMB,
+                                 vasGuard.abortLargestFreeMB);
+            if (!refuseGuard(reason,
+                             "WHServer VAS headroom below threshold: free=" +
+                             std::to_string(freeMB) + "MB largest=" +
+                             std::to_string(largestMB) + "MB (" + reason +
+                             "); refusing " + req.op + " before dispatch",
+                             belowFloor)) {
+                // census_lock above the abort floor -> CONTINUE: the
+                // request is DISPATCHED (return false = no refusal; one
+                // response frame per request either way).
+                if (!warns.continued) {
+                    warns.continued = true;
+                    emitBatchProgress(whserverVasContinueLine(
+                        whPid, freeMB, largestMB,
+                        vasGuard.freeThresholdMB,
+                        VasContinueCause::CensusLock, jsonProgress));
+                }
+                return false;
+            }
             return true;
         }
     }
@@ -7194,6 +7564,17 @@ DWORD WINAPI runServe(LPVOID param) {
                                     // recycleSiteDefers gate (attached
                                     // => defer exit 18; never-attached
                                     // => engine may run in-process)
+
+    // Foreign-client latch (KB Section 21): identical pre-activation
+    // sample as runBatch -- `new TsDevLib` below is this broker's own
+    // orlib20 attach (+7 m_nLock for its whole lifetime), so whether
+    // ANOTHER TradeStation program already holds the server must be
+    // captured before it. Read-only; inconclusive directions latch
+    // false. Mutable: a census_lock refuse above the abort floor is the
+    // same fact proven late -- the guard sets it so later requests take
+    // the cheap Continue arm instead of re-running the doomed census.
+    bool foreignClients =
+        p->vasGuard.enabled ? detectForeignWhServerClients() : false;
 
     // Construct ONE TsDevLib instance (all one-time init happens once).
     TsDevLib* lib = nullptr;
@@ -7298,6 +7679,7 @@ DWORD WINAPI runServe(LPVOID param) {
             if (serveVasGuardRefuse(req, p->vasGuard, vasWarns,
                                     p->jsonProgress, vasRefusal,
                                     &p->recycle, lib, sessionAttached,
+                                    &foreignClients,
                                     &recycleOutcome, &recycleRan)) {
                 // Best-effort write (design §4.3 teardown rule): when the recycle ran the broker
                 // MUST tear down regardless of the write result — a broker
@@ -7834,6 +8216,8 @@ int main(int argc, char** argv) {
     //            positional. Repeated separate occurrences accumulate.
     const char* tsPathOverride = nullptr;
     std::string tsPathStr;  // holds the value for the equals form
+    const char* logFileArg = nullptr;  // --log-file <path> (space or = form)
+    std::string logFileStr;            // holds the equals-form value
     bool jsonMode = false;
     bool pbar = false;        // --pbar (stderr progress bar)
     bool batchControl = false;  // --batch-progress-control (batch-* only)
@@ -7849,6 +8233,8 @@ int main(int argc, char** argv) {
     VasGuardConfig vasGuard;
     bool vasFreeFlagSet = false;     // --whserver-free-mb seen
     bool vasLargestFlagSet = false;  // --whserver-largest-free-mb seen
+    bool vasAbortFreeFlagSet = false;    // --whserver-abort-free-mb seen
+    bool vasAbortLargestFlagSet = false; // --whserver-abort-largest-free-mb seen
     bool traverseStrategyDependents = false;  // --traverse-strategy-dependents
     // WHServer gated auto-recycle (design tmp/RECYCLE_ENGINE_DESIGN.md §6.1):
     // presence boolean parsed in the global pre-scan like --json; the
@@ -7906,6 +8292,40 @@ int main(int argc, char** argv) {
                 return 1;
             }
             tsPathOverride = tsPathStr.c_str();
+        } else if (arg == "--log-file") {
+            // Space-separated form ("--log-file <path>"); the value is the
+            // next arg. Same contract as --ts-path.
+            if (i + 1 >= argc) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "--log-file requires a file path";
+                r.humanStderr = "Error: --log-file requires a file path\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            if (argv[i + 1][0] == '\0') {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "--log-file requires a non-empty file path";
+                r.humanStderr = "Error: --log-file requires a non-empty file path\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            logFileArg = argv[i + 1];
+            i++;  // skip the value
+        } else if (arg.rfind("--log-file=", 0) == 0) {
+            // Equals form ("--log-file=<path>"): value is everything after
+            // the '='. An empty value is a usage error (same as --ts-path=).
+            logFileStr = arg.substr(std::strlen("--log-file="));
+            if (logFileStr.empty()) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "--log-file requires a non-empty file path";
+                r.humanStderr = "Error: --log-file requires a non-empty file path\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            logFileArg = logFileStr.c_str();
         } else if (arg == "--json" || arg.rfind("--json=", 0) == 0) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
@@ -7987,6 +8407,59 @@ int main(int argc, char** argv) {
                 return 1;
             }
             vasLargestFlagSet = true;
+        } else if (arg == "--whserver-abort-free-mb" ||
+                   arg.rfind("--whserver-abort-free-mb=", 0) == 0) {
+            // Hard-abort floor on TOTAL free (below the recycle trigger).
+            // Same strict-decimal value contract as the trigger flags.
+            std::string v;
+            if (arg == "--whserver-abort-free-mb") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--whserver-abort-free-mb requires a value in MB";
+                    r.humanStderr = "Error: --whserver-abort-free-mb requires a value in MB\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--whserver-abort-free-mb="));
+            }
+            if (!parseMbThreshold(v, vasGuard.abortFreeMB)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --whserver-abort-free-mb value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --whserver-abort-free-mb value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            vasAbortFreeFlagSet = true;
+        } else if (arg == "--whserver-abort-largest-free-mb" ||
+                   arg.rfind("--whserver-abort-largest-free-mb=", 0) == 0) {
+            // Hard-abort floor on the LARGEST contiguous free block.
+            std::string v;
+            if (arg == "--whserver-abort-largest-free-mb") {
+                if (i + 1 >= argc) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--whserver-abort-largest-free-mb requires a value in MB";
+                    r.humanStderr = "Error: --whserver-abort-largest-free-mb requires a value in MB\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                v = argv[++i];
+            } else {
+                v = arg.substr(std::strlen("--whserver-abort-largest-free-mb="));
+            }
+            if (!parseMbThreshold(v, vasGuard.abortLargestFreeMB)) {
+                CliResult r;
+                r.exitCode = 1;
+                r.errorMessage = "invalid --whserver-abort-largest-free-mb value \"" + v + "\"";
+                r.humanStderr = "Error: invalid --whserver-abort-largest-free-mb value \"" + v + "\"\n";
+                emitOutput(r, jsonMode);
+                return 1;
+            }
+            vasAbortLargestFlagSet = true;
         } else if (arg == "--no-whserver-vas-guard" ||
                    arg.rfind("--no-whserver-vas-guard=", 0) == 0) {
             // Boolean switch like --json: presence disables the guard; a
@@ -8135,12 +8608,51 @@ int main(int argc, char** argv) {
             unsigned v = 0;
             if (parseMbThreshold(envBuf, v)) vasGuard.largestThresholdMB = v;
         }
+        // Abort-floor mirrors (field fix): same convention -- explicit
+        // --whserver-abort-* flags win; a garbage/missing value keeps the
+        // 64/32 MB defaults.
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_WHSERVER_ABORT_FREE_MB", envBuf,
+                                    sizeof(envBuf));
+        if (!vasAbortFreeFlagSet && n > 0 && n < sizeof(envBuf)) {
+            unsigned v = 0;
+            if (parseMbThreshold(envBuf, v)) vasGuard.abortFreeMB = v;
+        }
+        envBuf[0] = '\0';
+        n = GetEnvironmentVariableA("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB",
+                                    envBuf, sizeof(envBuf));
+        if (!vasAbortLargestFlagSet && n > 0 && n < sizeof(envBuf)) {
+            unsigned v = 0;
+            if (parseMbThreshold(envBuf, v)) vasGuard.abortLargestFreeMB = v;
+        }
         envBuf[0] = '\0';
         n = GetEnvironmentVariableA("TSDEV_NO_WHSERVER_VAS_GUARD", envBuf,
                                     sizeof(envBuf));
         if (vasGuard.enabled && n > 0 && n < sizeof(envBuf) &&
             !(n == 1 && envBuf[0] == '0')) {
             vasGuard.enabled = false;
+        }
+        // Trigger/floor inversion is a misconfiguration that silently
+        // disables the abort floor in the band between the two (the Pass
+        // check precedes the floor check) -- reject it outright.
+        if (vasGuard.enabled &&
+            tsdev::vasThresholdsInverted(vasGuard.freeThresholdMB,
+                                         vasGuard.largestThresholdMB,
+                                         vasGuard.abortFreeMB,
+                                         vasGuard.abortLargestFreeMB)) {
+            CliResult r;
+            r.exitCode = 1;
+            r.errorMessage =
+                "WHServer VAS trigger thresholds must not be below the "
+                "abort floor (trigger free=" +
+                std::to_string(vasGuard.freeThresholdMB) + "MB largest=" +
+                std::to_string(vasGuard.largestThresholdMB) +
+                "MB; floor free=" +
+                std::to_string(vasGuard.abortFreeMB) + "MB largest=" +
+                std::to_string(vasGuard.abortLargestFreeMB) + "MB)";
+            r.humanStderr = "Error: " + r.errorMessage + "\n";
+            emitOutput(r, jsonMode);
+            return 1;
         }
         // TSDEV_TRAVERSE_STRATEGY_DEPENDENTS: any value other than "0"
         // restores the legacy strategy-root reverse-dependent traversal
@@ -8194,6 +8706,33 @@ int main(int argc, char** argv) {
     // diagnostics are gated consistently. Batch worker threads and the serve
     // broker are spawned after this point and inherit the level.
     tsdev_log_set_level(LogLevelFromVerbosityCount(verboseCount));
+
+    // --log-file / TSDEV_LOG_FILE: open the process-global debug log-file
+    // sink BEFORE subcommand dispatch (set-once, like the level) so init,
+    // batch-worker, watchdog, and serve diagnostics all land in it. The
+    // file records the FULL message stream at every level, independent of
+    // the console -v level: console output stays user-facing while the
+    // file keeps the complete diagnostics. An open failure warns once and
+    // continues -- a logging failure must never abort the run.
+    {
+        std::string logFilePath;
+        if (resolveLogFilePath(logFileArg, logFilePath)) {
+            const int wlen = MultiByteToWideChar(
+                CP_ACP, 0, logFilePath.c_str(),
+                static_cast<int>(logFilePath.size()), nullptr, 0);
+            std::wstring logFileWide(static_cast<size_t>(wlen), L'\0');
+            MultiByteToWideChar(CP_ACP, 0, logFilePath.c_str(),
+                static_cast<int>(logFilePath.size()), &logFileWide[0], wlen);
+            if (!tsdev_log_open_file(logFileWide.c_str())) {
+                std::fprintf(stderr,
+                    "tsdev_cli: WARNING: cannot open log file '%s' "
+                    "(error %lu); continuing without file logging\n",
+                    logFilePath.c_str(),
+                    static_cast<unsigned long>(GetLastError()));
+                std::fflush(stderr);
+            }
+        }
+    }
 
     // Same set-once process-global contract as the log level: apply the
     // strategy-root traversal switch before any TsDevLib construction.
@@ -8271,7 +8810,7 @@ int main(int argc, char** argv) {
             std::fwrite(s.c_str(), 1, s.size(), stdout);
             std::fputc('\n', stdout);
         } else {
-            std::fprintf(stderr, "tsdev_cli: ERROR — this tool requires administrator privileges. "
+            std::fprintf(stderr, "tsdev_cli: ERROR -- this tool requires administrator privileges. "
                                  "Run from an elevated terminal (or let the Python wrapper auto-elevate).\n");
         }
         return 11;

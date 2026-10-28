@@ -94,7 +94,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existing);
     if (existing > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existing);
         bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);
         std::fprintf(stdout, "    deleteEntry = %s\n",
@@ -143,7 +143,7 @@ DWORD WINAPI runTest(LPVOID param) {
     if (errors.empty()) {
         std::fprintf(stdout, "    verifyModule: no errors (unexpected)\n");
         st->exitCode = fail(
-            "verifyModule succeeded on invalid source — test source is not "
+            "verifyModule succeeded on invalid source -- test source is not "
             "actually invalid",
             40);
         // Clean up the (now-valid) entry.
@@ -169,7 +169,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // --- Step 6: findExistPos — ASSERT entry STILL EXISTS (verifyModule
     //      no longer auto-cleans up — TVS-L.10 moved cleanup to doInsert) ---
     std::fprintf(stdout,
-                 "\n[6] findExistPos(\"%s\", Strategy) — "
+                 "\n[6] findExistPos(\"%s\", Strategy) -- "
                  "asserting entry STILL EXISTS (verifyModule no longer cleans)...\n",
                  kTestName);
     int afterVerifyProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -179,7 +179,7 @@ DWORD WINAPI runTest(LPVOID param) {
         // TVS-L.10 removed. Failing here catches a regression that re-adds
         // cleanup inside verifyModule.
         st->exitCode = fail(
-            "verifyModule auto-cleaned the partial entry — TVS-L.10 moved "
+            "verifyModule auto-cleaned the partial entry -- TVS-L.10 moved "
             "cleanup to doInsert; verifyModule must NOT clean up",
             50);
         delete lib;
@@ -193,7 +193,7 @@ DWORD WINAPI runTest(LPVOID param) {
     //      post-createEntry failure. Removes the warehouse entry + both
     //      artifacts (.ell/.xml). Assert the entry is gone afterwards. ---
     std::fprintf(stdout,
-                 "\n[7] deleteEntry(Strategy, \"%s\", flush=false) — "
+                 "\n[7] deleteEntry(Strategy, \"%s\", flush=false) -- "
                  "simulating doInsert cleanup...\n",
                  kTestName);
     bool cleaned = lib->deleteEntry(ComponentType::Strategy, kTestName,
@@ -201,7 +201,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    deleteEntry = %s\n", cleaned ? "true" : "false");
     if (!cleaned) {
         st->exitCode = fail(
-            "deleteEntry returned false — could not remove the partial entry",
+            "deleteEntry returned false -- could not remove the partial entry",
             60);
         // Best-effort retry with flush=true (single-item mode).
         lib->deleteEntry(ComponentType::Strategy, kTestName);
@@ -222,7 +222,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     std::fprintf(stdout,
-                 "\nPASS: TVS-L.10 contract holds — verifyModule reports stage "
+                 "\nPASS: TVS-L.10 contract holds -- verifyModule reports stage "
                  "without cleaning; explicit caller cleanup removes the entry\n");
     st->exitCode = 0;
 

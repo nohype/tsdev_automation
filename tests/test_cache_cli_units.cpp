@@ -31,7 +31,7 @@
 // file's main() is excluded by the TSDEV_CLI_TEST guard).
 //
 // Pinned formats:
-//   cacheProgressLine: "<OP> [<30-cell bar>] <pct>% <M:SS|H:MM:SS>[ — <file>]"
+//   cacheProgressLine: "<OP> [<30-cell bar>] <pct>% <M:SS|H:MM:SS>[ - <file>]"
 //     (bar/pct geometry identical to pbarLine; never wider than 79 cells).
 //   cacheSpinnerLine:  "<OP> <| / - \> <elapsed>" (ASCII only).
 //   cachePipeProgressLine human: "<OP> PROGRESS pct=<n> bytes=<n> total=<n>
@@ -54,9 +54,9 @@
 
 namespace {
 
-const std::string kFull   = "\xE2\x96\x88";  // U+2588 FULL BLOCK   '█'
-const std::string kShade  = "\xE2\x96\x91";  // U+2591 LIGHT SHADE  '░'
-const std::string kEmDash = "\xE2\x80\x94";  // U+2014 EM DASH      '—'
+const std::string kFull   = "#";  // filled bar cell
+const std::string kShade  = "-";  // empty bar cell
+const std::string kEmDash = "-";  // separator dash
 
 int fail(const char* msg, int code) {
     std::fprintf(stderr, "\n[FAIL] %s (code=%d)\n", msg, code);

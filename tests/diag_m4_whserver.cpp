@@ -671,13 +671,13 @@ DWORD WINAPI runDiag(LPVOID param) {
                 (void*)ord28, ord85Raw);
     if (!getWarehouse) {
         std::fprintf(stderr, "WARN: Ordinal_10 (GetWarehouse) NOT resolved "
-                     "— warehouse inspection will be skipped\n");
+                     "-- warehouse inspection will be skipped\n");
     }
     if (!ord69) std::fprintf(stderr, "WARN: Ordinal_69 unresolved\n");
     if (!ord70) std::fprintf(stderr, "WARN: Ordinal_70 unresolved\n");
     if (!ord28) std::fprintf(stderr, "WARN: Ordinal_28 unresolved\n");
     if (!ord85Raw) std::fprintf(stderr, "WARN: ordinal 85 (linker) "
-                                "unresolved — direct linker calls skipped\n");
+                                "unresolved -- direct linker calls skipped\n");
 
     // --- Step 3: insert + verify the Function. ---
     std::printf("\n[3] Insert + verify Function \"%s\"...\n",
@@ -737,7 +737,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         "+0x29 elemCount=%d\n", sa, ec);
         }
     } else {
-        std::printf("  [Ordinal_28 not resolved — partialBuf will be "
+        std::printf("  [Ordinal_28 not resolved -- partialBuf will be "
                     "NULL]\n");
     }
 
@@ -765,7 +765,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.ptr);
             snapWh("after 7a");
             if (ok && r.ptr) {
-                std::printf("    [non-NULL return — releasing via "
+                std::printf("    [non-NULL return -- releasing via "
                             "Ordinal_70]\n");
                 IntSehResult r70;
                 callOrd70(ord70, r.ptr, 0, &r70);
@@ -785,7 +785,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             std::printf("    call: %s, rec=%p\n", ok ? "OK" : "SEH", r.ptr);
             snapWh("after 7b");
             if (ok && r.ptr) {
-                std::printf("    [non-NULL return — releasing via "
+                std::printf("    [non-NULL return -- releasing via "
                             "Ordinal_70]\n");
                 IntSehResult r70;
                 callOrd70(ord70, r.ptr, 0, &r70);
@@ -805,7 +805,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         ok ? "OK (no SEH)" : "SEH raised", r.ptr);
             snapWh("after 7c");
             if (ok && r.ptr) {
-                std::printf("    [non-NULL return — releasing via "
+                std::printf("    [non-NULL return -- releasing via "
                             "Ordinal_70]\n");
                 IntSehResult r70;
                 callOrd70(ord70, r.ptr, 0, &r70);
@@ -826,7 +826,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         ok ? "OK (no SEH)" : "SEH raised", r.ptr);
             snapWh("after 7d");
             if (ok && r.ptr) {
-                std::printf("    [non-NULL return — releasing via "
+                std::printf("    [non-NULL return -- releasing via "
                             "Ordinal_70]\n");
                 IntSehResult r70;
                 callOrd70(ord70, r.ptr, 0, &r70);
@@ -838,7 +838,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 8: try Ordinal_69 with param_3=progId (linker path). ---
-    std::printf("\n[8] Calling Ordinal_69(4, %d, %d) — linker path "
+    std::printf("\n[8] Calling Ordinal_69(4, %d, %d) -- linker path "
                 "(param_3=progId)...\n", funcProgId, funcProgId);
     if (ord69) {
         snapWh("before Ord69-linker");

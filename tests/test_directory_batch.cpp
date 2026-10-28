@@ -393,7 +393,7 @@ int main() {
 
     if (rc == 0) {
         std::fprintf(stdout,
-                     "\nPASS: parseDirectory() directory-batch logic verified — "
+                     "\nPASS: parseDirectory() directory-batch logic verified -- "
                      "extension filtering, default vs override, stem extraction, "
                      "empty dir, subdirectory skipping, source reading\n");
     }

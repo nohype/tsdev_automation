@@ -381,7 +381,7 @@ DWORD WINAPI runTest(LPVOID param) {
             if (!denyReadToCurrentUser(unreadablePath)) {
                 std::fprintf(stdout,
                     "  [4] Unreadable: SKIPPED (could not apply deny-read ACL;"
-                    " non-fatal — directory case [3] already covers"
+                    " non-fatal -- directory case [3] already covers"
                     " existing-but-unreadable)\n");
             } else {
                 Sha256FileResult result = sha256FileCli(unreadablePath);

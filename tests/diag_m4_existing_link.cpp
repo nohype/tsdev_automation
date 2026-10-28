@@ -392,11 +392,11 @@ void testItem(int category, int progId, const char* name,
                         out->gate_set ? "SET(bit2)" : "CLEAR",
                         ec, eap);
         } else {
-            std::printf("    [Ordinal_28 did not return 1 — skipping "
+            std::printf("    [Ordinal_28 did not return 1 -- skipping "
                         "partial reads]\n");
         }
     } else {
-        std::printf("    [Ordinal_28 not resolved — skipping Step 1]\n");
+        std::printf("    [Ordinal_28 not resolved -- skipping Step 1]\n");
     }
 
     // --- Step 2: Call the linker directly (ordinal 85) ---
@@ -441,7 +441,7 @@ void testItem(int category, int progId, const char* name,
                 out->depList_dumped = true;
                 hexDump(dumpBuf, dumpN, "dep-list first 64 bytes");
             } else {
-                std::printf("    [SEH reading dep-list buffer — dump "
+                std::printf("    [SEH reading dep-list buffer -- dump "
                             "skipped]\n");
             }
         } else {
@@ -561,7 +561,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 3: enumerate existing items and test each ---
-    std::printf("\n[3] Enumerating EXISTING items (READ-ONLY — no "
+    std::printf("\n[3] Enumerating EXISTING items (READ-ONLY -- no "
                 "modification)...\n");
 
     // 3a. Existing Strategies (category 0).

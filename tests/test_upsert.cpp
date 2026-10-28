@@ -110,7 +110,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existing);
     if (existing > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existing);
         bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);
         std::fprintf(stdout, "    deleteEntry = %s\n",
@@ -119,7 +119,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 3: findExistPos for a NONEXISTENT name — ASSERT returns 0 ---
     std::fprintf(stdout,
-                 "\n[3] findExistPos(\"%s\", Strategy) — "
+                 "\n[3] findExistPos(\"%s\", Strategy) -- "
                  "asserting item does NOT exist...\n",
                  kTestName);
     int notFoundProgId = lib->findExistPos(kTestName,
@@ -180,7 +180,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 7: findExistPos for the EXISTING name — ASSERT same ProgId ---
     std::fprintf(stdout,
-                 "\n[7] findExistPos(\"%s\", Strategy) — "
+                 "\n[7] findExistPos(\"%s\", Strategy) -- "
                  "asserting item EXISTS with ProgId=%d...\n",
                  kTestName, progId);
     int foundProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -223,7 +223,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 9: findExistPos again — ASSERT SAME ProgId (KEY invariant) ---
     std::fprintf(stdout,
-                 "\n[9] findExistPos(\"%s\", Strategy) — "
+                 "\n[9] findExistPos(\"%s\", Strategy) -- "
                  "asserting SAME ProgId=%d after modify...\n",
                  kTestName, progId);
     int progIdAfter = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -273,7 +273,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // --- Step 12: Result ---
     if (st->exitCode == 0) {
         std::fprintf(stdout,
-                     "\nPASS: upsert composition verified — "
+                     "\nPASS: upsert composition verified -- "
                      "insert + modify preserve ProgId\n");
     }
 

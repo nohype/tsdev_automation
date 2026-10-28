@@ -163,7 +163,7 @@ int ensureComponentExists(TsDevLib* lib, int& ec) {
     std::fprintf(stdout, "    findExistPos(\"%s\") = %d\n", kTestName, progId);
 
     if (progId <= 0) {
-        std::fprintf(stdout, "    Component not found — inserting...\n");
+        std::fprintf(stdout, "    Component not found -- inserting...\n");
         int errCode = 0;
         progId = lib->createEntry(ComponentType::Strategy, kTestName, errCode);
         std::fprintf(stdout, "    createEntry = %d, errCode = 0x%X\n",

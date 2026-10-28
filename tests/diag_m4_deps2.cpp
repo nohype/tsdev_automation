@@ -490,7 +490,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n[6] HYPOTHESIS B SUMMARY: %s\n",
                 st->hypB_match
                     ? "FOUND Function ProgId in Strategy dep list for "
-                      "parenthesized call (hypothesis B SUPPORTED — parens "
+                      "parenthesized call (hypothesis B SUPPORTED -- parens "
                       "DO emit a 0xFA4 function-ref opcode)"
                     : "DID NOT find Function ProgId in Strategy dep list "
                       "even with parens (hypothesis B NOT supported by "
@@ -637,7 +637,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n[8] HYPOTHESIS C SUMMARY: %s\n",
                 st->hypC_match
                     ? "Deps appeared after warehouse reload (hypothesis C "
-                      "SUPPORTED — dep list is built lazily on reload)"
+                      "SUPPORTED -- dep list is built lazily on reload)"
                     : "Deps still absent after warehouse reload "
                       "(hypothesis C NOT supported)");
 
@@ -674,7 +674,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("  - GetDependencies DOES return the Function's ProgId "
                     "when the Strategy calls it WITH parentheses. The "
                     "no-arg form (`Value1 = FUNC;`) likely does NOT emit "
-                    "the 0xFA4 opcode — use parenthesized calls or a "
+                    "the 0xFA4 opcode -- use parenthesized calls or a "
                     "Function with inputs to establish a recordable dep.\n");
     } else {
         std::printf("  - GetDependencies does NOT return the Function's "

@@ -326,7 +326,7 @@ void releaseRec(Ordinal70Fn ord70, const char* label, void* rec) {
         std::printf("    [release %s] Ordinal_70(rec=%p, 0): %s, ret=%d\n",
                     label, rec, ok ? "OK" : "SEH", r.result);
     } else {
-        std::printf("    [release %s] Ordinal_70 NOT resolved — LEAKING "
+        std::printf("    [release %s] Ordinal_70 NOT resolved -- LEAKING "
                     "rec=%p\n", label, rec);
     }
 }
@@ -414,7 +414,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (!ord28) std::fprintf(stderr, "WARN: Ordinal_28 unresolved\n");
     if (!getDeps) std::fprintf(stderr, "WARN: GetDependencies unresolved\n");
     if (!linker) std::fprintf(stderr, "WARN: ordinal 85 (linker) "
-                              "unresolved — Test E will be skipped\n");
+                              "unresolved -- Test E will be skipped\n");
     std::printf("    Resolved: Ord69=%p Ord70=%p Ord28=%p GetDeps=%p "
                 "Linker(85)=%p\n",
                 (void*)ord69, (void*)ord70, (void*)ord28, (void*)getDeps,
@@ -474,7 +474,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         "the master record\n",
                         sa ? "DID populate" : "did NOT populate");
         } else {
-            std::printf("    [Ordinal_28 did not return 1 — cannot "
+            std::printf("    [Ordinal_28 did not return 1 -- cannot "
                         "inspect partial copy]\n");
         }
     } else {
@@ -489,7 +489,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     bool haveA_func = false, haveB_func = false, haveC_func = false;
 
     // --- Test A: Ordinal_69(4, funcProgId, 0) — normal path ---
-    std::printf("\n=== TEST A (Function): Ordinal_69(4, %d, 0) — normal "
+    std::printf("\n=== TEST A (Function): Ordinal_69(4, %d, 0) -- normal "
                 "path ===\n", funcProgId);
     {
         Ord69SehResult r;
@@ -501,12 +501,12 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveA_func = true;
             releaseRec(ord70, "Test A func", r.rec);
         } else {
-            std::printf("  [no record returned — Test A func skipped]\n");
+            std::printf("  [no record returned -- Test A func skipped]\n");
         }
     }
 
     // --- Test B: Ordinal_69(4, funcProgId, funcProgId) — short-circuit ---
-    std::printf("\n=== TEST B (Function): Ordinal_69(4, %d, %d) — "
+    std::printf("\n=== TEST B (Function): Ordinal_69(4, %d, %d) -- "
                 "short-circuit / linker path ===\n",
                 funcProgId, funcProgId);
     {
@@ -520,12 +520,12 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveB_func = true;
             releaseRec(ord70, "Test B func", r.rec);
         } else {
-            std::printf("  [no record returned — Test B func skipped]\n");
+            std::printf("  [no record returned -- Test B func skipped]\n");
         }
     }
 
     // --- Test C: Ordinal_69(4, funcProgId, 1) — minimal non-zero ---
-    std::printf("\n=== TEST C (Function): Ordinal_69(4, %d, 1) — minimal "
+    std::printf("\n=== TEST C (Function): Ordinal_69(4, %d, 1) -- minimal "
                 "non-zero ===\n", funcProgId);
     {
         Ord69SehResult r;
@@ -537,7 +537,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveC_func = true;
             releaseRec(ord70, "Test C func", r.rec);
         } else {
-            std::printf("  [no record returned — Test C func skipped]\n");
+            std::printf("  [no record returned -- Test C func skipped]\n");
         }
     }
 
@@ -572,7 +572,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     bool haveA_strat = false, haveB_strat = false, haveC_strat = false;
 
     // --- Test A (Strategy) ---
-    std::printf("\n=== TEST A (Strategy): Ordinal_69(0, %d, 0) — normal "
+    std::printf("\n=== TEST A (Strategy): Ordinal_69(0, %d, 0) -- normal "
                 "path ===\n", stratProgId);
     {
         Ord69SehResult r;
@@ -585,12 +585,12 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveA_strat = true;
             releaseRec(ord70, "Test A strat", r.rec);
         } else {
-            std::printf("  [no record returned — Test A strat skipped]\n");
+            std::printf("  [no record returned -- Test A strat skipped]\n");
         }
     }
 
     // --- Test B (Strategy) ---
-    std::printf("\n=== TEST B (Strategy): Ordinal_69(0, %d, %d) — "
+    std::printf("\n=== TEST B (Strategy): Ordinal_69(0, %d, %d) -- "
                 "short-circuit / linker path ===\n",
                 stratProgId, stratProgId);
     {
@@ -604,12 +604,12 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveB_strat = true;
             releaseRec(ord70, "Test B strat", r.rec);
         } else {
-            std::printf("  [no record returned — Test B strat skipped]\n");
+            std::printf("  [no record returned -- Test B strat skipped]\n");
         }
     }
 
     // --- Test C (Strategy) ---
-    std::printf("\n=== TEST C (Strategy): Ordinal_69(0, %d, 1) — minimal "
+    std::printf("\n=== TEST C (Strategy): Ordinal_69(0, %d, 1) -- minimal "
                 "non-zero ===\n", stratProgId);
     {
         Ord69SehResult r;
@@ -622,7 +622,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             haveC_strat = true;
             releaseRec(ord70, "Test C strat", r.rec);
         } else {
-            std::printf("  [no record returned — Test C strat skipped]\n");
+            std::printf("  [no record returned -- Test C strat skipped]\n");
         }
     }
 

@@ -114,7 +114,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
     } else {
         std::fprintf(stdout,
-                     "\n[3] Component already exists (ProgId=%d) — "
+                     "\n[3] Component already exists (ProgId=%d) -- "
                      "skipping createEntry (re-run)\n",
                      st->progId);
         // Pre-clean the .ell so we can verify re-creation.

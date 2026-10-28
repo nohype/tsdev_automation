@@ -641,7 +641,7 @@ void analyzeOrd69Record(void* recPtr, const char* label,
         std::printf("    Ordinal_70: %s, return=%d\n",
                     ok ? "OK (no SEH)" : "SEH raised", r.result);
     } else {
-        std::printf("\n  [Cleanup] Ordinal_70 NOT resolved — LEAKING.\n");
+        std::printf("\n  [Cleanup] Ordinal_70 NOT resolved -- LEAKING.\n");
     }
     std::printf("=== END Ordinal_69 LIVE RECORD: %s ===\n", label);
 }
@@ -841,7 +841,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             getStaticDep, deleteDep, "Strategy-key",
             /*keyProgId=*/stratProgId, /*searchProgId=*/funcProgId);
     } else {
-        std::printf("    [SKIPPED — _GetStaticDependencyList@12 or "
+        std::printf("    [SKIPPED -- _GetStaticDependencyList@12 or "
                     "_DeleteDependencyList@4 not resolved]\n");
     }
 
@@ -880,7 +880,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
         (void)funcFoundStrat;
     } else {
-        std::printf("    [SKIPPED — exports not resolved]\n");
+        std::printf("    [SKIPPED -- exports not resolved]\n");
     }
 
     // --- Step 10: Ordinal_28 partial copy for the Strategy. ---
@@ -901,10 +901,10 @@ DWORD WINAPI runDiag(LPVOID param) {
                           "Strategy Ordinal_28 copy (0x10A bytes)");
             dumpRecordBuffer(buf28, sizeof(buf28), hdr);
         } else {
-            std::printf("    [Ordinal_28 returned %u — no copy]\n", r.result);
+            std::printf("    [Ordinal_28 returned %u -- no copy]\n", r.result);
         }
     } else {
-        std::printf("    [SKIPPED — Ordinal_28 not resolved]\n");
+        std::printf("    [SKIPPED -- Ordinal_28 not resolved]\n");
     }
 
     // --- Step 11: Ordinal_28 partial copy for the Function. ---
@@ -923,10 +923,10 @@ DWORD WINAPI runDiag(LPVOID param) {
                           "Function Ordinal_28 copy (0x10A bytes)");
             dumpRecordBuffer(buf28, sizeof(buf28), hdr);
         } else {
-            std::printf("    [Ordinal_28 returned %u — no copy]\n", r.result);
+            std::printf("    [Ordinal_28 returned %u -- no copy]\n", r.result);
         }
     } else {
-        std::printf("    [SKIPPED — Ordinal_28 not resolved]\n");
+        std::printf("    [SKIPPED -- Ordinal_28 not resolved]\n");
     }
 
     // --- Step 12: Ordinal_69 live record for the Strategy. ---
@@ -942,7 +942,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             analyzeOrd69Record(r.rec, "STRATEGY", ord70);
         }
     } else {
-        std::printf("    [SKIPPED — Ordinal_69 not resolved]\n");
+        std::printf("    [SKIPPED -- Ordinal_69 not resolved]\n");
     }
 
     // --- Step 13: Ordinal_69 live record for the Function.
@@ -960,7 +960,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             analyzeOrd69Record(r.rec, "FUNCTION", ord70);
         }
     } else {
-        std::printf("    [SKIPPED — Ordinal_69 not resolved]\n");
+        std::printf("    [SKIPPED -- Ordinal_69 not resolved]\n");
     }
 
     // --- Step 14: CRITICAL — try GetDependencies with different ABIs.

@@ -13,30 +13,30 @@
 //         itemStarted(type,name); itemCompleted(); noteFailure();
 //         eventLine(line); finish(); }
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll and does NOT touch
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll and does NOT touch
 // the TradeStation installation. The body runs on a 64 MB-stack worker
 // thread only to match the project's test-harness convention (the stack is
 // harmless for a unit test).
 //
-// Linkage mechanism: identical to test_batch_progress.cpp — the helpers live
+// Linkage mechanism: identical to test_batch_progress.cpp -- the helpers live
 // inside tsdev_cli.cpp's anonymous namespace (internal linkage), so the test
 // #defines TSDEV_CLI_TEST and #includes the .cpp directly (same TU; the
 // file's main() is excluded by the TSDEV_CLI_TEST guard).
 //
 // Pinned line format (one physical line, no '\r'/'\n'/ANSI/trailing spaces,
 // NEVER wider than kPbarMaxCells = 79 display cells):
-//   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ — <n> failed]
-//   <bar>   exactly 30 cells: U+2588 '█' * floor(30*done/total) then U+2591
-//           '░' fill (total==0 -> all '░'; done>total clamps to a full bar).
+//   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ - <n> failed]
+//   <bar>   exactly 30 cells: '#' * floor(30*done/total) then '-' fill
+//           (total==0 -> all '-'; done>total clamps to a full bar).
 //   <pct>   done*100/total integer, right-aligned to width 3 + '%'.
 //   label   <type> "<name>" with the name through the existing jsonQuote()
 //           helper; empty when type and name are both empty; truncated with
 //           a trailing "..." so the whole line stays <= 79 cells.
-//   suffix  " — <n> failed" (U+2014 em dash) only when failures > 0; part of
+//   suffix  " - <n> failed" only when failures > 0; part of
 //           the width budget.
 // Cell width = display cells: every emitted glyph occupies exactly 1 console
 // cell, counted as bytes with (b & 0xC0) != 0x80 (UTF-8 continuation bytes
-// don't count).
+// don't count -- user-supplied item names may carry multibyte characters).
 //
 // PbarRenderer capture (check 16): stderr's C fd is _dup2()'d onto a binary-
 // mode temp file for the duration of the scenario so the emitted byte stream
@@ -54,7 +54,7 @@
 //   3. pbarLine full bar: 30 full, "100%".
 //   4. pbarLine total==0: all shade, "0/0   0%" (no division by zero).
 //   5. pbarLine done>total: bar clamps to 30 full, pct stays formulaic 150%.
-//   6. pbarLine failures only: " — 2 failed" U+2014 suffix, no label.
+//   6. pbarLine failures only: " - 2 failed" suffix, no label.
 //   7. pbarLine label + failure suffix together.
 //   8. Label truncation: exactly 79 cells, ends in "...", no failures.
 //   9. Label truncation with the failures suffix eating budget: still
@@ -93,14 +93,15 @@
 
 namespace {
 
-// UTF-8 encodings of the pinned glyphs, spelled as \x escapes so this file
-// stays ASCII-only (no /utf-8 compile flag; the implementation does the
-// same). Each escape is immediately followed by another escape or a
-// non-hex character, so the greedy \x parsing cannot overrun.
-const std::string kFull   = "\xE2\x96\x88";  // U+2588 FULL BLOCK   '█'
-const std::string kShade  = "\xE2\x96\x91";  // U+2591 LIGHT SHADE  '░'
-const std::string kEmDash = "\xE2\x80\x94";  // U+2014 EM DASH      '—'
-const std::string kAlpha  = "\xCE\xB1";      // U+03B1 GREEK SMALL LETTER ALPHA 'α'
+// The pinned bar/failure glyphs are plain ASCII. kAlpha stays a multibyte
+// \x-escaped fixture: user-supplied item names can carry UTF-8 characters,
+// and the renderer must still count cells / truncate on code-point
+// boundaries (the escape is followed by a non-hex character so the greedy
+// \x parsing cannot overrun).
+const std::string kFull   = "#";         // filled bar cell
+const std::string kShade  = "-";         // empty bar cell
+const std::string kEmDash = "-";         // separator dash
+const std::string kAlpha  = "\xCE\xB1";  // U+03B1 GREEK SMALL LETTER ALPHA 'alpha'
 
 int fail(const char* msg, int code) {
     std::fprintf(stderr, "\n[FAIL] %s (code=%d)\n", msg, code);
@@ -125,7 +126,7 @@ std::string rep(const std::string& s, size_t n) {
     return out;
 }
 
-// Returns true when `line` is exactly one physical line — non-empty, no
+// Returns true when `line` is exactly one physical line -- non-empty, no
 // '\n'/'\r' anywhere, no trailing space.
 bool isSingleLine(const std::string& line) {
     return !line.empty() &&
@@ -148,7 +149,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 1: pbarLine zero progress, no label, no failures.
     //   pbarLine("insert", 0, 10, "", "", 0)
-    // Expected: insert [░░x30] 0/10   0%
+    // Expected: insert [-x30] 0/10   0%
     // ------------------------------------------------------------------
     {
         std::string line = pbarLine("insert", 0, 10, "", "", 0);
@@ -171,7 +172,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 2: mid progress with label.
     //   pbarLine("batch-insert", 5, 10, "strategy", "MyStrat", 0)
     //   floor(30*5/10)=15 full + 15 shade; pct 50 -> " 50%"
-    // Expected: batch-insert [█x15░x15] 5/10  50% strategy "MyStrat"
+    // Expected: batch-insert [#x15-x15] 5/10  50% strategy "MyStrat"
     // ------------------------------------------------------------------
     {
         std::string line =
@@ -194,7 +195,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 3: full bar at 100%.
     //   pbarLine("insert", 10, 10, "function", "F", 0)
-    // Expected: insert [█x30] 10/10 100% function "F"
+    // Expected: insert [#x30] 10/10 100% function "F"
     // ------------------------------------------------------------------
     {
         std::string line =
@@ -212,7 +213,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 4: total == 0 -> all shade, pct 0, no division by zero.
     //   pbarLine("delete", 0, 0, "", "", 0)
-    // Expected: delete [░x30] 0/0   0%
+    // Expected: delete [-x30] 0/0   0%
     // ------------------------------------------------------------------
     {
         std::string line = pbarLine("delete", 0, 0, "", "", 0);
@@ -230,7 +231,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 5: done > total -> bar clamps to a full 30 cells; pct stays the
     // pinned formula value (150, width-3 field overflows to "150%").
     //   pbarLine("x", 15, 10, "", "", 0)
-    // Expected: x [█x30] 15/10 150%
+    // Expected: x [#x30] 15/10 150%
     // ------------------------------------------------------------------
     {
         std::string line = pbarLine("x", 15, 10, "", "", 0);
@@ -248,7 +249,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 6: failures suffix only (no label).
     //   pbarLine("insert", 7, 10, "", "", 2)
     //   floor(30*7/10)=21 full + 9 shade; pct 70 -> " 70%"
-    // Expected: insert [█x21░x9] 7/10  70% — 2 failed
+    // Expected: insert [#x21-x9] 7/10  70% - 2 failed
     // ------------------------------------------------------------------
     {
         std::string line = pbarLine("insert", 7, 10, "", "", 2);
@@ -267,7 +268,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 7: label + failure suffix together.
     //   pbarLine("modify", 3, 4, "showme", "S", 1)
     //   floor(30*3/4)=22 full + 8 shade; pct 75 -> " 75%"
-    // Expected: modify [█x22░x8] 3/4  75% showme "S" — 1 failed
+    // Expected: modify [#x22-x8] 3/4  75% showme "S" - 1 failed
     // ------------------------------------------------------------------
     {
         std::string line = pbarLine("modify", 3, 4, "showme", "S", 1);
@@ -289,9 +290,9 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 8: label truncation (no failures). Budget for " " + label is
     // 79 - 49(prefix) = 30 cells; the 51-cell label is cut to 26 cells +
-    // "...". The quote stays unterminated — truncation is mechanical.
+    // "...". The quote stays unterminated -- truncation is mechanical.
     //   pbarLine("insert", 0, 10, "strategy", <40-char name>, 0)
-    // Expected: insert [░x30] 0/10   0% strategy "ABCDEFGHIJKLMNOP...
+    // Expected: insert [-x30] 0/10   0% strategy "ABCDEFGHIJKLMNOP...
     // ------------------------------------------------------------------
     {
         const std::string name40 =
@@ -314,10 +315,10 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 9: label truncation with the failures suffix eating budget.
-    //   prefix 49 + suffix " — 5 failed" (11) = 60 used; label budget is
+    //   prefix 49 + suffix " - 5 failed" (11) = 60 used; label budget is
     //   19 cells -> 15 label cells + "...".
     //   pbarLine("insert", 0, 10, "strategy", <40-char name>, 5)
-    // Expected: insert [░x30] 0/10   0% strategy "ABCDE... — 5 failed
+    // Expected: insert [-x30] 0/10   0% strategy "ABCDE... - 5 failed
     // ------------------------------------------------------------------
     {
         const std::string name40 =
@@ -341,12 +342,12 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 10: multibyte-safe truncation. The name is 15 ASCII letters +
-    // 'α' (2-byte UTF-8) + more letters, so the 26-cell cut lands right
+    // 'alpha' (2-byte UTF-8) + more letters, so the 26-cell cut lands right
     // after the multibyte glyph: a byte-naive cut would emit a lone lead
     // byte or drop the glyph.
     //   pbarLine("insert", 0, 10, "strategy",
-    //            "ABCDEFGHIJKLMNO" + α + "PQRSTUVWXYZabcdefg", 0)
-    // Expected: insert [░x30] 0/10   0% strategy "ABCDEFGHIJKLMNOα...
+    //            "ABCDEFGHIJKLMNO" + alpha + "PQRSTUVWXYZabcdefg", 0)
+    // Expected: insert [-x30] 0/10   0% strategy "ABCDEFGHIJKLMNOalpha...
     // ------------------------------------------------------------------
     {
         const std::string name =
@@ -370,7 +371,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 11: jsonQuote consistency — a name containing '"' and LF
+    // Check 11: jsonQuote consistency -- a name containing '"' and LF
     // renders through the same escaping as BATCH lines, keeping the bar
     // one physical line.
     //   pbarLine("insert", 1, 1, "function", "A\"B\nC", 0)
@@ -444,7 +445,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
         // op 45 cells -> the 79-cell cut lands exactly on the "] "
         // separator space; the trailing space must be stripped so the line
-        // ends at ']' (78 cells) — pins the no-trailing-space invariant
+        // ends at ']' (78 cells) -- pins the no-trailing-space invariant
         // through the hard clamp.
         std::string e = pbarLine(rep("x", 45), 0, 1, "", "", 0);
         const std::string wantE =
@@ -457,7 +458,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 13: pbarEraseSeq — '\r' + cells spaces + '\r'.
+    // Check 13: pbarEraseSeq -- '\r' + cells spaces + '\r'.
     // ------------------------------------------------------------------
     {
         if (pbarEraseSeq(0) != std::string("\r\r")) {
@@ -477,7 +478,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 14: pbarDrawSeq — '\r' + line + pad to `cells`; already-wide
+    // Check 14: pbarDrawSeq -- '\r' + line + pad to `cells`; already-wide
     // lines get no pad; multibyte glyphs count as 1 cell each.
     // ------------------------------------------------------------------
     {
@@ -504,7 +505,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 15: invariant sweep — for a representative matrix every line is
+    // Check 15: invariant sweep -- for a representative matrix every line is
     // a single physical line, <= 79 display cells, no trailing space.
     // ------------------------------------------------------------------
     {
@@ -589,7 +590,7 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check16: _dup2(tmp, stderr) failed", 162);
             return 0;
         }
-        // Binary mode pins the exact bytes writeRaw emits — no '\n' ->
+        // Binary mode pins the exact bytes writeRaw emits -- no '\n' ->
         // "\r\n" CRT translation inside the capture. _isatty(fileno) is now
         // false, so the renderer deterministically uses the fwrite path.
         _setmode(_fileno(stderr), _O_BINARY);
@@ -672,7 +673,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

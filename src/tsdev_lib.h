@@ -80,6 +80,28 @@ void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...);
 typedef void (*TsDevLogSink)(const char* formattedUtf8);
 void tsdev_log_set_sink(TsDevLogSink sink);
 
+// Debug log-file sink (CLI: --log-file <path>, env mirror TSDEV_LOG_FILE).
+// When a file is open, EVERY message through tsdev_log_message() is
+// appended to it as a single-line record -- at EVERY level, independent of
+// the console level gate (the file always records the full diagnostic
+// stream even while the console stays at the default Warning level) and
+// independent of tsdev_log_set_sink() (the --pbar console sink swaps and
+// clears that hook mid-run; the file must not follow it). Each record is a
+// single WriteFile under a mutex on a FILE_FLAG_WRITE_THROUGH handle, so
+// records stay atomic across writer threads and survive process death.
+// The file is opened for APPEND, so sequential CLI invocations and a
+// respawned serve broker accumulate into one stream instead of truncating
+// each other. OFF by default: nothing is written unless a path is
+// configured. Set-once at startup, like the level.
+//   tsdev_log_open_file: open the file at `path` for append (a previously
+//     open file is closed first -- test re-init support). Returns false
+//     when the file cannot be opened (GetLastError() is preserved for the
+//     caller's warning); the sink then stays disabled -- a logging
+//     failure is never fatal.
+//   tsdev_log_close_file: close the file if open (idempotent; tests).
+bool tsdev_log_open_file(const wchar_t* path);
+void tsdev_log_close_file();
+
 // Process-global switch (set-once at startup, like tsdev_log_set_level)
 // controlling whether verifyModule() runs the reverse-dependent traversal
 // (and its master-record contract-check) for STRATEGY (category-0) roots.

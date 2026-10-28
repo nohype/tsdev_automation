@@ -323,7 +323,7 @@ def _resume_manifest_path(stderr: str) -> str | None:
 # refusal (NO manifest exists) from a written manifest whose path was
 # dropped from the event channel (the file exists on disk).
 _RESUME_MANIFEST_UNAVAILABLE_MARKER_MESSAGE = (
-    "resume manifest unavailable — remaining items not re-attempted"
+    "resume manifest unavailable -- remaining items not re-attempted"
 )
 
 
@@ -553,7 +553,7 @@ def _manifest_name_token(name: str) -> str:
         raise ValueError(
             f"component name {name!r} cannot be represented in the "
             "manifest line schema (a line break, a leading quote, or a "
-            "quote combined with whitespace) — such a name can still be "
+            "quote combined with whitespace) -- such a name can still be "
             "used with the single-item operations (insert/modify/delete/"
             "upsert/exists), which pass it via argv or the serve JSON "
             "protocol instead of a manifest line"
@@ -807,6 +807,9 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     for env_name, flag in (
         ("TSDEV_WHSERVER_FREE_MB", "--whserver-free-mb"),
         ("TSDEV_WHSERVER_LARGEST_FREE_MB", "--whserver-largest-free-mb"),
+        ("TSDEV_WHSERVER_ABORT_FREE_MB", "--whserver-abort-free-mb"),
+        ("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB",
+         "--whserver-abort-largest-free-mb"),
     ):
         v = os.environ.get(env_name)
         # isascii() guards isdigit(): Unicode digits (e.g. "²") pass
@@ -832,6 +835,17 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
     # the kwarg per the pinned precedence rule (see the docstring above).
     if recycle_whserver or os.environ.get("TSDEV_RECYCLE_WHSERVER") not in (None, "", "0"):
         args.append("--recycle-whserver")
+    # Same env->flag forwarding for the debug log file: TSDEV_LOG_FILE does
+    # not reach the elevated broker (runas default env), so it is forwarded
+    # as an explicit --log-file flag. Any non-empty value forwards verbatim
+    # (path validation is the CLI's; an open failure only warns and never
+    # aborts the broker). The broker records the full diagnostic stream at
+    # every level -- its stderr is discarded anyway, so the file is the only
+    # record. Direct subprocess calls need no forwarding: they inherit the
+    # caller's environment block and the CLI reads TSDEV_LOG_FILE itself.
+    v = os.environ.get("TSDEV_LOG_FILE")
+    if v:
+        args.extend(("--log-file", v))
     args.extend(["-v"] * verbose)
     # ShellExecuteExW receives a command-line string, not an argv list.
     # list2cmdline uses the quoting rules expected by the Windows C runtime.
@@ -844,18 +858,11 @@ def _build_serve_parameters(ts_path: str | None, handshake_path: str, verbose: i
 # effective authorization is on (direct path included, where the child's
 # captured stderr is likewise not surfaced by default).
 _RECYCLE_WHSERVER_WARNING = (
-    "recycle_whserver authorizes restarting WHServer.exe when the VAS "
-    "guard trips: a residual TOCTOU race cannot be eliminated — a client "
-    "holding only a class-factory proxy is invisible to the census and can "
-    "bind to the DYING server during the ~6-7s window between the census "
-    "pass and the dying server's COM-class revocation, then die on its "
-    "next warehouse call. See `tsdev_cli --recycle-whserver` help / "
-    "tmp/RECYCLE_ENGINE_DESIGN.md §6.3 for the full warning. On a recycle "
-    "(exit 18) the batch resumes from the CLI's resume manifest "
-    "automatically (direct path) or the client respawns the broker and "
-    "resubmits from the refused index (serve path — a non-elevated "
-    "client pays one UAC prompt per respawn); both are bounded at "
-    "3 recycles per batch, and a refusal (exit 19) aborts the batch."
+    "recycle_whserver authorizes restarting TradeStation's background "
+    "library server (WHServer.exe) when its memory runs low. The batch "
+    "may still stop safely -- for example when another TradeStation "
+    "program is using the server -- and writes a resume file for the "
+    "remaining items. See docs/BUNDLE_README.md."
 )
 
 
@@ -1188,7 +1195,7 @@ class _ServeBroker:
             raise TimeoutError(
                 "serve broker did not exit within the wait-only "
                 "recycle-respawn reap bound while in graceful teardown "
-                "releasing its WHServer session (m_nLock) refs — left "
+                "releasing its WHServer session (m_nLock) refs -- left "
                 "running, NOT terminated, so the teardown can finish "
                 "without orphaning the lock"
             )
@@ -1952,14 +1959,14 @@ class TsDevClient:
                 raise ValueError(
                     "recycle_whserver (" + " + ".join(sources) + ") cannot "
                     "be combined with TSDEV_NO_WHSERVER_VAS_GUARD env: the "
-                    "VAS guard is the recycle trigger — the broker would "
+                    "VAS guard is the recycle trigger -- the broker would "
                     "exit 1 before writing the pipe file. Unset "
                     "TSDEV_NO_WHSERVER_VAS_GUARD or drop the recycle "
                     "authorization."
                 )
             if self._recycle_whserver or recycle_from_env:
                 # The broker's §6.3 stderr warning is invisible here (hidden
-                # spawn, stderr discarded) — surface the client-side brief.
+                # spawn, stderr discarded) -- surface the client-side brief.
                 _warn_recycle_whserver()
             self._broker = _ServeBroker(self.cli_path, self.ts_path, verbose=self.verbose,
                                         recycle_whserver=self._recycle_whserver)
@@ -2117,7 +2124,7 @@ class TsDevClient:
         raise ValueError(
             "recycle_whserver (" + " + ".join(sources) + ") cannot "
             "be combined with TSDEV_NO_WHSERVER_VAS_GUARD env: the "
-            "VAS guard is the recycle trigger — the child exits 1 "
+            "VAS guard is the recycle trigger -- the child exits 1 "
             "before dispatching any item. Unset "
             "TSDEV_NO_WHSERVER_VAS_GUARD or drop the recycle "
             "authorization."
@@ -2144,7 +2151,7 @@ class TsDevClient:
                 "does not inherit the caller's environment), so this "
                 "batch runs WITHOUT recycle authorization. Set the env "
                 "var or TsDevClient(recycle_whserver=True) before the "
-                "broker starts, or call client._broker.shutdown() — the "
+                "broker starts, or call client._broker.shutdown() -- the "
                 "next operation auto-restarts the broker (_ServeBroker."
                 "call() re-runs start() when not _started).",
                 UserWarning,
@@ -2218,7 +2225,7 @@ class TsDevClient:
                 raise ValueError(
                     "per-call recycle_whserver=True is not supported on the "
                     "serve path: broker recycle authorization is fixed at "
-                    "broker launch — set TsDevClient(recycle_whserver=True) "
+                    "broker launch -- set TsDevClient(recycle_whserver=True) "
                     "or TSDEV_RECYCLE_WHSERVER before the broker starts"
                 )
             return self._batch_serve(op, items, on_progress,
@@ -2482,7 +2489,7 @@ class TsDevClient:
                 raise ValueError(
                     "per-call recycle_whserver=True is not supported on the "
                     "serve path: broker recycle authorization is fixed at "
-                    "broker launch — set TsDevClient(recycle_whserver=True) "
+                    "broker launch -- set TsDevClient(recycle_whserver=True) "
                     "or TSDEV_RECYCLE_WHSERVER before the broker starts"
                 )
             return self._batch_dir_serve(op, type_, dir_path, extensions, on_progress,
@@ -2930,7 +2937,7 @@ class TsDevClient:
                         # batch's temp sources — spare them all.
                         diag = _resume_manifest_diagnostic(stderr)
                         message = _RECYCLE_REFUSED_MARKER_MESSAGE + (
-                            f" (resume manifest unavailable — {diag})"
+                            f" (resume manifest unavailable -- {diag})"
                             if diag else "")
                         results = [
                             _rewrite_marker_message(r, message)
@@ -2988,7 +2995,7 @@ class TsDevClient:
                     message = _RESUME_MANIFEST_UNAVAILABLE_MARKER_MESSAGE
                     diag = _resume_manifest_diagnostic(stderr)
                     if diag is not None:
-                        message += f" — {diag}"
+                        message += f" -- {diag}"
                     if _resume_manifest_path_dropped(stderr):
                         self._retained_resume_manifest = (
                             _RETAIN_ALL_TEMP_SOURCES)

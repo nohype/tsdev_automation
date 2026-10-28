@@ -126,7 +126,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existingStrat);
     if (existingStrat > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existingStrat);
         bool deleted = lib->deleteEntry(ComponentType::Strategy,
                                         kStrategyName);
@@ -143,7 +143,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existingFunc);
     if (existingFunc > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existingFunc);
         bool deleted = lib->deleteEntry(ComponentType::Function, kFuncName);
         std::fprintf(stdout, "    deleteEntry = %s\n",
@@ -197,7 +197,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // source. The warehouse may normalize whitespace/line endings, so we use
     // substring checks (std::string::find) rather than exact equality.
     std::fprintf(stdout,
-                 "\n[7] getSource(Strategy, \"%s\") — "
+                 "\n[7] getSource(Strategy, \"%s\") -- "
                  "asserting source contains key substrings...\n",
                  kStrategyName);
     std::string retrieved = lib->getSource(ComponentType::Strategy,
@@ -244,7 +244,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // --- Step 8: getSource for a NONEXISTENT name (G2) ---
     // ASSERT returns empty string (not a crash).
     std::fprintf(stdout,
-                 "\n[8] getSource(Strategy, \"%s\") — "
+                 "\n[8] getSource(Strategy, \"%s\") -- "
                  "asserting returns empty string...\n",
                  kNonExistentName);
     std::string notFoundSrc = lib->getSource(ComponentType::Strategy,
@@ -318,7 +318,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // ASSERT the returned string contains key substrings from the inserted
     // function source.
     std::fprintf(stdout,
-                 "\n[12] getSource(Function, \"%s\") — "
+                 "\n[12] getSource(Function, \"%s\") -- "
                  "asserting source contains key substrings...\n",
                  kFuncName);
     std::string funcRetrieved = lib->getSource(ComponentType::Function,

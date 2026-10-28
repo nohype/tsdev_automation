@@ -146,6 +146,17 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check1: refused JSON event wrong", 11);
             return 0;
         }
+        // census_lock human wording: the detail carries a plain-English
+        // lead-in (another TradeStation program is using the server) so
+        // a bare token never reaches the user unexplained; the engine's
+        // diagnostic detail stays appended. The reason token itself is
+        // byte-pinned above.
+        if (jr.find("another TradeStation program") ==
+                std::string::npos ||
+            jr.find("pid=4242 lock=1") == std::string::npos) {
+            ec = fail("check1: census_lock detail wording wrong", 13);
+            return 0;
+        }
 
         // Minimal call (serve path / pre-flight continue): only the base
         // fields exist — no pid/free_mb/index/manifest members.
@@ -1203,9 +1214,141 @@ DWORD WINAPI runTest(LPVOID param) {
                 return 0;
             }
         }
-        std::fprintf(stdout, "    PASS: R1+R2 defer boundary — granted "
-                             "graceful-exit-18 vs refused §5 close-stage "
+        std::fprintf(stdout, "    PASS: R1+R2 defer boundary -- granted "
+                             "graceful-exit-18 vs refused section-5 close-stage "
                              "shapes + contract\n");
+    }
+
+    // -------------------------------------------------------------------
+    // Check 15: the two-threshold continuation policy (field fix) --
+    // VasGuardConfig floor defaults, the once-per-run notice renderer,
+    // and the census_lock-above-floor refuse classification.
+    // -------------------------------------------------------------------
+    {
+        // Defaults pin: trigger pair unchanged; floor pair is the new
+        // hard-abort band.
+        VasGuardConfig cfg;
+        if (!cfg.enabled || cfg.freeThresholdMB != 256 ||
+            cfg.largestThresholdMB != 64 ||
+            cfg.abortFreeMB != 64 || cfg.abortLargestFreeMB != 32) {
+            ec = fail("check15: VasGuardConfig defaults drifted", 160);
+            return 0;
+        }
+        VasGuardWarns w;
+        if (w.continued || w.measure || w.whEnum || w.crashEnum) {
+            ec = fail("check15: VasGuardWarns latches not default-false",
+                      161);
+            return 0;
+        }
+
+        // The abort-floor flags/env reuse parseMbThreshold's strict
+        // contract: "0".."1048575" decimal, nothing else. The caller drops
+        // invalid env values (keeps the default); the parse itself just
+        // answers valid-or-not.
+        {
+            unsigned v = 0;
+            if (!parseMbThreshold("0", v) || v != 0 ||
+                !parseMbThreshold("64", v) || v != 64 ||
+                !parseMbThreshold("32", v) || v != 32 ||
+                !parseMbThreshold("1048575", v) || v != 1048575 ||
+                parseMbThreshold("", v) ||
+                parseMbThreshold("-1", v) ||
+                parseMbThreshold("12.5", v) ||
+                parseMbThreshold("bogus", v) ||
+                parseMbThreshold(" 64", v) ||
+                parseMbThreshold("1048576", v)) {
+                ec = fail("check15: parseMbThreshold contract drifted",
+                          169);
+                return 0;
+            }
+        }
+
+        // Refuse classification: ONLY census_lock above the floor
+        // continues; everything else stays fail-closed.
+        if (!vasRefuseAllowsContinue("census_lock", false)) {
+            ec = fail("check15: census_lock above floor not a continue",
+                      162);
+            return 0;
+        }
+        if (vasRefuseAllowsContinue("census_lock", true) ||
+            vasRefuseAllowsContinue("attach_failed", false) ||
+            vasRefuseAllowsContinue("zombie_present_close", false) ||
+            vasRefuseAllowsContinue("census_unverifiable", false) ||
+            vasRefuseAllowsContinue("whserver_recycled", false) ||
+            vasRefuseAllowsContinue("", false) ||
+            vasRefuseAllowsContinue(nullptr, false)) {
+            ec = fail("check15: non-census_lock/below-floor refuse "
+                      "allowed a continue", 163);
+            return 0;
+        }
+
+        // Cause names are stable strings (the JSON `cause` field values).
+        if (std::strcmp(vasContinueCauseName(VasContinueCause::NotAuthorized),
+                        "recycle_not_authorized") != 0 ||
+            std::strcmp(vasContinueCauseName(VasContinueCause::ForeignClients),
+                        "foreign_clients") != 0 ||
+            std::strcmp(vasContinueCauseName(VasContinueCause::CensusLock),
+                        "census_lock") != 0) {
+            ec = fail("check15: continue cause names drifted", 164);
+            return 0;
+        }
+
+        // Human line: exact pinned text for each cause (the user's
+        // approved wording). All output must be pure ASCII.
+        const std::string base = whserverVasContinueLine(
+            4242, 246, 135, 256, VasContinueCause::NotAuthorized, false);
+        const std::string expectBase =
+            "tsdev_cli: NOTE WHServer memory low (free=246MB largest=135MB); "
+            "continuing -- the server can keep working (the 256MB restart "
+            "threshold is not a danger level)";
+        if (base != expectBase) {
+            ec = fail("check15: human continue line (not_authorized) "
+                      "wrong text", 165);
+            return 0;
+        }
+        const std::string expectSuffix =
+            " -- another TradeStation program is using the server so it "
+            "cannot be restarted";
+        if (whserverVasContinueLine(4242, 246, 135, 256,
+                                    VasContinueCause::ForeignClients,
+                                    false) != expectBase + expectSuffix ||
+            whserverVasContinueLine(4242, 246, 135, 256,
+                                    VasContinueCause::CensusLock,
+                                    false) != expectBase + expectSuffix) {
+            ec = fail("check15: human continue line (foreign/census) "
+                      "suffix wrong", 166);
+            return 0;
+        }
+        for (const std::string& s :
+             {base, expectBase + expectSuffix}) {
+            for (unsigned char c : s) {
+                if (c > 126 || c < 32) {
+                    ec = fail("check15: continue line not pure ASCII", 167);
+                    return 0;
+                }
+            }
+        }
+
+        // JSON line: the whserver_vas_continue event -- a diagnostics-lane
+        // object that deliberately matches NEITHER pinned recycle event
+        // name (client resume semantics untouched).
+        const std::string j = whserverVasContinueLine(
+            4242, 246, 135, 256, VasContinueCause::CensusLock, true);
+        if (j.find("\"event\":\"whserver_vas_continue\"") ==
+                std::string::npos ||
+            j.find("\"pid\":4242") == std::string::npos ||
+            j.find("\"free_mb\":246") == std::string::npos ||
+            j.find("\"largest_free_mb\":135") == std::string::npos ||
+            j.find("\"cause\":\"census_lock\"") == std::string::npos ||
+            j.find("\"action\":\"continue\"") == std::string::npos ||
+            j.find("whserver_recycled") != std::string::npos ||
+            j.find("whserver_recycle_refused") != std::string::npos) {
+            ec = fail("check15: JSON continue event wrong fields", 168);
+            return 0;
+        }
+        std::fprintf(stdout, "    PASS: two-threshold continuation policy "
+                             "(config defaults, census_lock classification, "
+                             "notice renderings)\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

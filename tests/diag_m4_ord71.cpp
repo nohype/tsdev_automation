@@ -515,7 +515,7 @@ void printWhFields(const char* label, const WhFields& f) {
 void inspectSafeArray(void* saPtr, const char* label) {
     std::printf("\n  --- SAFEARRAY INSPECTION: %s ---\n", label);
     if (!saPtr) {
-        std::printf("    [SafeArray pointer is NULL — nothing to inspect]\n");
+        std::printf("    [SafeArray pointer is NULL -- nothing to inspect]\n");
         return;
     }
     SAFEARRAY* psa = (SAFEARRAY*)saPtr;
@@ -523,12 +523,12 @@ void inspectSafeArray(void* saPtr, const char* label) {
     __try {
         dim = SafeArrayGetDim(psa);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::printf("    [SafeArrayGetDim raised SEH — not a valid SafeArray]\n");
+        std::printf("    [SafeArrayGetDim raised SEH -- not a valid SafeArray]\n");
         return;
     }
     std::printf("    SafeArrayGetDim = %u\n", (unsigned)dim);
     if (dim != 1) {
-        std::printf("    [dim != 1 — not a 1-D array; skipping bounds/data]\n");
+        std::printf("    [dim != 1 -- not a 1-D array; skipping bounds/data]\n");
         return;
     }
     LONG lb = 0, ub = 0;
@@ -589,7 +589,7 @@ void inspectSafeArray(void* saPtr, const char* label) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         std::printf("    [SafeArrayUnaccessData raised SEH]\n");
     }
-    std::printf("    [SafeArray NOT destroyed — caller owns it]\n");
+    std::printf("    [SafeArray NOT destroyed -- caller owns it]\n");
 }
 
 // -------------------------------------------------------------------------
@@ -607,7 +607,7 @@ void inspectSafeArray(void* saPtr, const char* label) {
 void analyzeOrd71Result(const void* ptr, const char* label) {
     std::printf("\n=== ORDINAL_71 RETURN VALUE ANALYSIS: %s ===\n", label);
     if (!ptr) {
-        std::printf("  [return pointer is NULL — global init failed]\n");
+        std::printf("  [return pointer is NULL -- global init failed]\n");
         return;
     }
     const unsigned char* p = (const unsigned char*)ptr;
@@ -647,7 +647,7 @@ void analyzeOrd71Result(const void* ptr, const char* label) {
     void* maybeSA = nullptr;
     if (sehReadPtr(p + 0x26, &maybeSA)) {
         std::printf("    +0x26 (would be SafeArray in a record): %p  "
-                    "[inside CRITICAL_SECTION in BST block — NOT a record]\n",
+                    "[inside CRITICAL_SECTION in BST block -- NOT a record]\n",
                     maybeSA);
     }
     std::printf("  >> CONFIRMED: Ordinal_71 returns a BST control block, "
@@ -662,7 +662,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                        int expectedProgId, Ordinal70Fn ord70) {
     std::printf("\n=== LIVE RECORD ANALYSIS: %s ===\n", label);
     if (!recPtr) {
-        std::printf("  [record pointer is NULL — nothing to analyze]\n");
+        std::printf("  [record pointer is NULL -- nothing to analyze]\n");
         return;
     }
     const unsigned char* rec = (const unsigned char*)recPtr;
@@ -697,7 +697,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
     if (sa26) {
         inspectSafeArray(sa26, "record+0x26 SafeArray");
     } else {
-        std::printf("    [No SafeArray at +0x26 — record has no "
+        std::printf("    [No SafeArray at +0x26 -- record has no "
                     "reverse-dep array]\n");
     }
 
@@ -708,7 +708,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
         std::printf("    Ordinal_70(rec, 0): %s, result=%d\n",
                     ok ? "OK" : "SEH", r.result);
     } else {
-        std::printf("    [Ordinal_70 NOT resolved — record LEAKED]\n");
+        std::printf("    [Ordinal_70 NOT resolved -- record LEAKED]\n");
     }
 }
 
@@ -731,7 +731,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
 void attemptDirectCmd0D(void* whPtr, int type, int progId) {
     std::printf("\n=== DIRECT WORKER-THREAD COMMAND 0x0D ATTEMPT ===\n");
     if (!whPtr) {
-        std::printf("  [warehouse pointer is NULL — cannot attempt]\n");
+        std::printf("  [warehouse pointer is NULL -- cannot attempt]\n");
         return;
     }
     unsigned char* wh = (unsigned char*)whPtr;
@@ -755,7 +755,7 @@ void attemptDirectCmd0D(void* whPtr, int type, int progId) {
 
     // Verify event/mutex handles are non-NULL.
     if (!origWakeEvt || !origDoneEvt || !origMutex) {
-        std::printf("  [ABORT: event/mutex handles are NULL — worker not "
+        std::printf("  [ABORT: event/mutex handles are NULL -- worker not "
                     "initialized]\n");
         return;
     }
@@ -780,7 +780,7 @@ void attemptDirectCmd0D(void* whPtr, int type, int progId) {
                 mres == WAIT_OBJECT_0 ? "acquired" :
                 mres == WAIT_TIMEOUT ? "TIMEOUT" : "FAILED");
     if (mres != WAIT_OBJECT_0) {
-        std::printf("  [ABORT: could not acquire mutex — restoring fields]\n");
+        std::printf("  [ABORT: could not acquire mutex -- restoring fields]\n");
         sehWriteShort(wh + 0x12, origType);
         sehWriteShort(wh + 0x16, origModId);
         return;
@@ -970,7 +970,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 whOk ? "OK (no SEH)" : "SEH raised", whSeh.ptr);
     void* whPtr = whSeh.ptr;
     if (!whPtr) {
-        std::fprintf(stderr, "  [WARN] warehouse pointer is NULL — cannot "
+        std::fprintf(stderr, "  [WARN] warehouse pointer is NULL -- cannot "
                      "read fields.\n");
     }
 
@@ -1011,7 +1011,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         analyzeOrd71Result(ord71Seh.ptr,
                            "Ordinal_71(4, funcProgId) return");
     } else if (ord71Ok) {
-        std::printf("\n  [Ordinal_71 returned NULL — global init failed]\n");
+        std::printf("\n  [Ordinal_71 returned NULL -- global init failed]\n");
     }
 
     // --- Step 8: try Ordinal_71 with (0, 0) and (4, 0) variants.
@@ -1022,7 +1022,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    Ordinal_71(0, 0): %s, return=%p  [%s]\n",
                     ok0 ? "OK" : "SEH", r0.ptr,
                     (ok0 && r0.ptr == ord71Seh.ptr) ?
-                    "SAME as first call (idempotent — expected)" :
+                    "SAME as first call (idempotent -- expected)" :
                     "DIFFERENT");
     }
     {
@@ -1031,7 +1031,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    Ordinal_71(4, 0): %s, return=%p  [%s]\n",
                     ok1 ? "OK" : "SEH", r1.ptr,
                     (ok1 && r1.ptr == ord71Seh.ptr) ?
-                    "SAME as first call (idempotent — expected)" :
+                    "SAME as first call (idempotent -- expected)" :
                     "DIFFERENT");
     }
 
@@ -1056,7 +1056,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                               funcProgId, ord70);
         }
     } else {
-        std::printf("    [Ordinal_69 not resolved — skipping comparison]\n");
+        std::printf("    [Ordinal_69 not resolved -- skipping comparison]\n");
     }
 
     // --- Step 9b: probe Ordinal_68 on the Ordinal_71 return value.
@@ -1068,7 +1068,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         Ord68SehResult r;
         bool ok = callOrd68(ord68, ord71Seh.ptr, &r);
         std::printf("    Ordinal_71 return: %s, result=%d (0x%X)  "
-                    "[expect garbage — +0x0C is inside CRITICAL_SECTION]\n",
+                    "[expect garbage -- +0x0C is inside CRITICAL_SECTION]\n",
                     ok ? "OK" : "SEH", r.result, (unsigned)r.result);
     }
 
@@ -1099,7 +1099,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (whPtr) {
         attemptDirectCmd0D(whPtr, /*type=*/4, /*progId=*/funcProgId);
     } else {
-        std::printf("  [SKIPPED — warehouse pointer is NULL]\n");
+        std::printf("  [SKIPPED -- warehouse pointer is NULL]\n");
     }
 
     // Re-read warehouse fields after the cmd 0x0D attempt.
@@ -1118,7 +1118,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("Function ProgId = %d\n", funcProgId);
     std::printf("Ordinal_71(4, %d): %s, return=%p\n",
                 funcProgId, ord71Ok ? "OK" : "SEH", ord71Seh.ptr);
-    std::printf("Ordinal_71 is a LAZY BST-global initializer — it does NOT "
+    std::printf("Ordinal_71 is a LAZY BST-global initializer -- it does NOT "
                 "trigger the worker,\n");
     std::printf("  does NOT set warehouse+0xC2, does NOT return a module "
                 "record.\n");

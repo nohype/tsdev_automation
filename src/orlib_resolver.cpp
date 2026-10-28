@@ -441,7 +441,7 @@ VersionDescriptor OrlibResolver::detectVersion() {
             vd.manifestEntry  = nullptr;
             vd.signatureSet   = SIGSET_NONE;
             vd.warningMessage = "UNTESTED orlib20.dll version '" + fv +
-                                "' — signatures may not match; proceeding "
+                                "' -- signatures may not match; proceeding "
                                 "at your own risk";
             m_version = vd;
             return m_version;

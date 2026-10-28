@@ -279,9 +279,9 @@ DWORD WINAPI runTest(LPVOID param) {
                 "reverse dependents\n");
     std::printf("  of a library item via the orlib20 warehouse worker-thread "
                 "command protocol\n");
-    std::printf("  (cmd 0x0D → cmd 0x3B → SafeArray parse).\n");
-    std::printf("See docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md §9 "
-                "(R-M.4a.1 through R-M.4a.6, §9.7).\n");
+    std::printf("  (cmd 0x0D -> cmd 0x3B -> SafeArray parse).\n");
+    std::printf("See docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md section 9 "
+                "(R-M.4a.1 through R-M.4a.6, section 9.7).\n");
     std::printf("Desktop/TSDev running state is not a prerequisite for this "
                 "library-level test.\n");
 

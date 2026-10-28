@@ -125,7 +125,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
     } else {
         std::fprintf(stdout,
-                     "\n[2a] Component already exists (ProgId=%d) — "
+                     "\n[2a] Component already exists (ProgId=%d) -- "
                      "skipping createEntry (re-run)\n",
                      st->progId);
     }
@@ -172,7 +172,7 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout, "    >>> Entry removed from in-memory lookup\n");
     } else {
         std::fprintf(stdout,
-                     "    >>> Entry still in in-memory lookup (ProgId=%d) — "
+                     "    >>> Entry still in in-memory lookup (ProgId=%d) -- "
                      "will verify after OrlibExit\n",
                      postDelete);
     }
@@ -187,7 +187,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // A fresh OrlibInit reloads the warehouse from disk. If the deletion was
     // persisted, FindExistPos should return <= 0.
     std::fprintf(stdout,
-                 "\n[7] Fresh TsDevLib — verify deletion persisted...\n");
+                 "\n[7] Fresh TsDevLib -- verify deletion persisted...\n");
     try {
         lib = new TsDevLib();
     } catch (const std::exception& e) {
@@ -201,7 +201,7 @@ DWORD WINAPI runTest(LPVOID param) {
     if (finalCheck > 0) {
         std::fprintf(stderr,
                      "    >>> Entry STILL EXISTS after OrlibExit/reload "
-                     "(ProgId=%d) — deletion did NOT persist!\n",
+                     "(ProgId=%d) -- deletion did NOT persist!\n",
                      finalCheck);
         st->exitCode = fail("deletion did not persist to disk", 80);
         // Clean up the .ell file manually as best-effort.
@@ -211,7 +211,7 @@ DWORD WINAPI runTest(LPVOID param) {
         delete lib;
         return 0;
     }
-    std::fprintf(stdout, "    >>> Entry GONE — deletion persisted!\n");
+    std::fprintf(stdout, "    >>> Entry GONE -- deletion persisted!\n");
 
     // --- Step 8: Verify the .ell file is deleted ---
     // The progId may differ after reload, but we check the original path.

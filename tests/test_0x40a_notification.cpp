@@ -453,7 +453,7 @@ int runFailedVerifyCase(TsDevLib& lib, int caseNum,
 
     // --- 4. Reset capture, then verifyModule (expected to FAIL) ---
     resetCapture();
-    std::printf("  [4] verifyModule(%s, %d) — expecting failure...\n",
+    std::printf("  [4] verifyModule(%s, %d) -- expecting failure...\n",
                 typeLabel, progId);
     std::string errors = lib.verifyModule(type, progId);
     if (!errors.empty()) {
@@ -661,7 +661,7 @@ int runBatchReuseCase(TsDevLib& lib, int caseNum,
     int category = getCategory(type);
     const int kIterations = 3;
 
-    std::printf("\n=== Case %d: BATCH REUSE — %d verify-success cycles (%s, "
+    std::printf("\n=== Case %d: BATCH REUSE -- %d verify-success cycles (%s, "
                 "category=%d) ===\n",
                 caseNum, kIterations, typeLabel, category);
 
@@ -1494,7 +1494,7 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
     // so the message should already be queued.
     if (WaitForSingleObject(rs.doneEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
-                     "  [receiver] doneEvent timed out — no 0x40A "
+                     "  [receiver] doneEvent timed out -- no 0x40A "
                      "captured\n");
     }
 
@@ -1609,7 +1609,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
     int category = getCategory(type);
     const int kIterations = 3;
 
-    std::printf("\n=== Case %d: RECEIVER-AWARE BATCH — %d verify-success "
+    std::printf("\n=== Case %d: RECEIVER-AWARE BATCH -- %d verify-success "
                 "cycles (%s, category=%d) ===\n",
                 caseNum, kIterations, typeLabel, category);
 
@@ -1792,7 +1792,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
     // targetCount is reached; we also signal it below as a backstop.
     if (WaitForSingleObject(rs.doneEvent, 5000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
-                     "  [receiver] doneEvent timed out — expected %d "
+                     "  [receiver] doneEvent timed out -- expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
 
@@ -2037,7 +2037,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
     int category = getCategory(type);
     const int kIterations = 3;
 
-    std::printf("\n=== Case %d: CLI stdin BATCH — %d verify-success ops via "
+    std::printf("\n=== Case %d: CLI stdin BATCH -- %d verify-success ops via "
                 "tsdev_cli.exe batch-insert --batch-stdin (%s, category=%d) "
                 "===\n",
                 caseNum, kIterations, typeLabel, category);
@@ -2337,7 +2337,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
     // before the child exits; 30s is a safety margin for late captures.
     if (WaitForSingleObject(rs.doneEvent, 30000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
-                     "  [receiver] doneEvent timed out — expected %d "
+                     "  [receiver] doneEvent timed out -- expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
 
@@ -2469,7 +2469,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     int category = getCategory(type);
     const int kIterations = 3;
 
-    std::printf("\n=== Case %d: CLI SERVE — %d verify-success ops via "
+    std::printf("\n=== Case %d: CLI SERVE -- %d verify-success ops via "
                 "tsdev_cli.exe serve --serve-pipe-file (%s, category=%d) "
                 "===\n",
                 caseNum, kIterations, typeLabel, category);
@@ -2945,7 +2945,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
     // before the broker exits; 30s is a safety margin for late captures.
     if (WaitForSingleObject(rs.doneEvent, 30000) != WAIT_OBJECT_0) {
         std::fprintf(stderr,
-                     "  [receiver] doneEvent timed out — expected %d "
+                     "  [receiver] doneEvent timed out -- expected %d "
                      "0x40A posts\n", rs.targetCount);
     }
 

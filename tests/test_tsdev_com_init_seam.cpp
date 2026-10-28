@@ -392,7 +392,7 @@ int checkLaterCtorExceptionAfterComSuccess() {
         return fail("later-ctor-exception: message must identify the injected post-COM throw", 53);
     }
     if (containsCI(what, "HRESULT")) {
-        std::fprintf(stderr, "  message=\"%s\" (must NOT contain \"HRESULT\" — that is the COM-init failure path)\n", what.c_str());
+        std::fprintf(stderr, "  message=\"%s\" (must NOT contain \"HRESULT\" -- that is the COM-init failure path)\n", what.c_str());
         return fail("later-ctor-exception: message must NOT be the COM-init failure diagnostic", 54);
     }
     std::fprintf(stdout, "    PASS: COM succeeded, post-COM throw, message identifies post-COM (not COM-init failure), CoUninitialize balanced once\n");

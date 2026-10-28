@@ -13,7 +13,7 @@
 //   - bool envPresenceEnabled(const char*)                    — env mirror
 //     presence semantics (set-and-not-"0")
 //   - const char kRecycleWhserverWarning[] + emitRecycleWhserverWarning()
-//     — §6.3 verbatim text, emitted once per process lifetime
+//     -- §6.3 warning text, emitted once per process lifetime
 //
 // This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch
 // the TradeStation installation, and performs no privileged I/O (the only
@@ -50,7 +50,8 @@
 //      TSDEV_RECYCLE_WHSERVER, snapshotted and restored.)
 //   4. emitRecycleWhserverWarning: emits kRecycleWhserverWarning verbatim
 //      to stderr exactly once (second call emits nothing — the once-per-
-//      process-lifetime guard).
+//      process-lifetime guard); the text is the short user-facing warning
+//      (ASCII, <= 5 lines, names the flag/server/resume file/docs).
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -398,24 +399,30 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check4: warning bytes wrong or emitted twice", 44);
             return 0;
         }
-        // The warning must state the fail-closed contract: the flag does
-        // not bypass the census gate.
+        // The warning is a short user-facing text (engineering detail
+        // lives in docs/BUNDLE_README.md): it must name the flag, state
+        // what it authorizes, note the batch can still stop safely when
+        // another TradeStation program uses the server, and point at the
+        // resume file + docs.
         const std::string w = kRecycleWhserverWarning;
-        if (w.find("does not bypass the gate") == std::string::npos ||
-            w.find("zero-client census") == std::string::npos ||
-            w.find("~6-7s") == std::string::npos ||
-            w.find("exit 19") == std::string::npos) {
+        if (w.find("--recycle-whserver") == std::string::npos ||
+            w.find("WHServer.exe") == std::string::npos ||
+            w.find("memory runs low") == std::string::npos ||
+            w.find("another TradeStation program") == std::string::npos ||
+            w.find("resume file") == std::string::npos ||
+            w.find("docs/BUNDLE_README.md") == std::string::npos) {
             ec = fail("check4: warning misses pinned content", 45);
             return 0;
         }
-        // The resume-contract tail (R4 wired) must state the resume
-        // manifest, the manual resubmission command, the client's
-        // automatic bounded resubmission, and the caller-owned cleanup.
-        if (w.find("tsdev_resume_") == std::string::npos ||
-            w.find("batch-<op> <resume-file>") == std::string::npos ||
-            w.find("3 recycles per batch") == std::string::npos ||
-            w.find("caller-owned") == std::string::npos) {
-            ec = fail("check4: warning misses resume-contract tail", 46);
+        // Strictly ASCII and short: every byte < 0x80 and no more than
+        // five emitted lines.
+        const bool asciiOnly = std::all_of(
+            w.begin(), w.end(),
+            [](char c) { return static_cast<unsigned char>(c) <= 0x7F; });
+        size_t newlines = 0;
+        for (char c : w) if (c == '\n') ++newlines;
+        if (!asciiOnly || newlines > 5) {
+            ec = fail("check4: warning not short ASCII text", 46);
             return 0;
         }
         std::fprintf(stdout, "    PASS: verbatim warning emitted once\n");

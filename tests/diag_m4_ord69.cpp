@@ -418,7 +418,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                        Ordinal70Fn ord70) {
     std::printf("\n=== LIVE RECORD ANALYSIS: %s ===\n", label);
     if (!recPtr) {
-        std::printf("  [record pointer is NULL — nothing to analyze]\n");
+        std::printf("  [record pointer is NULL -- nothing to analyze]\n");
         return;
     }
 
@@ -583,7 +583,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                     }
                     if (stride == 0) {
                         std::printf("      [zero stride at dep-rec[%d] @ %p "
-                                    "(opcode=0x%X) — stopping scan]\n",
+                                    "(opcode=0x%X) -- stopping scan]\n",
                                     recIdx, (void*)cur, (unsigned)opcode);
                         break;
                     }
@@ -594,7 +594,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                 std::printf("      dep-rec scan: %d records walked, "
                             "%d 0xFA4 opcodes found\n", recIdx, elemFa4);
             } else {
-                std::printf("      [dep-list empty or ptr NULL — no scan]\n");
+                std::printf("      [dep-list empty or ptr NULL -- no scan]\n");
             }
         }
         std::printf("\n  --- ELEMENT ITERATION SUMMARY: %d 0xFA4 opcodes "
@@ -628,7 +628,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                     ord70Ok ? "OK (no SEH)" : "SEH raised",
                     ord70Seh.result);
     } else {
-        std::printf("\n  [Cleanup] Ordinal_70 NOT resolved — LEAKING the "
+        std::printf("\n  [Cleanup] Ordinal_70 NOT resolved -- LEAKING the "
                     "live record (refcount not decremented).\n");
     }
 }
@@ -715,7 +715,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("  Strategy that calls a Function.\n");
     std::printf("ABI (Ghidra-confirmed): __cdecl, 3 args "
                 "(category:char, progId:int, flag:int),\n");
-    std::printf("  returns live record pointer (refcounted — release via "
+    std::printf("  returns live record pointer (refcounted -- release via "
                 "Ordinal_70).\n");
 
     // --- Step 1: construct a real TsDevLib (full init). No hooks. ---
@@ -768,15 +768,15 @@ DWORD WINAPI runDiag(LPVOID param) {
         return 0;
     }
     if (!ord70) {
-        std::fprintf(stderr, "WARN: failed to resolve Ordinal_70 — live "
+        std::fprintf(stderr, "WARN: failed to resolve Ordinal_70 -- live "
                      "record will LEAK (refcount not decremented)\n");
     }
     if (!ord28) {
-        std::fprintf(stderr, "WARN: failed to resolve Ordinal_28 — "
+        std::fprintf(stderr, "WARN: failed to resolve Ordinal_28 -- "
                      "sibling probe will be skipped\n");
     }
     if (!getDeps) {
-        std::fprintf(stderr, "WARN: failed to resolve GetDependencies — "
+        std::fprintf(stderr, "WARN: failed to resolve GetDependencies -- "
                      "post-Ord69 probe will be skipped\n");
     }
     std::printf("    Resolved: Ordinal_69=%p Ordinal_70=%p Ordinal_28=%p "
@@ -904,7 +904,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         "+0x4f elemArrayPtr=%p  [%s]\n",
                         ec, eap,
                         (ec == 0 && eap == nullptr)
-                            ? "PARTIAL COPY (zeros — same as "
+                            ? "PARTIAL COPY (zeros -- same as "
                               "_GetMasterRecByType@16)"
                             : "POPULATED (different from "
                               "_GetMasterRecByType@16)");
@@ -930,13 +930,13 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("Ordinal_69 Function call: %s (rec=%p)\n",
                 ord69FuncOk ? "OK" : "SEH", ord69FuncSeh.rec);
     std::printf("Ordinal_70 (refcount-dec): %s\n",
-                ord70 ? "resolved — live records released" :
-                "NOT resolved — live records LEAKED");
+                ord70 ? "resolved -- live records released" :
+                "NOT resolved -- live records LEAKED");
 
     std::printf("\n=== DIAGNOSIS ===\n");
     std::printf("  See the field reads above for the key offsets:\n");
-    std::printf("    +0x29 element count  — ZERO or NONZERO?\n");
-    std::printf("    +0x4f element array  — NULL or NON-NULL?\n");
+    std::printf("    +0x29 element count  -- ZERO or NONZERO?\n");
+    std::printf("    +0x4f element array  -- NULL or NON-NULL?\n");
     std::printf("    element +0x73 dep-list length\n");
     std::printf("    element +0x7b dep-list pointer\n");
     std::printf("  If +0x29 is NONZERO and +0x4f is NON-NULL, Ordinal_69 "
@@ -950,7 +950,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("    GetDependencies fails to enumerate.\n");
     std::printf("  GetDependencies AFTER Ordinal_69 should STILL return "
                 "empty dep lists\n");
-    std::printf("    (it gets its own live record internally — Ordinal_69 "
+    std::printf("    (it gets its own live record internally -- Ordinal_69 "
                 "does not cache for it).\n");
 
     st->exitCode = 0;

@@ -90,29 +90,178 @@ void tsdev_log_set_sink(TsDevLogSink sink) {
     g_logSink = sink;
 }
 
-void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...) {
-    if (static_cast<int>(level) > static_cast<int>(g_logLevel)) {
-        return;  // gated: message is more verbose than the current level
+namespace {
+
+// --- Debug log-file sink (CLI: --log-file, env TSDEV_LOG_FILE) --------------
+// Process-global file sink INSIDE tsdev_log_message(), deliberately NOT
+// routed through tsdev_log_set_sink: the --pbar console sink installs,
+// swaps, and clears that hook mid-run (tsdev_cli.cpp), so a file sink
+// hanging off it would lose records and corrupt the bar. The file sink is
+// also independent of g_logLevel: it records the FULL message stream at
+// every level, so the console can stay user-facing while the file keeps
+// the complete diagnostics.
+//
+// Conventions follow the sec-7.1 diagnostic sink (src/diag_log.cpp): one
+// line per record, QPC elapsed-seconds timestamps, writers serialized
+// under a CRITICAL_SECTION, and a single WriteFile per record on a
+// FILE_FLAG_WRITE_THROUGH handle so records survive process death. The
+// file is opened for APPEND, so sequential CLI invocations and a respawned
+// serve broker accumulate into one stream instead of truncating each
+// other. OFF by default -- the CLI opens it only when --log-file /
+// TSDEV_LOG_FILE names a path.
+HANDLE           g_logFile         = INVALID_HANDLE_VALUE;
+CRITICAL_SECTION g_logFileLock;     // serializes file writers (record atomicity)
+bool             g_logFileLockInit = false;
+LARGE_INTEGER    g_logFileQpcStart = {};
+LARGE_INTEGER    g_logFileFreq     = {};
+
+// Format `fmt`/`args` into a std::string WITHOUT consuming the caller's
+// va_list: two-pass vsnprintf on va_copy's (probe the required size, then
+// render into an exactly sized buffer). Shared by the console sink branch
+// and the file-record writer.
+std::string formatLogString(const char* fmt, va_list args) {
+    va_list probe;
+    va_copy(probe, args);
+    const int needed = std::vsnprintf(nullptr, 0, fmt, probe);
+    va_end(probe);
+    std::string buf;
+    if (needed > 0) {
+        buf.resize(static_cast<size_t>(needed) + 1);
+        va_list render;
+        va_copy(render, args);
+        std::vsnprintf(&buf[0], buf.size(), fmt, render);
+        va_end(render);
+        buf.resize(static_cast<size_t>(needed));
     }
+    return buf;
+}
+
+// Write one already-formatted message to the log file as a single-line
+// record: "[<secs>] tid=<id> <TAG> | <message>\n". The message's own
+// trailing CR/LF is dropped (the record terminator supplies the newline)
+// and embedded line breaks are escaped, so every record is exactly one
+// line and the file stays trivially greppable. A failing WriteFile
+// silently drops the record -- the sink must never crash or fail the CLI
+// because its own logging failed (same convention as diag_log.cpp).
+void writeLogFileRecord(TsDevLogLevel level, const std::string& msg) {
+    static const char* const kTag[] = { "ERR", "WRN", "INF", "DBG" };
+    const int li = static_cast<int>(level);
+    const char* tag = (li >= 0 && li <= 3) ? kTag[li] : "???";
+
+    std::string body = msg;
+    while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) {
+        body.pop_back();
+    }
+    std::string clean;
+    clean.reserve(body.size() + 8);
+    for (char c : body) {
+        if (c == '\n')      clean += "\\n";
+        else if (c == '\r') clean += "\\r";
+        else                clean += c;
+    }
+
+    // The lock is initialized inside tsdev_log_open_file() before the
+    // handle is published; a caller that observed a stale handle without
+    // the init store must not take an uninitialized lock.
+    if (!g_logFileLockInit) return;
+    EnterCriticalSection(&g_logFileLock);
+    // Re-check under the lock: the caller's fast-path test may have raced
+    // a tsdev_log_close_file().
+    if (g_logFile != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        const double secs =
+            static_cast<double>(now.QuadPart - g_logFileQpcStart.QuadPart) /
+            static_cast<double>(g_logFileFreq.QuadPart);
+        char head[96];
+        const int hn = std::snprintf(
+            head, sizeof(head), "[%12.6f] tid=%lu %s | ", secs,
+            static_cast<unsigned long>(GetCurrentThreadId()), tag);
+        std::string line;
+        line.reserve(clean.size() + sizeof(head) + 1);
+        if (hn > 0) line.append(head, static_cast<size_t>(hn));
+        line += clean;
+        line += '\n';
+        DWORD written = 0;
+        WriteFile(g_logFile, line.data(),
+                  static_cast<DWORD>(line.size()), &written, nullptr);
+    }
+    LeaveCriticalSection(&g_logFileLock);
+}
+
+} // namespace
+
+// Open the debug log file at `path` for append (see tsdev_lib.h for the
+// contract). OPEN_ALWAYS + FILE_APPEND_DATA: the file is created when
+// missing and every WriteFile lands at the true end of file, so a second
+// process appending concurrently (share-write is granted) cannot overwrite
+// existing records. The lock is initialized before the handle is
+// published, so any thread that observes a non-null handle can take it.
+bool tsdev_log_open_file(const wchar_t* path) {
+    if (path == nullptr || path[0] == L'\0') {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return false;
+    }
+    if (!g_logFileLockInit) {
+        InitializeCriticalSectionAndSpinCount(&g_logFileLock, 0x0400);
+        g_logFileLockInit = true;
+    }
+    EnterCriticalSection(&g_logFileLock);
+    // Re-open support (tests): close a previously opened file first.
+    if (g_logFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_logFile);
+        g_logFile = INVALID_HANDLE_VALUE;
+    }
+    HANDLE h = CreateFileW(path, FILE_APPEND_DATA,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE |
+                               FILE_SHARE_DELETE,
+                           nullptr, OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+                           nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD err = GetLastError();
+        LeaveCriticalSection(&g_logFileLock);
+        SetLastError(err);  // preserved for the caller's warning text
+        return false;
+    }
+    QueryPerformanceFrequency(&g_logFileFreq);
+    QueryPerformanceCounter(&g_logFileQpcStart);
+    g_logFile = h;
+    LeaveCriticalSection(&g_logFileLock);
+    return true;
+}
+
+void tsdev_log_close_file() {
+    if (!g_logFileLockInit) return;
+    EnterCriticalSection(&g_logFileLock);
+    if (g_logFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_logFile);
+        g_logFile = INVALID_HANDLE_VALUE;
+    }
+    LeaveCriticalSection(&g_logFileLock);
+}
+
+void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
+    // File sink first: it is independent of the console level gate below
+    // AND of the installed TsDevLogSink (--pbar swaps/clears that hook
+    // mid-run). An open log file records EVERY message at EVERY level --
+    // the complete diagnostic stream even while the console stays quiet.
+    if (g_logFile != INVALID_HANDLE_VALUE) {
+        writeLogFileRecord(level, formatLogString(fmt, args));
+    }
+    if (static_cast<int>(level) > static_cast<int>(g_logLevel)) {
+        va_end(args);
+        return;  // gated: message is more verbose than the current level
+    }
     if (g_logSink) {
         // Sink installed: format into a std::string and hand the complete
-        // message to the sink INSTEAD of stderr. Two-pass — probe the
-        // required size on a va_copy (the original va_list is consumed by
-        // the render below), then vsnprintf into an exactly sized buffer.
-        va_list probe;
-        va_copy(probe, args);
-        const int needed = std::vsnprintf(nullptr, 0, fmt, probe);
-        va_end(probe);
-        std::string buf;
-        if (needed > 0) {
-            buf.resize(static_cast<size_t>(needed) + 1);
-            std::vsnprintf(&buf[0], buf.size(), fmt, args);
-            buf.resize(static_cast<size_t>(needed));
-        }
+        // message to the sink INSTEAD of stderr (formatLogString renders on
+        // va_copy's; the caller's va_list is not consumed, and this branch
+        // returns before the stderr write anyway).
+        g_logSink(formatLogString(fmt, args).c_str());
         va_end(args);
-        g_logSink(buf.c_str());
         return;
     }
     std::vfprintf(stderr, fmt, args);
@@ -1393,7 +1542,7 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     //    override or a missing install is caught here with a clear error.
     if (!validateTsInstall(m_tsRoot)) {
         tsdev_log_message(TsDevLogLevel::Error,
-                     "tsdev: ERROR — orlib20.dll not found at %ls\\Program\\orlib20.dll.\n"
+                     "tsdev: ERROR -- orlib20.dll not found at %ls\\Program\\orlib20.dll.\n"
                      "tsdev: TS install path may be incorrect. Use --ts-path to specify the correct path.\n",
                      m_tsRoot.c_str());
         throw std::runtime_error(
@@ -1432,7 +1581,7 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
     //    detectVersion() never throws; it is already cached in the resolver.
     const VersionDescriptor& vd = m_resolver->version();
     if (!vd.known || !vd.warningMessage.empty()) {
-        tsdev_log_message(TsDevLogLevel::Warning, "tsdev: WARNING — %s\n",
+        tsdev_log_message(TsDevLogLevel::Warning, "tsdev: WARNING -- %s\n",
                      vd.warningMessage.c_str());
     }
 
@@ -1446,7 +1595,7 @@ void TsDevLib::initAfterCom(const wchar_t* tsPathOverride) {
             TSDEV_DIAG_LOG("init.LoadLibrary.support.leave",
                            "dll=%ls ok=0 err=%lu", dll, GetLastError());
             tsdev_log_message(TsDevLogLevel::Warning,
-                         "tsdev: WARNING — pre-load of %ls failed (err=%lu)\n",
+                         "tsdev: WARNING -- pre-load of %ls failed (err=%lu)\n",
                          dll, GetLastError());
         } else {
             TSDEV_DIAG_LOG("init.LoadLibrary.support.leave", "dll=%ls ok=1",
@@ -2605,7 +2754,7 @@ void TsDevLib::refreshCache() {
     // (enumerateRecords) will fall back to Phase 2 (findExistPos +
     // _GetMasterRecByType@16) which does not need the IWHouse interface.
     if (!iface5E) {
-        TSDEV_DBG("tsdev: refreshCache — [warehouse+0x5E] is NULL after cmd 0x0F, "
+        TSDEV_DBG("tsdev: refreshCache -- [warehouse+0x5E] is NULL after cmd 0x0F, "
                   "skipping cmd 0x4E (interface cannot be re-initialized)\n");
         return;
     }
@@ -3229,7 +3378,7 @@ bool TsDevLib::closeWarehouse() {
     if (!callCloseWarehouseHelper(m_pCloseWarehouse, 0)) {
         TSDEV_DIAG_LOG("dispatch.CloseWarehouse.leave", "ok=0 seh=1");
         tsdev_log_message(TsDevLogLevel::Warning,
-            "tsdev: WARNING — closeWarehouse raised SEH exception\n");
+            "tsdev: WARNING -- closeWarehouse raised SEH exception\n");
         return false;
     }
     TSDEV_DIAG_LOG("dispatch.CloseWarehouse.leave", "ok=1");
@@ -3279,7 +3428,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     std::string wrkPath = m_wrkPath;
     WIN32_FILE_ATTRIBUTE_DATA wrkBefore;
     BOOL wrkBeforeOk = GetFileAttributesExA(wrkPath.c_str(), GetFileExInfoStandard, &wrkBefore);
-    TSDEV_DBG("tsdev: deleteEntry — MWRKArea.wrk BEFORE: ok=%d size=%lu mtime=%lu\n",
+    TSDEV_DBG("tsdev: deleteEntry -- MWRKArea.wrk BEFORE: ok=%d size=%lu mtime=%lu\n",
               (int)wrkBeforeOk,
               wrkBeforeOk ? wrkBefore.nFileSizeLow : 0,
               wrkBeforeOk ? wrkBefore.ftLastWriteTime.dwLowDateTime : 0);
@@ -3288,7 +3437,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     //    Routed through the SEH-protected findExistPos() wrapper (AC3):
     //    direct m_pFindExistPos calls can raise SEH and must not be bypassed.
     int progId = findExistPos(name, type);
-    TSDEV_DBG("tsdev: deleteEntry — FindExistPos(\"%s\", %d) = %d\n",
+    TSDEV_DBG("tsdev: deleteEntry -- FindExistPos(\"%s\", %d) = %d\n",
               name.c_str(), category, progId);
     if (progId <= 0) {
         return false;
@@ -3322,7 +3471,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     // ------------------------------------------------------------------
     void* deleteOrchestrator = m_pDeleteOrchestrator;
 
-    TSDEV_DBG("tsdev: deleteEntry — calling FUN_101a8360"
+    TSDEV_DBG("tsdev: deleteEntry -- calling FUN_101a8360"
               " (deleteOrchestrator=%p, whType=%d, progId=%d)\n",
               deleteOrchestrator, category, progId);
 
@@ -3335,11 +3484,11 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     TSDEV_DIAG_LOG("dispatch.DeleteOrchestrator.leave",
                    "cat=%d progId=%d ok=%d", category, progId, ok ? 1 : 0);
 
-    TSDEV_DBG("tsdev: deleteEntry — FUN_101a8360 returned %s\n",
+    TSDEV_DBG("tsdev: deleteEntry -- FUN_101a8360 returned %s\n",
               ok ? "true" : "false (SEH exception)");
 
     if (!ok) {
-        TSDEV_DBG("tsdev: deleteEntry — delete orchestrator"
+        TSDEV_DBG("tsdev: deleteEntry -- delete orchestrator"
                   " raised SEH exception, aborting\n");
         return false;
     }
@@ -3347,16 +3496,16 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     // ---- MWRKArea.wrk timestamp (after orchestrator) ----
     WIN32_FILE_ATTRIBUTE_DATA wrkAfter;
     BOOL wrkAfterOk = GetFileAttributesExA(wrkPath.c_str(), GetFileExInfoStandard, &wrkAfter);
-    TSDEV_DBG("tsdev: deleteEntry — MWRKArea.wrk AFTER orchestrator: ok=%d size=%lu mtime=%lu\n",
+    TSDEV_DBG("tsdev: deleteEntry -- MWRKArea.wrk AFTER orchestrator: ok=%d size=%lu mtime=%lu\n",
               (int)wrkAfterOk,
               wrkAfterOk ? wrkAfter.nFileSizeLow : 0,
               wrkAfterOk ? wrkAfter.ftLastWriteTime.dwLowDateTime : 0);
     if (wrkBeforeOk && wrkAfterOk) {
         if (wrkAfter.ftLastWriteTime.dwLowDateTime != wrkBefore.ftLastWriteTime.dwLowDateTime ||
             wrkAfter.ftLastWriteTime.dwHighDateTime != wrkBefore.ftLastWriteTime.dwHighDateTime) {
-            TSDEV_DBG("tsdev: deleteEntry — *** MWRKArea.wrk TIMESTAMP CHANGED ***\n");
+            TSDEV_DBG("tsdev: deleteEntry -- *** MWRKArea.wrk TIMESTAMP CHANGED ***\n");
         } else {
-            TSDEV_DBG("tsdev: deleteEntry — WARNING: MWRKArea.wrk timestamp UNCHANGED\n");
+            TSDEV_DBG("tsdev: deleteEntry -- WARNING: MWRKArea.wrk timestamp UNCHANGED\n");
         }
     }
 
@@ -3370,18 +3519,18 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     if (!callInitGlobalLookup(
             reinterpret_cast<InitGlobalLookupFn>(m_pInitGlobalLookup),
             &globalLookup)) {
-        TSDEV_DBG("tsdev: deleteEntry — InitGlobalLookup raised SEH exception\n");
+        TSDEV_DBG("tsdev: deleteEntry -- InitGlobalLookup raised SEH exception\n");
     } else if (!globalLookup) {
-        TSDEV_DBG("tsdev: deleteEntry — InitGlobalLookup returned NULL\n");
+        TSDEV_DBG("tsdev: deleteEntry -- InitGlobalLookup returned NULL\n");
     } else {
-        TSDEV_DBG("tsdev: deleteEntry — globalLookup=%p\n", globalLookup);
+        TSDEV_DBG("tsdev: deleteEntry -- globalLookup=%p\n", globalLookup);
 
-        TSDEV_DBG("tsdev: deleteEntry — calling DeleteFromTree(%d, %d, 3)\n", category, progId);
+        TSDEV_DBG("tsdev: deleteEntry -- calling DeleteFromTree(%d, %d, 3)\n", category, progId);
         if (!callDeleteFromTree(m_pDeleteFromTree, globalLookup,
                                 category, progId, 3)) {
-            TSDEV_DBG("tsdev: deleteEntry — DeleteFromTree raised SEH exception\n");
+            TSDEV_DBG("tsdev: deleteEntry -- DeleteFromTree raised SEH exception\n");
         } else {
-            TSDEV_DBG("tsdev: deleteEntry — DeleteFromTree done\n");
+            TSDEV_DBG("tsdev: deleteEntry -- DeleteFromTree done\n");
         }
     }
 
@@ -3393,14 +3542,14 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     //    mode, the warehouse stays open for the session lifetime and is closed
     //    once at the end by runServe/runBatch.
     if (flush) {
-        TSDEV_DBG("tsdev: deleteEntry — calling closeWarehouse()\n");
+        TSDEV_DBG("tsdev: deleteEntry -- calling closeWarehouse()\n");
         if (!closeWarehouse()) {
-            TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() failed\n");
+            TSDEV_DBG("tsdev: deleteEntry -- closeWarehouse() failed\n");
             return false;
         }
-        TSDEV_DBG("tsdev: deleteEntry — closeWarehouse() done\n");
+        TSDEV_DBG("tsdev: deleteEntry -- closeWarehouse() done\n");
     } else {
-        TSDEV_DBG("tsdev: deleteEntry — skipping closeWarehouse (flush=false)\n");
+        TSDEV_DBG("tsdev: deleteEntry -- skipping closeWarehouse (flush=false)\n");
     }
 
     // 5. Delete the .ell and .xml files from disk.
@@ -3422,7 +3571,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
                   m_myWorkBin.c_str(), expandedWhType, progId);
     std::snprintf(xmlPath, sizeof(xmlPath), "%s\\elmodule_%d_%d.xml",
                   m_myWorkBin.c_str(), expandedWhType, progId);
-    TSDEV_DBG("tsdev: deleteEntry — deleting %s and %s\n", ellPath, xmlPath);
+    TSDEV_DBG("tsdev: deleteEntry -- deleting %s and %s\n", ellPath, xmlPath);
 
     bool cleanupFailed = false;
     if (diskCleanupErrorOut != nullptr) diskCleanupErrorOut->clear();
@@ -3437,7 +3586,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
             // the caller's Result/CliResult message via diskCleanupErrorOut.
             cleanupFailed = true;
             tsdev_log_message(TsDevLogLevel::Warning,
-                "tsdev: WARNING — failed to delete %s (error=%lu)\n",
+                "tsdev: WARNING -- failed to delete %s (error=%lu)\n",
                 ellPath, err);
             if (diskCleanupErrorOut != nullptr) {
                 if (!diskCleanupErrorOut->empty()) *diskCleanupErrorOut += "; ";
@@ -3455,7 +3604,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
                 err, tsdev::DeleteDiskArtifactKind::Xml)) {
             cleanupFailed = true;
             tsdev_log_message(TsDevLogLevel::Warning,
-                "tsdev: WARNING — failed to delete %s (error=%lu)\n",
+                "tsdev: WARNING -- failed to delete %s (error=%lu)\n",
                 xmlPath, err);
             if (diskCleanupErrorOut != nullptr) {
                 if (!diskCleanupErrorOut->empty()) *diskCleanupErrorOut += "; ";
@@ -3466,7 +3615,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
     }
 
     if (cleanupFailed) {
-        TSDEV_DBG("tsdev: deleteEntry — disk cleanup failed, returning false\n");
+        TSDEV_DBG("tsdev: deleteEntry -- disk cleanup failed, returning false\n");
         return false;
     }
 
@@ -3517,7 +3666,7 @@ bool TsDevLib::deleteEntry(ComponentType type, const std::string& name,
         }
     }
 
-    TSDEV_DBG("tsdev: deleteEntry — returning true\n");
+    TSDEV_DBG("tsdev: deleteEntry -- returning true\n");
     return true;
 }
 
@@ -3548,7 +3697,7 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     // It is detect-and-fail only; no rollback, retry, or restore is attempted.
     // 1. Look up the existing component by name + type.
     int progId = findExistPos(name, type);
-    TSDEV_DBG("tsdev: modifyEntry — findExistPos(\"%s\", %d) = %d\n",
+    TSDEV_DBG("tsdev: modifyEntry -- findExistPos(\"%s\", %d) = %d\n",
               name.c_str(), getCategory(type), progId);
     if (progId <= 0) {
         return Result{false, "component not found", 0};
@@ -3558,7 +3707,7 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     // M.2: pass isVerified=true — modify operates on a previously-verified
     // item, so flags bit 4 (is_verified) must be set per TSDev FUN_00452290.
     bool saved = saveSource(type, progId, newSource, true);
-    TSDEV_DBG("tsdev: modifyEntry — saveSource = %s\n",
+    TSDEV_DBG("tsdev: modifyEntry -- saveSource = %s\n",
               saved ? "true" : "false");
     if (!saved) {
         return Result{false, "saveSource failed", progId};
@@ -3568,13 +3717,13 @@ Result TsDevLib::modifyEntry(ComponentType type, const std::string& name,
     std::string errors = verifyModule(type, progId);
     if (!errors.empty()) {
         // Compilation failed — fail loudly with the error string.
-        TSDEV_DBG("tsdev: modifyEntry — verifyModule errors:\n%s\n",
+        TSDEV_DBG("tsdev: modifyEntry -- verifyModule errors:\n%s\n",
                   errors.c_str());
         return Result{false, errors, progId};
     }
 
     // 4. Success — component modified, recompiled, and persisted.
-    TSDEV_DBG("tsdev: modifyEntry — success (progId=%d)\n", progId);
+    TSDEV_DBG("tsdev: modifyEntry -- success (progId=%d)\n", progId);
     return Result{true, "", progId};
 }
 

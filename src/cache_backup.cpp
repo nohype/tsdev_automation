@@ -221,7 +221,7 @@ bool copyTree(const std::wstring& srcRoot, const std::wstring& dstRoot,
                                 " is locked and volume snapshot unavailable"
                                 " (" +
                                 verr +
-                                ") — close TradeStation Desktop and retry";
+                                ") -- close TradeStation Desktop and retry";
                         }
                         *errPath = dst;
                         *err = fbErr;
@@ -249,7 +249,7 @@ bool copyTree(const std::wstring& srcRoot, const std::wstring& dstRoot,
                             wideToUtf8(f.relativePath) +
                             " is locked and volume snapshot unavailable (" +
                             detail +
-                            ") — close TradeStation Desktop and retry";
+                            ") -- close TradeStation Desktop and retry";
                     }
                     *errPath = dst;
                     *err = se;

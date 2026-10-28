@@ -310,7 +310,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     int oneCallDepCount = -1;
     bool oneCallSeh = false;
     if (timingCat < 0) {
-        std::printf("    No non-empty category with a valid ProgId found — "
+        std::printf("    No non-empty category with a valid ProgId found -- "
                     "cannot time GetDependencies.\n");
     } else {
         std::printf("    Using cat=%d progId=%d whType=0x%X elemCount=%d\n",

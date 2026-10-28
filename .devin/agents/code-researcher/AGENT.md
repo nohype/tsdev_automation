@@ -15,4 +15,4 @@ Your job is to thoroughly investigate a topic and report back with:
 - Architecture patterns and dependencies
 - Code flow traces with specific line references
 
-Be exhaustive — search broadly and follow references.
+Be exhaustive -- search broadly and follow references.

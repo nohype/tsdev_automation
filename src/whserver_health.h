@@ -84,6 +84,68 @@ inline bool vasBreach(uint64_t totalFreeMB, uint64_t largestFreeMB,
            largestFreeMB < thresholdContigMB;
 }
 
+// The guard's per-pid action under the two-threshold field policy (the
+// 256/64 MB pair is the RESTART trigger, not a danger level -- the observed
+// death zone is ~10 MB free; inserts cost ~0.07 MB each; a 435 MB library
+// plateau sits below the trigger for the whole run):
+//   Pass            no trigger breach -- healthy;
+//   Continue        trigger breach still above the abort floor, but no
+//                   recycle can happen (unauthorized, or a foreign-client
+//                   latch says another TradeStation program holds the
+//                   server) -- keep working;
+//   AttemptRecycle  trigger breach with recycling authorized and not
+//                   latched -- take the defer/engine recycle boundary;
+//   Abort           below the abort floor with no authorization -- the
+//                   hard-abort arm (batch exit 14 / serve exit-14 refusal).
+enum class VasGuardAction {
+    Pass,
+    Continue,
+    AttemptRecycle,
+    Abort,
+};
+
+// Pure decision shared by the batch guard and the serve pre-mutation
+// gate. Trigger semantics are vasBreach() against (triggerTotalMB,
+// triggerContigMB); the abort floor is vasBreach() against (floorTotalMB,
+// floorContigMB). foreignClients is the pre-activation latch (KB Section
+// 21) -- consulted ONLY above the floor, where it downgrades an authorized
+// recycle attempt to Continue; below the floor it is irrelevant (the
+// defer/engine path aborts on any refuse, exactly as before).
+inline VasGuardAction vasGuardAction(uint64_t totalFreeMB,
+                                     uint64_t largestFreeMB,
+                                     uint64_t triggerTotalMB,
+                                     uint64_t triggerContigMB,
+                                     uint64_t floorTotalMB,
+                                     uint64_t floorContigMB,
+                                     bool foreignClients,
+                                     bool recycleAuthorized) {
+    if (!vasBreach(totalFreeMB, largestFreeMB,
+                   triggerTotalMB, triggerContigMB)) {
+        return VasGuardAction::Pass;
+    }
+    if (vasBreach(totalFreeMB, largestFreeMB, floorTotalMB, floorContigMB)) {
+        return recycleAuthorized ? VasGuardAction::AttemptRecycle
+                                 : VasGuardAction::Abort;
+    }
+    // Trigger breach still above the abort floor -- survivable headroom.
+    if (foreignClients || !recycleAuthorized) {
+        return VasGuardAction::Continue;
+    }
+    return VasGuardAction::AttemptRecycle;
+}
+
+// Config sanity: the trigger must not sit below the abort floor. An
+// inverted pair silently kills the floor in the band between them (the
+// Pass check precedes the floor check), so reject the configuration at
+// parse time instead of continuing through a dead safety net.
+inline bool vasThresholdsInverted(uint64_t triggerTotalMB,
+                                  uint64_t triggerContigMB,
+                                  uint64_t floorTotalMB,
+                                  uint64_t floorContigMB) {
+    return triggerTotalMB < floorTotalMB ||
+           triggerContigMB < floorContigMB;
+}
+
 } // namespace tsdev
 
 #endif // TSDEV_WHSERVER_HEALTH_H

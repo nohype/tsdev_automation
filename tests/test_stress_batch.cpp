@@ -113,7 +113,7 @@ const char* kSourceBody =
 // compile-failure + create-path cleanup + recovery block.
 const char* kInvalidSourceBody =
     "Inputs: ;\r\n"
-    "{ syntax error — malformed Inputs }\r\n"
+    "{ syntax error -- malformed Inputs }\r\n"
     "Buy next bar at Market;\r\n";
 
 // Default batch size; overridable via STRESS_BATCH_N env var.
@@ -734,7 +734,7 @@ DWORD WINAPI runTest(LPVOID param) {
                          kResBounds.workingSetKb);
     std::fprintf(stdout, "Fault block (mid-run compile-failure + recovery): ok=%d%s\n",
                  (int)faultBlockOk, faultBlockOk ? "" :
-                 (" — " + faultBlockNote).c_str());
+                 (" -- " + faultBlockNote).c_str());
     std::fprintf(stdout, "MID violations : %s\n",
                  resMidViolations.empty() ? "(none)" : resMidViolations.c_str());
     std::fprintf(stdout, "END violations : %s\n",
@@ -753,14 +753,14 @@ DWORD WINAPI runTest(LPVOID param) {
 
     std::fprintf(stdout, "-------------------------------------------------------------\n");
     if (allClean) {
-        std::fprintf(stdout, "VERDICT: PASS — %d inserts + %d deletes fully clean in one process;\n",
+        std::fprintf(stdout, "VERDICT: PASS -- %d inserts + %d deletes fully clean in one process;\n",
                      N, N);
         std::fprintf(stdout, "         mid-run compile-failure + recovery OK on same TsDevLib;\n");
         std::fprintf(stdout, "         no unbounded resource growth (TVS-L.15 bounds hold).\n");
         std::fprintf(stdout, "         Batch mode (TVS-D.3) is DE-RISKED.\n");
         st->exitCode = 0;
     } else {
-        std::fprintf(stdout, "VERDICT: FAIL — degradation, leftovers, fault-block failure, or\n");
+        std::fprintf(stdout, "VERDICT: FAIL -- degradation, leftovers, fault-block failure, or\n");
         std::fprintf(stdout, "         unbounded resource growth detected (see above).\n");
         std::fprintf(stdout, "         Batch mode needs mitigations before TVS-D.3.\n");
         st->exitCode = 1;

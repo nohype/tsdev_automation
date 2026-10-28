@@ -307,7 +307,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
           "onSaveModuleNewReady hook fired during saveSource");
     if (!g_capture.fired) {
         lib.deleteEntry(tc.type, tc.name, /*flush=*/false);
-        return fail("hook did not fire — cannot assert flags/password",
+        return fail("hook did not fire -- cannot assert flags/password",
                     100 + caseNum * 10 + 5);
     }
 
@@ -373,7 +373,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
                       "passwordBuf starts with \"!p$Kn@aSus\" [case %d, "
-                      "buffer empty/NULL — skipped]",
+                      "buffer empty/NULL -- skipped]",
                       caseNum);
         CHECK(false, buf);
     }
@@ -397,7 +397,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
         char buf[128];
         std::snprintf(buf, sizeof(buf),
                       "passwordBuf bytes 10-63 all zero [case %d, "
-                      "buffer size < 64 — skipped]",
+                      "buffer size < 64 -- skipped]",
                       caseNum);
         CHECK(false, buf);
     }
@@ -429,7 +429,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
     // --- 14. getSource round-trip — assert retrieved source contains the
     // original source text. The warehouse may normalize whitespace/line
     // endings, so we use substring checks on key tokens. ---
-    std::printf("  [14] getSource(%s, \"%s\") — round-trip...\n",
+    std::printf("  [14] getSource(%s, \"%s\") -- round-trip...\n",
                 typeLabel, tc.name.c_str());
     std::string retrieved = lib.getSource(tc.type, tc.name);
     std::printf("      getSource returned %zu bytes\n", retrieved.size());
@@ -666,7 +666,7 @@ int runModifyCase(TsDevLib& lib, int caseNum,
     // non-empty result containing the modify source's key token ("Sell"),
     // proving the modify save correctly placed the new source and the item
     // is still retrievable.
-    std::printf("  [6] getSource(%s, \"%s\") — round-trip after modify...\n",
+    std::printf("  [6] getSource(%s, \"%s\") -- round-trip after modify...\n",
                 typeLabel, name.c_str());
     std::string retrieved = lib.getSource(type, name);
     std::printf("      getSource returned %zu bytes\n", retrieved.size());

@@ -88,12 +88,12 @@ DWORD WINAPI runTest(LPVOID param) {
 
     if (st->progId > 0) {
         std::fprintf(stdout,
-                     "    >>> Stale entry found (ProgId=%d) — deleting to "
+                     "    >>> Stale entry found (ProgId=%d) -- deleting to "
                      "start clean\n",
                      st->progId);
         if (!lib->deleteEntry(ComponentType::TradingApp, kTestName)) {
             std::fprintf(stdout,
-                         "    >>> Stale deleteEntry failed — continuing\n");
+                         "    >>> Stale deleteEntry failed -- continuing\n");
         }
         st->progId = 0;
     }
@@ -192,7 +192,7 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout, "    >>> Entry removed from in-memory lookup\n");
     } else {
         std::fprintf(stdout,
-                     "    >>> Entry still in in-memory lookup (ProgId=%d) — "
+                     "    >>> Entry still in in-memory lookup (ProgId=%d) -- "
                      "will verify after OrlibExit\n",
                      postDelete);
     }
@@ -205,7 +205,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 7: Verify in a FRESH TsDevLib instance ---
     std::fprintf(stdout,
-                 "\n[7] Fresh TsDevLib — verify deletion persisted...\n");
+                 "\n[7] Fresh TsDevLib -- verify deletion persisted...\n");
     try {
         lib = new TsDevLib();
     } catch (const std::exception& e) {
@@ -219,7 +219,7 @@ DWORD WINAPI runTest(LPVOID param) {
     if (finalCheck > 0) {
         std::fprintf(stderr,
                      "    >>> Entry STILL EXISTS after OrlibExit/reload "
-                     "(ProgId=%d) — deletion did NOT persist!\n",
+                     "(ProgId=%d) -- deletion did NOT persist!\n",
                      finalCheck);
         st->exitCode = fail("deletion did not persist to disk", 80);
         // Best-effort cleanup.
@@ -230,7 +230,7 @@ DWORD WINAPI runTest(LPVOID param) {
         delete lib;
         return 0;
     }
-    std::fprintf(stdout, "    >>> Entry GONE — deletion persisted!\n");
+    std::fprintf(stdout, "    >>> Entry GONE -- deletion persisted!\n");
 
     // --- Step 8: Verify the .ell file is deleted from disk ---
     std::fprintf(stdout, "\n[8] Verify .ell file deleted: %s\n",

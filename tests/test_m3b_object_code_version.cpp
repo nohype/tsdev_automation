@@ -15,7 +15,7 @@
 //   because there are no `Inputs:`/`Variables:`/`Array:` declarations to
 //   trigger the compiler's `Record*` count-populator functions. CLI-compiled
 //   items WITH declarations produce non-zero elemCount and non-NULL
-//   elemArrayPtr. See docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md §12-13.
+//   elemArrayPtr. See docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md sections 12-13.
 //
 // What this test now does:
 //   - Loops over all 5 supported component types (Strategy, Indicator,
@@ -35,7 +35,7 @@
 //   public contract. M.4b will replace the linker-based approach with
 //   warehouse-level APIs; until then this remains a manual admin diagnostic.
 //
-// Reference: docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md §12-13.
+// Reference: docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md sections 12-13.
 //
 // Flow:
 //   1. Pre-check TSCrashReport.exe.
@@ -354,7 +354,7 @@ void releaseRec(Ordinal70Fn ord70, const char* label, void* rec) {
         std::printf("    [release %s] Ordinal_70(rec=%p, 0): %s, ret=%d\n",
                     label, rec, ok ? "OK" : "SEH", r.result);
     } else {
-        std::printf("    [release %s] Ordinal_70 NOT resolved — LEAKING "
+        std::printf("    [release %s] Ordinal_70 NOT resolved -- LEAKING "
                     "rec=%p\n", label, rec);
     }
 }
@@ -407,7 +407,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("  M.3b.2b finding: the original M.3b 'defect' was a TEST "
                 "ARTIFACT.\n");
     std::printf("  Reference: docs/RE/RE_M3B_OBJECT_CODE_VERSION_DEFECT.md "
-                "§12-13.\n");
+                "sections 12-13.\n");
 
     // --- Step 1: construct a real TsDevLib (full init). No hooks. ---
     std::printf("\n[1] Constructing TsDevLib (test-only ctor, real ComApi, "
@@ -454,17 +454,17 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("    Resolved: Ord28=%p Ord70=%p Linker(85)=%p\n",
                 (void*)ord28, (void*)ord70, ord85Raw);
     if (!ord28) {
-        std::fprintf(stderr, "FATAL: Ordinal_28 not resolved — cannot get "
+        std::fprintf(stderr, "FATAL: Ordinal_28 not resolved -- cannot get "
                      "partial master record. Aborting.\n");
         st->exitCode = 103;
         return 0;
     }
     if (!ord70) {
-        std::fprintf(stderr, "WARN: Ordinal_70 not resolved — linker rec "
+        std::fprintf(stderr, "WARN: Ordinal_70 not resolved -- linker rec "
                      "will LEAK if returned.\n");
     }
     if (!ord85Raw) {
-        std::fprintf(stderr, "FATAL: linker (ordinal 85) not resolved — "
+        std::fprintf(stderr, "FATAL: linker (ordinal 85) not resolved -- "
                      "cannot run diagnostic. Aborting.\n");
         st->exitCode = 104;
         return 0;
@@ -507,7 +507,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         int progId = insertAndVerify(*lib, tc.type, itemName, source,
                                      tc.label);
         if (progId <= 0) {
-            std::fprintf(stderr, "FATAL: %s insert/verify failed — cannot "
+            std::fprintf(stderr, "FATAL: %s insert/verify failed -- cannot "
                          "run linker diagnostic without a compiled item.\n",
                          tc.label);
             tr.pass = false;
@@ -547,7 +547,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 std::printf("    Partial copy +0x26 SafeArrayPtr=%p, "
                             "+0x29 elemCount=%d\n", sa, ec);
             } else {
-                std::fprintf(stderr, "WARN: Ordinal_28 did not return 1 — "
+                std::fprintf(stderr, "WARN: Ordinal_28 did not return 1 -- "
                              "linker will be called with partialBuf=NULL.\n");
             }
         }
@@ -578,10 +578,10 @@ DWORD WINAPI runDiag(LPVOID param) {
                 linkerRec = r.ptr;
                 tr.linkerReturnedRec = true;
             } else if (!ok) {
-                std::fprintf(stderr, "    [linker raised SEH — no record to "
+                std::fprintf(stderr, "    [linker raised SEH -- no record to "
                              "inspect]\n");
             } else {
-                std::fprintf(stderr, "    [linker returned NULL — no record "
+                std::fprintf(stderr, "    [linker returned NULL -- no record "
                              "to inspect]\n");
             }
         }
@@ -706,7 +706,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         if (!tr.pass) allPass = false;
     }
     std::printf("\n  OVERALL: %s\n", allPass ? "PASS" : "FAIL");
-    std::printf("  (Manual admin diagnostic — NOT in regression suite. "
+    std::printf("  (Manual admin diagnostic -- NOT in regression suite. "
                 "M.3b.2c.)\n");
 
     st->exitCode = allPass ? 0 : 1;

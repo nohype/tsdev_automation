@@ -1492,28 +1492,40 @@ class TestVerboseForwarding:
         """TSDEV_WHSERVER_* env overrides are forwarded to the broker as
         explicit --whserver-* flags (ShellExecuteExW runas does not inherit
         the caller's environment block)."""
-        monkeypatch.delenv("TSDEV_WHSERVER_FREE_MB", raising=False)
-        monkeypatch.delenv("TSDEV_WHSERVER_LARGEST_FREE_MB", raising=False)
-        monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
+        for name in (
+            "TSDEV_WHSERVER_FREE_MB", "TSDEV_WHSERVER_LARGEST_FREE_MB",
+            "TSDEV_WHSERVER_ABORT_FREE_MB",
+            "TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB",
+            "TSDEV_NO_WHSERVER_VAS_GUARD",
+        ):
+            monkeypatch.delenv(name, raising=False)
         # No env -> byte-identical default command line.
         assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
         monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
         monkeypatch.setenv("TSDEV_WHSERVER_LARGEST_FREE_MB", "128")
+        monkeypatch.setenv("TSDEV_WHSERVER_ABORT_FREE_MB", "48")
+        monkeypatch.setenv("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB", "16")
         assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe",
-             "--whserver-free-mb", "5000", "--whserver-largest-free-mb", "128"]
+             "--whserver-free-mb", "5000", "--whserver-largest-free-mb", "128",
+             "--whserver-abort-free-mb", "48",
+             "--whserver-abort-largest-free-mb", "16"]
         )
         # Garbage/out-of-range values are dropped (env semantics: keep default).
         monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "bogus")
         monkeypatch.setenv("TSDEV_WHSERVER_LARGEST_FREE_MB", "9999999")
+        monkeypatch.setenv("TSDEV_WHSERVER_ABORT_FREE_MB", "-1")
+        monkeypatch.setenv("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB", "12.5")
         assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
         # Disable switch: any value but "0" forwards; "0"/unset do not.
         monkeypatch.delenv("TSDEV_WHSERVER_FREE_MB")
         monkeypatch.delenv("TSDEV_WHSERVER_LARGEST_FREE_MB")
+        monkeypatch.delenv("TSDEV_WHSERVER_ABORT_FREE_MB")
+        monkeypatch.delenv("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB")
         monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
         assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe", "--no-whserver-vas-guard"]
@@ -1576,6 +1588,34 @@ class TestVerboseForwarding:
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
         monkeypatch.setenv("TSDEV_TRAVERSE_STRATEGY_DEPENDENTS", "")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+
+    def test_build_serve_parameters_log_file_env_forwarding(self, monkeypatch) -> None:
+        """TSDEV_LOG_FILE is forwarded to the broker as an explicit
+        --log-file flag (ShellExecuteExW runas does not inherit the
+        caller's environment block). Direct subprocess calls inherit the
+        env and need no forwarding."""
+        monkeypatch.delenv("TSDEV_LOG_FILE", raising=False)
+        # Unset -> byte-identical default command line.
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe"]
+        )
+        # A non-empty value forwards verbatim (path validation is the CLI's).
+        monkeypatch.setenv("TSDEV_LOG_FILE", "C:/logs/tsdev.log")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--log-file", "C:/logs/tsdev.log"]
+        )
+        # Forwarded flags survive quoting for paths with spaces.
+        monkeypatch.setenv("TSDEV_LOG_FILE", "C:/my logs/tsdev.log")
+        assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
+            ["serve", "--serve-pipe-file", "C:/hs.pipe",
+             "--log-file", "C:/my logs/tsdev.log"]
+        )
+        # An empty value does not forward.
+        monkeypatch.setenv("TSDEV_LOG_FILE", "")
         assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
             ["serve", "--serve-pipe-file", "C:/hs.pipe"]
         )
@@ -1955,28 +1995,28 @@ class TestRecycleWhserver:
     def test_ensure_broker_warns_when_recycle_authorized(
         self, fake_cli: Path, monkeypatch
     ) -> None:
-        """F2: the broker's §6.3 stderr warning is invisible in serve mode
-        (hidden spawn, stderr discarded) — the client emits a
-        ``warnings.warn`` brief naming the TOCTOU residual instead."""
+        """F2: the broker's Section 6.3 stderr warning is invisible in serve mode
+        (hidden spawn, stderr discarded) -- the client emits a
+        ``warnings.warn`` brief naming what the flag authorizes instead."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         c = TsDevClient(cli_path=str(fake_cli), use_serve=True,
                         recycle_whserver=True)
         c._is_elevated = False
-        with pytest.warns(UserWarning, match="TOCTOU"):
+        with pytest.warns(UserWarning, match="background library server"):
             broker = c._ensure_broker()
         assert broker is c._broker
         # The env OR-arm warns too (kwarg False does not veto env).
         c2 = TsDevClient(cli_path=str(fake_cli), use_serve=True)
         c2._is_elevated = False
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
-        with pytest.warns(UserWarning, match="TOCTOU"):
+        with pytest.warns(UserWarning, match="background library server"):
             c2._ensure_broker()
 
     def test_batch_direct_warns_when_recycle_authorized(
         self, client: TsDevClient, monkeypatch
     ) -> None:
         """The direct path also emits the client-side warning (the CLI's
-        §6.3 text goes to captured child stderr, not surfaced)."""
+        Section 6.3 text goes to captured child stderr, not surfaced)."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
         monkeypatch.setattr(
@@ -1984,7 +2024,7 @@ class TestRecycleWhserver:
             lambda *a, **k: _make_completed(
                 json.dumps([json.loads(_success_json("delete", "strategy", "A"))])))
         client._recycle_whserver = True
-        with pytest.warns(UserWarning, match="TOCTOU"):
+        with pytest.warns(UserWarning, match="background library server"):
             results = client.batch_delete([BatchItem("strategy", "A")])
         assert len(results) == 1 and results[0].success
 
@@ -2013,7 +2053,7 @@ class TestRecycleWhserver:
                       ".*TSDEV_NO_WHSERVER_VAS_GUARD",
             ):
                 client.batch_delete([BatchItem("strategy", "A")])
-        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+        assert not [w for w in caught if "background library server" in str(w.message)]
 
     def test_batch_direct_no_warning_before_elevation_error(
         self, fake_cli: Path, monkeypatch
@@ -2034,7 +2074,7 @@ class TestRecycleWhserver:
             warnings.simplefilter("always")
             with pytest.raises(exc.ElevationRequiredError):
                 c.batch_delete([BatchItem("strategy", "A")])
-        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+        assert not [w for w in caught if "background library server" in str(w.message)]
 
     def test_serve_batch_warns_env_set_after_broker_launch(
         self, tmp_path: Path, monkeypatch
@@ -2221,7 +2261,7 @@ class TestRecycleWhserver:
                       ".*TSDEV_NO_WHSERVER_VAS_GUARD",
             ):
                 client._batch_dir("delete", "strategy", str(tmp_path), None)
-        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+        assert not [w for w in caught if "background library server" in str(w.message)]
 
     def test_batch_dir_warns_when_recycle_authorized(
         self, client: TsDevClient, monkeypatch, tmp_path: Path
@@ -2236,7 +2276,7 @@ class TestRecycleWhserver:
             lambda *a, **k: _make_completed(
                 json.dumps([json.loads(_success_json("delete", "strategy", "A"))])))
         client._recycle_whserver = True
-        with pytest.warns(UserWarning, match="TOCTOU"):
+        with pytest.warns(UserWarning, match="background library server"):
             results = client._batch_dir("delete", "strategy", str(tmp_path), None)
         assert len(results) == 1 and results[0].success
 
@@ -2306,7 +2346,7 @@ class TestRecycleWhserver:
                       ".*TSDEV_NO_WHSERVER_VAS_GUARD",
             ):
                 client.batch_delete([BatchItem("strategy", "A")])
-        assert not [w for w in caught if "TOCTOU" in str(w.message)]
+        assert not [w for w in caught if "background library server" in str(w.message)]
 
 
 class TestCliMain:
@@ -2527,7 +2567,7 @@ class TestCliNewSubcommands:
         assert items[1].type == "function"
         assert items[1].name == "B"
         assert items[1].source == "/path/b.el"
-        assert rc == 0, "all success → exit 0"
+        assert rc == 0, "all success -> exit 0"
         assert "A" in out
         assert "B" in out
 
@@ -4065,14 +4105,18 @@ class TestServeBatchRecycleBoundary:
         assert fake_broker.start.call_count == 1
         assert [r.success for r in results] == [True, True, True]
 
-    def test_recycle_warning_documents_bounded_resubmit_and_uac(self):
-        """The client-side §6.3 stand-in warning must document the
-        bounded resubmit and its non-elevated UAC cost (one interactive
-        prompt per respawn — unattended non-elevated runs must not set
-        the flag)."""
-        assert "3 recycles per batch" in _RECYCLE_WHSERVER_WARNING
-        assert "UAC prompt" in _RECYCLE_WHSERVER_WARNING
-        assert "resubmits from the refused index" in _RECYCLE_WHSERVER_WARNING
+    def test_recycle_warning_is_short_ascii_user_text(self):
+        """The client-side stand-in warning mirrors the broker's short
+        stderr text: it names what is authorized, notes the batch can
+        still stop safely when another TradeStation program uses the
+        server, and points at the resume file + docs. Strictly ASCII,
+        strictly short -- engineering detail lives in the docs."""
+        assert "WHServer.exe" in _RECYCLE_WHSERVER_WARNING
+        assert "memory runs low" in _RECYCLE_WHSERVER_WARNING
+        assert "another TradeStation program" in _RECYCLE_WHSERVER_WARNING
+        assert "resume file" in _RECYCLE_WHSERVER_WARNING
+        assert "docs/BUNDLE_README.md" in _RECYCLE_WHSERVER_WARNING
+        assert all(ord(c) <= 0x7F for c in _RECYCLE_WHSERVER_WARNING)
 
 
 class TestRecycleRespawnWaitOnlyReap:
@@ -4515,7 +4559,7 @@ class TestDirectBatchRecycleResume:
         spares ALL temps so manual resubmission works."""
         dropped_diag = (
             "tsdev_cli: resume manifest path is not representable in "
-            "the JSON event stream (non-ASCII) — automatic resume "
+            "the JSON event stream (non-ASCII) -- automatic resume "
             "cannot use it; resume the remaining items manually\n")
         src_paths: list[str] = []
 
@@ -4559,7 +4603,7 @@ class TestDirectBatchRecycleResume:
         refusal_diag = (
             'tsdev_cli: resume manifest cannot represent item 2 '
             '("<unrepresentable filename: X>"): it already failed '
-            'manifest pre-validation (failed to convert) — no manifest '
+            'manifest pre-validation (failed to convert) -- no manifest '
             'written (resume the remaining items manually)\n')
 
         def fake_run(cmd, **kw):
@@ -4592,7 +4636,7 @@ class TestDirectBatchRecycleResume:
         refusal names the refusing item)."""
         refusal_diag = (
             'tsdev_cli: resume manifest cannot represent item 2 ("N"): '
-            'it already failed manifest pre-validation (bad) — no '
+            'it already failed manifest pre-validation (bad) -- no '
             'manifest written\n')
         refused_event = json.dumps(
             {"event": "whserver_recycle_refused", "reason": "census_lock",

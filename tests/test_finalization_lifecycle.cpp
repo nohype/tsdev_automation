@@ -222,7 +222,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout,
                  "\nSUCCESS: finalization lifecycle regression passed "
                  "(constructor, invariants, destructor, repeatable "
-                 "lifecycle) — no persistence-patch API invoked\n");
+                 "lifecycle) -- no persistence-patch API invoked\n");
     return 0;
 }
 

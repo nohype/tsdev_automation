@@ -45,7 +45,7 @@
          from the non-TS C++ test_directory_batch parser unit executable. It is
          skipped under -NoTs or -SkipDirectoryBatch.
      11. serve E2E tests        (tests/run_serve_e2e.ps1)
-         Three default tests plus one opt-in stress test gated by
+         Sixteen default tests plus one opt-in stress test gated by
          TS_SERVE_STRESS=1. Requires live TS AND an elevated parent shell;
          skipped under -NoTs or -SkipServeE2e.
          Launches an unelevated Python client via Task Scheduler that
@@ -82,10 +82,10 @@
         skipped under -NoTs or -SkipVerboseFlag.
      16. pbar E2E tests (tests/test_pbar.ps1)
         10 pbar E2E test cases (PB1-PB10) for the global --pbar progress-bar
-        flag: stderr-only '\r'-redrawn UTF-8 block bar on single ops and
-        batch runs (BATCH FAILED lines + detail blocks scroll above for
-        failed items; BATCH COMPLETE last when the run is not clean),
-        " <U+2014> <n> failed" suffix, --pbar+--json and --pbar+serve usage
+        flag: stderr-only '\r'-redrawn ASCII bar ('#'/'-' cells) on single
+        ops and batch runs (BATCH FAILED lines + detail blocks scroll above
+        for failed items; BATCH COMPLETE last when the run is not clean),
+        " - <n> failed" suffix, --pbar+--json and --pbar+serve usage
         errors, position-free/--pbar=<value>/repeat forms, non-pbar
         byte-identical guard, and --batch-progress-control coexistence,
         plus suppressed mutation SUCCESS stdout and a fully clean batch

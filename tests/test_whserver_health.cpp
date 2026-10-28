@@ -210,6 +210,95 @@ int runTests() {
             pids.size());
     }
 
+    // -------------------------------------------------------------------
+    // Group 7: vasGuardAction -- the two-threshold field-policy decision.
+    // Trigger pair (256,64); abort floor (64,32). Every arm of the
+    // (breach-band x authorized x foreignClients) matrix is pinned.
+    // -------------------------------------------------------------------
+    {
+        using tsdev::VasGuardAction;
+        const unsigned TRIG_T = 256, TRIG_C = 64, FLOOR_T = 64, FLOOR_C = 32;
+        auto act = [&](uint64_t freeMB, uint64_t largestMB,
+                       bool foreign, bool auth) {
+            return tsdev::vasGuardAction(
+                freeMB, largestMB, TRIG_T, TRIG_C,
+                FLOOR_T, FLOOR_C, foreign, auth);
+        };
+
+        // No trigger breach -> Pass for every auth/latch combination.
+        if (act(400, 300, false, false) != VasGuardAction::Pass)
+            return fail("g7: healthy headroom not Pass", 70);
+        if (act(400, 300, true, true) != VasGuardAction::Pass)
+            return fail("g7: healthy headroom not Pass (latched+auth)", 71);
+        // Exactly AT the trigger -> Pass (strict '<').
+        if (act(TRIG_T, TRIG_C, false, true) != VasGuardAction::Pass)
+            return fail("g7: at-trigger breached ('<' semantics)", 72);
+        // Exactly AT the floor -> NOT an abort: trigger-breach band.
+        if (act(FLOOR_T, FLOOR_C, false, false) != VasGuardAction::Continue)
+            return fail("g7: at-floor treated as below floor", 73);
+
+        // Below the abort floor: unauthorized -> Abort; authorized ->
+        // AttemptRecycle. The latch is irrelevant below the floor.
+        if (act(10, 200, false, false) != VasGuardAction::Abort)
+            return fail("g7: below floor + !auth not Abort", 74);
+        if (act(10, 200, true, false) != VasGuardAction::Abort)
+            return fail("g7: below floor + latch + !auth not Abort", 75);
+        if (act(10, 200, false, true) != VasGuardAction::AttemptRecycle)
+            return fail("g7: below floor + auth not AttemptRecycle", 76);
+        if (act(10, 200, true, true) != VasGuardAction::AttemptRecycle)
+            return fail("g7: below floor + latch + auth not AttemptRecycle", 77);
+        // Largest-only below floor -> same band (fragmentation abort).
+        if (act(200, 10, false, false) != VasGuardAction::Abort)
+            return fail("g7: largest below floor + !auth not Abort", 78);
+        if (act(200, 10, true, true) != VasGuardAction::AttemptRecycle)
+            return fail("g7: largest below floor + auth+latch not Attempt", 79);
+
+        // The field band: below trigger, above floor.
+        //   unauthorized -> Continue (the 246MB field-abort fix);
+        //   authorized + foreign latch -> Continue (restart impossible);
+        //   authorized + no latch -> AttemptRecycle.
+        if (act(246, 135, false, false) != VasGuardAction::Continue)
+            return fail("g7: field plateau + !auth not Continue", 80);
+        if (act(246, 135, true, true) != VasGuardAction::Continue)
+            return fail("g7: field plateau + auth+latch not Continue", 81);
+        if (act(246, 135, false, true) != VasGuardAction::AttemptRecycle)
+            return fail("g7: field plateau + auth not AttemptRecycle", 82);
+        // Latch does not revive recycling when unauthorized (already
+        // Continue) and does not matter when Pass.
+        if (act(246, 135, true, false) != VasGuardAction::Continue)
+            return fail("g7: field plateau + !auth+latch not Continue", 83);
+        // Largest-only trigger breach above largest-floor: same band.
+        if (act(400, 40, false, false) != VasGuardAction::Continue)
+            return fail("g7: largest band + !auth not Continue", 84);
+        if (act(400, 40, false, true) != VasGuardAction::AttemptRecycle)
+            return fail("g7: largest band + auth not AttemptRecycle", 85);
+        // Boundary: just above the floor (floor+1) is the band; just
+        // below the trigger (trigger-1) is the band.
+        if (act(FLOOR_T + 1, FLOOR_C + 1, false, true)
+                != VasGuardAction::AttemptRecycle)
+            return fail("g7: floor+1 + auth not AttemptRecycle", 86);
+        if (act(TRIG_T - 1, TRIG_C - 1, false, true)
+                != VasGuardAction::AttemptRecycle)
+            return fail("g7: trigger-1 + auth not AttemptRecycle", 87);
+        std::fprintf(stdout, "    PASS: group 7 (vasGuardAction policy)\n");
+    }
+
+    // Group 8: trigger/floor inversion detection -- an inverted pair
+    // silently kills the floor in the band between the two, so the
+    // configuration must be rejected at parse time.
+    {
+        using tsdev::vasThresholdsInverted;
+        if (!vasThresholdsInverted(32, 64, 64, 32))
+            return fail("g8: trigger-free below floor-free not detected", 88);
+        if (!vasThresholdsInverted(256, 16, 64, 32))
+            return fail("g8: trigger-largest below floor-largest not detected", 89);
+        if (vasThresholdsInverted(256, 64, 64, 32))
+            return fail("g8: sane defaults reported inverted", 90);
+        if (vasThresholdsInverted(64, 32, 64, 32))
+            return fail("g8: equal trigger/floor reported inverted", 91);
+        std::fprintf(stdout, "    PASS: group 8 (vasThresholdsInverted)\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }

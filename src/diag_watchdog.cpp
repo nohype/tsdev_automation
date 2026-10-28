@@ -241,7 +241,7 @@ void logWarehouseState() {
         // minidump — do NOT hack orlib20 internals to recover it.
         logRecordNoProgressf(
             "watchdog.warehouse",
-            "wh=unavailable (not registered — hang is pre-init or "
+            "wh=unavailable (not registered -- hang is pre-init or "
             "GetWarehouse failed); relying on stacks+minidump");
         return;
     }
@@ -423,7 +423,7 @@ void whserverSample() {
         logRecordNoProgressf(
             "whserver.sample",
             "present=1 pids=%s windows=0 (windowless; responsiveness not "
-            "determinable — presence only) vasFreeMB=%s vasLargestFreeMB=%s "
+            "determinable -- presence only) vasFreeMB=%s vasLargestFreeMB=%s "
             "vasErr=%d",
             pidList.c_str(), vasFreeList.c_str(), vasLargestList.c_str(),
             vasErr);
@@ -667,7 +667,7 @@ void fire(double idleSecs) {
     // §7.1 2d(4): abort loudly with a distinct exit code.
     logRecordNoProgressf("watchdog.abort", "exit=%d", WATCHDOG_EXIT_CODE);
     std::fprintf(stderr,
-                 "tsdev_diag: WATCHDOG FIRED — no log progress for %.1f s "
+                 "tsdev_diag: WATCHDOG FIRED -- no log progress for %.1f s "
                  "(threshold %.1f s). All thread stacks + warehouse state "
                  "were appended to the log:\n"
                  "  %s\n"
@@ -813,7 +813,7 @@ void idlePhaseEnd() {
 void diagInit() {
     if (!initSink()) {
         std::fprintf(stderr,
-                     "tsdev_diag: ERROR — could not create the diagnostic "
+                     "tsdev_diag: ERROR -- could not create the diagnostic "
                      "log file (TSDEV_DIAG_DIR unwritable?); continuing "
                      "WITHOUT diagnostics and WITHOUT the watchdog\n");
         std::fflush(stderr);

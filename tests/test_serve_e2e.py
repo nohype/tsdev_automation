@@ -397,7 +397,7 @@ class TestServeE2E:
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, (
                 "broker process handle must be non-None after first batch op "
-                "(serve was bypassed — batch_insert did not route through the broker)"
+                "(serve was bypassed -- batch_insert did not route through the broker)"
             )
 
             for r, n in zip(ins_results, names):
@@ -423,7 +423,7 @@ class TestServeE2E:
             # Invariant 2: same broker / TsDevLib lifetime across the batch.
             assert client.broker_process_handle() == broker_handle, (
                 "broker process handle must not change across batch_modify "
-                "(broker restarted — TsDevLib lifetime broken)"
+                "(broker restarted -- TsDevLib lifetime broken)"
             )
 
             for r, n, pid in zip(mod_results, names, prog_ids):
@@ -2026,7 +2026,7 @@ class TestServeE2E:
                     )
                 else:
                     assert client.broker_process_handle() == broker_handle, (
-                        f"broker handle changed at insert {i} — broker restarted"
+                        f"broker handle changed at insert {i} -- broker restarted"
                     )
 
                 # --- Mid-run compile-failure + recovery (ONE injection) ---
@@ -2040,7 +2040,7 @@ class TestServeE2E:
                         client.insert("strategy", fault_name, invalid_source)
                     # Broker must still be alive with the SAME handle.
                     assert client.broker_process_handle() == broker_handle, (
-                        "broker handle changed after compile failure — "
+                        "broker handle changed after compile failure -- "
                         "broker restarted on compile error"
                     )
                     # The fault item must NOT exist (create-path cleanup).
@@ -2127,16 +2127,38 @@ class TestServeE2E:
         """TVS-1c GREEN (test-only): WHServer VAS-headroom guard on the
         serve path, end to end through the real elevated broker.
 
-        Phase 1 (default thresholds): a 2-item ``batch_upsert`` succeeds —
+        Two-threshold policy (``vasGuardAction``, ``whserver_health.h``):
+        the 256/64 MB pair is the RECYCLE TRIGGER, the 64/32 MB pair
+        (``--whserver-abort-free-mb`` / ``--whserver-abort-largest-free-mb``)
+        is the hard ABORT FLOOR. A trigger breach still above the floor
+        with recycling unauthorized CONTINUES -- the request dispatches;
+        only a FLOOR breach aborts.
+
+        Phase 1 (default thresholds): a 2-item ``batch_upsert`` succeeds --
         the guard passes with normal WHServer headroom.
-        Phase 2 (``TSDEV_WHSERVER_FREE_MB=5000`` set in the client process
-        env; ``_build_serve_parameters`` forwards it to the broker as
-        ``--whserver-free-mb 5000`` because ``runas`` does not inherit env):
-        every mutating request is refused with ``exit_code=14`` /
-        ``error.code == "whserver_vas_abort"`` without executing the op; the
-        client aborts the batch — refusal recorded, remaining items become
-        exit-12 markers carrying the abort message, no further requests are
-        sent. Read-only ``exists`` is NOT gated and still answers.
+        Phase 2 (floor breach): ``TSDEV_WHSERVER_FREE_MB=6000`` +
+        ``TSDEV_WHSERVER_ABORT_FREE_MB=5000`` (both forwarded to the broker
+        as explicit ``--whserver-*`` flags because ``runas`` does not
+        inherit env; the trigger is raised together with the floor because
+        ``vasThresholdsInverted`` rejects a trigger below the floor with
+        exit 1 before the pipe file is written). Every mutating request is
+        refused with ``exit_code=14`` / ``error.code ==
+        "whserver_vas_abort"`` without executing the op; the client aborts
+        the batch -- refusal recorded, remaining items become exit-12
+        markers carrying the abort message, no further requests are sent.
+        Read-only ``exists`` is NOT gated and still answers; nothing is
+        written.
+        Phase 3 (trigger-only breach): ``TSDEV_WHSERVER_FREE_MB=5000`` with
+        the floor at its default -- above the floor, recycling unauthorized
+        -> CONTINUE: both requests dispatch and succeed (exit 0) and the
+        items are really written (``exists`` answers true), so this phase
+        carries its own delete cleanup. The broker's one-shot
+        ``whserver_vas_continue`` notice rides the BROKER's stderr, which
+        the hidden ``runas`` spawn discards (the response frame carries no
+        diagnostics lane), so it is not client-observable here; its JSON
+        shape (event name + ``action:"continue"``) is pinned by
+        ``tests/test_recycle_resume.cpp`` check15 and the direct path's
+        captured stderr carries it (live-probed 2026-10-28).
         """
         # Skip if elevated — serve mode only activates when NOT elevated.
         if _detect_elevation():
@@ -2179,16 +2201,28 @@ class TestServeE2E:
             for nm in names:
                 _cleanup(client1, nm)
 
-        # --- Phase 2: absurd threshold -> broker refuses mutating requests ---
+        # --- Phase 2: floor breach -> broker refuses mutating requests ---
         # ShellExecuteExW runas does NOT inherit the caller's environment
-        # block, so _build_serve_parameters forwards TSDEV_WHSERVER_FREE_MB
-        # to the broker as an explicit --whserver-free-mb flag. 5000 MB is
-        # above any possible non-LAA 32-bit free VAS (~2 GB ceiling), so the
-        # guard ALWAYS breaches while WHServer.exe is running.
-        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
+        # block, so _build_serve_parameters forwards TSDEV_WHSERVER_* to the
+        # broker as explicit --whserver-* flags. The FLOOR pair is the
+        # hard-abort threshold: TSDEV_WHSERVER_ABORT_FREE_MB=5000 is above
+        # any possible non-LAA 32-bit free VAS (~2 GB ceiling), so the guard
+        # ALWAYS breaches while WHServer.exe is running. The trigger is
+        # raised with it (6000 >= 5000): vasThresholdsInverted rejects a
+        # trigger below the floor outright (exit 1 before the pipe file is
+        # written), so the floor cannot be breached alone.
+        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "6000")
+        monkeypatch.setenv("TSDEV_WHSERVER_ABORT_FREE_MB", "5000")
         client2 = TsDevClient(cli_path=cli_path)
         try:
             assert client2._serve_active()
+            # Warm-up: a read-only exists is NOT gated, but it is a
+            # warehouse dispatch, so WHServer.exe is guaranteed running
+            # (and measured) when the mutating request's guard runs --
+            # without it a self-reaped server would make the guard pass
+            # trivially and dispatch the upserts.
+            warm = client2.exists("strategy", names[0])
+            assert warm.exit_code == 0, f"warm-up exists failed: {warm!r}"
             results = client2.batch_upsert(items)
             assert len(results) == 2
             # Item 1: the broker refused before dispatch.
@@ -2216,6 +2250,65 @@ class TestServeE2E:
                     client2._broker.shutdown()
                 except Exception:
                     pass
+
+        # --- Phase 3: trigger-only breach -> CONTINUE, request dispatches ---
+        # New two-threshold policy: TSDEV_WHSERVER_FREE_MB=5000 breaches the
+        # RECYCLE TRIGGER (any non-LAA 32-bit free VAS is below it) while the
+        # abort floor stays at its 64/32 default -- a survivable headroom.
+        # Recycling is unauthorized (no --recycle-whserver), so vasGuardAction
+        # returns Continue: the requests DISPATCH instead of being refused.
+        # The phase-2 abort env vars are dropped first (monkeypatch keeps
+        # them otherwise).
+        monkeypatch.delenv("TSDEV_WHSERVER_ABORT_FREE_MB", raising=False)
+        monkeypatch.delenv("TSDEV_WHSERVER_ABORT_LARGEST_FREE_MB", raising=False)
+        monkeypatch.setenv("TSDEV_WHSERVER_FREE_MB", "5000")
+        client3 = TsDevClient(cli_path=cli_path)
+        leftovers: list[str] = []
+        try:
+            assert client3._serve_active()
+            # Same warm-up as phase 2: guarantee WHServer.exe is running so
+            # the guard really takes the Continue arm (with a self-reaped
+            # server it would pass trivially -- same observable outcome,
+            # but the policy under test would go unexercised).
+            warm = client3.exists("strategy", names[0])
+            assert warm.exit_code == 0, f"warm-up exists failed: {warm!r}"
+            results = client3.batch_upsert(items)
+            assert len(results) == 2
+            assert all(r.success for r in results), (
+                f"trigger-only breach must CONTINUE (dispatch), got: {results!r}"
+            )
+            assert all(r.exit_code == 0 for r in results), (
+                f"continued upserts must exit 0, got: {results!r}"
+            )
+            # The continued upserts EXECUTED -- the old phase-2 "nothing
+            # written" assumption does not hold on this arm.
+            for nm in names:
+                r = client3.exists("strategy", nm)
+                assert r.exit_code == 0 and r.exists is True, (
+                    f"continued upsert must have written {nm}: {r!r}"
+                )
+        finally:
+            # The continued upserts really wrote the items: delete them
+            # while this (trigger-breach) broker is still up -- the guard
+            # CONTINUEs mutating deletes too, so the cleanup dispatches.
+            for nm in names:
+                try:
+                    client3.delete("strategy", nm)
+                except Exception:
+                    pass
+                try:
+                    r = client3.exists("strategy", nm)
+                    if r.exit_code != 0 or r.exists:
+                        leftovers.append(nm)
+                except Exception:
+                    leftovers.append(f"{nm} (exists check failed)")
+            if client3._broker is not None:
+                try:
+                    client3._broker.shutdown()
+                except Exception:
+                    pass
+        # Leak guard (success path only -- never masks a body failure).
+        assert not leftovers, f"phase 3 cleanup left items behind: {leftovers}"
 
 
 def _snapshot_crash_reporter_pids() -> dict[int, str]:

@@ -257,7 +257,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 "enumerateReverseDependents and verify it finds\n");
     std::printf("  Indicators 3 and 8 as reverse dependents of Functions "
                 "516/517/21/458.\n");
-    std::printf("  READ-ONLY — no insert/modify/delete.\n");
+    std::printf("  READ-ONLY -- no insert/modify/delete.\n");
     std::printf("  PID=%lu\n", GetCurrentProcessId());
 
     // --- Step 1: construct a real TsDevLib (full init). No hooks. ---

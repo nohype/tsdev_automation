@@ -462,11 +462,11 @@ void testItem(int category, int progId, const char* name,
         if (ok && r.result == 1) {
             havePartial = true;
         } else {
-            std::printf("    [Ordinal_28 did not return 1 — skipping "
+            std::printf("    [Ordinal_28 did not return 1 -- skipping "
                         "partial reads]\n");
         }
     } else {
-        std::printf("    [Ordinal_28 not resolved — skipping Step 1]\n");
+        std::printf("    [Ordinal_28 not resolved -- skipping Step 1]\n");
     }
 
     // --- Step 2: Call the linker directly (ordinal 85) ---
@@ -538,7 +538,7 @@ void testItem(int category, int progId, const char* name,
             size_t dumpN = esz < kMaxDump ? esz : kMaxDump;
             unsigned char dumpBuf[kMaxDump] = {};
             if (!sehMemcpy(eptr, dumpBuf, dumpN)) {
-                std::printf("      [SEH reading dep-list buffer — dump "
+                std::printf("      [SEH reading dep-list buffer -- dump "
                             "skipped]\n");
                 ed.sehOnRead = true;
                 out->elements.push_back(ed);
@@ -596,7 +596,7 @@ void testItem(int category, int progId, const char* name,
             }
 
             if (pr.truncated) {
-                std::printf("      [PARSE TRUNCATED at dumpN=%zu — "
+                std::printf("      [PARSE TRUNCATED at dumpN=%zu -- "
                             "dep-list may continue beyond %zu bytes]\n",
                             dumpN, dumpN);
             }
@@ -635,7 +635,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 "present in\n");
     std::printf("  Strategy/Indicator dep-lists with valid function "
                 "references (ProgIds)\n");
-    std::printf("  at entry+0xd. READ-ONLY on existing items — no "
+    std::printf("  at entry+0xd. READ-ONLY on existing items -- no "
                 "insert/modify/delete.\n");
 
     // --- Step 1: construct a real TsDevLib (full init). No hooks. ---
@@ -697,7 +697,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 3: enumerate existing items and test each ---
-    std::printf("\n[3] Enumerating EXISTING items (READ-ONLY — no "
+    std::printf("\n[3] Enumerating EXISTING items (READ-ONLY -- no "
                 "modification)...\n");
 
     // 3a. Existing Strategies (category 0) — first 10.
@@ -735,7 +735,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     // 3c. Existing built-in Functions (category 4) — first 5 (expected empty
     // dep-lists). User-created Functions are now category 1.
     std::printf("\n  --- 3c. Existing Functions (category 4, built-in, "
-                "first 5 — expected empty dep-lists) ---\n");
+                "first 5 -- expected empty dep-lists) ---\n");
     auto existingFuncs = enumerateExisting(loadMasterRecsEx, /*cat=*/4,
                                            /*maxCount=*/5, "Function");
     std::vector<ItemTestResult> funcResults;

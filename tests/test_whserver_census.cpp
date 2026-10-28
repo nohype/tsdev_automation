@@ -747,6 +747,102 @@ int runTests() {
         std::fprintf(stdout, "    PASS: group 19 (binary-identity predicate)\n");
     }
 
+    // -------------------------------------------------------------------
+    // Group 20: whServerHasForeignClients -- the pre-activation latch's
+    // pure evaluation. All three seams are scripted; every inconclusive
+    // direction must latch FALSE (the conservative outcome -- the recycle
+    // attempt then proceeds and the fail-closed census stays the
+    // authority).
+    // -------------------------------------------------------------------
+    {
+        using tsdev::WhLockSample;
+        auto locks = [](DWORD lock) {
+            return [lock](DWORD, WhLockSample& s) -> bool {
+                s.lockValue = lock;
+                return true;
+            };
+        };
+        auto readFails = [](DWORD, WhLockSample&) -> bool { return false; };
+        auto allKnown = [](DWORD) -> bool { return true; };
+        auto noneKnown = [](DWORD) -> bool { return false; };
+        auto pids = [](std::vector<DWORD> v) {
+            return [v](std::vector<DWORD>& out) -> bool {
+                out = v;
+                return true;
+            };
+        };
+        auto enumFails = [](std::vector<DWORD>& out) -> bool {
+            out.clear();
+            return false;
+        };
+
+        // No WHServer running at all -> no foreign clients.
+        if (tsdev::whServerHasForeignClients(
+                pids({}), allKnown, locks(7)))
+            return fail("g20: empty pid set latched foreign", 201);
+        // Inconclusive enumeration -> false (never evidence either way).
+        if (tsdev::whServerHasForeignClients(
+                enumFails, allKnown, locks(7)))
+            return fail("g20: failed enumeration latched foreign", 202);
+        // lock==0 on every known pid -> false (server free of clients).
+        if (tsdev::whServerHasForeignClients(
+                pids({100, 200}), allKnown, locks(0)))
+            return fail("g20: all-zero locks latched foreign", 203);
+        // Any positive lock -> true (foreign client present).
+        if (!tsdev::whServerHasForeignClients(
+                pids({100}), allKnown, locks(7)))
+            return fail("g20: lock==7 not latched foreign", 204);
+        // Short-circuit ordering: a zero-lock first pid does not hide a
+        // positive-lock second pid.
+        {
+            int reads = 0;
+            auto seqLocks = [&](DWORD, WhLockSample& s) -> bool {
+                ++reads;
+                s.lockValue = (reads == 1) ? 0 : 3;
+                return true;
+            };
+            if (!tsdev::whServerHasForeignClients(
+                    pids({100, 200}), allKnown, seqLocks))
+                return fail("g20: second-pid lock>0 not latched", 205);
+            // And once a positive lock is seen, no further pids are probed.
+            reads = 0;
+            auto countLocks = [&](DWORD, WhLockSample& s) -> bool {
+                ++reads;
+                s.lockValue = 5;
+                return true;
+            };
+            if (!tsdev::whServerHasForeignClients(
+                    pids({100, 200}), allKnown, countLocks))
+                return fail("g20: positive lock not latched (count)", 206);
+            if (reads != 1)
+                return fail("g20: latch did not short-circuit after lock>0",
+                            207);
+        }
+        // Unprobed image -> the pid's bytes are no evidence; skipped.
+        if (tsdev::whServerHasForeignClients(
+                pids({100}), noneKnown, locks(7)))
+            return fail("g20: unknown-image lock>0 latched foreign", 208);
+        // A failed read is skipped; a later positive lock still latches.
+        {
+            int calls = 0;
+            auto flaky = [&](DWORD pid, WhLockSample& s) -> bool {
+                ++calls;
+                if (pid == 100) return false;   // unreadable
+                s.lockValue = 9;
+                return true;
+            };
+            if (!tsdev::whServerHasForeignClients(
+                    pids({100, 200}), allKnown, flaky))
+                return fail("g20: failed read hid a later lock>0", 209);
+        }
+        // All reads fail -> false (conservative).
+        if (tsdev::whServerHasForeignClients(
+                pids({100, 200}), allKnown, readFails))
+            return fail("g20: all-failed reads latched foreign", 210);
+        std::fprintf(stdout,
+            "    PASS: group 20 (foreign-client latch evaluation)\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }

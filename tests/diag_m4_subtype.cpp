@@ -480,7 +480,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 (void*)ord28, (void*)ord69, (void*)ord70,
                 (void*)loadMasterRecsEx);
     if (!ord28) {
-        std::fprintf(stderr, "FATAL: Ordinal_28 not resolved — cannot read "
+        std::fprintf(stderr, "FATAL: Ordinal_28 not resolved -- cannot read "
                      "+0xe9. Aborting.\n");
         st->exitCode = 103;
         return 0;
@@ -494,7 +494,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                                      makeFunctionSource(funcName),
                                      "Function");
     if (funcProgId <= 0) {
-        std::fprintf(stderr, "  [WARN] Function insert/verify failed — "
+        std::fprintf(stderr, "  [WARN] Function insert/verify failed -- "
                      "skipping CLI Function +0xe9 read.\n");
     } else {
         st->funcProgId = funcProgId;
@@ -530,7 +530,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                                       "Strategy");
     }
     if (stratProgId <= 0) {
-        std::fprintf(stderr, "  [WARN] Strategy insert/verify failed — "
+        std::fprintf(stderr, "  [WARN] Strategy insert/verify failed -- "
                      "skipping CLI Strategy +0xe9 read.\n");
     } else {
         st->stratProgId = stratProgId;
@@ -549,7 +549,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 5: enumerate EXISTING items (read-only) and read +0xe9. ---
-    std::printf("\n[5] Enumerating EXISTING items (READ-ONLY — no "
+    std::printf("\n[5] Enumerating EXISTING items (READ-ONLY -- no "
                 "modification)...\n");
 
     // 5a. Existing Strategies (category 0).
@@ -667,7 +667,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             FindClose(h);
         }
     } else {
-        std::printf("  [Strategy was not created — nothing to delete]\n");
+        std::printf("  [Strategy was not created -- nothing to delete]\n");
     }
     if (st->funcProgId > 0) {
         std::printf("  Deleting Function \"%s\" (ProgId=%d)...\n",
@@ -686,7 +686,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             FindClose(h);
         }
     } else {
-        std::printf("  [Function was not created — nothing to delete]\n");
+        std::printf("  [Function was not created -- nothing to delete]\n");
     }
 
     // --- Final summary. ---

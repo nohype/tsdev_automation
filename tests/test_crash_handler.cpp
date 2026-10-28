@@ -210,7 +210,7 @@ int expectChildDeath(const char* arg, DWORD expectedCode,
     }
     if (cr.waitResult != WAIT_OBJECT_0) {
         std::fprintf(stderr,
-                     "[FAIL] %s: child did not exit within 15s (wait=%lu) — "
+                     "[FAIL] %s: child did not exit within 15s (wait=%lu) -- "
                      "a dialog or deadlock escaped the containment\n",
                      label, static_cast<unsigned long>(cr.waitResult));
         codeOut = -2;
@@ -232,7 +232,7 @@ int expectChildDeath(const char* arg, DWORD expectedCode,
     if (reporters != 0) {
         std::fprintf(stderr,
                      "[FAIL] %s: %d crash-reporter process(es) parented by "
-                     "the child (snapshot %s) — the death was not clean\n",
+                     "the child (snapshot %s) -- the death was not clean\n",
                      label, reporters,
                      reporters < 0 ? "failed (inconclusive)" : "succeeded");
         codeOut = -4;
@@ -585,7 +585,7 @@ int runInvalidParamMode() {
     const errno_t rc = strcpy_s(dst, sizeof(dst), nullptr);
     // Unreachable — the invalid-parameter handler terminates the process.
     std::fprintf(stderr,
-                 "[FAIL] strcpy_s(nullptr) returned %d — invalid-parameter "
+                 "[FAIL] strcpy_s(nullptr) returned %d -- invalid-parameter "
                  "handler did not fire\n", static_cast<int>(rc));
     return 63;
 }

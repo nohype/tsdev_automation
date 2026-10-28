@@ -15,7 +15,7 @@
          (TSCrashReport.exe / WerFault.exe) spawns.
 
     After the crash test, this script verifies that NO TSCrashReport.exe or
-    WerFault.exe process is running — if either is present, the VEH failed to
+    WerFault.exe process is running -- if either is present, the VEH failed to
     suppress the crash dialog and the test FAILS (the stray process is
     force-killed first so it does not linger).
 
@@ -101,7 +101,7 @@ if ($normalOutput) {
 if ($normalExit -eq 0) {
     Write-Host "PASS (exit $normalExit)" -ForegroundColor Green
 } else {
-    Write-Host "FAIL (exit $normalExit) — expected 0" -ForegroundColor Red
+    Write-Host "FAIL (exit $normalExit) -- expected 0" -ForegroundColor Red
     $failed = $true
 }
 
@@ -134,7 +134,7 @@ Write-Host "  Exit code: $crashExit (expected $ExpectedCrashExitCode = 0xC000000
 if ($crashExit -eq $ExpectedCrashExitCode) {
     Write-Host "PASS (exit $crashExit == 0xC0000005)" -ForegroundColor Green
 } else {
-    Write-Host "FAIL (exit $crashExit) — expected $ExpectedCrashExitCode (0xC0000005)" -ForegroundColor Red
+    Write-Host "FAIL (exit $crashExit) -- expected $ExpectedCrashExitCode (0xC0000005)" -ForegroundColor Red
     $failed = $true
 }
 
@@ -152,7 +152,7 @@ Start-Sleep -Milliseconds 500
 $crashReport = Get-Process -Name TSCrashReport -ErrorAction SilentlyContinue
 if ($crashReport) {
     Stop-Process -Name TSCrashReport -Force
-    Write-Host "[FAIL] TSCrashReport.exe spawned — VEH did not suppress crash dialog" -ForegroundColor Red
+    Write-Host "[FAIL] TSCrashReport.exe spawned -- VEH did not suppress crash dialog" -ForegroundColor Red
     $failed = $true
 } else {
     Write-Host "PASS: no TSCrashReport.exe running" -ForegroundColor Green
@@ -161,7 +161,7 @@ if ($crashReport) {
 $werFault = Get-Process -Name WerFault -ErrorAction SilentlyContinue
 if ($werFault) {
     Stop-Process -Name WerFault -Force
-    Write-Host "[FAIL] WerFault.exe spawned — error mode did not suppress crash dialog" -ForegroundColor Red
+    Write-Host "[FAIL] WerFault.exe spawned -- error mode did not suppress crash dialog" -ForegroundColor Red
     $failed = $true
 } else {
     Write-Host "PASS: no WerFault.exe running" -ForegroundColor Green

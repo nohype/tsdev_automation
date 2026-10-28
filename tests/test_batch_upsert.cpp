@@ -144,7 +144,7 @@ DWORD WINAPI runTest(LPVOID param) {
                      i, names[i], existing);
         if (existing > 0) {
             std::fprintf(stdout,
-                         "    [%d] Entry already exists (ProgId=%d) — deleting...\n",
+                         "    [%d] Entry already exists (ProgId=%d) -- deleting...\n",
                          i, existing);
             bool deleted = lib->deleteEntry(ComponentType::Strategy, names[i]);
             std::fprintf(stdout, "    [%d] deleteEntry = %s\n",
@@ -154,7 +154,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 3: findExistPos for NONEXISTENT names — ASSERT <= 0 ---
     std::fprintf(stdout,
-                 "\n[3] findExistPos for each probe — asserting absent...\n");
+                 "\n[3] findExistPos for each probe -- asserting absent...\n");
     for (int i = 0; i < 2; i++) {
         int notFound = lib->findExistPos(names[i], ComponentType::Strategy);
         std::fprintf(stdout, "    [%d] findExistPos(\"%s\") = %d\n",
@@ -238,7 +238,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 7: findExistPos for EXISTING names — ASSERT same ProgId ---
     std::fprintf(stdout,
-                 "\n[7] findExistPos for each probe — asserting exists with same ProgId...\n");
+                 "\n[7] findExistPos for each probe -- asserting exists with same ProgId...\n");
     for (int i = 0; i < 2; i++) {
         int found = lib->findExistPos(names[i], ComponentType::Strategy);
         std::fprintf(stdout, "    [%d] findExistPos(\"%s\") = %d (expected %d)\n",
@@ -293,7 +293,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 9: findExistPos again — ASSERT SAME ProgId (KEY invariant) ---
     std::fprintf(stdout,
-                 "\n[9] findExistPos for each probe — asserting SAME ProgId after modify...\n");
+                 "\n[9] findExistPos for each probe -- asserting SAME ProgId after modify...\n");
     for (int i = 0; i < 2; i++) {
         int after = lib->findExistPos(names[i], ComponentType::Strategy);
         std::fprintf(stdout, "    [%d] findExistPos(\"%s\") = %d (was %d)\n",
@@ -352,7 +352,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // --- Step 12: Result ---
     if (st->exitCode == 0) {
         std::fprintf(stdout,
-                     "\nPASS: batch-upsert composition verified — "
+                     "\nPASS: batch-upsert composition verified -- "
                      "multiple items on shared TsDevLib, "
                      "insert + modify preserve ProgId, single closeWarehouse\n");
     }

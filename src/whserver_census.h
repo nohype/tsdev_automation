@@ -48,6 +48,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -156,6 +157,38 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
 // activityValid). On false, out.openError or out.rpmError carries the
 // failing GetLastError.
 bool readWhLockSample(const CensusTarget& target, WhLockSample& out);
+
+// Foreign-client latch evaluation (the pre-activation "another
+// TradeStation program is using the server" check behind the guard's
+// Continue arm). One lightweight m_nLock probe per enumerated WHServer
+// pid -- NOT the full sustained-zero census: the latch only answers
+// "is a restart already impossible", so one valid lock>0 sample is
+// conclusive. Every failure direction returns false -- no server, a failed
+// enumeration, an unknown image, or an unreadable lock -- the conservative
+// outcome: the recycle attempt then proceeds and the fail-closed census
+// engine above remains the authority.
+//
+// The three injected seams are the production reads
+// (findWhServerPids snapshotOk overload + whServerPidImageIsKnown +
+// readWhLockSample); unit tests script every arm.
+//   enumerate    -> the fail-closed pid enumeration: false = inconclusive.
+//   imageIsKnown -> the probed-build identity gate (an unprobed image's
+//                   fixed-VA bytes are evidence of nothing -- skip the pid).
+//   readLock     -> fills `sample`; true only when the m_nLock DWORD was
+//                   actually read (openError==rpmError==0 semantics).
+inline bool whServerHasForeignClients(
+    const std::function<bool(std::vector<DWORD>& pids)>& enumerate,
+    const std::function<bool(DWORD pid)>& imageIsKnown,
+    const std::function<bool(DWORD pid, WhLockSample& sample)>& readLock) {
+    std::vector<DWORD> pids;
+    if (!enumerate(pids)) return false;   // inconclusive enumeration
+    for (DWORD pid : pids) {
+        if (!imageIsKnown(pid)) continue;  // unprobed build -- no evidence
+        WhLockSample sample{};
+        if (readLock(pid, sample) && sample.lockValue > 0) return true;
+    }
+    return false;
+}
 
 } // namespace tsdev
 

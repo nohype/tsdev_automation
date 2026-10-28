@@ -424,20 +424,20 @@ EllInspect inspectEllFile(const std::string& binDir, int whType, int progId) {
 // -------------------------------------------------------------------------
 void inspectSafeArray(const char* tag, void* saPtr) {
     if (!saPtr) {
-        std::printf("  [%s SafeArray] saPtr is NULL — skipping\n", tag);
+        std::printf("  [%s SafeArray] saPtr is NULL -- skipping\n", tag);
         return;
     }
     SAFEARRAY* psa = (SAFEARRAY*)saPtr;
     unsigned short dims = 0;
     __try { dims = SafeArrayGetDim(psa); }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::printf("  [%s SafeArray] SafeArrayGetDim raised SEH — not a valid SafeArray?\n", tag);
+        std::printf("  [%s SafeArray] SafeArrayGetDim raised SEH -- not a valid SafeArray?\n", tag);
         return;
     }
     std::printf("  [%s SafeArray] saPtr=%p  SafeArrayGetDim=%u\n",
                 tag, saPtr, (unsigned)dims);
     if (dims != 1) {
-        std::printf("    [dims != 1 — not the expected 1-D mailbox; skipping data dump]\n");
+        std::printf("    [dims != 1 -- not the expected 1-D mailbox; skipping data dump]\n");
         return;
     }
     long lb = 0, ub = -1;
@@ -484,7 +484,7 @@ void inspectSafeArray(const char* tag, void* saPtr) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         std::printf("    SafeArrayUnaccessData raised SEH\n");
     }
-    std::printf("    [SafeArray NOT destroyed — owned by warehouse]\n");
+    std::printf("    [SafeArray NOT destroyed -- owned by warehouse]\n");
 }
 
 // -------------------------------------------------------------------------
@@ -556,7 +556,7 @@ void releaseRec(Ordinal70Fn ord70, const char* label, void* rec) {
         std::printf("    [release %s] Ordinal_70(rec=%p, 0): %s, ret=%d\n",
                     label, rec, ok ? "OK" : "SEH", r.result);
     } else {
-        std::printf("    [release %s] Ordinal_70 NOT resolved — LEAKING "
+        std::printf("    [release %s] Ordinal_70 NOT resolved -- LEAKING "
                     "rec=%p\n", label, rec);
     }
 }
@@ -633,7 +633,7 @@ void printWhIndir(const WhIndir& w) {
 void inspectObjCodeBuffer(const char* tag, void* bufPtr, void* wrapperPtr,
                           size_t assumeSize) {
     if (!bufPtr) {
-        std::printf("  [%s objcode] buffer ptr is NULL — nothing to dump\n",
+        std::printf("  [%s objcode] buffer ptr is NULL -- nothing to dump\n",
                     tag);
         return;
     }
@@ -662,11 +662,11 @@ void inspectObjCodeBuffer(const char* tag, void* bufPtr, void* wrapperPtr,
     size_t dumpN = assumeSize < sizeof(local) ? assumeSize : sizeof(local);
     if (dumpN == 0) dumpN = sizeof(local);  // size unknown — try 512
     if (!sehMemcpy(bufPtr, local, dumpN)) {
-        std::printf("    [memcpy of first %zu bytes raised SEH — trying "
+        std::printf("    [memcpy of first %zu bytes raised SEH -- trying "
                     "smaller]\n", dumpN);
         dumpN = 64;
         if (!sehMemcpy(bufPtr, local, dumpN)) {
-            std::printf("    [memcpy of 64 bytes ALSO raised SEH — "
+            std::printf("    [memcpy of 64 bytes ALSO raised SEH -- "
                         "aborting dump]\n");
             return;
         }
@@ -723,7 +723,7 @@ void inspectObjCodeBuffer(const char* tag, void* bufPtr, void* wrapperPtr,
                     "(first at 0x%zx)  0xBB9: %d hit(s) (first at 0x%zx)\n",
                     scanTotal, hitsBbc, firstBbc, hitsBb9, firstBb9);
     } else {
-        std::printf("    [wider scan skipped — assumeSize unknown or > 1MB]\n");
+        std::printf("    [wider scan skipped -- assumeSize unknown or > 1MB]\n");
     }
 }
 
@@ -837,7 +837,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (!ord70) std::fprintf(stderr, "WARN: Ordinal_70 unresolved\n");
     if (!ord28) std::fprintf(stderr, "WARN: Ordinal_28 unresolved\n");
     if (!ord85Raw) std::fprintf(stderr, "WARN: ordinal 85 (linker) "
-                                "unresolved — direct linker call skipped\n");
+                                "unresolved -- direct linker call skipped\n");
 
     // --- Step 3: insert + verify the Function. ---
     std::printf("\n[3] Insert + verify Function \"%s\"...\n",
@@ -890,7 +890,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         "+0x29 elemCount=%d\n", sa, ec);
         }
     } else {
-        std::printf("  [Ordinal_28 not resolved — partialBuf will be "
+        std::printf("  [Ordinal_28 not resolved -- partialBuf will be "
                     "NULL]\n");
     }
 
@@ -911,7 +911,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             printFields("Linker return (errorFlag=0)", fLinker, funcProgId);
             haveLinkerRec = true;
         } else {
-            std::printf("    [linker returned NULL — no record to "
+            std::printf("    [linker returned NULL -- no record to "
                         "inspect]\n");
         }
     } else {
@@ -968,16 +968,16 @@ DWORD WINAPI runDiag(LPVOID param) {
         if (sehReadDword((const char*)wrapperPtr + 0x1c5, &sz) && sz > 0 &&
             sz < 0x100000) {
             assumeSize = sz;
-            std::printf("    wrapper+0x1c5 (size candidate) = %u — using "
+            std::printf("    wrapper+0x1c5 (size candidate) = %u -- using "
                         "as assumeSize\n", sz);
         } else if (sehReadDword((const char*)wrapperPtr + 0x1c8, &sz) &&
                    sz > 0 && sz < 0x100000) {
             assumeSize = sz;
-            std::printf("    wrapper+0x1c8 (size candidate) = %u — using "
+            std::printf("    wrapper+0x1c8 (size candidate) = %u -- using "
                         "as assumeSize\n", sz);
         } else {
             std::printf("    [size could not be determined from wrapper "
-                        "fields — will dump 512 bytes blindly]\n");
+                        "fields -- will dump 512 bytes blindly]\n");
         }
     }
     inspectObjCodeBuffer("post-linker", objCodeBuf, wrapperPtr, assumeSize);
@@ -986,11 +986,11 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n[8] Reading the SafeArray at the correct indirection...\n");
     if (whPost.ptr) {
         if (whPost.looksLikeWrapper && whPost.ptr0c) {
-            std::printf("    ptr is the wrapper — SafeArray mailbox is at "
+            std::printf("    ptr is the wrapper -- SafeArray mailbox is at "
                         "*(ptr+0x0c)+0x26 = %p\n", whPost.innerSa26);
             inspectSafeArray("*(wrapper+0xc)+0x26", whPost.innerSa26);
         } else {
-            std::printf("    ptr does NOT look like the wrapper — falling "
+            std::printf("    ptr does NOT look like the wrapper -- falling "
                         "back to ptr+0x26 (old way)\n");
             inspectSafeArray("ptr+0x26 (old way)", whPost.ptr26_old);
         }
@@ -1016,13 +1016,13 @@ DWORD WINAPI runDiag(LPVOID param) {
             compareBuffers("objcode head", objHead, n,
                            ".ell head", ell.head, ell.headLen);
         } else {
-            std::printf("    [memcpy of objcode head raised SEH — cannot "
+            std::printf("    [memcpy of objcode head raised SEH -- cannot "
                         "compare]\n");
         }
     } else if (!objCodeBuf) {
-        std::printf("    [objcode buffer is NULL — cannot compare]\n");
+        std::printf("    [objcode buffer is NULL -- cannot compare]\n");
     } else if (ell.headLen == 0) {
-        std::printf("    [.ell file unreadable — cannot compare]\n");
+        std::printf("    [.ell file unreadable -- cannot compare]\n");
     }
 
     // Also: is the .ell file just a wrapper around the compressed object
@@ -1072,7 +1072,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         // Release via Ordinal_70.
         releaseRec(ord70, "linker rec", linkerRec);
     } else {
-        std::printf("    [linker returned NULL — no record to inspect]\n");
+        std::printf("    [linker returned NULL -- no record to inspect]\n");
     }
 
     // --- Step 11: cleanup. ---

@@ -252,7 +252,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
           "onCompilerReady hook fired during verifyModule");
     if (!g_capture.fired) {
         lib.deleteEntry(tc.type, tc.name, /*flush=*/false);
-        return fail("hook did not fire — cannot assert layout", 100 + caseNum * 10 + 5);
+        return fail("hook did not fire -- cannot assert layout", 100 + caseNum * 10 + 5);
     }
 
     // --- 7. Assert the captured component type and progId ---

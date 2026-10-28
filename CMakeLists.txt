@@ -563,6 +563,12 @@ add_dependencies(test_json_serialize siggen)
 # stderr via the CRT _dup/_dup2 redirection idiom to assert level gating. It
 # is a PURE UNIT TEST (no orlib20 access), so it is NOT in TSDEV_ADMIN_TARGETS
 # and runs under -NoTs.
+#
+# The same test also covers the debug log-file sink
+# (tsdev_log_open_file/close_file in src/tsdev_lib.cpp): the file records the
+# full stream at every level independent of the console level and of
+# tsdev_log_set_sink swaps (--pbar), one line per record, and the file-local
+# resolveLogFilePath() --log-file/TSDEV_LOG_FILE precedence helper.
 add_executable(test_log_levels tests/test_log_levels.cpp)
 target_include_directories(test_log_levels PRIVATE third_party)
 target_link_libraries(test_log_levels tsdev_lib)

@@ -4,13 +4,12 @@
 
 .DESCRIPTION
     End-to-end test for the --pbar flag: a pinned, stderr-only progress bar
-    redrawn in place via '\r' (no ANSI) with UTF-8 block glyphs - U+2588
-    'FULL BLOCK' (E2 96 88) filled cells and U+2591 'LIGHT SHADE' (E2 96 91)
-    empty cells - in the pinned format
+    redrawn in place via '\r' (no ANSI) with strictly ASCII glyphs - '#'
+    (0x23) filled cells and '-' (0x2D) empty cells - in the pinned format
 
-      <op> [<30-cell bar>] <done>/<total> <pct>%[ <type> "<name>"][ <U+2014> <n> failed]
+      <op> [<30-cell bar>] <done>/<total> <pct>%[ <type> "<name>"][ - <n> failed]
 
-    (the ' <U+2014> <n> failed' suffix uses U+2014 EM DASH, E2 80 94). stdout is
+    (the ' - <n> failed' suffix uses a plain ASCII dash, 0x2D). stdout is
     never touched by the bar. Contract details (src/tsdev_cli.cpp):
 
       * Global, position-free, idempotent boolean: bare "--pbar" or
@@ -26,7 +25,7 @@
         emitted only with --json, and --pbar + --json is a usage error.
       * Single-item subcommands (exists/delete/...) emit the whole bar in
         one draw sequence after the op: 0/1 labelled, then filled to 1/1
-        (with " <U+2014> 1 failed" on failure), pinned by a newline.
+        (with " - 1 failed" on failure), pinned by a newline.
         Mutation success stdout ("SUCCESS: ...") is suppressed under
         --pbar; query answers and failure detail are unchanged.
       * --pbar + --json is a usage error (exit 1, JSON error object on
@@ -51,10 +50,10 @@
     Test cases:
       PB1  --pbar exists function <probe>: exit 0; stdout keeps the human
            exists=1 / stored_name / progId lines; stderr contains '\r'
-           redraw bytes, the block-glyph UTF-8 sequences, a 1/1 100% frame,
+           redraw bytes, the ASCII glyph bytes, a 1/1 100% frame,
            and the probe name in the <type> "<name>" label.
       PB2  --pbar delete function <nonexistent>: exit 5; stderr bar reaches
-           1/1 with the " <U+2014> 1 failed" suffix; stdout is empty (the human
+           1/1 with the " - 1 failed" suffix; stdout is empty (the human
            ERROR line stays on stderr - the stdout contract is unchanged).
       PB3  --pbar --json exists function <probe>: exit 1 usage error;
            stdout is a JSON error object whose message mentions --pbar;
@@ -63,7 +62,7 @@
       PB4  --pbar serve: exit 1; stderr mentions "not valid with serve".
       PB5  --pbar batch-delete <manifest of 3: 1 real probe + 2
            nonexistent>: exit 2; stderr contains '\r' bar frames ending at
-           3/3 with " <U+2014> 2 failed", the successful item emits no
+           3/3 with " - 2 failed", the successful item emits no
            BATCH line, each failed item scrolls a BATCH FAILED marker plus
            its detail block above the bar, and the last stderr line is
            BATCH COMPLETE (the run is not clean); stdout is EMPTY.
@@ -73,8 +72,11 @@
            (idempotent repeat) - all exit 0 with bar bytes on stderr.
       PB7  Non-pbar guard: plain `batch-delete <same manifest>` - exit 2;
            stderr byte check: NO bare '\r' (every 0x0D belongs to a CRLF
-           pair - there are no bar redraw frames) and NO block-glyph UTF-8
-           sequences. stderr carries the human per-item BATCH completion
+           pair - there are no bar redraw frames), NO '#' (0x23) filled-cell
+           byte, and no bar-interior opening ('[' immediately followed by
+           '-' - the bare '-' byte itself cannot be asserted negatively
+           because legit human text such as "ERROR --" carries it). stderr
+           carries the human per-item BATCH completion
            lines (no BATCH START) ending at BATCH COMPLETE; stdout is
            EMPTY without --json.
       PB8  --pbar --batch-progress-control batch-delete <manifest> with
@@ -90,7 +92,7 @@
       PB10 --pbar batch-delete <manifest of 2, all existing> created
            inside the case: a fully clean run - exit 0; stdout is EMPTY;
            stderr is ONLY the pinned bar ('\r' frames ending at 2/2 100%,
-           no " <U+2014> <n> failed" suffix, no BATCH lines at all) and
+           no " - <n> failed" suffix, no BATCH lines at all) and
            the last stderr line is the committed bar frame itself (no
            BATCH COMPLETE on a clean run).
 
@@ -185,13 +187,12 @@ $InsertName     = "PbarE2E_${runId}_I"     # PB9's --pbar insert target (created
 $CleanDelName1  = "PbarE2E_${runId}_D1"    # PB10 all-success manifest item (created inside the case)
 $CleanDelName2  = "PbarE2E_${runId}_D2"    # PB10 all-success manifest item (created inside the case)
 
-# Bar byte markers (UTF-8). The script file stays ASCII-only, so the glyphs
-# are matched on raw bytes, and the em dash is composed as a char for the
-# string assertions.
-$FullGlyphBytes = [byte[]](0xE2, 0x96, 0x88)  # U+2588 FULL BLOCK
-$ShadeGlyphBytes = [byte[]](0xE2, 0x96, 0x91) # U+2591 LIGHT SHADE
-$EmDashBytes = [byte[]](0xE2, 0x80, 0x94)     # U+2014 EM DASH
-$EmDash = [string][char]0x2014
+# Bar byte markers (strictly ASCII, matching kPbar*Glyph in
+# src/tsdev_cli.cpp). The script file stays ASCII-only, so the glyphs are
+# matched on raw bytes and as plain chars for the string assertions.
+$FullGlyphBytes = [byte[]](0x23)              # '#' filled bar cell
+$ShadeGlyphBytes = [byte[]](0x2D)             # '-' empty bar cell
+$FailSep = "-"
 $CrByte = [byte]0x0D
 $LfByte = [byte]0x0A
 
@@ -370,8 +371,8 @@ function Invoke-Cli {
     }
 
     # String views via BOM-aware reads (auto-detect): the raw byte files
-    # have no BOM, so they decode as UTF-8 - the bar's E2 96 88 / E2 96 91 /
-    # E2 80 94 sequences arrive as real block/shade/em-dash chars.
+    # have no BOM, so they decode as UTF-8 - the bar's ASCII '#'/'-' glyph
+    # bytes arrive as real characters.
     $stdoutStr = ''
     $stderrStr = ''
     if (Test-Path -Path $stdoutFile -PathType Leaf) {
@@ -479,7 +480,7 @@ function Assert-NoPopup {
 
 # ---------------------------------------------------------------------------
 # Assert-BarBytes: shared bar evidence on a capture's raw stderr bytes:
-# a bare '\r' redraw byte plus at least one block-glyph UTF-8 sequence.
+# a bare '\r' redraw byte plus at least one ASCII bar-glyph byte.
 # ---------------------------------------------------------------------------
 function Assert-BarBytes {
     param(
@@ -490,7 +491,7 @@ function Assert-BarBytes {
         "$Context stderr must contain a bare '\r' bar-redraw byte; stderr bytes length=$($Capture.StderrBytes.Length)"
     $hasGlyph = (Test-BytesContain -Haystack $Capture.StderrBytes -Needle $script:FullGlyphBytes) -or
                 (Test-BytesContain -Haystack $Capture.StderrBytes -Needle $script:ShadeGlyphBytes)
-    Assert-True $hasGlyph "$Context stderr must contain a block-glyph UTF-8 sequence (E2 96 88 or E2 96 91)"
+    Assert-True $hasGlyph "$Context stderr must contain an ASCII bar-glyph byte (0x23 '#' or 0x2D '-')"
 }
 
 # ---------------------------------------------------------------------------
@@ -709,19 +710,19 @@ try {
 
     # =====================================================================
     # PB2: --pbar delete function <nonexistent> - exit 5; the bar still
-    # reaches 1/1 and gains the " <U+2014> 1 failed" suffix; stdout stays empty
+    # reaches 1/1 and gains the " - 1 failed" suffix; stdout stays empty
     # (the human ERROR line is on stderr - the stdout contract is unchanged).
     # =====================================================================
     Write-Host "--- PB2: --pbar delete function <nonexistent> ---" -ForegroundColor Cyan
-    Run-TestCase -TestId "PB2" -Step "pbar delete not-found: exit 5 + ' <U+2014> 1 failed'" -Body {
+    Run-TestCase -TestId "PB2" -Step "pbar delete not-found: exit 5 + ' - 1 failed'" -Body {
         $cli = Invoke-Cli -Arguments @("--pbar", "delete", "function", $script:DeleteGhost)
         Assert-NoPopup $cli
         Assert-True ($cli.ExitCode -eq 5) "exit code: expected 5, got $($cli.ExitCode); stderr: $($cli.Stderr)"
         Assert-True ($cli.Stdout.Trim() -eq '') "stdout must be empty (human ERROR stays on stderr); got: $($cli.Stdout)"
         Assert-BarBytes $cli "PB2"
         Assert-True ($cli.Stderr.Contains("1/1")) "stderr bar must reach '1/1'; got: $($cli.Stderr)"
-        Assert-True ($cli.Stderr.Contains("$($script:EmDash) 1 failed")) `
-            "stderr bar must carry the ' <U+2014> 1 failed' suffix; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains("$($script:FailSep) 1 failed")) `
+            "stderr bar must carry the ' - 1 failed' suffix; got: $($cli.Stderr)"
         Assert-True ($cli.Stderr.Contains("ERROR")) "stderr must still carry the human ERROR line; got: $($cli.Stderr)"
     }
 
@@ -763,7 +764,7 @@ try {
 
     # =====================================================================
     # PB5: --pbar batch-delete <manifest of 3: 1 real + 2 nonexistent> -
-    # exit 2; '\r' bar frames end at 3/3 with " <U+2014> 2 failed"; under
+    # exit 2; '\r' bar frames end at 3/3 with " - 2 failed"; under
     # --pbar the successful item emits no BATCH line while each failed item
     # scrolls a BATCH FAILED marker + its full detail block above the bar;
     # the last stderr line is BATCH COMPLETE (the run is not clean); stdout
@@ -790,8 +791,8 @@ try {
         # precedes the count, whereas a bare "3/3" would also match a
         # "BATCH FAILED [3/3]" event line and pass without a full bar.
         Assert-True ($cli.Stderr.Contains("] 3/3")) "stderr bar frame must reach '] 3/3'; got: $($cli.Stderr)"
-        Assert-True ($cli.Stderr.Contains("$($script:EmDash) 2 failed")) `
-            "stderr bar must carry the ' <U+2014> 2 failed' suffix; got: $($cli.Stderr)"
+        Assert-True ($cli.Stderr.Contains("$($script:FailSep) 2 failed")) `
+            "stderr bar must carry the ' - 2 failed' suffix; got: $($cli.Stderr)"
         Assert-True (-not $cli.Stderr.Contains("BATCH START")) `
             "stderr must contain no BATCH START lines (removed from human batch output); got: $($cli.Stderr)"
         Assert-True (-not $cli.Stderr.Contains("BATCH SUCCESS")) `
@@ -804,10 +805,10 @@ try {
         Assert-True ($failMarkers[1].Contains("[3/3]") -and $failMarkers[1].Contains("name=`"$($script:GhostName2)`"") -and $failMarkers[1].Contains("exit_code=5")) `
             "second BATCH FAILED must be [3/3] $GhostName2 exit_code=5; got: $($failMarkers[1])"
         # Each failed item's full human detail block scrolls above the bar
-        # too: 'tsdev_cli: ERROR <U+2014> function "X" not found in the
+        # too: 'tsdev_cli: ERROR -- function "X" not found in the
         # warehouse.'
-        $detail1 = "tsdev_cli: ERROR $($script:EmDash) function `"$($script:GhostName1)`" not found in the warehouse."
-        $detail2 = "tsdev_cli: ERROR $($script:EmDash) function `"$($script:GhostName2)`" not found in the warehouse."
+        $detail1 = "tsdev_cli: ERROR -- function `"$($script:GhostName1)`" not found in the warehouse."
+        $detail2 = "tsdev_cli: ERROR -- function `"$($script:GhostName2)`" not found in the warehouse."
         Assert-True ($cli.Stderr.Contains($detail1)) "stderr must contain GhostName1's failure detail block; got: $($cli.Stderr)"
         Assert-True ($cli.Stderr.Contains($detail2)) "stderr must contain GhostName2's failure detail block; got: $($cli.Stderr)"
         # The bar's final frame is committed as a permanent line; the run
@@ -874,9 +875,12 @@ try {
         Assert-True (-not (Test-HasBareCR -Bytes $cli.StderrBytes)) `
             "non-pbar stderr must contain NO bare '\r' bar-redraw bytes (only CRLF line endings); stderr bytes length=$($cli.StderrBytes.Length)"
         Assert-True (-not (Test-BytesContain -Haystack $cli.StderrBytes -Needle $script:FullGlyphBytes)) `
-            "non-pbar stderr must contain NO U+2588 bytes (E2 96 88)"
-        Assert-True (-not (Test-BytesContain -Haystack $cli.StderrBytes -Needle $script:ShadeGlyphBytes)) `
-            "non-pbar stderr must contain NO U+2591 bytes (E2 96 91)"
+            "non-pbar stderr must contain NO '#' (0x23) filled-cell byte"
+        # The bare '-' byte cannot be asserted negatively (legit human text
+        # such as "tsdev_cli: ERROR --" carries it); the bar's shade interior
+        # is pinned instead by its opening: '[' immediately followed by '-'.
+        Assert-True (-not (Test-BytesContain -Haystack $cli.StderrBytes -Needle ([byte[]](0x5B, 0x2D)))) `
+            "non-pbar stderr must contain NO bar-interior opening ('[' + '-' bytes)"
         # The human per-item completion lines are still emitted - one per
         # attempted item (the manifest items are already gone after PB5, so
         # they are BATCH FAILED markers followed by their detail blocks) -
@@ -964,7 +968,7 @@ try {
     # PB10: --pbar batch-delete <manifest of 2, all existing> - a fully
     # clean run: exit 0; stdout is EMPTY (no results array without --json);
     # stderr is ONLY the pinned bar - '\r' frames ending at ] 2/2 100%,
-    # no " <U+2014> <n> failed" suffix, and no BATCH lines at all (no
+    # no " - <n> failed" suffix, and no BATCH lines at all (no
     # START/SUCCESS/FAILED/COMPLETE). A fully clean run ends with the
     # committed bar frame as the last stderr line - BATCH COMPLETE prints
     # only when the run was not clean.
@@ -1008,8 +1012,8 @@ try {
         Assert-BarBytes $cli "PB10"
         Assert-True ($cli.Stderr.Contains("] 2/2")) "stderr bar frame must reach '] 2/2'; got: $($cli.Stderr)"
         Assert-True ($cli.Stderr.Contains("100%")) "stderr bar frame must reach '100%'; got: $($cli.Stderr)"
-        Assert-True (-not ($cli.Stderr -match "$($script:EmDash) \d+ failed")) `
-            "stderr bar must carry no ' <U+2014> <n> failed' suffix on a clean run; got: $($cli.Stderr)"
+        Assert-True (-not ($cli.Stderr -match "$($script:FailSep) \d+ failed")) `
+            "stderr bar must carry no ' - <n> failed' suffix on a clean run; got: $($cli.Stderr)"
         $batchLines = @($cli.Stderr -split "`n" | Where-Object { $_ -match 'BATCH' })
         Assert-True ($batchLines.Count -eq 0) `
             "stderr must contain no BATCH lines at all (no START/SUCCESS/FAILED/COMPLETE) under --pbar; got: $($batchLines -join ' | ')"

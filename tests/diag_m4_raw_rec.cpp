@@ -321,7 +321,7 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
                              int expectedProgId) {
     std::printf("\n=== MASTER RECORD ANALYSIS: %s ===\n", label);
     if (!rec) {
-        std::printf("  [record pointer is NULL — nothing to analyze]\n");
+        std::printf("  [record pointer is NULL -- nothing to analyze]\n");
         return;
     }
 
@@ -448,7 +448,7 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
                     if (stride == 0) {
                         // Avoid infinite loop on a zero-stride record.
                         std::printf("      [zero stride at dep-rec[%d] @ %p "
-                                    "(opcode=0x%X) — stopping scan]\n",
+                                    "(opcode=0x%X) -- stopping scan]\n",
                                     recIdx, cur, (unsigned)opcode);
                         break;
                     }
@@ -459,7 +459,7 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
                 std::printf("      dep-rec scan: %d records walked, "
                             "%d 0xFA4 opcodes found\n", recIdx, fa4Found);
             } else {
-                std::printf("      [dep-list empty or ptr NULL — no scan]\n");
+                std::printf("      [dep-list empty or ptr NULL -- no scan]\n");
             }
         }
         std::printf("\n  --- ELEMENT ITERATION SUMMARY: %d 0xFA4 opcodes "
@@ -613,7 +613,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     // --- Step 10/11: Ordinal_69 and Ordinal_28 are SKIPPED (ABI unknown;
     // calling them blindly could crash). ---
     std::printf("\n[10/11] SKIPPING Ordinal_69 (RVA 0x1A3E00) and "
-                "Ordinal_28 (RVA 0x1A03F0) — ABIs unknown, calling them "
+                "Ordinal_28 (RVA 0x1A03F0) -- ABIs unknown, calling them "
                 "blindly could crash.\n");
 
     // --- Step 12: cleanup. ---
@@ -633,8 +633,8 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     std::printf("\n=== DIAGNOSIS ===\n");
     std::printf("  See the field reads above for the key offsets:\n");
-    std::printf("    +0x29 element count  — ZERO or NONZERO?\n");
-    std::printf("    +0x4f element array  — NULL or NON-NULL?\n");
+    std::printf("    +0x29 element count  -- ZERO or NONZERO?\n");
+    std::printf("    +0x4f element array  -- NULL or NON-NULL?\n");
     std::printf("    element +0x73 dep-list length\n");
     std::printf("    element +0x7b dep-list pointer\n");
     std::printf("  If +0x29 is ZERO or +0x4f is NULL, the 0x10A-byte master "

@@ -1173,7 +1173,7 @@ int main() {
             // as VS_FIXEDFILEINFO (binary DWORDs) rather than in the
             // string table, or with different padding/alignment. Do NOT
             // fail the test — this case is best-effort.
-            std::printf("SKIP: Case 4 — UTF-16LE '9.50.01.3344' pattern "
+            std::printf("SKIP: Case 4 -- UTF-16LE '9.50.01.3344' pattern "
                         "not found in buffer. The version string may be "
                         "stored as VS_FIXEDFILEINFO (binary DWORDs) rather "
                         "than in the string table. This case is best-effort "
@@ -1455,7 +1455,7 @@ int main() {
             // Resolution failed in Part A, so there is no descriptor to
             // validate. Skip this dependent check; Part A already records
             // the resolution failure.
-            std::printf("SKIP: cannot validate \"%s\" — resolvePatchSite "
+            std::printf("SKIP: cannot validate \"%s\" -- resolvePatchSite "
                         "failed in Part A.\n",
                         e.name);
             continue;
@@ -1812,7 +1812,7 @@ int main() {
         std::printf("Cycle 6: %d/%d assertions passed\n", c6Passes, c6Total);
     }
 
-    std::printf("Cycle 6: OrlibResolver public iterator API — PASS\n");
+    std::printf("Cycle 6: OrlibResolver public iterator API -- PASS\n");
 
     // --- Summary ---
     int total = g_passCount + g_failCount;

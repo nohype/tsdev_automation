@@ -1480,7 +1480,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         std::fprintf(stdout,
-                     "    PASS: bounded control wait — pass-through, "
+                     "    PASS: bounded control wait -- pass-through, "
                      "bound expiry (cancel), EOF-as-cancel, 0=unbounded\n");
     }
 

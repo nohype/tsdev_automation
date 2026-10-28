@@ -364,7 +364,7 @@ void releaseRec(Ordinal70Fn ord70, const char* label, void* rec) {
         std::printf("    [release %s] Ordinal_70(rec=%p, 0): %s, ret=%d\n",
                     label, rec, ok ? "OK" : "SEH", r.result);
     } else {
-        std::printf("    [release %s] Ordinal_70 NOT resolved — LEAKING "
+        std::printf("    [release %s] Ordinal_70 NOT resolved -- LEAKING "
                     "rec=%p\n", label, rec);
     }
 }
@@ -474,7 +474,7 @@ void inspectEllFile(const std::string& binDir, int whType, int progId) {
 // -------------------------------------------------------------------------
 void inspectWarehouseSafeArray(const char* tag, void* whPtr) {
     if (!whPtr) {
-        std::printf("  [%s SafeArray] warehouse ptr is NULL — skipping\n",
+        std::printf("  [%s SafeArray] warehouse ptr is NULL -- skipping\n",
                     tag);
         return;
     }
@@ -502,7 +502,7 @@ void inspectWarehouseSafeArray(const char* tag, void* whPtr) {
     if (!ok) return;
     std::printf("    SafeArrayGetDim = %u\n", (unsigned)dims);
     if (dims == 0) {
-        std::printf("    [zero-dim SafeArray — no data]\n");
+        std::printf("    [zero-dim SafeArray -- no data]\n");
         return;
     }
     __try {
@@ -554,7 +554,7 @@ void inspectWarehouseSafeArray(const char* tag, void* whPtr) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         std::printf("    SafeArrayUnaccessData raised SEH\n");
     }
-    std::printf("    [SafeArray NOT destroyed — owned by warehouse]\n");
+    std::printf("    [SafeArray NOT destroyed -- owned by warehouse]\n");
 }
 
 // -------------------------------------------------------------------------
@@ -579,7 +579,7 @@ void* readCachedLinkedRecord(const char* tag, void* whPtr,
         RecFields f = readFields(cached);
         char label[96];
         std::snprintf(label, sizeof(label),
-                      "%s — cached record at warehouse+0x23d", tag);
+                      "%s -- cached record at warehouse+0x23d", tag);
         printFields(label, f, expectedProgId);
     }
     return cached;
@@ -679,7 +679,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     if (!ord70) std::fprintf(stderr, "WARN: Ordinal_70 unresolved\n");
     if (!ord28) std::fprintf(stderr, "WARN: Ordinal_28 unresolved\n");
     if (!ord85Raw) std::fprintf(stderr, "WARN: ordinal 85 (linker) "
-                                "unresolved — direct linker call skipped\n");
+                                "unresolved -- direct linker call skipped\n");
 
     // --- Step 3: insert + verify the Function. ---
     std::printf("\n[3] Insert + verify Function \"%s\"...\n",
@@ -735,7 +735,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                         "+0x29 elemCount=%d\n", sa, ec);
         }
     } else {
-        std::printf("  [Ordinal_28 not resolved — partialBuf will be "
+        std::printf("  [Ordinal_28 not resolved -- partialBuf will be "
                     "NULL]\n");
     }
 
@@ -758,7 +758,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             printFields("Linker return (errorFlag=1)", fLinker, funcProgId);
             haveLinkerRec = true;
         } else {
-            std::printf("    [linker returned NULL — no record to "
+            std::printf("    [linker returned NULL -- no record to "
                         "inspect]\n");
         }
         // Read warehouse+0x23d again — did it change?
@@ -787,7 +787,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     inspectEllFile(binDir, /*whType=*/1, funcProgId);
 
     // --- Step 9: try Ordinal_69 with param_3=0 (normal path). ---
-    std::printf("\n[9] Calling Ordinal_69(4, %d, 0) — normal path...\n",
+    std::printf("\n[9] Calling Ordinal_69(4, %d, 0) -- normal path...\n",
                 funcProgId);
     RecFields fOrd69_0 = {};
     bool haveOrd69_0 = false;
@@ -799,7 +799,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         snapWh("after Ord69(.,.,0)", whPtr);
         if (ok && r.ptr) {
             fOrd69_0 = readFields(r.ptr);
-            printFields("Ordinal_69(4, progId, 0) — normal path",
+            printFields("Ordinal_69(4, progId, 0) -- normal path",
                         fOrd69_0, funcProgId);
             haveOrd69_0 = true;
             releaseRec(ord70, "Ord69(.,.,0) rec", r.ptr);
@@ -811,7 +811,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 10: try Ordinal_69 with param_3=1 (short-circuit). ---
-    std::printf("\n[10] Calling Ordinal_69(4, %d, 1) — short-circuit "
+    std::printf("\n[10] Calling Ordinal_69(4, %d, 1) -- short-circuit "
                 "(linker path)...\n", funcProgId);
     RecFields fOrd69_1 = {};
     bool haveOrd69_1 = false;
@@ -823,7 +823,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         snapWh("after Ord69(.,.,1)", whPtr);
         if (ok && r.ptr) {
             fOrd69_1 = readFields(r.ptr);
-            printFields("Ordinal_69(4, progId, 1) — short-circuit",
+            printFields("Ordinal_69(4, progId, 1) -- short-circuit",
                         fOrd69_1, funcProgId);
             haveOrd69_1 = true;
             releaseRec(ord70, "Ord69(.,.,1) rec", r.ptr);

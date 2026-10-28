@@ -20,6 +20,15 @@
 //     implemented in src/tsdev_lib.cpp): an installed sink receives the
 //     fully formatted message INSTEAD of stderr (gated-out messages stay
 //     suppressed); tsdev_log_set_sink(nullptr) restores stderr output.
+//   - tsdev_log_open_file(path) / tsdev_log_close_file() (exported by
+//     src/tsdev_lib.h, implemented in src/tsdev_lib.cpp): the debug
+//     log-file sink. It records EVERY message at EVERY level (independent
+//     of the console level gate and of an installed TsDevLogSink -- the
+//     --pbar swap does not affect it) as one-line records on a
+//     write-through handle. Open failure returns false and never aborts.
+//   - resolveLogFilePath(flagValue, out) (file-local helper in
+//     src/tsdev_cli.cpp): the --log-file flag vs TSDEV_LOG_FILE env
+//     precedence (flag wins; env applies only when the flag is absent).
 //
 // It runs on a worker thread with a 64 MB stack only to match the project's
 // test harness convention (all tests run on a large-stack worker thread); the
@@ -59,6 +68,18 @@
 //      reaches ONLY the sink (captured stderr is empty) and a gated-out
 //      Debug marker is not delivered at all; after
 //      tsdev_log_set_sink(nullptr) the marker reaches stderr again.
+//   8. tsdev_log_open_file(): with the console at Warning the file records
+//      the FULL stream (Error + Info + Debug markers, level tags, and a
+//      multi-line message kept to one record line) while captured stderr
+//      stays exactly the Error + Warning markers.
+//   9. File sink across a console-sink swap: a message emitted while a
+//      TsDevLogSink is installed AND a message emitted after
+//      set_sink(nullptr) both reach the file; console routing is
+//      unchanged (first to the sink, second to stderr).
+//  10. tsdev_log_open_file() on a bogus path returns false (the CLI
+//      warns once and continues); logging afterwards is unaffected.
+//  11. resolveLogFilePath(): flag wins over TSDEV_LOG_FILE; env applies
+//      only when the flag is absent; empty/unset env means OFF.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -157,6 +178,32 @@ bool captureStderr(void (*fn)(void*), void* ctx, std::string& out) {
     }
     std::fclose(rf);
     DeleteFileA(tmpFile);
+    return true;
+}
+
+// makeTempLogPath: a unique log-file path under %TEMP% (ANSI + wide form).
+// GetTempFileName creates the file -- the sink appends, so a pre-existing
+// empty file is fine.
+bool makeTempLogPath(char* outPath, wchar_t* outWide) {
+    char tmpDir[MAX_PATH] = {0};
+    if (GetTempPathA(MAX_PATH, tmpDir) == 0) return false;
+    if (GetTempFileNameA(tmpDir, "tslf", 0, outPath) == 0) return false;
+    if (MultiByteToWideChar(CP_ACP, 0, outPath, -1, outWide, MAX_PATH) == 0)
+        return false;
+    return true;
+}
+
+// readWholeFile: read a file back into `out` (binary).
+bool readWholeFile(const char* path, std::string& out) {
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") != 0 || f == nullptr) return false;
+    char buf[4096];
+    size_t n;
+    out.clear();
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        out.append(buf, n);
+    }
+    std::fclose(f);
     return true;
 }
 
@@ -396,6 +443,211 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout,
                      "    PASS: log sink replaces stderr; nullptr "
                      "restores it\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 8: tsdev_log_open_file() -- the file sink records the FULL
+    //   stream at every level while the console level stays at Warning.
+    //   Console gating is unchanged: captured stderr is exactly the
+    //   Error marker + the Warning-level multi-line message.
+    // ------------------------------------------------------------------
+    {
+        char logPath[MAX_PATH] = {0};
+        wchar_t logPathW[MAX_PATH] = {0};
+        if (!makeTempLogPath(logPath, logPathW)) {
+            ec = fail("check8: temp log path failed", 80);
+            return 0;
+        }
+        if (!tsdev_log_open_file(logPathW)) {
+            DeleteFileA(logPath);
+            ec = fail("check8: tsdev_log_open_file failed", 81);
+            return 0;
+        }
+        std::string captured;
+        if (!captureStderr([](void*) {
+                emitMarkers();
+                // A message containing embedded line breaks must be kept
+                // to ONE record line (escapes, not raw newlines).
+                tsdev_log_message(TsDevLogLevel::Warning,
+                                  "TSLL-ML-A\nTSLL-ML-B\n");
+            }, nullptr, captured)) {
+            tsdev_log_close_file();
+            DeleteFileA(logPath);
+            ec = fail("check8: stderr capture setup failed", 82);
+            return 0;
+        }
+        tsdev_log_close_file();
+        std::string fileText;
+        if (!readWholeFile(logPath, fileText)) {
+            DeleteFileA(logPath);
+            ec = fail("check8: cannot read log file back", 83);
+            return 0;
+        }
+        DeleteFileA(logPath);
+        if (captured != std::string(kErrMarker) + "TSLL-ML-A\nTSLL-ML-B\n") {
+            ec = fail("check8: console gating changed by the file sink",
+                      84);
+            return 0;
+        }
+        if (fileText.find("TSLL-ERR-MARKER") == std::string::npos ||
+            fileText.find("TSLL-INFO-MARKER") == std::string::npos ||
+            fileText.find("TSLL-DBG-MARKER") == std::string::npos) {
+            ec = fail("check8: file did not record the full stream", 85);
+            return 0;
+        }
+        if (fileText.find("ERR | ") == std::string::npos ||
+            fileText.find("INF | ") == std::string::npos ||
+            fileText.find("DBG | ") == std::string::npos) {
+            ec = fail("check8: level tags missing from file records", 86);
+            return 0;
+        }
+        if (fileText.find("TSLL-ML-A\\nTSLL-ML-B") == std::string::npos) {
+            ec = fail("check8: multi-line message not kept to one record "
+                      "line", 87);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: file records the full stream at every "
+                     "level\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 9: the file sink is INDEPENDENT of tsdev_log_set_sink (the
+    //   --pbar console sink swaps/clears that hook mid-run). Emit once
+    //   with a sink installed (-> sink + file), clear it mid-capture,
+    //   emit again (-> stderr + file): the file records BOTH; console
+    //   routing is untouched.
+    // ------------------------------------------------------------------
+    {
+        char logPath[MAX_PATH] = {0};
+        wchar_t logPathW[MAX_PATH] = {0};
+        if (!makeTempLogPath(logPath, logPathW)) {
+            ec = fail("check9: temp log path failed", 90);
+            return 0;
+        }
+        if (!tsdev_log_open_file(logPathW)) {
+            DeleteFileA(logPath);
+            ec = fail("check9: tsdev_log_open_file failed", 91);
+            return 0;
+        }
+        g_sinkCapture.clear();
+        g_sinkCalls = 0;
+        tsdev_log_set_sink(&testLogSink);
+        std::string captured;
+        if (!captureStderr([](void*) {
+                tsdev_log_message(TsDevLogLevel::Warning, "TSLL-SWAP-1\n");
+                // Mid-run swap like the --pbar console sink teardown.
+                tsdev_log_set_sink(nullptr);
+                tsdev_log_message(TsDevLogLevel::Warning, "TSLL-SWAP-2\n");
+            }, nullptr, captured)) {
+            tsdev_log_set_sink(nullptr);
+            tsdev_log_close_file();
+            DeleteFileA(logPath);
+            ec = fail("check9: stderr capture setup failed", 92);
+            return 0;
+        }
+        tsdev_log_close_file();
+        std::string fileText;
+        if (!readWholeFile(logPath, fileText)) {
+            DeleteFileA(logPath);
+            ec = fail("check9: cannot read log file back", 93);
+            return 0;
+        }
+        DeleteFileA(logPath);
+        if (fileText.find("TSLL-SWAP-1") == std::string::npos ||
+            fileText.find("TSLL-SWAP-2") == std::string::npos) {
+            ec = fail("check9: file did not record across the sink swap",
+                      94);
+            return 0;
+        }
+        if (captured != std::string("TSLL-SWAP-2\n") ||
+            g_sinkCapture != std::string("TSLL-SWAP-1\n")) {
+            ec = fail("check9: console sink routing changed by the file "
+                      "sink", 95);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: file records across a console-sink swap\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 10: tsdev_log_open_file() on a bogus path returns false -- the
+    //   CLI's warn-once surface (it emits one WARNING line and continues);
+    //   logging afterwards is unaffected.
+    // ------------------------------------------------------------------
+    {
+        if (tsdev_log_open_file(L"C:\\tsdev_no_such_dir_9f3a\\x.log")) {
+            ec = fail("check10: open on a bogus path succeeded", 100);
+            return 0;
+        }
+        std::string captured;
+        if (!captureStderr([](void*) {
+                tsdev_log_message(TsDevLogLevel::Warning, kWarnMarker);
+            }, nullptr, captured) ||
+            captured != std::string(kWarnMarker)) {
+            ec = fail("check10: stderr output broken after a failed open",
+                      101);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    PASS: open failure returns false; logging "
+                     "unaffected\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 11: resolveLogFilePath -- the explicit flag wins over the
+    //   TSDEV_LOG_FILE env mirror; env applies only when the flag is
+    //   absent; empty/unset env means OFF. The real env var is snapshotted
+    //   and restored.
+    // ------------------------------------------------------------------
+    {
+        char savedEnv[8192] = {};
+        const DWORD savedLen = GetEnvironmentVariableA(
+            "TSDEV_LOG_FILE", savedEnv, sizeof(savedEnv));
+        const bool hadSaved = savedLen > 0 && savedLen < sizeof(savedEnv);
+
+        std::string out;
+        bool ok = true;
+        SetEnvironmentVariableA("TSDEV_LOG_FILE", nullptr);
+        if (resolveLogFilePath(nullptr, out)) {
+            ec = fail("check11: resolved with no flag and no env", 110);
+            ok = false;
+        } else {
+            SetEnvironmentVariableA("TSDEV_LOG_FILE", "");
+            if (resolveLogFilePath(nullptr, out)) {
+                ec = fail("check11: empty env treated as set", 111);
+                ok = false;
+            } else {
+                SetEnvironmentVariableA("TSDEV_LOG_FILE", "C:\\env.log");
+                if (!resolveLogFilePath(nullptr, out) ||
+                    out != "C:\\env.log") {
+                    ec = fail("check11: env not used when flag absent",
+                              112);
+                    ok = false;
+                } else if (!resolveLogFilePath("C:\\flag.log", out) ||
+                           out != "C:\\flag.log") {
+                    ec = fail("check11: flag did not win over env", 113);
+                    ok = false;
+                } else {
+                    SetEnvironmentVariableA("TSDEV_LOG_FILE", nullptr);
+                    if (!resolveLogFilePath("C:\\flag2.log", out) ||
+                        out != "C:\\flag2.log") {
+                        ec = fail("check11: flag ignored with env unset",
+                                  114);
+                        ok = false;
+                    }
+                }
+            }
+        }
+        // Restore the original env value regardless of the outcome.
+        if (hadSaved) {
+            SetEnvironmentVariableA("TSDEV_LOG_FILE", savedEnv);
+        } else {
+            SetEnvironmentVariableA("TSDEV_LOG_FILE", nullptr);
+        }
+        if (!ok) return 0;
+        std::fprintf(stdout,
+                     "    PASS: --log-file flag wins over TSDEV_LOG_FILE\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

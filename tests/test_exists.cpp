@@ -95,7 +95,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existing);
     if (existing > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existing);
         bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);
         std::fprintf(stdout, "    deleteEntry = %s\n",
@@ -145,7 +145,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 6: findExistPos for the EXISTING name — ASSERT ProgId > 0 ---
     std::fprintf(stdout,
-                 "\n[6] findExistPos(\"%s\", Strategy) — "
+                 "\n[6] findExistPos(\"%s\", Strategy) -- "
                  "asserting item EXISTS...\n",
                  kTestName);
     int foundProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -162,7 +162,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 7: findExistPos for a NONEXISTENT name — ASSERT returns 0 ---
     std::fprintf(stdout,
-                 "\n[7] findExistPos(\"%s\", Strategy) — "
+                 "\n[7] findExistPos(\"%s\", Strategy) -- "
                  "asserting item does NOT exist...\n",
                  kNonExistentName);
     int notFoundProgId = lib->findExistPos(kNonExistentName,

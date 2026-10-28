@@ -609,7 +609,7 @@ int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
 // ---------------------------------------------------------------------------
 int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
                              const std::string& funcName) {
-    std::printf("\n=== Case %d: Negative — Function with NO callers "
+    std::printf("\n=== Case %d: Negative -- Function with NO callers "
                 "(traversal entered, zero dependents) ===\n", caseNum);
 
     std::printf("  [1] Insert + verify leaf Function \"%s\"...\n",
@@ -679,7 +679,7 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
 // ---------------------------------------------------------------------------
 int runCategoryGateCase(TsDevLib& lib, int caseNum,
                         const std::string& indName) {
-    std::printf("\n=== Case %d: Category gate — modify Indicator "
+    std::printf("\n=== Case %d: Category gate -- modify Indicator "
                 "(category 2, NOT in 0/1/4) -> NO traversal ===\n", caseNum);
 
     std::printf("  [1] Insert + verify Indicator \"%s\"...\n",
@@ -761,7 +761,7 @@ int runCycleSafetyContractPinCase(TsDevLib& /*lib*/, int caseNum) {
     std::printf("\n=== Case %d: Cycle safety (unit-level contract pin) ===\n",
                 caseNum);
     std::printf("  NOTE: live warehouse cycle test deferred to regression "
-                "per plan §M.4 TDD step 4.\n");
+                "per plan section M.4 TDD step 4.\n");
     std::printf("  This case pins the hook signature (traversalDepth field) "
                 "at the unit level.\n");
 

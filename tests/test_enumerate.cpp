@@ -101,7 +101,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    findExistPos = %d\n", existing);
     if (existing > 0) {
         std::fprintf(stdout,
-                     "    Entry already exists (ProgId=%d) — deleting...\n",
+                     "    Entry already exists (ProgId=%d) -- deleting...\n",
                      existing);
         bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);
         std::fprintf(stdout, "    deleteEntry = %s\n",
@@ -154,7 +154,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // the item stored as "zzz_test_ci_probe" (verbatim stored name returned),
     // with exists == true and progId > 0.
     std::fprintf(stdout,
-                 "\n[6] enumerateRecords(Strategy, \"%s\") — "
+                 "\n[6] enumerateRecords(Strategy, \"%s\") -- "
                  "asserting case-insensitive MATCH...\n",
                  kTestNameUpper);
     EnumerateResult result =
@@ -201,7 +201,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // --- Step 7: enumerateRecords for a NONEXISTENT name — ASSERT not found ---
     std::fprintf(stdout,
-                 "\n[7] enumerateRecords(Strategy, \"%s\") — "
+                 "\n[7] enumerateRecords(Strategy, \"%s\") -- "
                  "asserting item does NOT exist...\n",
                  kNonExistentName);
     EnumerateResult notFound =
