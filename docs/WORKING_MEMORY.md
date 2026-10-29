@@ -70,3 +70,4 @@
 - Deferred marker text reuses "WHServer recycled; resubmit remaining items" phrasing; `reason` field is the truthful discriminator.
 
 - **v0.1.6 RELEASED (2026-10-29):** tag pushed at 8b91992; both CI runs green; release published non-draft with tsdev_automation_v0.1.6.zip; release binary verified `tsdev_cli v0.1.6` via --version. Repo still PRIVATE (update feed 404s anonymously until flip); kMinSelfUpdateVersion="0.1.6" correct.
+- **LIVE-FEED E2E VERIFIED (repo public, 2026-10-29):** real v0.1.6 bundle `update check` -> "You are up to date (v0.1.6)." exit 0 (anonymous feed works); `update v0.1.5 --yes` -> real download + digest verify + swap -> "Updated: v0.1.6 -> v0.1.5."; installed exe confirmed genuine pre-stamping v0.1.5 binary. Feature fully verified end to end.
