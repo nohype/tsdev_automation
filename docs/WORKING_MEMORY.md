@@ -68,3 +68,5 @@
 - Pre-existing HEAD warnings: C4476 format-string (tsdev_cli.cpp usage text), strncpy deprecation (dispatch_watchdog.cpp), C4244 (test_path_discovery/xutility).
 - Serve never-attached site exits 18 even after a *successful* engine run (3-broker choreography) -- by design, response frame must reflect engine outcome.
 - Deferred marker text reuses "WHServer recycled; resubmit remaining items" phrasing; `reason` field is the truthful discriminator.
+
+- **v0.1.6 RELEASED (2026-10-29):** tag pushed at 8b91992; both CI runs green; release published non-draft with tsdev_automation_v0.1.6.zip; release binary verified `tsdev_cli v0.1.6` via --version. Repo still PRIVATE (update feed 404s anonymously until flip); kMinSelfUpdateVersion="0.1.6" correct.
