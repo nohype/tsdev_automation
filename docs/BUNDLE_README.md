@@ -33,6 +33,8 @@ tsdev_cli upsert   <type> <name> <source_file>
 tsdev_cli delete   <type> <name>
 tsdev_cli exists   <type> <name> [--case-insensitive]
 tsdev_cli get-source <type> <name> [--output <file>]
+tsdev_cli update [check | <version> | latest] [--yes] [--force]
+tsdev_cli --version
 ```
 
 Global: `--json` emits a single JSON result -- for `batch-*` it instead emits the results array on stdout (empty without it) and renders stderr progress as JSON event lines; `--pbar` renders a visual progress bar on stderr that is quiet on success -- a successful mutation op's `SUCCESS:` stdout line is suppressed while query ops still print their answer (position-free, idempotent; usage error with `--json` or `serve`); `--ts-path <dir>` overrides the TradeStation install. `--backup-cache` / `--restore-cache` copy `<TS>\Program\Cache` to/from `%LOCALAPPDATA%\tsdev_cli\cache-backup` before the subcommand (or standalone; `--cache-backup-policy <prompt|overwrite|skip|abort>` governs an existing backup; not valid with `serve`). After a successful backup the backup tree is NTFS-compressed in the background (`--no-cache-compress` suppresses). `-v`/`--verbose` (position-free, repeatable) raises the stderr log level: default = warnings + errors only; one occurrence (`-v`) adds info; two or more (`-vv`) add debug internals; additional occurrences clamp at debug. `exists` is case-sensitive by default; `--case-insensitive` relaxes matching. `get-source` decrypts encrypted items automatically.
@@ -68,6 +70,54 @@ The WHServer recycle is TRI-STATE (resolved once per process from flags/env; the
 All subcommands are additionally protected by the dispatch watchdog: every orlib20 warehouse dispatch is bracketed by an in-flight marker, and a watchdog thread polls the marker once per second and aborts the process when a dispatch exceeds the bound. If WHServer.exe wedges or crashes mid-call (orlib20's synchronous COM wait never returns), the watchdog aborts truthfully instead of hanging forever: it fires when an in-flight dispatch exceeds `--dispatch-timeout-secs <N>` (default `300`, range `0..86400`, `0` disables; env mirror `TSDEV_DISPATCH_TIMEOUT_SECS`), when a `TSCrashReport.exe` runs as a child of a WHServer.exe pid during a flight (`whserver_crashed`), or when a WHServer.exe observed during the flight vanishes (`whserver_gone` -- confirmed only after 3 consecutive empty 1 s polls, since a single empty/failed process snapshot is inconclusive). The timeout is the sole guaranteed backstop -- a wedged-but-alive WHServer is detected only when the dispatch exceeds the bound; the `whserver_crashed`/`whserver_gone` checks are best-effort fast paths. On fire it prints a `tsdev_cli: WATCHDOG ABORT: warehouse dispatch '<site>' ... [reason: ...]; exiting with code 15` line on stderr and terminates itself with exit code `15`. A watchdog abort emits **no JSON frame** for the in-flight item -- `--json` consumers get no result line for it (it is the "uncertain state" item). What survives of the completed items depends on the path: under `serve` each completed request already returned its JSON frame, so those results are safe; on the direct `batch-*` path the stdout JSON array is emitted only after the whole batch finishes, so a mid-batch abort loses every item's result -- the stderr abort line plus the already-streamed per-item progress events (`BATCH SUCCESS`/`BATCH FAILED` lines, or `batch_item_completed` events under `--json`) are the only record -- and under `--pbar` successes emit no completion line, so a `--pbar` abort leaves no per-item record at all. On the serve path the watchdog kills the whole broker process; the Python client surfaces that as `TsDevWatchdogAbortError` rather than retrying the request into the same wedged server. Under `TsDevClient(use_serve=True)` the broker is spawned hidden with no stderr capture, so the `WATCHDOG ABORT` line and its site/reason detail are not observable on that path -- exit code `15`, surfaced as `TsDevWatchdogAbortError`, is the only machine-readable signal. Idle waits (e.g. the `serve` broker blocked in `ConnectNamedPipe`) carry no in-flight marker and are exempt.
 
 `tsdev_cli serve` accepts an optional `"batch":{"id","index","total"}` member on `insert`/`modify`/`delete`/`upsert` requests (exactly those members, `1 <= index <= total`; malformed tags reject the request). Tagged requests emit a per-item started/completed progress pair on the broker's stderr (human lines, or JSON events under `--json`) and append a `"progress":{"batch_id","index","total","phase":"completed"}` member to the ordinary response -- still exactly one response frame per request. A request whose batch metadata is valid still gets the progress pair and enriched response even when the operation itself fails validation or dispatch (unknown type, missing source, duplicate insert); only an invalid `batch` member produces an untagged failure. Untagged requests are unchanged.
+
+### Self-update
+
+`tsdev_cli.exe` can update itself in place -- no installer, no manual re-download:
+
+```powershell
+.\tsdev_cli.exe update check   # check only, change nothing
+.\tsdev_cli.exe update         # install the latest release ("update latest" is the same)
+.\tsdev_cli.exe update v0.1.5  # install a specific version (upgrade, reinstall, or downgrade)
+.\tsdev_cli.exe --version      # print the running version; evaluated before the elevation check
+```
+
+Typical session (administrator terminal):
+
+```text
+> .\tsdev_cli.exe update check
+Checking for updates ...
+Update available: v0.1.5 -> v0.1.6.
+Run: tsdev_cli update
+
+> .\tsdev_cli.exe update
+Checking for updates ...
+Downloading tsdev_automation_v0.1.6.zip (2.4 MB) ...
+Installing v0.1.6 ...
+Updated: v0.1.5 -> v0.1.6.
+```
+
+Windows asks for administrator permission when the command runs -- that is normal; click Yes. This is the same UAC prompt every `tsdev_cli.exe` command already shows; update adds zero extra prompts.
+
+- **Release feed:** the GitHub Releases of `nohype/tsdev_automation`. "Latest" means the highest published version number (numeric semver compare: `v0.1.10 > v0.1.9`); drafts and prereleases are ignored, and releases whose tag is not a plain `vX.Y.Z` version are invisible. This requires the GitHub repo to be PUBLIC -- while it is private, every check fails with exit `25`.
+- **Integrity:** the downloaded zip's SHA-256 is compared to the checksum published with the release asset. A release with no published checksum, or a checksum mismatch, is refused -- nothing is changed.
+- **Staged swap:** the zip is downloaded and unpacked into a staging folder next to the exe; then the existing `tsdev_cli.exe`, `tsdev_automation\`, and `README.md` are renamed to `*.old` and the new files are moved in. The `*.old` leftovers are deleted automatically after the command exits (and stale ones are cleaned up on later runs). A failure mid-install rolls the `*.old` files back.
+- **Capability-loss confirmation:** releases older than `v0.1.6` cannot update themselves. Installing one asks a yes/no confirmation first; `--yes` (or `-y`) pre-answers it. On a non-interactive console (scripts, hidden windows) the install is refused with exit `28` unless `--yes` is passed.
+- **`--force`:** overrides the development-build refusal (`0.0.0-dev`), the not-a-release-bundle refusal (folder without `tsdev_automation\` + `README.md` next to the exe), and forces a reinstall at the same version (repair). It does not pre-answer the confirmation prompt.
+- **Another `tsdev_cli.exe` running** (for example a `serve` broker) does not block the update; the broker keeps serving the OLD version until it is restarted -- a NOTE is printed in that case.
+- **Power loss mid-install:** if the tool folder is left broken -- the exe missing and `*.old` files present -- rename the `*.old` files back to their original names to recover, or unzip the release over the folder.
+
+Update exit codes (in addition to `0` success, `1` usage error, `11` not elevated):
+
+| Exit | `error.code` | Meaning |
+|---|---|---|
+| 25 | `update_check_failed` | Could not check for updates: offline/DNS, HTTP error, rate limit, unreadable feed. Try again later. |
+| 26 | `update_not_found` | The requested version is not a published release, or that release has no `tsdev_automation_<tag>.zip` bundle. |
+| 27 | `update_failed` | Download/verify/install failure: checksum mismatch, missing checksum, corrupt zip, write error. Nothing was changed, or everything was rolled back. |
+| 28 | `update_refused` | Needs explicit consent: dev build or non-bundle folder (pass `--force`), or a required confirmation on a non-interactive console (pass `--yes`). |
+| 12 | `cancelled` | You answered no (or just pressed Enter) at the confirmation prompt. |
+
+**Testing/internal overrides** (hidden from usage text; not supported end-user flags): `--update-url <base>` (env mirror `TSDEV_UPDATE_URL`, flag wins) replaces the release-feed API base URL entirely -- used by test fixtures. `--update-result-file <path>` (global flag, valid only with the `update` subcommand) atomically writes the JSON result frame to `<path>` at every point where `--json` would emit one -- used by the Python client's elevated launch and by test harnesses.
 
 ## Python wrapper (`TsDevClient`)
 
@@ -108,3 +158,22 @@ client.batch_delete(items, *, on_progress=None)   # -> list[TsDevResult]
 `items` is a `Sequence[BatchItem]`; each method returns one `TsDevResult` per item, in order. Directory batch helpers (`batch_*_dir`) are also available and also return `list[TsDevResult]`. Per-item failures are returned in the result list (not raised); manifest- or directory-level failures raise `TsDevError`.
 
 `on_progress` (keyword-only, `BatchProgressCallback | None`, all eight batch methods) is invoked synchronously in input order with a frozen `BatchProgress(index, total, result)` after each **attempted** item's actual result -- success or failure -- with the same public semantics on the serve path and the direct elevated path. Only a `False` return cancels (before the next item; `False` on the final item is ignored). On cancellation the list stays full length: unattempted items become `exit_code=12`, `error.code="cancelled"` markers that never invoke the callback. A callback exception aborts the batch and propagates unchanged; the broker stays usable. Serve requests carry `"batch":{"id","index","total"}` metadata and each response's `"progress"` member is validated before parsing (a malformed/mismatched member raises `TsDevError`, no callback). On the direct path the batch runs as one `tsdev_cli` child with `--json` + `--batch-progress-control`: manifest batches stream a framed `TSDEV_BATCH_CONTROL/1` manifest over stdin (kept open for `continue`/`cancel` decisions; no temp manifest file), directory batches keep the native argv with decisions-only stdin; the client validates the stderr progress events strictly, writes a decision after each non-final item, and returns the authoritative final stdout array (exit `1` -> `TsDevError`, NTSTATUS -> `TsDevCrashError`, timeout -> `TimeoutError`). A non-elevated `use_serve=False` session still raises `ElevationRequiredError` before launch; no-callback direct batches are unchanged.
+
+Self-update methods:
+
+```python
+client.check_update()                                       # -> TsDevResult
+client.update(version=None, *, yes=False, force=False)      # -> TsDevResult
+```
+
+`version=None` installs the latest release; `"v0.1.5"`/`"0.1.5"`/`"latest"` are passed through to the CLI (which validates them). `yes=True` forwards `--yes` (pre-answers the capability-loss confirmation -- required on the non-interactive elevated launch); `force=True` forwards `--force`. `check_update()` takes no arguments.
+
+These calls are **never routed through the serve broker** -- the broker is the binary being replaced. Both always launch `tsdev_cli --json update ...` directly, even when `use_serve=True` and a broker is running. On a non-elevated session each call costs **one UAC prompt** (elevated `runas` launch with no console, regardless of `use_serve`; a declined prompt raises `PermissionError`). On an elevated session they run as a plain subprocess.
+
+`check_update()` never raises for the "up to date"/"ahead"/"dev build" verdicts -- those are successful results. `update()` raises `CancelledError` when a confirmation is declined, and `UpdateRefusedError` when a needed confirmation could not be asked (the exception's remedy note says to re-run with `yes=True`).
+
+`TsDevResult` gains update fields (all `None`/`False`/empty on non-update calls): `.current_version`, `.latest_version`, `.update_available`, `.target_version`, `.dev_build`, `.asset` (dict or `None`), `.from_version`, `.to_version`, `.downgrade`, `.already_current`, `.files_replaced`, `.notes` (list of strings), `.rolled_back`, `.requires_force`, `.requires_confirmation`. `TsDevErrorInfo` gains `.retry_after_secs`.
+
+New exceptions (`TsDevError` subclasses, mapped by `error.code`): `UpdateCheckError` (exit 25), `UpdateNotFoundError` (26), `UpdateFailedError` (27), `UpdateRefusedError` (28), `CancelledError` (12).
+
+When `update()` succeeds while the client owns a live serve broker, `.notes` contains `broker_restart_required`: the old broker keeps running and keeps serving valid requests (the wire protocol is unchanged) until it is restarted -- `client.close()` plus a new `TsDevClient()` picks up the new version.

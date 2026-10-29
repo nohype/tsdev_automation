@@ -91,6 +91,19 @@ Each item is reported as it completes; a failed item does not stop the rest.
 
 Run `.\tsdev_cli.exe` with no arguments to print the full command list.
 
+## Updating the tool
+
+The tool updates itself -- no installer, no re-download by hand:
+
+```powershell
+.\tsdev_cli.exe update check   # is a new version out?
+.\tsdev_cli.exe update         # install the latest version
+.\tsdev_cli.exe update v0.1.4  # switch to a specific version
+```
+
+Windows asks for administrator permission as usual -- click Yes.
+To see your version: `.\tsdev_cli.exe --version`.
+
 ## If something goes wrong
 
 The tool is designed to be fail-safe: every operation is checked, and when TradeStation is in a bad state it **refuses, prints the reason, and stops** instead of risking your library. A refusal is safe -- unprocessed items simply did not run. Common cases:

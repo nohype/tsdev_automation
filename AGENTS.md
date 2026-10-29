@@ -33,6 +33,7 @@ Counts, listings, and details that could drift live in ONE authoritative locatio
 - **Exists:** given type and name, return whether it exists, its verbatim stored name, and its ProgId when found. C++ uses `--case-insensitive`; Python uses `case_insensitive=True`. Human output is `exists=N`, `stored_name=...`, `progId=N`; `--json` selects JSON. Without the flag, search is case-sensitive. Never use source comments for the stored name.
 - **Get source:** given type and name, emit raw EasyLanguage to stdout or use `--output <file_path>`; decrypt internal encrypted items automatically, as TSDev does.
 - **Upsert:** given type, name, and a source file, modify if present or insert otherwise.
+- **Update:** `tsdev_cli update` is a seventh operation but NON-TS: it never contacts the warehouse/orlib20 (self-update from GitHub releases). Exit codes `25`-`28` plus `cancelled` (`12`). The full UX/contract -- grammar, exact output, hidden testing overrides `--update-url`/`TSDEV_UPDATE_URL` and `--update-result-file` -- lives in `tmp/UPDATE_DESIGN.md`.
 
 ## Acceptance criteria
 
@@ -43,6 +44,7 @@ This six-operation acceptance target is distinct from type coverage: five of eig
 ## Stack and process
 
 - C++ with the available Visual Studio Build Tools.
+- Version stamping: the `TSDEV_VERSION_STRING` compile define carries the running version (CMake `git describe --tags --exact-match` -> `X.Y.Z` on an exact tag, else `0.0.0-dev`); `--version` is a global flag evaluated before the elevation guard; `kMinSelfUpdateVersion` = `"0.1.6"` in `src/tsdev_cli.cpp` gates which targets can still self-update.
 - Reverse engineer TSDev/orlib20 with Ghidra for static work and direct Frida CLI instrumentation for runtime work. Prefer the smallest, least-complex standalone implementation that reproduces TSDev behavior.
 
 **Process:**
