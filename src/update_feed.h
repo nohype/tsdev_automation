@@ -1,4 +1,4 @@
-// update_feed.h -- self-update release feed (design tmp/UPDATE_DESIGN.md).
+// update_feed.h -- self-update release feed (design docs/UPDATE_DESIGN.md).
 //
 // Pure-Win32 module (WinHTTP + BCrypt + nlohmann/json; no orlib20, no TS).
 // Two layers:

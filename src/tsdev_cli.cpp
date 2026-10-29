@@ -139,7 +139,7 @@
 // exception / noexcept violation), 21 = abort()/SIGABRT, 22 = CRT
 // invalid-parameter fatal, 23 = pure virtual call, 24 = UEF invoked with
 // no exception record (defensive — unreachable per the API contract).
-// 25-28 = self-update (`update` subcommand; design tmp/UPDATE_DESIGN.md):
+// 25-28 = self-update (`update` subcommand; design docs/UPDATE_DESIGN.md):
 // 25 = update_check_failed (feed unreachable / HTTP error / rate limit /
 // malformed feed), 26 = update_not_found (version or bundle asset absent),
 // 27 = update_failed (download/hash/unpack/lock/swap failure),
@@ -276,7 +276,7 @@
 #include "whserver_recycle.h" // R3: gated WHServer recycle engine
 #include "ts_install.h"     // resolveTsCacheDir for the cache phase
 #include "cache_backup.h"   // cache backup/restore engine (--backup-cache/--restore-cache)
-#include "update_feed.h"    // self-update: release feed (tmp/UPDATE_DESIGN.md)
+#include "update_feed.h"    // self-update: release feed (docs/UPDATE_DESIGN.md)
 #include "update_apply.h"   // self-update: staged-swap apply engine
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
@@ -310,7 +310,7 @@
 using namespace tsdev;
 using ordered_json = nlohmann::ordered_json;  // preserves insertion order
 
-// Build-time version stamp (self-update design tmp/UPDATE_DESIGN.md
+// Build-time version stamp (self-update design docs/UPDATE_DESIGN.md
 // Appendix B): CMake resolves `git describe --tags --exact-match HEAD` and
 // passes -DTSDEV_VERSION_STRING="X.Y.Z" (leading v stripped) on a tagged
 // HEAD; every other build (missing git, non-git source tree, untagged HEAD)
@@ -771,7 +771,7 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // the batch aborted.
         case 18: return "whserver_recycled";
         case 19: return "whserver_recycle_refused";
-        // 25-28 are the self-update codes (design tmp/UPDATE_DESIGN.md
+        // 25-28 are the self-update codes (design docs/UPDATE_DESIGN.md
         // section 5): 25 feed unreachable/error/rate-limited/malformed,
         // 26 requested release or bundle asset not found, 27 fetch/verify/
         // install failure, 28 policy refusal needing an explicit opt-in.
@@ -8421,7 +8421,7 @@ bool startUefRearmSentry() {
     return true;
 }
 
-// --- Self-update: `update` subcommand (design tmp/UPDATE_DESIGN.md) ---------
+// --- Self-update: `update` subcommand (design docs/UPDATE_DESIGN.md) ---------
 // update is a first-class subcommand but a NON-TS operation: it never loads
 // orlib20 and runs entirely on the main thread (no 64 MB worker needed --
 // the big stack exists only for the EasyLanguage compiler + window-affine
@@ -9056,7 +9056,9 @@ int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
             case ApplyError::StagingCreateFailed:
                 return fail(27,
                     "cannot write to " + wideToUtf8Cli(installDir) +
-                    " (access denied). Nothing was changed.");
+                    " (" +
+                    (ar.detail.empty() ? "access denied" : ar.detail) +
+                    "). Nothing was changed.");
             case ApplyError::LockCreateFailed:
                 return fail(27,
                     "cannot acquire the update lock; nothing was changed. "

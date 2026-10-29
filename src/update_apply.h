@@ -1,5 +1,5 @@
 // update_apply.h -- self-update staged-swap apply engine
-// (design tmp/UPDATE_DESIGN.md section 9).
+// (design docs/UPDATE_DESIGN.md section 9).
 //
 // Pure-Win32 module (kernel32 + toolhelp + tar.exe/Expand-Archive
 // subprocesses; no orlib20, no TS). Semantics:
@@ -87,11 +87,24 @@ std::wstring updateMutexName(const std::wstring& installDir);
 // tsdev_cli.exe (own PID excluded).
 bool otherTsdevCliInstancesRunning();
 
-// Full apply: reap stale artifacts -> create staging -> unpack -> verify
-// payload -> mutex -> swap -> notes -> schedule .old cleanup. `selfExePath`
-// is explicit for testability (production passes GetModuleFileNameW); the
-// running exe is never MoveFile'd across volumes and a failed rename of it
-// triggers the deferred-apply fallback.
+// Detached post-exit helpers (hidden powershell.exe, no wait handle kept).
+// They wait on `waitPid` then act: scheduleOldCleanup deletes every *.old
+// sibling in the install dir; scheduleDeferredApply copies ONLY the
+// whitelisted payload members over the install dir then removes the
+// staging dir. A dead `waitPid` makes the helper act immediately (used
+// by tests). Never fatal to the update.
+bool scheduleOldCleanup(const std::wstring& installDir,
+                        unsigned long waitPid);
+bool scheduleDeferredApply(const std::wstring& stagingDir,
+                           const std::wstring& installDir,
+                           unsigned long waitPid);
+
+// Full apply: acquire the self-concurrency mutex -> reap stale artifacts
+// -> create staging -> unpack -> verify payload -> swap -> notes ->
+// schedule .old cleanup. `selfExePath` is explicit for testability
+// (production passes GetModuleFileNameW); the running exe is never
+// MoveFile'd across volumes and a failed rename of it triggers the
+// deferred-apply fallback.
 ApplyResult applyUpdate(const std::wstring& installDir,
                         const std::wstring& zipPath,
                         const std::wstring& selfExePath);

@@ -1,7 +1,7 @@
 // test_update_feed.cpp
 //
 // Unit test for the self-update release-feed module src/update_feed.cpp
-// (design tmp/UPDATE_DESIGN.md): the PURE parts only -- semver
+// (design docs/UPDATE_DESIGN.md): the PURE parts only -- semver
 // parse/compare, releases-JSON parse + skip rules, selectLatest /
 // findRelease / pickBundleAsset / publishedSemverRange, sha256BytesHex /
 // sha256FileHex on known content, and HttpResult error-kind mapping
@@ -20,7 +20,10 @@
 //      invalid-sorts-below.
 //   3. parseReleasesJson: draft/prerelease/non-semver tags skipped;
 //      digest field parsed (has_digest, prefix stripped); malformed JSON
-//      and non-array JSON rejected.
+//      and non-array JSON rejected; wrong-typed fields (e.g.
+//      "tag_name":123, "size":"abc") reject the whole feed WITHOUT an
+//      unhandled nlohmann exception (review regression: the type_error
+//      used to escape and kill the process).
 //   4. selectLatest / findRelease / pickBundleAsset /
 //      publishedSemverRange incl. draft + non-semver exclusion and
 //      v-prefix-insensitive lookup.
@@ -240,6 +243,36 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::fprintf(stdout, "    parseReleasesJson malformed-input rules "
                      "PASS\n");
+    }
+    // Wrong-typed fields must reject the feed WITHOUT throwing out of the
+    // parser (whole-parse failure -> FeedError::MalformedJson -> exit 25).
+    {
+        std::vector<ReleaseInfo> tmp;
+        const char* kBadTypes = R"JSON([
+          { "tag_name": 123, "draft": "yes", "prerelease": 1,
+            "assets": [ { "name": 7, "size": "abc" } ] } ])JSON";
+        if (parseReleasesJson(kBadTypes, tmp)) {
+            ec = fail("check3: wrong-typed release fields accepted", 81);
+            return 0;
+        }
+        // A wrong-typed "size" inside an otherwise-valid digest-bearing
+        // entry must also fail the parse (no partial release leaks).
+        const char* kBadSize = R"JSON([
+          { "tag_name": "v1.2.3", "draft": false, "prerelease": false,
+            "assets": [ { "name": "tsdev_automation_v1.2.3.zip",
+              "browser_download_url": "https://example.test/v123.zip",
+              "size": "abc",
+              "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333" } ] } ])JSON";
+        if (parseReleasesJson(kBadSize, tmp)) {
+            ec = fail("check3: wrong-typed asset size accepted", 82);
+            return 0;
+        }
+        if (!tmp.empty()) {
+            ec = fail("check3: rejected feed must leave no releases", 83);
+            return 0;
+        }
+        std::fprintf(stdout, "    parseReleasesJson wrong-typed-field "
+                     "rejection PASS\n");
     }
 
     // ------------------------------------------------------------------

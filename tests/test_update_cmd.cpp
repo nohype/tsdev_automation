@@ -1,7 +1,7 @@
 // test_update_cmd.cpp
 //
 // Unit test for the self-update CLI decision surface in src/tsdev_cli.cpp
-// (design tmp/UPDATE_DESIGN.md):
+// (design docs/UPDATE_DESIGN.md):
 //   - parseUpdateArgs(): the update-local flag grammar -- 0-or-1 positional
 //     (check | latest | <semver>), --yes/-y and --force in any position,
 //     --update-url non-repeatable, >1 positional/unknown token -> !ok.

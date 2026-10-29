@@ -1,7 +1,7 @@
 // test_update_apply.cpp
 //
 // Unit test for the self-update apply engine src/update_apply.cpp
-// (design tmp/UPDATE_DESIGN.md section 9). Exercises the REAL staging /
+// (design docs/UPDATE_DESIGN.md section 9). Exercises the REAL staging /
 // unpack / completeness-gate / swap / rollback / mutex-name code paths on
 // REAL temp directories under %TEMP%. No network: the test builds its own
 // bundle zips with the OS tar.exe (bsdtar; allowed in-test) from a fake
@@ -27,7 +27,15 @@
 //   6. Deferred apply: a lock-held running exe triggers the
 //      deferred_apply note and keeps the staged payload.
 //   7. Renamed exe: a non-tsdev_cli.exe selfExePath produces the
-//      renamed_exe note.
+//      renamed_exe note and the running binary is renamed aside to
+//      <basename>.exe.old (9.12).
+//   8. Detached .old cleanup helper REALLY EXECUTES (regression for the
+//      DETACHED_PROCESS bug: powershell exited 0 without running
+//      -Command, so the helper was a silent no-op). A dead wait-PID
+//      makes the helper act at once; the .old set must actually vanish.
+//   9. Deferred-apply helper copies ONLY the whitelisted members (a
+//      stray staged file must NOT land in the install dir) and removes
+//      the staging dir.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -44,6 +52,8 @@ using tsdev::update::ApplyResult;
 using tsdev::update::applyUpdate;
 using tsdev::update::otherTsdevCliInstancesRunning;
 using tsdev::update::resolveUnpacker;
+using tsdev::update::scheduleDeferredApply;
+using tsdev::update::scheduleOldCleanup;
 using tsdev::update::Unpacker;
 using tsdev::update::updateMutexName;
 using tsdev::update::updateStagingDir;
@@ -137,6 +147,40 @@ void installOldVersion(const std::wstring& install) {
     writeFileW(install + L"\\tsdev_cli.exe", "MZ-OLD-EXE");
     writeFileW(install + L"\\tsdev_automation\\__init__.py", "# old pkg");
     writeFileW(install + L"\\README.md", "# old readme");
+}
+
+// Return a PID that is guaranteed dead: spawn `cmd.exe /c exit`, wait for
+// it, reuse its PID (PID reuse within a test run is a non-issue).
+DWORD deadPid() {
+    std::wstring cmd = L"cmd.exe /c exit";
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        return 0;  // PID 0 (System Idle) is never Wait-Process-blocked
+    }
+    WaitForSingleObject(pi.hProcess, 30000);
+    const DWORD pid = pi.dwProcessId;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return pid;
+}
+
+// Poll `path` for absence up to `ms` (detached helpers are out-of-process;
+// their work is only observable by its filesystem effect).
+bool waitGone(const std::wstring& path, DWORD ms) {
+    const DWORD deadline = GetTickCount() + ms;
+    do {
+        std::error_code ec;
+        if (!fs::exists(fs::path(path), ec)) return true;
+        Sleep(200);
+    } while (GetTickCount() < deadline);
+    return false;
 }
 
 struct TestState {
@@ -409,6 +453,9 @@ DWORD WINAPI runTest(LPVOID param) {
         buildPayloadDir(payload, true, "new");
         const std::wstring zip = makeZip(payload, install + L"\\b.zip");
         if (zip.empty()) { ec = fail("check7: zip build failed", 70); return 0; }
+        // The renamed binary must exist in the install dir for the 9.12
+        // rename-aside to apply.
+        writeFileW(install + L"\\mytool.exe", "MZ-MYTOOL-OLD");
         const ApplyResult r = applyUpdate(install, zip,
                                           install + L"\\mytool.exe");
         if (r.error != ApplyError::None) {
@@ -421,9 +468,100 @@ DWORD WINAPI runTest(LPVOID param) {
         if (!sawRenamed) {
             ec = fail("check7: renamed_exe note missing", 72); return 0;
         }
-        std::fprintf(stdout, "    check7 renamed-exe note PASS\n");
+        // 9.12: the renamed binary becomes <basename>.exe.old so the .old
+        // cleanup helper removes it; a fresh tsdev_cli.exe is installed.
+        if (fs::exists(install + L"\\mytool.exe") ||
+            readFileW(install + L"\\mytool.exe.old") != "MZ-MYTOOL-OLD") {
+            ec = fail("check7: renamed exe did not become mytool.exe.old",
+                      73); return 0;
+        }
+        if (readFileW(install + L"\\tsdev_cli.exe") != "MZ-FAKE-EXE-new") {
+            ec = fail("check7: fresh tsdev_cli.exe not installed", 74);
+            return 0;
+        }
+        std::fprintf(stdout, "    check7 renamed-exe note + .old rename "
+                     "PASS\n");
         fs::remove_all(zip);
         fs::remove_all(payload);
+    }
+
+    // ------------------------------------------------------------------
+    // Check 8: the detached .old cleanup helper REALLY EXECUTES. The swap
+    // leaves a live .old set; scheduleOldCleanup is invoked with a dead
+    // wait-PID so the helper acts at once. The .old files must actually
+    // vanish within ~15 s -- the only observable proof the detached
+    // powershell command ran (the DETACHED_PROCESS bug regression test).
+    // ------------------------------------------------------------------
+    {
+        const std::wstring install = makeTempDir(L"c8i");
+        const std::wstring payload = makeTempDir(L"c8p");
+        installOldVersion(install);
+        buildPayloadDir(payload, true, "new");
+        const std::wstring zip = makeZip(payload, install + L"\\b.zip");
+        if (zip.empty()) { ec = fail("check8: zip build failed", 80); return 0; }
+        const ApplyResult r = applyUpdate(install, zip, selfFake);
+        if (r.error != ApplyError::None) {
+            ec = fail("check8: apply failed", 81); return 0;
+        }
+        // Sanity: the swap's own .old set exists before the helper runs.
+        if (!fs::exists(install + L"\\tsdev_cli.exe.old")) {
+            ec = fail("check8: .old set missing before helper", 82);
+            return 0;
+        }
+        if (!scheduleOldCleanup(install, deadPid())) {
+            ec = fail("check8: cleanup helper did not spawn", 83); return 0;
+        }
+        if (!waitGone(install + L"\\tsdev_cli.exe.old", 15000) ||
+            !waitGone(install + L"\\README.md.old", 15000) ||
+            !waitGone(install + L"\\tsdev_automation.old", 15000)) {
+            ec = fail("check8: detached helper did NOT remove .old set "
+                      "(command never ran)", 84);
+            return 0;
+        }
+        std::fprintf(stdout, "    check8 detached .old cleanup executes "
+                     "PASS\n");
+        fs::remove_all(zip);
+        fs::remove_all(payload);
+        fs::remove_all(install);
+    }
+
+    // ------------------------------------------------------------------
+    // Check 9: the deferred-apply helper copies ONLY the whitelisted
+    // members into the install dir (no wildcard staging copy), then
+    // removes the staging dir.
+    // ------------------------------------------------------------------
+    {
+        const std::wstring install = makeTempDir(L"c9i");
+        const std::wstring staging = install + L"\\.tsdev_update_tmp_c9";
+        installOldVersion(install);
+        buildPayloadDir(staging, true, "c9");
+        // A stray non-whitelisted entry that a wildcard copy would drag in.
+        writeFileW(staging + L"\\stray.exe", "MZ-STRAY");
+        const DWORD pid = deadPid();
+        if (!scheduleDeferredApply(staging, install, pid)) {
+            ec = fail("check9: deferred helper did not spawn", 90);
+            return 0;
+        }
+        // Staging removal is the helper's last step: once it is gone the
+        // copies have completed.
+        if (!waitGone(staging, 20000)) {
+            ec = fail("check9: staging dir not consumed by helper", 91);
+            return 0;
+        }
+        if (readFileW(install + L"\\tsdev_cli.exe") != "MZ-FAKE-EXE-c9" ||
+            readFileW(install + L"\\README.md") != "# readme c9" ||
+            readFileW(install + L"\\tsdev_automation\\client.py") !=
+                "# client c9") {
+            ec = fail("check9: whitelisted members not copied", 92);
+            return 0;
+        }
+        if (fs::exists(install + L"\\stray.exe")) {
+            ec = fail("check9: non-whitelisted staged file was copied",
+                      93); return 0;
+        }
+        std::fprintf(stdout, "    check9 deferred-apply whitelist copy "
+                     "PASS\n");
+        fs::remove_all(install);
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

@@ -27,7 +27,7 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 
 # --- Build-time version stamp ------------------------------------------------
-# Self-update design (tmp/UPDATE_DESIGN.md Appendix B): resolve
+# Self-update design (docs/UPDATE_DESIGN.md Appendix B): resolve
 # `git describe --tags --exact-match HEAD` at configure time. On a tag vX.Y.Z
 # the stamp is X.Y.Z (leading v stripped); every other case (missing git,
 # non-git source tree, untagged HEAD) stamps 0.0.0-dev. Applied to both CLI
@@ -757,7 +757,7 @@ add_dependencies(test_version_stamp siggen)
 
 # --- Self-update release-feed unit test --------------------------------------
 # Pure unit test for src/update_feed.cpp (self-update design
-# tmp/UPDATE_DESIGN.md): semver parse/compare, releases-JSON parse + skip
+# docs/UPDATE_DESIGN.md): semver parse/compare, releases-JSON parse + skip
 # rules, selectLatest/findRelease/pickBundleAsset/publishedSemverRange,
 # sha256BytesHex/sha256FileHex on known content, and the error-classification
 # surface. The module .cpp is compiled directly into the test (same pattern

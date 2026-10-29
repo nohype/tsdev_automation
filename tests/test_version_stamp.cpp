@@ -1,7 +1,7 @@
 // test_version_stamp.cpp
 //
 // Unit test for the version-stamp helpers in src/tsdev_cli.cpp (self-update
-// design tmp/UPDATE_DESIGN.md section 6 + Appendix B):
+// design docs/UPDATE_DESIGN.md section 6 + Appendix B):
 //   - kTsdevCliVersion: the build-time stamp (TSDEV_VERSION_STRING with the
 //     #ifndef "0.0.0-dev" fallback). This test compiles WITHOUT the define,
 //     so the fallback path itself is what is exercised here.

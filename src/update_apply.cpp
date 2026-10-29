@@ -1,5 +1,5 @@
 // update_apply.cpp -- self-update staged-swap apply engine (see
-// update_apply.h and design tmp/UPDATE_DESIGN.md section 9).
+// update_apply.h and design docs/UPDATE_DESIGN.md section 9).
 
 #include "update_apply.h"
 #include "update_feed.h"   // sha256BytesHex for the mutex name
@@ -69,8 +69,10 @@ int runAndWait(std::wstring cmdLine) {
     return static_cast<int>(code);
 }
 
-// Spawn a fully detached hidden process (no wait). Used for the cleanup
-// helpers that outlive this process.
+// Spawn a hidden child we do not wait on. Used for the cleanup helpers
+// that outlive this process. CREATE_NO_WINDOW only: DETACHED_PROCESS
+// hands powershell.exe null std handles, under which PS 5.1 exits 0
+// without running -Command (the helper would be a silent no-op).
 bool spawnDetached(std::wstring cmdLine) {
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
@@ -80,8 +82,7 @@ bool spawnDetached(std::wstring cmdLine) {
     std::vector<wchar_t> buf(cmdLine.begin(), cmdLine.end());
     buf.push_back(L'\0');
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr,
-                        nullptr, &si, &pi)) {
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         return false;
     }
     CloseHandle(pi.hProcess);
@@ -140,6 +141,8 @@ bool removePath(const std::wstring& p) {
     return !ec;
 }
 
+} // namespace
+
 // Detached helper that waits for `waitPid` to exit then deletes every
 // *.old sibling in the install dir. Never fatal to the update.
 bool scheduleOldCleanup(const std::wstring& installDir, DWORD waitPid) {
@@ -154,26 +157,28 @@ bool scheduleOldCleanup(const std::wstring& installDir, DWORD waitPid) {
 }
 
 // Deferred-apply fallback: leave the staged payload in place and spawn a
-// detached helper that waits for this PID then copies the staged members
-// over the install dir (the running exe could not be renamed).
+// detached helper that waits for this PID then copies ONLY the whitelisted
+// staged members over the install dir (same whitelist as the swap; a
+// wildcard copy would drag stray staging entries into the install).
 bool scheduleDeferredApply(const std::wstring& stagingDir,
                            const std::wstring& installDir, DWORD waitPid) {
     std::wstring cmd = std::wstring(kPowerShellExe) +
         L" -NoProfile -NonInteractive -Command \"Wait-Process -Id " +
         std::to_wstring(waitPid) +
-        L" -Timeout 600 -ErrorAction SilentlyContinue; "
-        L"Copy-Item -Path " + psQuote(stagingDir + L"\\*") +
-        L" -Destination " + psQuote(installDir) +
-        L" -Recurse -Force -ErrorAction SilentlyContinue; "
-        L"Remove-Item -LiteralPath " + psQuote(stagingDir) +
+        L" -Timeout 600 -ErrorAction SilentlyContinue; ";
+    for (const PayloadMember& m : kMembers) {
+        cmd += L"Copy-Item -LiteralPath " +
+               psQuote(stagingDir + L"\\" + m.name) +
+               L" -Destination " + psQuote(installDir) +
+               L" -Recurse -Force -ErrorAction SilentlyContinue; ";
+    }
+    cmd += L"Remove-Item -LiteralPath " + psQuote(stagingDir) +
         L" -Recurse -Force -ErrorAction SilentlyContinue; "
         L"Get-ChildItem -LiteralPath " + psQuote(installDir) +
         L" -Filter *.old | Remove-Item -Recurse -Force "
         L"-ErrorAction SilentlyContinue\"";
     return spawnDetached(cmd);
 }
-
-} // namespace
 
 Unpacker resolveUnpacker() {
     if (GetFileAttributesW(kTarExe) != INVALID_FILE_ATTRIBUTES) {
@@ -303,6 +308,28 @@ ApplyResult applyUpdate(const std::wstring& installDir,
                         const std::wstring& selfExePath) {
     ApplyResult res;
 
+    // Self-concurrency mutex (fail closed). Acquired BEFORE any mutable
+    // step -- the reap below, staging, unpack, swap and cleanup scheduling
+    // all run inside the guard so a second updater cannot delete this
+    // run's live staging or in-flight .old set. In-mutex duration is
+    // seconds, under the 60 s wait cap.
+    const std::wstring mutexName = updateMutexName(installDir);
+    HANDLE hMutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+    if (!hMutex) {
+        res.error = ApplyError::LockCreateFailed;
+        res.detail = "CreateMutexW error " + std::to_string(GetLastError());
+        return res;
+    }
+    struct MutexGuard {
+        HANDLE h;
+        ~MutexGuard() { CloseHandle(h); }
+    } mg{hMutex};
+    const DWORD wait = WaitForSingleObject(hMutex, 60 * 1000);
+    if (wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED) {
+        res.error = ApplyError::LockHeld;
+        return res;
+    }
+
     // Best-effort reap of leftovers from prior runs (apply runs only).
     // The just-downloaded zip matches the .tsdev_update_* glob, so it is
     // passed as the explicit exclusion.
@@ -344,29 +371,43 @@ ApplyResult applyUpdate(const std::wstring& installDir,
         return res;
     }
 
-    // Self-concurrency mutex (fail closed). A second updater waits up to
-    // 60 s then reports the held lock.
-    const std::wstring mutexName = updateMutexName(installDir);
-    HANDLE hMutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
-    if (!hMutex) {
-        res.error = ApplyError::LockCreateFailed;
-        res.detail = "CreateMutexW error " + std::to_string(GetLastError());
-        return res;
-    }
-    struct MutexGuard {
-        HANDLE h;
-        ~MutexGuard() { CloseHandle(h); }
-    } mg{hMutex};
-    const DWORD wait = WaitForSingleObject(hMutex, 60 * 1000);
-    if (wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED) {
-        res.error = ApplyError::LockHeld;
-        return res;
-    }
-
     // --- Staged swap ------------------------------------------------------
     const std::wstring selfBase = basenameW(selfExePath);
     const bool selfIsTsdevCli = iequalsA(selfBase, L"tsdev_cli.exe");
     if (!selfIsTsdevCli) res.notes.push_back("renamed_exe");
+
+    // Renamed running exe (9.12): the swap below installs a fresh
+    // tsdev_cli.exe, so rename this binary aside to <name>.exe.old BEFORE
+    // member 0 moves -- the .old cleanup helper then deletes it like the
+    // rest of the set. Failure is non-fatal (the note above already
+    // tells the user a fresh exe was installed).
+    bool selfHadOld = false;
+    const std::wstring selfOld = selfExePath + L".old";
+    // Only when the renamed binary actually lives in the install dir.
+    bool selfInInstallDir = false;
+    if (!selfIsTsdevCli) {
+        std::error_code ec;
+        const fs::path parent =
+            fs::weakly_canonical(fs::path(selfExePath).parent_path(), ec);
+        const fs::path inst =
+            fs::weakly_canonical(fs::path(installDir), ec);
+        selfInInstallDir = !ec && parent == inst;
+    }
+    if (!selfIsTsdevCli && selfInInstallDir) {
+        std::error_code ec;
+        if (fs::exists(fs::path(selfOld), ec) && !removePath(selfOld)) {
+            // A locked stale .old blocks the rename; treat as swap failure
+            // (no member has moved yet, nothing to roll back).
+            res.error = ApplyError::SwapFailedRollbackOk;
+            res.detail = "cannot remove stale .old for " +
+                         wideToUtf8(selfBase);
+            return res;
+        }
+        if (fs::exists(fs::path(selfExePath), ec) &&
+            MoveFileW(selfExePath.c_str(), selfOld.c_str())) {
+            selfHadOld = true;
+        }
+    }
 
     // Per-member swap state for rollback: hadOld = an existing member was
     // renamed aside to <name>.old; movedIn = the staged member was moved
@@ -431,6 +472,11 @@ ApplyResult applyUpdate(const std::wstring& installDir,
             if (hadOld[i] && !MoveFileW(old.c_str(), cur.c_str())) {
                 restoreFailed = true;
             }
+        }
+        // The renamed exe (9.12) restores like any other .old member.
+        if (selfHadOld &&
+            !MoveFileW(selfOld.c_str(), selfExePath.c_str())) {
+            restoreFailed = true;
         }
         res.rolledBack = true;
         res.filesReplaced = 0;

@@ -71,37 +71,45 @@ bool parseReleasesJson(const std::string& jsonText,
     if (!j.is_array()) return false;
     for (const auto& rel : j) {
         if (!rel.is_object()) return false;
-        const bool draft = rel.value("draft", false);
-        const bool prerelease = rel.value("prerelease", false);
-        if (draft || prerelease) continue;
-        const std::string tag = rel.value("tag_name", "");
-        const Semver ver = parseSemver(tag);
-        if (!ver.valid) continue;  // non-semver tags are invisible
-        ReleaseInfo info;
-        info.tag = tag;
-        info.version = ver;
-        auto ait = rel.find("assets");
-        if (ait != rel.end() && ait->is_array()) {
-            for (const auto& a : *ait) {
-                if (!a.is_object()) continue;
-                AssetInfo asset;
-                asset.name = a.value("name", "");
-                asset.url  = a.value("browser_download_url", "");
-                asset.size = a.value("size", (uint64_t)0);
-                auto dit = a.find("digest");
-                if (dit != a.end() && dit->is_string()) {
-                    const std::string d = dit->get<std::string>();
-                    const std::string prefix = "sha256:";
-                    if (d.rfind(prefix, 0) == 0 &&
-                        d.size() == prefix.size() + 64) {
-                        asset.sha256 = d.substr(prefix.size());
-                        asset.has_digest = true;
+        // Wrong-typed fields (e.g. "tag_name": 123, "size": "abc") make
+        // rel.value()/a.value() throw nlohmann::json::type_error. An
+        // untrusted feed must never crash the process, so any type error
+        // fails the whole parse -> FeedError::MalformedJson -> exit 25.
+        try {
+            const bool draft = rel.value("draft", false);
+            const bool prerelease = rel.value("prerelease", false);
+            if (draft || prerelease) continue;
+            const std::string tag = rel.value("tag_name", "");
+            const Semver ver = parseSemver(tag);
+            if (!ver.valid) continue;  // non-semver tags are invisible
+            ReleaseInfo info;
+            info.tag = tag;
+            info.version = ver;
+            auto ait = rel.find("assets");
+            if (ait != rel.end() && ait->is_array()) {
+                for (const auto& a : *ait) {
+                    if (!a.is_object()) continue;
+                    AssetInfo asset;
+                    asset.name = a.value("name", "");
+                    asset.url  = a.value("browser_download_url", "");
+                    asset.size = a.value("size", (uint64_t)0);
+                    auto dit = a.find("digest");
+                    if (dit != a.end() && dit->is_string()) {
+                        const std::string d = dit->get<std::string>();
+                        const std::string prefix = "sha256:";
+                        if (d.rfind(prefix, 0) == 0 &&
+                            d.size() == prefix.size() + 64) {
+                            asset.sha256 = d.substr(prefix.size());
+                            asset.has_digest = true;
+                        }
                     }
+                    info.assets.push_back(std::move(asset));
                 }
-                info.assets.push_back(std::move(asset));
             }
+            out.push_back(std::move(info));
+        } catch (const nlohmann::json::exception&) {
+            return false;
         }
-        out.push_back(std::move(info));
     }
     return true;
 }
