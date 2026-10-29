@@ -139,6 +139,12 @@
 // exception / noexcept violation), 21 = abort()/SIGABRT, 22 = CRT
 // invalid-parameter fatal, 23 = pure virtual call, 24 = UEF invoked with
 // no exception record (defensive — unreachable per the API contract).
+// 25-28 = self-update (`update` subcommand; design tmp/UPDATE_DESIGN.md):
+// 25 = update_check_failed (feed unreachable / HTTP error / rate limit /
+// malformed feed), 26 = update_not_found (version or bundle asset absent),
+// 27 = update_failed (download/hash/unpack/lock/swap failure),
+// 28 = update_refused (dev build / non-bundle dir without --force, or a
+// required confirmation on a non-interactive channel without --yes).
 // VEH/UEF deaths otherwise exit with the SEH exception code itself
 // (0xC...), never via WER/TSCrashReport and never through ExitProcess's
 // DLL detach.
@@ -270,6 +276,8 @@
 #include "whserver_recycle.h" // R3: gated WHServer recycle engine
 #include "ts_install.h"     // resolveTsCacheDir for the cache phase
 #include "cache_backup.h"   // cache backup/restore engine (--backup-cache/--restore-cache)
+#include "update_feed.h"    // self-update: release feed (tmp/UPDATE_DESIGN.md)
+#include "update_apply.h"   // self-update: staged-swap apply engine
 
 #include <nlohmann/json.hpp>  // TVS-D.2: --json structured output
 
@@ -454,6 +462,7 @@ void printUsage() {
         "  tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
         "  tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]\n"
         "  tsdev_cli [--json] --version\n"
+        "  tsdev_cli [--json] [--pbar] update [check | <version> | latest] [--yes] [--force]\n"
         "  <type>         strategy | function | indicator | tradingapp | showme (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
@@ -675,6 +684,7 @@ void printUsage() {
 // message (errorMessage), distinct from the prefixed humanStderr line.
 struct CliResult {
     std::string op;
+    std::string action;   // "update" discriminator: "check" / "apply"
     std::string typeStr;
     std::string name;
     bool        success = false;
@@ -704,6 +714,9 @@ struct CliResult {
     // --json cache payload (the "cache" member object). Null/empty for all
     // other ops (no serialization change).
     ordered_json extraPayload;
+    // Extra members merged into the failure error object (update's
+    // retry_after_secs etc.). Null/empty for all ops that do not set it.
+    ordered_json extraErrorFields;
     // §5 teardown flag (whserver_recycle.h close_failed class): true when
     // the op ended while the warehouse session may still be open with
     // UNCERTAIN teardown state — i.e. a closeWarehouse that this op owned
@@ -758,6 +771,14 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // the batch aborted.
         case 18: return "whserver_recycled";
         case 19: return "whserver_recycle_refused";
+        // 25-28 are the self-update codes (design tmp/UPDATE_DESIGN.md
+        // section 5): 25 feed unreachable/error/rate-limited/malformed,
+        // 26 requested release or bundle asset not found, 27 fetch/verify/
+        // install failure, 28 policy refusal needing an explicit opt-in.
+        case 25: return "update_check_failed";
+        case 26: return "update_not_found";
+        case 27: return "update_failed";
+        case 28: return "update_refused";
         default: return "unknown_error";
     }
 }
@@ -779,6 +800,7 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
     // op/type/name are included only when known (omitted for usage errors
     // that occur before the subcommand/args are resolved).
     if (!r.op.empty())      j["op"] = r.op;
+    if (!r.action.empty())  j["action"] = r.action;  // update check/apply
     if (!r.typeStr.empty()) j["type"] = r.typeStr;
     if (!r.name.empty())    j["name"] = r.name;
     j["success"]    = r.success;
@@ -819,9 +841,26 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
             }
         }
     } else {
+        // Failure-side extra top-level payload (update frames carry
+        // current_version / from_version / to_version / rolled_back and
+        // the requires_* markers on refusals): merged before the error
+        // object, mirroring the success-side merge.
+        if (r.extraPayload.is_object()) {
+            for (auto it = r.extraPayload.begin();
+                 it != r.extraPayload.end(); ++it) {
+                j[it.key()] = it.value();
+            }
+        }
         ordered_json err;
         err["code"]    = errorCodeString(r.exitCode, r.op);
         err["message"] = r.errorMessage;
+        // Extra error-object members (update's retry_after_secs).
+        if (r.extraErrorFields.is_object()) {
+            for (auto it = r.extraErrorFields.begin();
+                 it != r.extraErrorFields.end(); ++it) {
+                err[it.key()] = it.value();
+            }
+        }
         // exit 5 (insert): include the existing ProgId.
         if (r.exitCode == 5 && r.op == "insert" && r.existingProgId > 0) {
             err["existing_prog_id"] = r.existingProgId;
@@ -1326,6 +1365,51 @@ void pbarLogSink(const char* s) {
     std::abort();
 }
 
+// --- --update-result-file ---------------------------------------------------
+// Hidden GLOBAL flag (self-update design §8): recognized and consumed by the
+// global flag pre-scan, allowed only with the `update` subcommand (validated
+// post-elevation-guard). At every point where a JSON result frame would be
+// emitted under --json, the same object is ALSO written to <path>
+// atomically (.tmp + rename, the --serve-pipe-file precedent) -- whether or
+// not --json was passed. Frame-less exits (watchdog kill, SEH) write
+// nothing. A write failure warns on stderr and never changes the exit code.
+// Exists for the Python client's elevated runas launch (which cannot
+// capture child stdout) and doubles as a test hook.
+std::string g_updateResultFilePath;
+
+// Serialize `j` to the result file atomically. All failures funnel to the
+// one WARNING line; callers never inspect the result.
+void writeUpdateResultJson(const ordered_json& j) {
+    if (g_updateResultFilePath.empty()) return;
+    try {
+        const std::string s =
+            j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        const std::string tmp = g_updateResultFilePath + ".tmp";
+        if (!writeFile(tmp, s + "\n") ||
+            !MoveFileExA(tmp.c_str(), g_updateResultFilePath.c_str(),
+                         MOVEFILE_REPLACE_EXISTING)) {
+            std::fprintf(stderr,
+                "tsdev_cli: WARNING could not write update result file: "
+                "error %lu\n", GetLastError());
+            std::fflush(stderr);
+        }
+    } catch (...) {
+        std::fprintf(stderr,
+            "tsdev_cli: WARNING could not write update result file: "
+            "serialization failure\n");
+        std::fflush(stderr);
+    }
+}
+
+// CliResult convenience wrapper: writes the exact object emitOutput() would
+// emit under --json. Called inside emitOutput (covers every emitOutput call
+// site in both modes) and explicitly at the few result paths that bypass
+// emitOutput in human mode.
+void writeUpdateResultFrame(const CliResult& r) {
+    if (g_updateResultFilePath.empty()) return;
+    writeUpdateResultJson(cliResultToJson(r));
+}
+
 // emitOutput renders a CliResult in either human-readable or JSON form.
 //
 // Human mode (jsonMode == false): writes humanStdout to stdout and
@@ -1341,6 +1425,9 @@ void pbarLogSink(const char* s) {
 // performs all escaping (backslashes in Windows paths, quotes, newlines)
 // automatically.
 void emitOutput(const CliResult& r, bool jsonMode) {
+    // --update-result-file: every frame-emission point mirrors the JSON
+    // object into the result file (independent of --json).
+    writeUpdateResultFrame(r);
     try {
     if (!jsonMode) {
         if (!r.humanStdout.empty()) {
@@ -8334,6 +8421,727 @@ bool startUefRearmSentry() {
     return true;
 }
 
+// --- Self-update: `update` subcommand (design tmp/UPDATE_DESIGN.md) ---------
+// update is a first-class subcommand but a NON-TS operation: it never loads
+// orlib20 and runs entirely on the main thread (no 64 MB worker needed --
+// the big stack exists only for the EasyLanguage compiler + window-affine
+// EDIT control).
+
+// First release tag that ships the self-update feature (Appendix B):
+// capability gates the TARGET, not the running binary -- a target below
+// this version can never update itself again and triggers the one
+// interactive confirmation.
+constexpr char kMinSelfUpdateVersion[] = "0.1.6";
+
+// Default GitHub REST API base; full replacement via --update-url /
+// TSDEV_UPDATE_URL (flag wins; the GitHub releases-array JSON shape is
+// still expected).
+constexpr char kUpdateApiBaseDefault[] =
+    "https://api.github.com/repos/nohype/tsdev_automation";
+
+// Parsed update-local argument list (inside the dispatch, the
+// --case-insensitive-in-exists precedent). kind Latest covers both bare
+// `update` and `update latest`.
+struct UpdateArgs {
+    enum class Kind { Latest, Check, Version } kind = Kind::Latest;
+    std::string version;      // raw <version> token (Kind::Version)
+    bool yes = false;         // --yes / -y
+    bool force = false;       // --force
+    std::string updateUrl;    // --update-url <base> (hidden)
+    bool ok = false;
+    std::string errToken;     // offending token for the usage error
+};
+
+// Grammar: 0-or-1 positional (check | latest | <semver>); --yes/-y and
+// --force presence flags legal in any position; --update-url non-repeatable
+// value flag. >1 positional or an unknown token -> !ok with errToken set.
+UpdateArgs parseUpdateArgs(const std::vector<std::string>& args) {
+    UpdateArgs ua;
+    int positional = 0;
+    int updateUrlCount = 0;
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        if (a == "--yes" || a == "-y") {
+            ua.yes = true;
+        } else if (a == "--force") {
+            ua.force = true;
+        } else if (a == "--update-url" ||
+                   a.rfind("--update-url=", 0) == 0) {
+            ++updateUrlCount;
+            if (a == "--update-url") {
+                if (i + 1 < args.size()) {
+                    ua.updateUrl = args[++i];
+                } else {
+                    ua.errToken = a;
+                    return ua;
+                }
+            } else {
+                ua.updateUrl = a.substr(std::strlen("--update-url="));
+                if (ua.updateUrl.empty()) {
+                    ua.errToken = a;
+                    return ua;
+                }
+            }
+        } else {
+            ++positional;
+            if (positional > 1) {
+                ua.errToken = a;
+                return ua;
+            }
+            if (iequals(a, "check")) {
+                ua.kind = UpdateArgs::Kind::Check;
+            } else if (iequals(a, "latest")) {
+                ua.kind = UpdateArgs::Kind::Latest;
+            } else if (tsdev::update::parseSemver(a).valid) {
+                ua.kind = UpdateArgs::Kind::Version;
+                ua.version = a;
+            } else {
+                ua.errToken = a;
+                return ua;
+            }
+        }
+    }
+    if (updateUrlCount > 1) {
+        ua.errToken = "--update-url";
+        return ua;
+    }
+    ua.ok = true;
+    return ua;
+}
+
+// --- decideUpdateAction -----------------------------------------------------
+// Pure decision function over the fully-resolved inputs (unit-tested via
+// tests/test_update_cmd.cpp). Every verdict/refusal the spec enumerates is
+// one enum value; cmdUpdate maps each to its output contract.
+struct UpdateDecisionInput {
+    tsdev::update::Semver current;       // parseSemver(kTsdevCliVersion)
+    bool devBuild = false;               // stamp is not strict semver
+    bool checkOnly = false;              // `update check`
+    bool explicitTarget = false;         // `update <version>` given
+    bool feedEmpty = true;               // no published releases
+    bool targetFound = false;            // resolved release exists
+    tsdev::update::Semver target;        // resolved target (latest or <v>)
+    bool targetHasAsset = false;         // bundle asset present on release
+    bool bundleLayout = true;            // install dir looks like a bundle
+    bool yes = false;
+    bool force = false;
+    bool interactive = false;
+    tsdev::update::Semver minSelfUpdate; // kMinSelfUpdateVersion parsed
+};
+
+enum class UpdateAction {
+    VerdictEmpty,        // no published releases (exit 0)
+    VerdictDev,          // check on a dev build (exit 0)
+    VerdictUpToDate,     // current == latest/target (exit 0)
+    VerdictAhead,        // current > latest (exit 0)
+    CheckAvailable,      // check: an update exists (exit 0)
+    AlreadyCurrent,      // update <v> == current without --force (exit 0)
+    FailNotFound,        // 26: requested version not a published release
+    FailNoAsset,         // 26: release has no bundle asset
+    RefuseDev,           // 28: dev build without --force
+    RefuseNonBundle,     // 28: non-bundle dir without --force
+    RefuseConfirm,       // 28: capability-loss confirm, non-interactive
+    NeedsConfirm,        // interactive capability-loss prompt
+    Apply,               // proceed to download/install
+};
+
+UpdateAction decideUpdateAction(const UpdateDecisionInput& in) {
+    using tsdev::update::compareSemver;
+    if (in.checkOnly) {
+        if (in.feedEmpty) return UpdateAction::VerdictEmpty;
+        if (in.devBuild)  return UpdateAction::VerdictDev;
+        const int c = compareSemver(in.target, in.current);
+        if (c > 0) return UpdateAction::CheckAvailable;
+        if (c == 0) return UpdateAction::VerdictUpToDate;
+        return UpdateAction::VerdictAhead;
+    }
+    // Apply forms (bare/latest/<version>).
+    if (in.feedEmpty) {
+        return in.explicitTarget ? UpdateAction::FailNotFound
+                                 : UpdateAction::VerdictEmpty;
+    }
+    if (!in.targetFound)    return UpdateAction::FailNotFound;
+    if (!in.targetHasAsset) return UpdateAction::FailNoAsset;
+    if (in.devBuild && !in.force)     return UpdateAction::RefuseDev;
+    if (!in.bundleLayout && !in.force) return UpdateAction::RefuseNonBundle;
+    if (!in.devBuild) {
+        const int c = compareSemver(in.target, in.current);
+        if (c == 0 && !in.force) {
+            return in.explicitTarget ? UpdateAction::AlreadyCurrent
+                                     : UpdateAction::VerdictUpToDate;
+        }
+        if (c < 0 && !in.explicitTarget) return UpdateAction::VerdictAhead;
+    }
+    // Capability-loss gate: a target that can never update itself again is
+    // the ONLY thing that prompts (4.1). --yes pre-answers it; a
+    // non-interactive channel refuses.
+    if (compareSemver(in.target, in.minSelfUpdate) < 0) {
+        if (in.yes)         return UpdateAction::Apply;
+        if (in.interactive) return UpdateAction::NeedsConfirm;
+        return UpdateAction::RefuseConfirm;
+    }
+    return UpdateAction::Apply;
+}
+
+// Interactivity predicate (4.1): CONIN$ opens AND stderr is a console AND
+// the console window is VISIBLE -- a real-but-hidden console (elevated
+// runas + SW_HIDE child) counts as NON-interactive so the prompt can never
+// hang on input nobody can see. Distinct from the existing cache prompt's
+// predicate on purpose (that one's semantics are untouched).
+bool updateInteractive() {
+    const HWND w = GetConsoleWindow();
+    return coninAvailable() && stderrIsConsole() &&
+           w != nullptr && IsWindowVisible(w);
+}
+
+// The one mandated confirmation (4.1): 'y'/'Y' accepts; bare Enter, 'n',
+// EOF decline; anything else re-prompts. CONIN$ + ReadConsoleW (the cache
+// prompt precedent); callers invoke only when updateInteractive() is true.
+bool promptCapabilityLossConfirm(const std::string& targetDisplay) {
+    std::fprintf(stderr,
+        "The requested version %s cannot update itself.\n"
+        "If you install it, updating again later means downloading the "
+        "release\n"
+        "zip from github.com/nohype/tsdev_automation and unzipping it by "
+        "hand.\n",
+        targetDisplay.c_str());
+    HANDLE hIn = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_EXISTING, 0, nullptr);
+    if (hIn == INVALID_HANDLE_VALUE) return false;
+    bool accepted = false;
+    for (;;) {
+        std::fprintf(stderr, "Install %s anyway? [y/N]: ",
+                     targetDisplay.c_str());
+        std::fflush(stderr);
+        wchar_t buf[256];
+        DWORD n = 0;
+        if (!ReadConsoleW(hIn, buf, _countof(buf), &n, nullptr) || n == 0) {
+            std::fputc('\n', stderr);
+            accepted = false;  // EOF/read failure -> decline
+            break;
+        }
+        std::wstring line(buf, n);
+        bool sawNewline = line.find(L'\n') != std::wstring::npos;
+        while (!sawNewline) {
+            DWORD dn = 0;
+            if (!ReadConsoleW(hIn, buf, _countof(buf), &dn, nullptr) ||
+                dn == 0) {
+                break;
+            }
+            for (DWORD k = 0; k < dn && !sawNewline; ++k)
+                sawNewline = (buf[k] == L'\n');
+        }
+        // First non-whitespace char decides; bare Enter declines.
+        wchar_t choice = L'\0';
+        for (wchar_t ch : line) {
+            if (iswspace(ch)) continue;
+            choice = static_cast<wchar_t>(towlower(ch));
+            break;
+        }
+        if (choice == L'y') { accepted = true; break; }
+        if (choice == L'n' || choice == L'\0') { accepted = false; break; }
+        std::fprintf(stderr, "tsdev_cli: please enter y or n.\n");
+    }
+    CloseHandle(hIn);
+    return accepted;
+}
+
+// Byte size -> "%.1f MB" for the Downloading progress line.
+std::string updateSizeMb(uint64_t bytes) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f MB",
+                  static_cast<double>(bytes) / 1048576.0);
+    return buf;
+}
+
+// The running exe's full path (wide), from GetModuleFileNameW.
+std::wstring updateSelfExePath() {
+    std::wstring buf(MAX_PATH, L'\0');
+    DWORD n = GetModuleFileNameW(nullptr, &buf[0],
+                                 static_cast<DWORD>(buf.size()));
+    while (n == buf.size()) {  // truncated -> grow
+        buf.resize(buf.size() * 2);
+        n = GetModuleFileNameW(nullptr, &buf[0],
+                               static_cast<DWORD>(buf.size()));
+    }
+    buf.resize(n);
+    return buf;
+}
+
+// The running exe's directory (wide).
+std::wstring updateInstallDir() {
+    const std::wstring self = updateSelfExePath();
+    const size_t sep = self.find_last_of(L"\\/");
+    return sep == std::wstring::npos ? self : self.substr(0, sep);
+}
+
+// cmdUpdate: the `update` subcommand handler. Runs on the MAIN thread --
+// update never touches orlib20/the warehouse, so no 64 MB worker is
+// required. `args` are the update-local tokens (already validated by
+// parseUpdateArgs in the dispatch).
+int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
+    using namespace tsdev::update;
+
+    CliResult r;
+    r.op = "update";
+    const bool checkOnly = (ua.kind == UpdateArgs::Kind::Check);
+    r.action = checkOnly ? "check" : "apply";
+
+    const std::string currentStamp = kTsdevCliVersion;
+    const Semver current = parseSemver(currentStamp);
+    const bool devBuild = versionStampIsDev(currentStamp);
+    const std::string currentDisplay = versionStampDisplay(currentStamp);
+
+    // --update-url flag > TSDEV_UPDATE_URL env > default (flag wins; a
+    // garbage/missing env value falls through to the default).
+    std::string apiBase = ua.updateUrl;
+    if (apiBase.empty()) {
+        char envBuf[512] = {};
+        const DWORD n = GetEnvironmentVariableA("TSDEV_UPDATE_URL", envBuf,
+                                                sizeof(envBuf));
+        if (n > 0 && n < sizeof(envBuf)) apiBase.assign(envBuf, n);
+    }
+    if (apiBase.empty()) apiBase = kUpdateApiBaseDefault;
+    while (!apiBase.empty() && apiBase.back() == '/') apiBase.pop_back();
+
+    auto fail = [&](int code, const std::string& msg) -> int {
+        r.success = false;
+        r.exitCode = code;
+        r.errorMessage = msg;
+        r.humanStderr = "tsdev_cli: ERROR " + msg + "\n";
+        emitOutput(r, jsonMode);
+        return code;
+    };
+    auto verdict = [&](const std::string& line) -> int {
+        r.success = true;
+        r.exitCode = 0;
+        r.humanStdout = line + "\n";
+        emitOutput(r, jsonMode);
+        return 0;
+    };
+
+    if (!jsonMode) {
+        std::fprintf(stderr, "Checking for updates ...\n");
+        std::fflush(stderr);
+    }
+
+    // --- Feed ---------------------------------------------------------------
+    const std::string userAgent = "tsdev_cli/" + currentStamp;
+    FeedResult feed = fetchReleases(apiBase, userAgent);
+    if (feed.error != FeedError::None) {
+        r.extraPayload["current_version"] = currentDisplay;
+        r.extraPayload["dev_build"] = devBuild;
+        switch (feed.error) {
+            case FeedError::Unreachable:
+                return fail(25,
+                    "cannot check for updates -- the update service is "
+                    "unreachable. Check your internet connection and try "
+                    "again.");
+            case FeedError::RateLimited: {
+                long mins = 0;
+                if (feed.retryAfterSecs >= 0) {
+                    mins = (feed.retryAfterSecs + 59) / 60;
+                    r.extraErrorFields["retry_after_secs"] =
+                        feed.retryAfterSecs;
+                }
+                return fail(25,
+                    "the update service rate-limited this machine (too "
+                    "many requests). Try again in about " +
+                    std::to_string(mins) + " minutes.");
+            }
+            case FeedError::MalformedJson:
+                return fail(25,
+                    "the update service returned a response this tool "
+                    "cannot read. Try again later; if it repeats, reinstall "
+                    "manually from "
+                    "github.com/nohype/tsdev_automation/releases.");
+            case FeedError::HttpStatus:
+            case FeedError::None:
+            default:
+                return fail(25,
+                    "the update service returned an unexpected response "
+                    "(HTTP " + std::to_string(feed.httpStatus) +
+                    "). Try again later.");
+        }
+    }
+
+    // --- Resolve target ------------------------------------------------------
+    const ReleaseInfo* latestRel = selectLatest(feed.releases);
+    const bool feedEmpty = feed.releases.empty();
+    const ReleaseInfo* targetRel = nullptr;
+    if (checkOnly || ua.kind == UpdateArgs::Kind::Latest) {
+        targetRel = latestRel;
+    } else {
+        targetRel = findRelease(feed.releases, ua.version);
+    }
+    const AssetInfo* targetAsset =
+        targetRel ? pickBundleAsset(*targetRel) : nullptr;
+    const Semver targetVer =
+        targetRel ? targetRel->version : Semver{};
+
+    const std::wstring selfExe = updateSelfExePath();
+    const std::wstring installDir = updateInstallDir();
+    const bool bundleLayout =
+        GetFileAttributesW((installDir +
+            L"\\tsdev_automation\\__init__.py").c_str()) !=
+            INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesW((installDir + L"\\README.md").c_str()) !=
+            INVALID_FILE_ATTRIBUTES;
+
+    UpdateDecisionInput din;
+    din.current = current;
+    din.devBuild = devBuild;
+    din.checkOnly = checkOnly;
+    din.explicitTarget = (ua.kind == UpdateArgs::Kind::Version);
+    din.feedEmpty = feedEmpty;
+    din.targetFound = (targetRel != nullptr);
+    din.target = targetVer;
+    din.targetHasAsset = (targetAsset != nullptr);
+    din.bundleLayout = bundleLayout;
+    din.yes = ua.yes;
+    din.force = ua.force;
+    din.interactive = updateInteractive();
+    din.minSelfUpdate = parseSemver(kMinSelfUpdateVersion);
+    const UpdateAction act = decideUpdateAction(din);
+
+    const bool isDowngrade =
+        !devBuild && din.targetFound &&
+        compareSemver(targetVer, current) < 0;
+    const std::string targetDisplay =
+        din.targetFound ? ("v" + std::to_string(targetVer.major) + "." +
+                           std::to_string(targetVer.minor) + "." +
+                           std::to_string(targetVer.patch))
+                        : std::string();
+    const std::string reqVersionDisplay =  // normalized "vX.Y.Z" of the
+        ua.kind == UpdateArgs::Kind::Version  // requested arg (not-found msg)
+            ? "v" + std::to_string(parseSemver(ua.version).major) + "." +
+              std::to_string(parseSemver(ua.version).minor) + "." +
+              std::to_string(parseSemver(ua.version).patch)
+            : std::string();
+
+    // Shared verdict JSON fields (check frame + apply-path verdicts).
+    auto setVerdictFields = [&]() {
+        r.extraPayload["current_version"] = currentDisplay;
+        r.extraPayload["dev_build"] = devBuild;
+        if (latestRel) {
+            const Semver& lv = latestRel->version;
+            r.extraPayload["latest_version"] =
+                "v" + std::to_string(lv.major) + "." +
+                std::to_string(lv.minor) + "." +
+                std::to_string(lv.patch);
+        } else {
+            r.extraPayload["latest_version"] = nullptr;
+        }
+        const bool updateAvailable =
+            !feedEmpty &&
+            (devBuild || compareSemver(latestRel->version, current) > 0);
+        r.extraPayload["update_available"] = updateAvailable;
+        if (updateAvailable) {
+            const Semver& lv = latestRel->version;
+            r.extraPayload["target_version"] =
+                "v" + std::to_string(lv.major) + "." +
+                std::to_string(lv.minor) + "." +
+                std::to_string(lv.patch);
+        } else {
+            r.extraPayload["target_version"] = nullptr;
+        }
+        if (devBuild) r.extraPayload["requires_force"] = true;
+        if (updateAvailable &&
+            compareSemver(latestRel->version, din.minSelfUpdate) < 0) {
+            r.extraPayload["requires_confirmation"] = true;
+        }
+        const AssetInfo* la =
+            latestRel ? pickBundleAsset(*latestRel) : nullptr;
+        if (la) {
+            ordered_json asset;
+            asset["name"] = la->name;
+            asset["size_bytes"] = la->size;
+            if (la->has_digest) asset["sha256"] = la->sha256;
+            asset["url"] = la->url;
+            r.extraPayload["asset"] = asset;
+        }
+    };
+
+    std::string latestDisplay;
+    if (latestRel) {
+        const Semver& lv = latestRel->version;
+        latestDisplay = "v" + std::to_string(lv.major) + "." +
+                        std::to_string(lv.minor) + "." +
+                        std::to_string(lv.patch);
+    }
+
+    switch (act) {
+        case UpdateAction::VerdictEmpty:
+            setVerdictFields();
+            return verdict("No published releases were found to update "
+                           "to.");
+        case UpdateAction::VerdictDev:
+            setVerdictFields();
+            return verdict("Development build (" + currentDisplay +
+                           ") -- not installed from a release.\n"
+                           "Latest release: " + latestDisplay + ".");
+        case UpdateAction::CheckAvailable:
+            setVerdictFields();
+            return verdict("Update available: " + currentDisplay + " -> " +
+                           latestDisplay + ".\nRun: tsdev_cli update");
+        case UpdateAction::VerdictUpToDate:
+            if (checkOnly || ua.kind != UpdateArgs::Kind::Version) {
+                setVerdictFields();
+            }
+            return verdict("You are up to date (" + currentDisplay + ").");
+        case UpdateAction::VerdictAhead:
+            if (checkOnly || ua.kind != UpdateArgs::Kind::Version) {
+                setVerdictFields();
+            }
+            return verdict("Your version (" + currentDisplay +
+                           ") is newer than the latest release (" +
+                           latestDisplay + "). Nothing to do.");
+        case UpdateAction::AlreadyCurrent:
+            r.extraPayload["from_version"] = currentDisplay;
+            r.extraPayload["to_version"] = targetDisplay;
+            r.extraPayload["already_current"] = true;
+            return verdict("Already at " + targetDisplay +
+                           " -- nothing to do. Reinstall anyway with "
+                           "--force.");
+        case UpdateAction::FailNotFound: {
+            setVerdictFields();
+            std::string msg = "no release \"" + reqVersionDisplay +
+                              "\" was found.";
+            if (!feedEmpty) {
+                Semver lo, hi;
+                publishedSemverRange(feed.releases, lo, hi);
+                msg += " Published releases run from v" +
+                       std::to_string(lo.major) + "." +
+                       std::to_string(lo.minor) + "." +
+                       std::to_string(lo.patch) + " to v" +
+                       std::to_string(hi.major) + "." +
+                       std::to_string(hi.minor) + "." +
+                       std::to_string(hi.patch) + ".";
+            }
+            return fail(26, msg);
+        }
+        case UpdateAction::FailNoAsset:
+            setVerdictFields();
+            return fail(26,
+                "release " + targetDisplay +
+                " has no install bundle. Reinstall manually from "
+                "github.com/nohype/tsdev_automation/releases.");
+        case UpdateAction::RefuseDev:
+            r.extraPayload["current_version"] = currentDisplay;
+            r.extraPayload["dev_build"] = true;
+            r.extraPayload["requires_force"] = true;
+            return fail(28,
+                "this is a development build (" + currentDisplay +
+                "). Refusing to replace it with a release; pass --force "
+                "to install the release anyway.");
+        case UpdateAction::RefuseNonBundle:
+            r.extraPayload["current_version"] = currentDisplay;
+            r.extraPayload["dev_build"] = devBuild;
+            r.extraPayload["requires_force"] = true;
+            return fail(28,
+                wideToUtf8Cli(installDir) +
+                " does not look like a release bundle (missing "
+                "tsdev_automation\\ or README.md). Pass --force to update "
+                "this copy anyway.");
+        case UpdateAction::RefuseConfirm:
+            r.extraPayload["current_version"] = currentDisplay;
+            r.extraPayload["dev_build"] = devBuild;
+            r.extraPayload["requires_confirmation"] = true;
+            return fail(28,
+                "installing " + targetDisplay +
+                " requires confirmation: that version cannot update "
+                "itself. Re-run interactively, or pass --yes to accept.");
+        case UpdateAction::NeedsConfirm:
+            if (!promptCapabilityLossConfirm(targetDisplay)) {
+                r.extraPayload["current_version"] = currentDisplay;
+                r.extraPayload["dev_build"] = devBuild;
+                r.extraPayload["requires_confirmation"] = true;
+                r.success = false;
+                r.exitCode = 12;
+                r.errorMessage = "update cancelled by user";
+                r.humanStdout = "Update cancelled.\n";
+                emitOutput(r, jsonMode);
+                return 12;
+            }
+            break;  // accepted -> fall through to Apply
+        case UpdateAction::Apply:
+            break;
+    }
+
+    // --- Apply ---------------------------------------------------------------
+    if (isDowngrade) {
+        // A downgrade to a still-update-capable version is a one-line
+        // notice, not a prompt (4.2).
+        std::fprintf(stderr, "Downgrading %s -> %s (this version can still "
+                     "update itself).\n",
+                     currentDisplay.c_str(), targetDisplay.c_str());
+        std::fflush(stderr);
+    }
+
+    // Unpack capability is resolved BEFORE any bytes are fetched (9.2).
+    const Unpacker unpacker = resolveUnpacker();
+    if (unpacker == Unpacker::None) {
+        r.extraPayload["from_version"] = currentDisplay;
+        r.extraPayload["to_version"] = targetDisplay;
+        return fail(27,
+            "cannot unpack the update archive on this Windows version. "
+            "Reinstall manually from "
+            "github.com/nohype/tsdev_automation/releases.");
+    }
+
+    // Integrity gate: a missing digest refuses before download -- never
+    // verify-optional (9.1).
+    if (!targetAsset->has_digest) {
+        r.extraPayload["from_version"] = currentDisplay;
+        r.extraPayload["to_version"] = targetDisplay;
+        return fail(27,
+            "release " + targetDisplay +
+            " cannot be verified (no checksum published); refusing to "
+            "install it.");
+    }
+
+    if (!jsonMode) {
+        std::fprintf(stderr, "Downloading %s (%s) ...\n",
+                     targetAsset->name.c_str(),
+                     updateSizeMb(targetAsset->size).c_str());
+        std::fflush(stderr);
+    }
+
+    // Download into a sibling scratch path (not the staging dir -- the
+    // apply engine reaps staging-patterned dirs at start).
+    const std::wstring zipPath =
+        installDir + L"\\.tsdev_update_dl_" +
+        std::to_wstring(GetCurrentProcessId()) + L".zip";
+    struct ZipGuard {
+        std::wstring path;
+        ~ZipGuard() { DeleteFileW(path.c_str()); }
+    } zipGuard{zipPath};
+
+    const HttpResult dl = httpGetToFile(targetAsset->url, userAgent, zipPath);
+    if (dl.error != HttpError::None) {
+        r.extraPayload["from_version"] = currentDisplay;
+        r.extraPayload["to_version"] = targetDisplay;
+        if (dl.error == HttpError::RateLimited &&
+            dl.retryAfterSecs >= 0) {
+            r.extraErrorFields["retry_after_secs"] = dl.retryAfterSecs;
+        }
+        return fail(27,
+            "the update download failed (the update service could not "
+            "deliver the file). Nothing was changed. Try again; if it "
+            "repeats, reinstall manually.");
+    }
+
+    std::string gotHash;
+    if (!sha256FileHex(zipPath, gotHash) || gotHash != targetAsset->sha256) {
+        r.extraPayload["from_version"] = currentDisplay;
+        r.extraPayload["to_version"] = targetDisplay;
+        return fail(27,
+            "the downloaded update failed its integrity check and was "
+            "discarded. Nothing was changed. Try again; if it repeats, "
+            "reinstall manually.");
+    }
+
+    if (!jsonMode) {
+        std::fprintf(stderr, "Installing %s ...\n", targetDisplay.c_str());
+        std::fflush(stderr);
+    }
+
+    const ApplyResult ar = applyUpdate(installDir, zipPath, selfExe);
+    if (ar.error != ApplyError::None) {
+        r.extraPayload["from_version"] = currentDisplay;
+        r.extraPayload["to_version"] = targetDisplay;
+        if (ar.rolledBack) r.extraPayload["rolled_back"] = true;
+        switch (ar.error) {
+            case ApplyError::StagingCreateFailed:
+                return fail(27,
+                    "cannot write to " + wideToUtf8Cli(installDir) +
+                    " (access denied). Nothing was changed.");
+            case ApplyError::LockCreateFailed:
+                return fail(27,
+                    "cannot acquire the update lock; nothing was changed. "
+                    "Try again; if it repeats, reinstall manually.");
+            case ApplyError::LockHeld:
+                return fail(27,
+                    "another update is already running. Try again when it "
+                    "finishes.");
+            case ApplyError::UnpackFailed:
+                return fail(27,
+                    "the update archive could not be unpacked (corrupt "
+                    "download). It was discarded; nothing was changed.");
+            case ApplyError::IncompletePayload:
+                return fail(27,
+                    "the update archive is missing required files; "
+                    "nothing was changed.");
+            case ApplyError::SwapFailedRollbackOk:
+                return fail(27,
+                    "update failed while installing; the previous version "
+                    "(" + currentDisplay +
+                    ") was restored. Try again, or reinstall manually "
+                    "from the release zip.");
+            case ApplyError::SwapFailedRollbackFailed:
+                return fail(27,
+                    "update failed while installing AND the previous "
+                    "version could not be fully restored. Reinstall "
+                    "manually: download tsdev_automation_" +
+                    targetRel->tag +
+                    ".zip from github.com/nohype/tsdev_automation/releases "
+                    "and unzip it over " + wideToUtf8Cli(installDir) + ".");
+            case ApplyError::NoUnpacker:
+            default:
+                return fail(27,
+                    "cannot unpack the update archive on this Windows "
+                    "version. Reinstall manually from "
+                    "github.com/nohype/tsdev_automation/releases.");
+        }
+    }
+
+    // Success. Human notes on stderr; machine notes in JSON.
+    bool deferred = false;
+    for (const std::string& note : ar.notes) {
+        if (note == "deferred_apply") deferred = true;
+    }
+    if (!jsonMode) {
+        for (const std::string& note : ar.notes) {
+            if (note == "other_instances_running") {
+                std::fprintf(stderr,
+                    "tsdev_cli: NOTE another tsdev_cli.exe is still "
+                    "running the old version.\n"
+                    "           A running serve broker keeps serving %s "
+                    "until it is restarted.\n",
+                    currentDisplay.c_str());
+            } else if (note == "renamed_exe") {
+                std::wstring selfBase = selfExe;
+                const size_t s = selfBase.find_last_of(L"\\/");
+                if (s != std::wstring::npos) selfBase = selfBase.substr(s + 1);
+                std::fprintf(stderr,
+                    "tsdev_cli: NOTE this copy was renamed to %s; the "
+                    "update\n"
+                    "           installs a fresh tsdev_cli.exe -- launch "
+                    "that file (or\n"
+                    "           rename it back).\n",
+                    wideToUtf8Cli(selfBase).c_str());
+            }
+        }
+        std::fflush(stderr);
+    }
+
+    r.extraPayload["from_version"] = currentDisplay;
+    r.extraPayload["to_version"] = targetDisplay;
+    r.extraPayload["downgrade"] = isDowngrade;
+    r.extraPayload["files_replaced"] = ar.filesReplaced;
+    r.extraPayload["install_dir"] = wideToUtf8Cli(installDir);
+    ordered_json notes = ordered_json::array();
+    for (const std::string& note : ar.notes) notes.push_back(note);
+    r.extraPayload["notes"] = notes;
+    std::string line = "Updated: " + currentDisplay + " -> " +
+                       targetDisplay + ".";
+    if (deferred) {
+        line += "\nUpdate will finish when this command exits.";
+    }
+    return verdict(line);
+}
+
 } // namespace
 
 #ifndef TSDEV_CLI_TEST
@@ -8453,6 +9261,12 @@ int main(int argc, char** argv) {
     bool noCacheCompressFlag = false;  // --no-cache-compress
     CacheBackupPolicy cachePolicy = CacheBackupPolicy::Prompt;  // default
     bool cachePolicyFlagSet = false;   // --cache-backup-policy seen
+    // --update-result-file <path> (self-update §8): hidden GLOBAL value
+    // flag, non-repeatable. Recognized and consumed here (the
+    // --batch-progress-control precedent) so the path is already in hand
+    // for every pre-dispatch exit incl. the elevation guard; validated
+    // post-elevation-guard as update-subcommand-only.
+    int updateResultFileCount = 0;
 
     std::vector<char*> reducedArgv;
     reducedArgv.push_back(argv[0]);  // program name
@@ -8525,6 +9339,38 @@ int main(int argc, char** argv) {
                 return 1;
             }
             logFileArg = logFileStr.c_str();
+        } else if (arg == "--update-result-file" ||
+                   arg.rfind("--update-result-file=", 0) == 0) {
+            // Space or equals form; non-repeatable (counted here and
+            // rejected post-elevation like --batch-progress-control).
+            // Empty values are a usage error immediately.
+            ++updateResultFileCount;
+            if (arg == "--update-result-file") {
+                if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--update-result-file requires a "
+                                     "non-empty file path";
+                    r.humanStderr = "Error: --update-result-file requires "
+                                    "a non-empty file path\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+                g_updateResultFilePath = argv[++i];
+            } else {
+                g_updateResultFilePath =
+                    arg.substr(std::strlen("--update-result-file="));
+                if (g_updateResultFilePath.empty()) {
+                    CliResult r;
+                    r.exitCode = 1;
+                    r.errorMessage = "--update-result-file requires a "
+                                     "non-empty file path";
+                    r.humanStderr = "Error: --update-result-file requires "
+                                    "a non-empty file path\n";
+                    emitOutput(r, jsonMode);
+                    return 1;
+                }
+            }
         } else if (arg == "--json" || arg.rfind("--json=", 0) == 0) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
@@ -8993,6 +9839,7 @@ int main(int argc, char** argv) {
         r.exitCode = 1;
         r.errorMessage = "no subcommand given";
         r.humanStderr = "";  // printUsage writes directly below
+        writeUpdateResultFrame(r);  // non-json path bypasses emitOutput
         if (jsonMode) {
             emitOutput(r, jsonMode);
         } else {
@@ -9029,17 +9876,23 @@ int main(int argc, char** argv) {
     // subcommand dispatch. Excluded under TSDEV_CLI_TEST (unit tests include
     // this .cpp and define their own main()).
     if (!isElevated()) {
-        if (jsonMode) {
+        // The not_elevated JSON frame is also an --update-result-file
+        // emission point (the flag was already consumed by the pre-scan).
+        if (jsonMode || !g_updateResultFilePath.empty()) {
             nlohmann::ordered_json j;
             j["success"] = false;
             j["exit_code"] = 11;
             j["error"]["code"] = "not_elevated";
             j["error"]["message"] = "this tool requires administrator privileges. "
                                     "Run from an elevated terminal (or let the Python wrapper auto-elevate).";
-            std::string s = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            std::fwrite(s.c_str(), 1, s.size(), stdout);
-            std::fputc('\n', stdout);
-        } else {
+            writeUpdateResultJson(j);
+            if (jsonMode) {
+                std::string s = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                std::fwrite(s.c_str(), 1, s.size(), stdout);
+                std::fputc('\n', stdout);
+            }
+        }
+        if (!jsonMode) {
             std::fprintf(stderr, "tsdev_cli: ERROR -- this tool requires administrator privileges. "
                                  "Run from an elevated terminal (or let the Python wrapper auto-elevate).\n");
         }
@@ -9123,6 +9976,31 @@ int main(int argc, char** argv) {
             }
             return 1;
         }
+    }
+
+    // --update-result-file (self-update §8): the flag is recognized and
+    // consumed by the global pre-scan, but both validations live here,
+    // AFTER the unchanged elevation guard (a non-elevated caller still
+    // gets exit 11 first): non-repeatable, and update-subcommand-only.
+    // The usage-error frame itself is a result-file emission point.
+    if (updateResultFileCount > 1) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--update-result-file must not be repeated";
+        r.humanStderr = "Error: --update-result-file must not be repeated\n";
+        emitOutput(r, jsonMode);
+        return 1;
+    }
+    if (!g_updateResultFilePath.empty() &&
+        !iequals(subcommand, "update")) {
+        CliResult r;
+        r.exitCode = 1;
+        r.errorMessage = "--update-result-file is only valid with the "
+                         "update subcommand";
+        r.humanStderr = "Error: --update-result-file is only valid with "
+                        "the update subcommand\n";
+        emitOutput(r, jsonMode);
+        return 1;
     }
 
     // --recycle-whserver (design §6.1): validated here, AFTER the unchanged
@@ -9504,6 +10382,38 @@ int main(int argc, char** argv) {
                            tsPathWidePtr, jsonMode, batchControl,
                            batchControlTimeoutSecs, pbar,
                            vasGuard, recycle);
+    }
+
+    // --- Self-update: `update` subcommand -----------------------------------
+    // update-local grammar is parsed inside the dispatch (the
+    // --case-insensitive-in-exists precedent): 0-or-1 positional
+    // (check | latest | <version>) plus --yes/-y, --force and the hidden
+    // --update-url value flag in any position. NON-TS op: no TsDevLib, no
+    // worker thread; cmdUpdate runs on the main thread.
+    if (iequals(subcommand, "update")) {
+        std::vector<std::string> updateTokens;
+        for (int i = 2; i < reducedArgc; i++) {
+            updateTokens.push_back(reducedArgvPtr[i]);
+        }
+        const UpdateArgs ua = parseUpdateArgs(updateTokens);
+        if (!ua.ok) {
+            CliResult r;
+            r.op = "update";
+            r.exitCode = 1;
+            r.errorMessage = "\"" + ua.errToken +
+                "\" is not a valid version (expected e.g. v0.1.5 or 0.1.5, "
+                "\"check\", or \"latest\")";
+            r.humanStderr = "Error: " + r.errorMessage + "\n";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                writeUpdateResultFrame(r);  // bypasses emitOutput below
+                std::fprintf(stderr, "%s", r.humanStderr.c_str());
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdUpdate(ua, jsonMode, pbar);
     }
 
     {

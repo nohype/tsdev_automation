@@ -190,7 +190,8 @@ std::wstring updateStagingDir(const std::wstring& installDir) {
            std::to_wstring(GetCurrentProcessId());
 }
 
-void reapStaleUpdateArtifacts(const std::wstring& installDir) {
+void reapStaleUpdateArtifacts(const std::wstring& installDir,
+                              const std::wstring& excludePath) {
     std::error_code ec;
     const fs::path root(installDir);
     for (fs::directory_iterator it(root, fs::directory_options::
@@ -198,7 +199,13 @@ void reapStaleUpdateArtifacts(const std::wstring& installDir) {
          end;
          !ec && it != end; it.increment(ec)) {
         const std::wstring name = it->path().filename().wstring();
-        if (name.rfind(L".tsdev_update_tmp_", 0) == 0 ||
+        if (!excludePath.empty() &&
+            it->path().wstring() == excludePath) {
+            continue;  // the in-flight download zip
+        }
+        // .tsdev_update_* covers both the staging dirs (_tmp_<pid>) and a
+        // leftover download scratch (.tsdev_update_dl_<pid>.zip).
+        if (name.rfind(L".tsdev_update_", 0) == 0 ||
             (name.size() > 4 &&
              iequalsA(name.substr(name.size() - 4), L".old"))) {
             fs::remove_all(it->path(), ec);
@@ -297,7 +304,9 @@ ApplyResult applyUpdate(const std::wstring& installDir,
     ApplyResult res;
 
     // Best-effort reap of leftovers from prior runs (apply runs only).
-    reapStaleUpdateArtifacts(installDir);
+    // The just-downloaded zip matches the .tsdev_update_* glob, so it is
+    // passed as the explicit exclusion.
+    reapStaleUpdateArtifacts(installDir, zipPath);
 
     const Unpacker unpacker = resolveUnpacker();
     if (unpacker == Unpacker::None) {

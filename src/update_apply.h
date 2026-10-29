@@ -65,10 +65,12 @@ struct ApplyResult {
 // so the swap renames stay in-volume.
 std::wstring updateStagingDir(const std::wstring& installDir);
 
-// Best-effort removal of stale .tsdev_update_tmp_* dirs and *.old files in
-// the install dir. Runs at the start of an APPLY run only (update check is
-// strictly read-only).
-void reapStaleUpdateArtifacts(const std::wstring& installDir);
+// Best-effort removal of stale .tsdev_update_* artifacts (staging dirs and
+// download scratch files) and *.old files in the install dir. Runs at the
+// start of an APPLY run only (update check is strictly read-only).
+// `excludePath` (optional) protects the in-flight download zip.
+void reapStaleUpdateArtifacts(const std::wstring& installDir,
+                              const std::wstring& excludePath = L"");
 
 // Extract `zipPath` into the empty `dir` via the resolved unpacker.
 bool unpackZipToDir(Unpacker u, const std::wstring& zipPath,
