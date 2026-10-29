@@ -9,13 +9,15 @@
                               (parameter override -> registry -> conventional
                               default).
       * Ensure-BaselineDll  - if the baseline DLL (tests/fixtures/
-                              orlib20_baseline.dll) is missing, prompts the
-                              user to copy it from the TradeStation
-                              installation. Returns $true if the DLL is
-                              available (present or successfully copied),
-                              $false if the user declined or the DLL could
-                              not be copied. The caller MUST fail loudly
-                              when this returns $false.
+                              orlib20_baseline.dll, an untracked local-copy
+                              fixture) is missing, prompts the user to copy
+                              it from the TradeStation installation.
+                              Returns $true if the DLL is available
+                              (present or successfully copied), $false if
+                              the user declined or the DLL could not be
+                              copied. On $false the caller treats
+                              DLL-dependent tests as SKIPPED (missing
+                              prerequisite), not as failures.
       * Assert-BatchStderrProgress - asserts the default (human) batch
                               progress event lines on stderr against the
                               expected per-item results.
@@ -104,7 +106,8 @@ function Find-TsInstallPath {
 # the user to copy it from the TradeStation installation. Does NOT continue
 # without a user decision (uses Read-Host). Returns $true only when the DLL is
 # available at $DllPath on exit; $false when the user declined or the copy
-# failed. The caller is responsible for failing loudly on $false.
+# failed. On $false the caller marks DLL-dependent tests as SKIPPED (missing
+# prerequisite); it is an expected skip, not a failure.
 # ---------------------------------------------------------------------------
 function Ensure-BaselineDll {
     param(
@@ -119,7 +122,7 @@ function Ensure-BaselineDll {
 
     # DLL missing — prompt the user.
     Write-Host ""
-    Write-Host "ERROR: Baseline DLL not found at: $DllPath" -ForegroundColor Red
+    Write-Host "Baseline DLL not found at: $DllPath" -ForegroundColor Yellow
     Write-Host "This DLL is required for: test_orlib_resolver, sigtool verify gate." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Copy it from the TradeStation installation?" -ForegroundColor Cyan
@@ -158,20 +161,20 @@ function Ensure-BaselineDll {
             Write-Host "SUCCESS: Copied orlib20.dll to $DllPath" -ForegroundColor Green
             return $true
         } else {
-            Write-Host "ERROR: Cannot auto-copy - TS install not detected or orlib20.dll not found." -ForegroundColor Red
+            Write-Host "Cannot auto-copy - TS install not detected or orlib20.dll not found." -ForegroundColor Yellow
             Write-Host "Please manually copy orlib20.dll from your TradeStation installation to:" -ForegroundColor Yellow
             Write-Host "  $DllPath" -ForegroundColor Yellow
             Write-Host "Then re-run the tests." -ForegroundColor Yellow
             return $false
         }
     } else {
-        # User declined — return false, caller must fail loudly.
-        Write-Host "ERROR: User declined to copy the baseline DLL." -ForegroundColor Red
-        Write-Host "Tests requiring this DLL will FAIL. The DLL is needed for:" -ForegroundColor Yellow
-        Write-Host "  - test_orlib_resolver (signature resolution + patch-site validation)" -ForegroundColor Yellow
-        Write-Host "  - sigtool verify gate (signature verification)" -ForegroundColor Yellow
-        Write-Host "To resolve: copy orlib20.dll from your TradeStation installation to:" -ForegroundColor Yellow
-        Write-Host "  $DllPath" -ForegroundColor Yellow
+        # User declined — return false; callers skip DLL-dependent tests.
+        Write-Host "User declined to copy the baseline DLL." -ForegroundColor DarkYellow
+        Write-Host "Tests requiring this DLL will be SKIPPED:" -ForegroundColor DarkYellow
+        Write-Host "  - test_orlib_resolver (signature resolution + patch-site validation)" -ForegroundColor DarkYellow
+        Write-Host "  - sigtool verify gate (signature verification)" -ForegroundColor DarkYellow
+        Write-Host "To enable them: copy orlib20.dll from your TradeStation installation to:" -ForegroundColor DarkYellow
+        Write-Host "  $DllPath" -ForegroundColor DarkYellow
         return $false
     }
 }

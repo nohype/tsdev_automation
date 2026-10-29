@@ -7,12 +7,13 @@
     orlib20_baseline.dll and the committed v9.50.01.3344 signature set.
 
     sigtool.exe is built by the CMake sigtool target and is checked before the
-    cases run. A successful run exits 0; missing prerequisites or failed cases
-    exit 1.
+    cases run. A successful run exits 0; failed cases exit 1. When the
+    baseline DLL cannot be acquired, the DLL-dependent cases are skipped
+    and only the DLL-free error-path cases run (still exit 0 on success).
 
     Exit codes:
-        0 = all tests passed
-        1 = at least one test failed (or a prerequisite was missing)
+        0 = all executed tests passed (skipped cases do not fail the run)
+        1 = at least one test failed (or a hard prerequisite was missing)
 
 .NOTES
     Run with:
@@ -64,27 +65,27 @@ if (-not (Test-Path $sigtool)) {
     exit 1
 }
 
-# Baseline DLL: if missing, prompt the user to copy it from the TS install.
-# Do NOT continue without a user decision. The entire script depends on the
-# DLL, so a decline (or failed copy) is a hard failure. When invoked from
-# run_regression.ps1 with -SkipBaselineDllPrompt (the orchestrator already
-# prompted and the user declined), skip the prompt and fail immediately.
+# Baseline DLL: an untracked local-copy fixture (proprietary orlib20.dll).
+# If missing, prompt the user to copy it from the TS install (interactive
+# runs). When invoked from run_regression.ps1 with -SkipBaselineDllPrompt
+# (the orchestrator already prompted), skip the prompt. When the DLL cannot
+# be acquired, the DLL-dependent cases (1-9) are SKIPPED and only the
+# DLL-free error-path cases (10-12) still run.
+$baselineSkipReason = "baseline DLL unavailable (tests\fixtures\orlib20_baseline.dll)"
 if ($SkipBaselineDllPrompt) {
-    if (-not (Test-Path -Path $dll -PathType Leaf)) {
-        Write-Host ""
-        Write-Host "FATAL: baseline DLL not available - sigtool verify gate cannot run." -ForegroundColor Red
-        Write-Host "The entire sigtool test suite requires $dll." -ForegroundColor Yellow
-        Write-Host "(prompt suppressed by -SkipBaselineDllPrompt from parent orchestrator)" -ForegroundColor DarkGray
-        exit 1
-    }
-} elseif (-not (Ensure-BaselineDll -DllPath $dll)) {
+    $baselineDllAvailable = (Test-Path -Path $dll -PathType Leaf)
+} else {
+    $baselineDllAvailable = Ensure-BaselineDll -DllPath $dll
+}
+if (-not $baselineDllAvailable) {
     Write-Host ""
-    Write-Host "FATAL: baseline DLL not available - sigtool verify gate cannot run." -ForegroundColor Red
-    Write-Host "The entire sigtool test suite requires $dll." -ForegroundColor Yellow
-    exit 1
+    Write-Host "NOTE: baseline DLL not available - DLL-dependent sigtool cases will be SKIPPED." -ForegroundColor DarkYellow
+    Write-Host "To enable them, copy <TS install>\Program\orlib20.dll to:" -ForegroundColor DarkYellow
+    Write-Host "  $dll" -ForegroundColor DarkYellow
 }
 
-if (-not (Test-Path $sigJson)) {
+# The signature JSON is only needed by the DLL-dependent cases (8-9).
+if ($baselineDllAvailable -and -not (Test-Path $sigJson)) {
     Write-Host "FAIL: signature JSON not found at $sigJson"
     exit 1
 }
@@ -113,14 +114,25 @@ if (-not (Test-Path $sigJson)) {
     Optional script block returning $true/$false for an additional stdout
     content assertion (e.g. "contains '9.50.01.3344'"). Evaluated only when
     the exit code already matches.
+
+.PARAMETER Skip
+    When set, the case is recorded as SKIPPED (missing prerequisite) instead
+    of being executed; the skip reason is taken from $baselineSkipReason.
 #>
 function Run-Test {
     param(
         [string]   $Name,
         [scriptblock] $ScriptBlock,
         [int]      $ExpectedExit,
-        [scriptblock] $ExtraCheck
+        [scriptblock] $ExtraCheck,
+        [switch]   $Skip
     )
+
+    if ($Skip) {
+        Write-Host "SKIP: $Name ($baselineSkipReason)"
+        $script:skipCount++
+        return
+    }
 
     # Execute the command block — it populates $script:out and $script:code.
     & $ScriptBlock
@@ -159,6 +171,7 @@ function Run-Test {
 
 $script:passCount = 0
 $script:failCount = 0
+$script:skipCount = 0
 
 # ===========================================================================
 # Test 1: verify (default signatures)
@@ -167,6 +180,7 @@ $script:failCount = 0
 # ===========================================================================
 Run-Test -Name "verify (default signatures)" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool verify --dll $dll 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -184,6 +198,7 @@ Run-Test -Name "verify (default signatures)" `
 # ===========================================================================
 Run-Test -Name "verify --verbose" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool verify --dll $dll --verbose 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -200,6 +215,7 @@ Run-Test -Name "verify --verbose" `
 # ===========================================================================
 Run-Test -Name "verify-patch" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool verify-patch --dll $dll 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -212,6 +228,7 @@ Run-Test -Name "verify-patch" `
 # ===========================================================================
 Run-Test -Name "info" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool info --dll $dll 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -227,6 +244,7 @@ Run-Test -Name "info" `
 # ===========================================================================
 Run-Test -Name "scan (valid pattern)" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool scan --dll $dll --pattern "55 8B EC" 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -239,6 +257,7 @@ Run-Test -Name "scan (valid pattern)" `
 # ===========================================================================
 Run-Test -Name "scan (no match pattern)" `
     -ExpectedExit 1 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool scan --dll $dll --pattern "DE AD BE EF DE AD BE EF DE AD BE EF DE AD BE EF DE AD BE EF DE AD BE EF DE AD BE EF DE AD BE EF" 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -251,6 +270,7 @@ Run-Test -Name "scan (no match pattern)" `
 # ===========================================================================
 Run-Test -Name "manifest (known version)" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool manifest --dll $dll 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -266,6 +286,7 @@ Run-Test -Name "manifest (known version)" `
 # ===========================================================================
 Run-Test -Name "verify --signatures JSON" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool verify --dll $dll --signatures $sigJson 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -281,6 +302,7 @@ Run-Test -Name "verify --signatures JSON" `
 # ===========================================================================
 Run-Test -Name "verify-patch --signatures JSON" `
     -ExpectedExit 0 `
+    -Skip:(-not $baselineDllAvailable) `
     -ScriptBlock {
         $script:out = & $sigtool verify-patch --dll $dll --signatures $sigJson 2>&1 | Out-String
         $script:code = $LASTEXITCODE
@@ -323,9 +345,13 @@ Run-Test -Name "error: unknown subcommand" `
 # Summary
 # ---------------------------------------------------------------------------
 
-$total = $script:passCount + $script:failCount
+$total = $script:passCount + $script:failCount + $script:skipCount
 Write-Host ""
-Write-Host "$($script:passCount)/$total tests passed"
+if ($script:skipCount -gt 0) {
+    Write-Host "$($script:passCount)/$total tests passed, $($script:skipCount) skipped"
+} else {
+    Write-Host "$($script:passCount)/$total tests passed"
+}
 
 if ($script:failCount -gt 0) {
     exit 1

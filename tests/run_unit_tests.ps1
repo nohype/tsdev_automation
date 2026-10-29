@@ -271,30 +271,24 @@ if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {
 }
 
 # ---------------------------------------------------------------------------
-# Baseline DLL prerequisite for test_orlib_resolver. If missing, prompt the
-# user to copy it from the TS install. Do NOT continue without a decision.
-# If the user declines (or the copy fails), test_orlib_resolver is marked as
-# FAILED with a loud message; other tests still run (they do not need the
-# DLL). The script ultimately exits 1 because test_orlib_resolver failed.
+# Baseline DLL prerequisite for test_orlib_resolver. The DLL is an untracked
+# local-copy fixture (proprietary orlib20.dll; it cannot be redistributed).
+# If missing, prompt the user to copy it from the TS install (interactive
+# runs). When it cannot be acquired (no TS install detected, prompt
+# declined, or -SkipBaselineDllPrompt from the parent orchestrator),
+# test_orlib_resolver is marked SKIPPED; all other tests still run (they do
+# not need the DLL) and the run can still exit 0.
 # ---------------------------------------------------------------------------
-# If invoked from run_regression.ps1 with -SkipBaselineDllPrompt (the
-# orchestrator already prompted and the user declined), skip the prompt and
-# treat the DLL as unavailable.
 if ($SkipBaselineDllPrompt) {
     $baselineDllAvailable = (Test-Path -Path $BaselineDll -PathType Leaf)
-    if (-not $baselineDllAvailable) {
-        Write-Host ""
-        Write-Host "FATAL: baseline DLL not available - test_orlib_resolver cannot run." -ForegroundColor Red
-        Write-Host "(prompt suppressed by -SkipBaselineDllPrompt from parent orchestrator)" -ForegroundColor DarkGray
-        Write-Host "Other tests will continue, but test_orlib_resolver will be marked FAILED." -ForegroundColor Yellow
-    }
 } else {
     $baselineDllAvailable = Ensure-BaselineDll -DllPath $BaselineDll
-    if (-not $baselineDllAvailable) {
-        Write-Host ""
-        Write-Host "FATAL: baseline DLL not available - test_orlib_resolver cannot run." -ForegroundColor Red
-        Write-Host "Other tests will continue, but test_orlib_resolver will be marked FAILED." -ForegroundColor Yellow
-    }
+}
+if (-not $baselineDllAvailable) {
+    Write-Host ""
+    Write-Host "NOTE: baseline DLL not available - test_orlib_resolver will be SKIPPED." -ForegroundColor DarkYellow
+    Write-Host "To enable it, copy <TS install>\Program\orlib20.dll to:" -ForegroundColor DarkYellow
+    Write-Host "  $BaselineDll" -ForegroundColor DarkYellow
 }
 
 foreach ($td in $TestDefinitions) {
@@ -314,21 +308,20 @@ foreach ($td in $TestDefinitions) {
         continue
     }
 
-    # If the baseline DLL is unavailable, mark test_orlib_resolver as FAILED
-    # with a loud message instead of running it (it would exit 99 anyway,
-    # but this gives a clear, immediate explanation).
+    # If the baseline DLL is unavailable, mark test_orlib_resolver as
+    # SKIPPED (missing prerequisite, same treatment as RequiresTs skips)
+    # instead of running it (it would exit 99 anyway).
     if ($td.Name -eq 'test_orlib_resolver' -and -not $baselineDllAvailable) {
         Write-Host ""
         Write-Host "===== $($td.Name) =====" -ForegroundColor Cyan
-        Write-Host "FAIL: FATAL - baseline DLL not available (user declined or copy failed)." -ForegroundColor Red
-        Write-Host "      test_orlib_resolver requires $BaselineDll." -ForegroundColor Yellow
+        Write-Host "SKIP (baseline DLL unavailable)" -ForegroundColor DarkYellow
         $Results.Add([pscustomobject]@{
             Name     = $td.Name
-            ExitCode = 99
-            Result   = 'FAIL'
+            ExitCode = 0
+            Result   = 'SKIP'
             Duration = [timespan]::Zero
-            Output   = "FATAL: baseline DLL not available - test_orlib_resolver cannot run."
-            Skipped   = $false
+            Output   = $null
+            Skipped   = $true
         })
         continue
     }

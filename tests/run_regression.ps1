@@ -250,11 +250,12 @@
         -SkipDirectoryBatch, -SkipServeE2e, -SkipShowMeE2e, -SkipPbar, or
         -SkipVerboseFlag is used).
         The Unknown Link stress suite additionally requires -ExtendedStress.
-      - tests/fixtures/orlib20_baseline.dll must exist for the sigtool
-        suite and test_orlib_resolver. If missing, the runner PROMPTS the
-        user to copy it from the TradeStation installation. If the user
-        declines, the sigtool suite and test_orlib_resolver are marked
-        FAILED; other suites still run.
+      - tests/fixtures/orlib20_baseline.dll is an untracked local-copy
+        fixture required by the sigtool suite and test_orlib_resolver. If
+        missing, the runner PROMPTS the user to copy it from the
+        TradeStation installation (interactive runs). When it cannot be
+        acquired, the DLL-dependent cases are marked SKIPPED; other suites
+        still run.
       - Runs that execute suites invoking tsdev_cli.exe directly must start
         this runner from an elevated administrator process. The elevation
         contract (including the non-elevated direct-CLI exit code 11
@@ -363,7 +364,11 @@ function Invoke-Suite {
         [Parameter(Mandatory = $true)] [int]$SuiteTotal,
         [Parameter(Mandatory = $true)] [string]$SuiteName,
         [Parameter(Mandatory = $true)] [string]$ScriptPath,
-        [string[]]$Arguments = @()
+        [string[]]$Arguments = @(),
+        # When set and the child exits 0, the suite is recorded as SKIP
+        # (missing prerequisite) instead of PASS. A non-zero exit still
+        # records FAIL (a real failure in the cases that did run).
+        [string]$SkipReason
     )
 
     Write-Host ""
@@ -442,17 +447,26 @@ function Invoke-Suite {
 
     $status = if ($exitCode -eq 0) { 'PASS' } else { 'FAIL' }
     $color  = if ($exitCode -eq 0) { 'Green' } else { 'Red' }
+    $skippedResult = ($exitCode -eq 0 -and $SkipReason)
+    if ($skippedResult) {
+        $status = 'SKIP'
+        $color  = 'DarkYellow'
+    }
     $durationStr = "{0:0.00}s" -f $stopwatch.Elapsed.TotalSeconds
 
     Write-Host ""
-    Write-Host ("{0}: {1} (exit {2}) [{3}]" -f $SuiteName, $status, $exitCode, $durationStr) -ForegroundColor $color
+    if ($skippedResult) {
+        Write-Host ("{0}: SKIP: {1} [{2}]" -f $SuiteName, $SkipReason, $durationStr) -ForegroundColor $color
+    } else {
+        Write-Host ("{0}: {1} (exit {2}) [{3}]" -f $SuiteName, $status, $exitCode, $durationStr) -ForegroundColor $color
+    }
 
     $result = [pscustomobject]@{
         Suite     = $SuiteName
         Result    = $status
         ExitCode  = $exitCode
         Duration  = $stopwatch.Elapsed
-        Skipped   = $false
+        Skipped   = $skippedResult
     }
     $SuiteResults.Add($result) | Out-Null
     return $result
@@ -479,34 +493,6 @@ function Skip-Suite {
         ExitCode  = 0
         Duration  = [timespan]::Zero
         Skipped   = $true
-    }
-    $SuiteResults.Add($result) | Out-Null
-    return $result
-}
-
-# ---------------------------------------------------------------------------
-# Fail-Suite: records a suite as FAILED without running it (used when a
-# prerequisite such as the baseline DLL is missing and the user declined to
-# remediate).
-# ---------------------------------------------------------------------------
-function Fail-Suite {
-    param(
-        [Parameter(Mandatory = $true)] [int]$SuiteIndex,
-        [Parameter(Mandatory = $true)] [int]$SuiteTotal,
-        [Parameter(Mandatory = $true)] [string]$SuiteName,
-        [string]$Reason
-    )
-
-    Write-Host ""
-    Write-Host "===== SUITE $SuiteIndex/$SuiteTotal : $SuiteName =====" -ForegroundColor Cyan
-    Write-Host "FAIL: $Reason" -ForegroundColor Red
-
-    $result = [pscustomobject]@{
-        Suite     = $SuiteName
-        Result    = 'FAIL'
-        ExitCode  = 1
-        Duration  = [timespan]::Zero
-        Skipped   = $false
     }
     $SuiteResults.Add($result) | Out-Null
     return $result
@@ -599,20 +585,24 @@ if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {
 
 # ---------------------------------------------------------------------------
 # Prerequisite: baseline DLL for the sigtool suite and test_orlib_resolver.
-# If missing, prompt the user to copy it from the TS install. Do NOT continue
-# without a user decision. This prompt happens ONCE here in the orchestrator;
-# the child scripts receive -SkipBaselineDllPrompt so they do not re-prompt.
+# The DLL is an untracked local-copy fixture (proprietary orlib20.dll; it
+# cannot be redistributed). If missing, prompt the user to copy it from the
+# TS install (interactive runs). This prompt happens ONCE here in the
+# orchestrator; the child scripts receive -SkipBaselineDllPrompt so they do
+# not re-prompt.
 #   - If the DLL is available (present or copied): child scripts run normally
 #     and their own Ensure-BaselineDll check passes (DLL present, no prompt).
-#   - If the user declined: the sigtool suite is marked FAILED (not launched),
-#     and run_unit_tests.ps1 is launched with -SkipBaselineDllPrompt so it
-#     marks test_orlib_resolver as FAILED but still runs the other unit tests.
+#   - If it cannot be acquired: the sigtool suite still runs its DLL-free
+#     error-path cases and is recorded as SKIP, and run_unit_tests.ps1 is
+#     launched with -SkipBaselineDllPrompt so it marks test_orlib_resolver
+#     as SKIPPED but still runs the other unit tests.
 # ---------------------------------------------------------------------------
 $baselineDllAvailable = Ensure-BaselineDll -DllPath $BaselineDll -TsPath $TsPath
 if (-not $baselineDllAvailable) {
     Write-Host ""
-    Write-Host "FATAL: baseline DLL not available - sigtool suite and test_orlib_resolver will FAIL." -ForegroundColor Red
-    Write-Host "Other suites (non-DLL unit tests, E2E tests, exists tests) will still run." -ForegroundColor Yellow
+    Write-Host "NOTE: baseline DLL not available - sigtool suite and test_orlib_resolver will be SKIPPED." -ForegroundColor DarkYellow
+    Write-Host "To enable them, copy <TS install>\Program\orlib20.dll to:" -ForegroundColor DarkYellow
+    Write-Host "  $BaselineDll" -ForegroundColor DarkYellow
 }
 
 # ---------------------------------------------------------------------------
@@ -755,15 +745,19 @@ if ($skipPbarActual) { $suiteCount++ }
 $idx = 0
 if (-not $SkipSigtool) {
     $idx++
+    $sigArgs = @()
+    if ($Verbose) { $sigArgs += "-Verbose" }
     if (-not $baselineDllAvailable) {
-        # DLL missing and user declined - mark the suite FAILED without
-        # launching the child script (it would only re-prompt / exit 1).
-        Fail-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
-            -SuiteName "sigtool verify gate" `
-            -Reason "baseline DLL not available (user declined to copy). Required: $BaselineDll" | Out-Null
+        # Baseline DLL cannot be acquired: the suite still runs its DLL-free
+        # error-path cases and skips the DLL-dependent ones; record the
+        # suite as SKIP (missing prerequisite), not FAIL. A non-zero exit
+        # from the DLL-free cases still records a real FAIL.
+        $sigArgs += "-SkipBaselineDllPrompt"
+        Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
+            -SuiteName "sigtool verify gate" -ScriptPath $SigtoolScript `
+            -Arguments $sigArgs `
+            -SkipReason "baseline DLL not available; ran DLL-free cases only" | Out-Null
     } else {
-        $sigArgs = @()
-        if ($Verbose) { $sigArgs += "-Verbose" }
         Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
             -SuiteName "sigtool verify gate" -ScriptPath $SigtoolScript -Arguments $sigArgs | Out-Null
     }
@@ -779,7 +773,7 @@ if (-not $SkipUnit) {
     if ($Verbose) { $unitArgs += "-Verbose" }
     # If the orchestrator already prompted and the DLL is unavailable, tell
     # the child script to skip its own prompt (it will mark
-    # test_orlib_resolver as FAILED but still run the other unit tests).
+    # test_orlib_resolver as SKIPPED but still run the other unit tests).
     if (-not $baselineDllAvailable) { $unitArgs += "-SkipBaselineDllPrompt" }
     Invoke-Suite -SuiteIndex $idx -SuiteTotal $suiteCount `
         -SuiteName "C++ unit tests" -ScriptPath $UnitScript -Arguments $unitArgs | Out-Null
