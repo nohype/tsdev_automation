@@ -104,6 +104,8 @@ The tool updates itself -- no installer, no re-download by hand:
 Windows asks for administrator permission as usual -- click Yes.
 To see your version: `.\tsdev_cli.exe --version`.
 
+Self-update exists from v0.1.6 onward. If your copy is v0.1.5 or older, it cannot update itself -- download the new zip one last time by hand; after that, updates are automatic.
+
 ## If something goes wrong
 
 The tool is designed to be fail-safe: every operation is checked, and when TradeStation is in a bad state it **refuses, prints the reason, and stops** instead of risking your library. A refusal is safe -- unprocessed items simply did not run. Common cases:
