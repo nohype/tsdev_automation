@@ -8,6 +8,8 @@
 //   - decideUpdateAction(): every spec decision path -- check verdicts,
 //     empty feed, dev-build/non-bundle refusals, not-found/no-asset, the
 //     capability-loss confirm trigger, kMin boundary, decline/force paths.
+//   - capableDowngradeNotice(): the 4.2 notice scope (kMin <= target <
+//     current only) and the errTooMany grammar flag.
 //   - kMinSelfUpdateVersion constant.
 //
 // This is a PURE UNIT TEST -- no orlib20, no network, no filesystem
@@ -335,6 +337,70 @@ DWORD WINAPI runTest(LPVOID param) {
         if ((ec = expectAction("bare update ahead (target<kMin moot)", in,
                                UpdateAction::VerdictAhead, 82)) != 0)
             return 0;
+    }
+
+    // ------------------------------------------------------------------
+    // Check 8: capable-downgrade notice scope (4.2) + too-many-args flag.
+    // ------------------------------------------------------------------
+    {
+        auto expectNotice = [](const char* label,
+                               const UpdateDecisionInput& in,
+                               bool want, int code) {
+            const bool got = capableDowngradeNotice(in);
+            if (got != want) {
+                std::fprintf(stderr,
+                             "\n[FAIL] %s: notice=%d expected %d\n",
+                             label, (int)got, (int)want);
+                return code;
+            }
+            std::fprintf(stdout, "    %-58s -> %d PASS\n", label,
+                         (int)got);
+            return 0;
+        };
+        // (a) Downgrade to a still-capable target (kMin <= target <
+        // current) flags the notice.
+        UpdateDecisionInput in = baseInput();
+        in.explicitTarget = true;
+        in.current = parseSemver("0.1.10");
+        in.target = parseSemver("0.1.9");
+        if ((ec = expectNotice("downgrade to capable target -> notice", in,
+                               true, 90)) != 0) return 0;
+        // Boundary: target == kMin still counts as capable.
+        in.target = parseSemver(kMinSelfUpdateVersion);
+        if ((ec = expectNotice("downgrade to kMin boundary -> notice", in,
+                               true, 91)) != 0) return 0;
+        // (b) Downgrade below kMin -> NO capable-downgrade notice; the
+        // capability-loss confirm path owns that case.
+        in = baseInput();
+        in.explicitTarget = true;
+        in.yes = true;              // pre-answer the confirm gate
+        in.target = parseSemver("0.1.4");  // < kMin, < current 0.1.5
+        if ((ec = expectAction("downgrade below kMin + --yes applies", in,
+                               UpdateAction::Apply, 92)) != 0) return 0;
+        if ((ec = expectNotice("downgrade below kMin -> NO notice", in,
+                               false, 93)) != 0) return 0;
+        // Non-downgrade / dev-build cases never flag the notice.
+        in = baseInput();           // target 0.1.6 > current 0.1.5
+        if ((ec = expectNotice("upgrade -> no notice", in,
+                               false, 94)) != 0) return 0;
+        in.devBuild = true;
+        in.current = parseSemver("0.1.10");
+        in.target = parseSemver("0.1.9");
+        if ((ec = expectNotice("dev build -> no notice", in,
+                               false, 95)) != 0) return 0;
+        // (c) >1 positional is flagged as a distinct grammar error.
+        const UpdateArgs tm = parseUpdateArgs({"check", "v0.1.5"});
+        if (tm.ok || !tm.errTooMany) {
+            ec = fail("check8: 'check v0.1.5' must set errTooMany", 96);
+            return 0;
+        }
+        const UpdateArgs bt = parseUpdateArgs({"foo"});
+        if (bt.ok || bt.errTooMany) {
+            ec = fail("check8: 'foo' is a bad token, not errTooMany", 97);
+            return 0;
+        }
+        std::fprintf(stdout,
+                     "    capableDowngradeNotice + errTooMany PASS\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

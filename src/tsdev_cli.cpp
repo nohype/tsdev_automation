@@ -8450,6 +8450,7 @@ struct UpdateArgs {
     std::string updateUrl;    // --update-url <base> (hidden)
     bool ok = false;
     std::string errToken;     // offending token for the usage error
+    bool errTooMany = false;  // error is >1 positional, not a bad token
 };
 
 // Grammar: 0-or-1 positional (check | latest | <semver>); --yes/-y and
@@ -8486,6 +8487,7 @@ UpdateArgs parseUpdateArgs(const std::vector<std::string>& args) {
             ++positional;
             if (positional > 1) {
                 ua.errToken = a;
+                ua.errTooMany = true;
                 return ua;
             }
             if (iequals(a, "check")) {
@@ -8581,6 +8583,17 @@ UpdateAction decideUpdateAction(const UpdateDecisionInput& in) {
         return UpdateAction::RefuseConfirm;
     }
     return UpdateAction::Apply;
+}
+
+// 4.2: the "can still update itself" downgrade notice applies ONLY to a
+// real downgrade whose target is still update-capable
+// (kMinSelfUpdateVersion <= target < current). Sub-kMin targets take the
+// capability-loss confirm path (4.1) instead -- emitting the notice for
+// them would claim they can self-update when they cannot.
+bool capableDowngradeNotice(const UpdateDecisionInput& in) {
+    return !in.devBuild && in.targetFound &&
+           tsdev::update::compareSemver(in.target, in.current) < 0 &&
+           tsdev::update::compareSemver(in.target, in.minSelfUpdate) >= 0;
 }
 
 // Interactivity predicate (4.1): CONIN$ opens AND stderr is a console AND
@@ -8970,9 +8983,9 @@ int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
     }
 
     // --- Apply ---------------------------------------------------------------
-    if (isDowngrade) {
+    if (!jsonMode && capableDowngradeNotice(din)) {
         // A downgrade to a still-update-capable version is a one-line
-        // notice, not a prompt (4.2).
+        // notice, not a prompt (4.2). Human-mode stderr only (2.2).
         std::fprintf(stderr, "Downgrading %s -> %s (this version can still "
                      "update itself).\n",
                      currentDisplay.c_str(), targetDisplay.c_str());
@@ -10402,9 +10415,12 @@ int main(int argc, char** argv) {
             CliResult r;
             r.op = "update";
             r.exitCode = 1;
-            r.errorMessage = "\"" + ua.errToken +
-                "\" is not a valid version (expected e.g. v0.1.5 or 0.1.5, "
-                "\"check\", or \"latest\")";
+            r.errorMessage = ua.errTooMany
+                ? "too many arguments for update (expected at most one "
+                  "of: check, latest, <version>)"
+                : "\"" + ua.errToken +
+                  "\" is not a valid version (expected e.g. v0.1.5 or "
+                  "0.1.5, \"check\", or \"latest\")";
             r.humanStderr = "Error: " + r.errorMessage + "\n";
             if (jsonMode) {
                 emitOutput(r, jsonMode);

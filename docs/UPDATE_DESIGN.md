@@ -239,10 +239,12 @@ ANOTHER `tsdev_cli.exe` process (likely the serve broker):
 tsdev_cli: NOTE another tsdev_cli.exe is still running the old version.
            A running serve broker keeps serving v0.1.5 until it is restarted.
 ```
-Downgrade to a still-capable version adds one stderr line before
-`Installing`:
+Downgrade to a still-capable version (`kMinSelfUpdateVersion <= target <
+current`) adds one stderr line before `Installing`; a downgrade below
+`kMinSelfUpdateVersion` takes the capability-loss confirm path (4.1)
+instead and does NOT print this line:
 ```
-Downgrading v0.1.6 -> v0.1.5 (this version can still update itself).
+Downgrading v0.1.7 -> v0.1.6 (this version can still update itself).
 ```
 
 Deferred apply (the running exe could not be renamed, item 9.6): exit
@@ -501,7 +503,8 @@ Exact human messages (stderr unless noted; `<dir>`/`v*` substituted):
 | Dev build apply | `tsdev_cli: ERROR this is a development build (0.0.0-dev). Refusing to replace it with a release; pass --force to install the release anyway.` | 28 |
 | Non-bundle dir | `tsdev_cli: ERROR <dir> does not look like a release bundle (missing tsdev_automation\ or README.md). Pass --force to update this copy anyway.` | 28 |
 | Confirm on non-interactive | (4.1 text above) | 28 |
-| `update foo` / `update check extra` | `Error: "foo" is not a valid version (expected e.g. v0.1.5 or 0.1.5, "check", or "latest")` + usage | 1 |
+| `update foo` (bad token) | `Error: "foo" is not a valid version (expected e.g. v0.1.5 or 0.1.5, "check", or "latest")` + usage | 1 |
+| `update check extra` (>1 positional) | `Error: too many arguments for update (expected at most one of: check, latest, <version>)` + usage | 1 |
 
 `update check` output channels: verdict lines to stdout (success) or the
 `tsdev_cli: ERROR` line to stderr (failure). Under `--json` the frame on
