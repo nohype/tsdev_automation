@@ -85,20 +85,41 @@ def _print_stderr_once(results: list[TsDevResult]) -> None:
             print(diag, file=sys.stderr)
 
 
+def _semver_key(version: str | None) -> tuple[int, int, int] | None:
+    """Parse a normalized ``vX.Y.Z`` version into a comparable tuple."""
+    if not version:
+        return None
+    try:
+        parts = tuple(int(p) for p in version.lstrip("vV").split("."))
+    except ValueError:
+        return None
+    return parts if len(parts) == 3 else None
+
+
 def _print_update_check(r: TsDevResult) -> None:
-    """Human-friendly rendering of a ``check_update`` verdict."""
+    """Human-friendly rendering of a ``check_update`` verdict.
+
+    Verdict order mirrors the C++ ``decideUpdateAction`` check branch:
+    an empty feed takes precedence over the dev-build verdict.
+    """
     if not r.success:
         _print_result(r)
         return
+    if r.latest_version is None:
+        print("No published releases were found to update to.")
+        return
     if r.dev_build:
         print(f"Development build ({r.current_version}) -- not installed from a release.")
-        if r.latest_version:
-            print(f"Latest release: {r.latest_version}.")
-    elif r.update_available:
+        print(f"Latest release: {r.latest_version}.")
+        return
+    if r.update_available:
         print(f"Update available: {r.current_version} -> {r.latest_version}.")
-        print("Run: tsdev-automation update")
-    elif r.latest_version is None:
-        print("No published releases were found to update to.")
+        print("Run: tsdev_cli update")
+        return
+    cur, lat = _semver_key(r.current_version), _semver_key(r.latest_version)
+    if cur is not None and lat is not None and cur > lat:
+        print(f"Your version ({r.current_version}) is newer than the "
+              f"latest release ({r.latest_version}). Nothing to do.")
     else:
         print(f"You are up to date ({r.current_version}).")
 
@@ -109,15 +130,25 @@ def _print_update_result(r: TsDevResult) -> None:
         _print_result(r)
         return
     if r.already_current:
-        print(f"Already at {r.to_version or r.from_version} -- nothing to do.")
-    elif r.to_version is None and r.update_available is False:
-        # Empty-feed verdict mirroring the check fields (action=apply).
+        print(f"Already at {r.to_version or r.from_version} -- nothing "
+              "to do. Reinstall anyway with --force.")
+    elif r.to_version is None:
+        # Verdict-shaped apply result (empty feed / up-to-date / ahead):
+        # it carries the check verdict fields and renders identically.
         _print_update_check(r)
     else:
-        direction = "Downgraded" if r.downgrade else "Updated"
-        print(f"{direction}: {r.from_version} -> {r.to_version}.")
+        print(f"Updated: {r.from_version} -> {r.to_version}.")
+        if r.downgrade:
+            print(f"Downgrading {r.from_version} -> {r.to_version} "
+                  "(this version can still update itself).", file=sys.stderr)
     notes = r.notes or []
-    if "broker_restart_required" in notes or "other_instances_running" in notes:
+    if "other_instances_running" in notes:
+        # Mirrors the C++ stderr two-liner.
+        print("NOTE: another tsdev_cli.exe is still running the old version.",
+              file=sys.stderr)
+        print(f"      A running serve broker keeps serving {r.from_version} "
+              "until it is restarted.", file=sys.stderr)
+    if "broker_restart_required" in notes:
         print("NOTE: a running serve broker keeps serving the old version "
               "until it is restarted.", file=sys.stderr)
     if "deferred_apply" in notes:

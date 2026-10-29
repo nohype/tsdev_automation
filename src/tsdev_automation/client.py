@@ -755,8 +755,11 @@ _SW_HIDE = 0
 
 # Bounded wait for the elevated `update` child (runas path): a slow-link
 # download plus the staged swap can take minutes; the floor is 10 min per
-# the update design (tmp/UPDATE_DESIGN.md Section 10).
+# the update design (docs/UPDATE_DESIGN.md Section 10).
 _UPDATE_WAIT_TIMEOUT_MS = 15 * 60 * 1000
+# Grace period for the post-timeout terminate+reap: long enough for the
+# OS to tear the child down, short enough to fail fast when it refuses.
+_UPDATE_KILL_WAIT_MS = 10 * 1000
 _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
 
@@ -2015,16 +2018,20 @@ class TsDevClient:
         ``runas`` does not inherit the caller's environment block, so
         ``TSDEV_UPDATE_URL`` (when set) is forwarded explicitly as
         ``--update-url`` -- the same env->flag convention
-        :func:`_build_serve_parameters` applies.
+        :func:`_build_serve_parameters` applies.  ``--update-url`` is an
+        update-local flag (the C++ parses it only inside
+        ``parseUpdateArgs``), so it is emitted AFTER the update args;
+        placed before the ``update`` token it would become the
+        subcommand and the launch would fail as a usage error.
         """
         args: list[str] = []
         if self.ts_path:
             args.extend(("--ts-path", self.ts_path))
         args.extend(("--json", "--update-result-file", result_path))
+        args.extend(update_args)
         update_url = os.environ.get("TSDEV_UPDATE_URL")
         if update_url:
             args.extend(("--update-url", update_url))
-        args.extend(update_args)
         args.extend(["-v"] * self.verbose)
         return subprocess.list2cmdline(args)
 
@@ -2079,11 +2086,20 @@ class TsDevClient:
                 raise PermissionError("UAC declined: no process handle returned")
             process_handle = int(sei.hProcess)
             try:
-                if not _wait_for_exit(process_handle, _UPDATE_WAIT_TIMEOUT_MS):
-                    # _wait_for_exit already attempted TerminateProcess;
-                    # mid-swap termination is permitted because the apply
+                # Long wait is WAIT-ONLY: a False here means "still
+                # running after 15 min", NOT "termination failed" --
+                # _wait_for_exit(terminate=True) reports True on a
+                # confirmed kill, which would silently swallow the
+                # timeout.  Terminate explicitly, then always raise.
+                if not _wait_for_exit(
+                    process_handle, _UPDATE_WAIT_TIMEOUT_MS, terminate=False
+                ):
+                    # Mid-swap termination is permitted because the apply
                     # phase's rollback + *.old recovery points bound the
                     # damage (design Section 10).
+                    _wait_for_exit(
+                        process_handle, _UPDATE_KILL_WAIT_MS, terminate=True
+                    )
                     raise TsDevError(message="update timed out")
                 exit_dword = wintypes.DWORD()
                 ok2 = _kernel32.GetExitCodeProcess(
@@ -2094,10 +2110,14 @@ class TsDevClient:
                 _kernel32.CloseHandle(wintypes.HANDLE(process_handle))
             return self._read_update_result(tmp_path, exit_code)
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            # Best-effort cleanup of the result file and a lingering
+            # atomic-write sibling (<path>.tmp) if the child died
+            # mid-rename.
+            for p in (tmp_path, tmp_path + ".tmp"):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
     def _read_update_result(self, result_path: str, exit_code: int | None) -> TsDevResult:
         """Map the elevated update child's outcome over the four
@@ -2157,10 +2177,13 @@ class TsDevClient:
                 message=f"update result file is not valid JSON: {text!r}"
             )
         result = TsDevResult.from_json(obj, stderr="")
+        # The result file is authoritative for its contents in both
+        # off-spec combinations: exit 0 + a failure frame still maps the
+        # frame through the error table (raise here), and a nonzero exit
+        # carrying a success frame returns the success result as
+        # recorded (the caller's not-success check handles nonzero +
+        # failure frames the same way).
         if exit_code == 0 and not result.success:
-            # exit 0 + a failure frame is not a spec'd combination; treat
-            # the file as authoritative (nonzero+file maps through the
-            # error table -- a failure frame maps the same way).
             self._raise_update_error(result)
         return result
 

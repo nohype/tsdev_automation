@@ -16,6 +16,7 @@ import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -9385,12 +9386,18 @@ class TestUpdate:
     def test_runas_forwards_update_url_env(
         self, non_elevated_client: TsDevClient, monkeypatch
     ) -> None:
-        """TSDEV_UPDATE_URL is forwarded as --update-url (runas drops env)."""
+        """TSDEV_UPDATE_URL is forwarded as --update-url (runas drops env),
+        positioned AFTER the update args -- the C++ parses --update-url
+        only inside parseUpdateArgs, so ``--update-url <u> update`` would
+        be a usage error."""
         monkeypatch.setenv("TSDEV_UPDATE_URL", "http://127.0.0.1:9999")
         state = self._fake_runas(monkeypatch, result_json=_update_apply_json())
         non_elevated_client.update()
         assert "--update-url" in state["params"]
         assert "http://127.0.0.1:9999" in state["params"]
+        assert re.search(r"\bupdate\b.*--update-url", state["params"]), (
+            f"--update-url must follow the update args: {state['params']!r}"
+        )
 
     def test_runas_no_update_url_env(
         self, non_elevated_client: TsDevClient, monkeypatch
@@ -9452,7 +9459,67 @@ class TestUpdate:
     def test_runas_timeout_terminates_and_raises(
         self, non_elevated_client: TsDevClient, monkeypatch
     ) -> None:
-        """A wait-bound expiry raises TsDevError("update timed out")."""
-        self._fake_runas(monkeypatch, result_json=None, exit_code=0, wait_ok=False)
+        """A wait-bound expiry terminates the child AND raises
+        TsDevError("update timed out") -- never the generic no-result
+        error, even when the terminate+reap confirms the kill."""
+        self._fake_runas(monkeypatch, result_json=None, exit_code=0)
+        real_wait = _wait_for_exit
+        wait_modes: list[bool] = []
+
+        def fake_wait(handle, timeout_ms, *, terminate=True):
+            wait_modes.append(terminate)
+            if not terminate:
+                return False  # the 15-min WAIT-ONLY wait expires
+            # The terminate+reap call exercises the REAL _wait_for_exit:
+            # it returns True on a confirmed kill, and the caller must
+            # still report the timeout.
+            return real_wait(handle, timeout_ms, terminate=True)
+
+        terminated: list[int] = []
+        wait_results = iter([0x00000102, 0x00000000])  # TIMEOUT, OBJECT_0
+        monkeypatch.setattr(
+            "tsdev_automation.client._wait_for_exit", fake_wait
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.WaitForSingleObject",
+            lambda h, ms: next(wait_results, 0x00000000),
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.TerminateProcess",
+            lambda h, code: terminated.append(getattr(code, "value", code)) or 1,
+        )
         with pytest.raises(TsDevError, match="update timed out"):
             non_elevated_client.update()
+        assert wait_modes == [False, True]
+        assert terminated  # TerminateProcess was invoked
+
+    def test_runas_timeout_still_raises_when_kill_fails(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """A failed TerminateProcess still reports the timeout."""
+        self._fake_runas(
+            monkeypatch, result_json=None, exit_code=0, wait_ok=False
+        )
+        with pytest.raises(TsDevError, match="update timed out"):
+            non_elevated_client.update()
+
+    def test_use_serve_non_elevated_still_takes_runas(
+        self, fake_cli: Path, monkeypatch
+    ) -> None:
+        """use_serve=True + non-elevated: update never goes through the
+        broker -- it still takes the elevated runas launch."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        state = self._fake_runas(monkeypatch, result_json=_update_apply_json())
+        r = c.update()
+        assert r.success is True
+        assert state["lpVerb"] == "runas"
+        assert c._broker is None
+
+    def test_update_check_passthrough_argv(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        """client.update("check") forwards the bare 'check' token."""
+        calls = self._capture_argv(monkeypatch, _update_check_json())
+        client.update("check")
+        assert calls[0] == [str(client.cli_path), "--json", "update", "check"]

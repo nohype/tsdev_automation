@@ -1,7 +1,7 @@
 # Handoff: `tsdev_cli update` (self-update)
 
 Maintainer map for the self-update feature. The contract (exact grammar,
-output text, JSON shapes, exit codes) lives in `tmp/UPDATE_DESIGN.md` --
+output text, JSON shapes, exit codes) lives in `docs/UPDATE_DESIGN.md` --
 this file is a map, not a copy. Spec section numbers below refer to that
 document.
 
@@ -77,9 +77,9 @@ live broker outlives the update.
 
 ## Tests
 
-`tests/test_update_feed.cpp` exists (feed parse/select/digest). Planned
-siblings `test_update_apply.cpp` / `test_update_cmd.cpp` may not have
-landed yet and names may change -- check `tests/` before referencing.
+`tests/test_update_feed.cpp` (feed parse/select/digest),
+`tests/test_update_apply.cpp` (real staging/swap/rollback), and
+`tests/test_update_cmd.cpp` (decision table + grammar) all exist.
 Update is fully testable without TS (`-NoTs`): feed fixtures via
 `TSDEV_UPDATE_URL`/`--update-url` pointing at a local HTTP server
 (spec 8 harness shape). Suite inventory: `tests/run_unit_tests.ps1` /
