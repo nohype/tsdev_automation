@@ -26,6 +26,13 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
                                   only)
     cache_io_error      -> TsDevCacheError (exit 16)
     cache_cancelled     -> TsDevCacheCancelledError (exit 17)
+    update_check_failed -> UpdateCheckError (exit 25)
+    update_not_found    -> UpdateNotFoundError (exit 26)
+    update_failed       -> UpdateFailedError (exit 27)
+    update_refused      -> UpdateRefusedError (exit 28)
+    cancelled           -> CancelledError (exit 12; update-prompt decline
+                           and any batch-marker code surfacing through a
+                           raising path)
 """
 
 from __future__ import annotations
@@ -213,6 +220,51 @@ class TsDevCacheCancelledError(TsDevError):
     """
 
 
+class UpdateCheckError(TsDevError):
+    """Update check failed (exit 25).
+
+    The update service could not be queried: offline/DNS, HTTP error,
+    rate limit, or a malformed feed.  ``result.error.retry_after_secs``
+    carries the rate-limit reset when the service reported one.
+    """
+
+
+class UpdateNotFoundError(TsDevError):
+    """Requested update version is not a published release (exit 26).
+
+    The feed was reachable but the requested version is not a published
+    non-draft non-prerelease release, or its release has no
+    ``tsdev_automation_<tag>.zip`` asset.
+    """
+
+
+class UpdateFailedError(TsDevError):
+    """Update download/verify/install failure (exit 27).
+
+    Covers integrity-check failures, corrupt archives, unpack/write
+    errors, and swap failures.  ``result.rolled_back`` reports whether
+    the previous version was restored after a mid-swap failure.
+    """
+
+
+class UpdateRefusedError(TsDevError):
+    """Update policy refusal needing explicit opt-in (exit 28).
+
+    Dev build or non-bundle install dir without ``--force``, or a
+    required capability-loss confirmation on a non-interactive channel
+    without ``--yes``.  ``result.requires_force`` /
+    ``result.requires_confirmation`` identify which opt-in applies.
+    """
+
+
+class CancelledError(TsDevError):
+    """User declined the update capability-loss confirmation (exit 12).
+
+    Also covers the batch cancelled-marker code if it ever surfaces
+    through a raising path.
+    """
+
+
 # error.code -> exception class
 ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "usage_error": UsageError,
@@ -231,6 +283,11 @@ ERROR_CODE_MAP: dict[str, type[TsDevError]] = {
     "whserver_dispatch_watchdog_abort": TsDevWatchdogAbortError,
     "cache_io_error": TsDevCacheError,
     "cache_cancelled": TsDevCacheCancelledError,
+    "update_check_failed": UpdateCheckError,
+    "update_not_found": UpdateNotFoundError,
+    "update_failed": UpdateFailedError,
+    "update_refused": UpdateRefusedError,
+    "cancelled": CancelledError,
 }
 
 
@@ -260,6 +317,11 @@ __all__ = [
     "TsDevWatchdogAbortError",
     "TsDevCacheError",
     "TsDevCacheCancelledError",
+    "UpdateCheckError",
+    "UpdateNotFoundError",
+    "UpdateFailedError",
+    "UpdateRefusedError",
+    "CancelledError",
     "ElevationRequiredError",
     "ERROR_CODE_MAP",
     "exception_for",

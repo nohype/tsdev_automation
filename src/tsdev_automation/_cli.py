@@ -20,6 +20,8 @@ Usage::
     tsdev-automation batch-modify-dir  strategy ./mydir [-t el]...
     tsdev-automation batch-delete-dir  strategy ./mydir [-t el]...
     tsdev-automation batch-upsert-dir  strategy ./mydir [-t el]...
+    tsdev-automation update  [version] [--yes] [--force]
+    tsdev-automation update-check
     tsdev-automation --backup-cache [--cache-backup-policy <mode>]
     tsdev-automation --restore-cache
     tsdev-automation --backup-cache insert strategy MyName ./source.el
@@ -81,6 +83,45 @@ def _print_stderr_once(results: list[TsDevResult]) -> None:
         if diag and diag not in seen:
             seen.add(diag)
             print(diag, file=sys.stderr)
+
+
+def _print_update_check(r: TsDevResult) -> None:
+    """Human-friendly rendering of a ``check_update`` verdict."""
+    if not r.success:
+        _print_result(r)
+        return
+    if r.dev_build:
+        print(f"Development build ({r.current_version}) -- not installed from a release.")
+        if r.latest_version:
+            print(f"Latest release: {r.latest_version}.")
+    elif r.update_available:
+        print(f"Update available: {r.current_version} -> {r.latest_version}.")
+        print("Run: tsdev-automation update")
+    elif r.latest_version is None:
+        print("No published releases were found to update to.")
+    else:
+        print(f"You are up to date ({r.current_version}).")
+
+
+def _print_update_result(r: TsDevResult) -> None:
+    """Human-friendly rendering of an ``update`` apply result."""
+    if not r.success:
+        _print_result(r)
+        return
+    if r.already_current:
+        print(f"Already at {r.to_version or r.from_version} -- nothing to do.")
+    elif r.to_version is None and r.update_available is False:
+        # Empty-feed verdict mirroring the check fields (action=apply).
+        _print_update_check(r)
+    else:
+        direction = "Downgraded" if r.downgrade else "Updated"
+        print(f"{direction}: {r.from_version} -> {r.to_version}.")
+    notes = r.notes or []
+    if "broker_restart_required" in notes or "other_instances_running" in notes:
+        print("NOTE: a running serve broker keeps serving the old version "
+              "until it is restarted.", file=sys.stderr)
+    if "deferred_apply" in notes:
+        print("Update will finish when this command exits.")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -164,6 +205,16 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("-t", action="append", dest="extensions", default=None,
                         help="file extension filter (repeatable; first -t overrides defaults .el+.txt)")
 
+    sp = sub.add_parser("update", help="self-update tsdev_cli to the latest (or a given) release.")
+    sp.add_argument("version", nargs="?", default=None,
+                    help="release to install: v0.1.5 | 0.1.5 | latest (default: latest)")
+    sp.add_argument("--yes", "-y", action="store_true", default=False,
+                    help="pre-answer the capability-loss confirmation")
+    sp.add_argument("--force", action="store_true", default=False,
+                    help="override dev-build / non-bundle / same-version refusals")
+
+    sub.add_parser("update-check", help="check whether a newer tsdev_cli release exists (read-only).")
+
     return p
 
 
@@ -227,6 +278,14 @@ def _main(argv: list[str] | None = None) -> int:
         if args.command == "upsert":
             r = client.upsert(args.type, args.name, args.source, **cache_kwargs)
             _print_result(r)
+            return 0 if r.success else 1
+        if args.command == "update":
+            r = client.update(args.version, yes=args.yes, force=args.force)
+            _print_update_result(r)
+            return 0 if r.success else 1
+        if args.command == "update-check":
+            r = client.check_update()
+            _print_update_check(r)
             return 0 if r.success else 1
         if args.command.endswith("-dir"):
             # batch-insert-dir, batch-modify-dir, batch-delete-dir, batch-upsert-dir

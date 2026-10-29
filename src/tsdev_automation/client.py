@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import _pipe
-from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, TsDevWatchdogAbortError, exception_for
+from .exceptions import ElevationRequiredError, TsDevCrashError, TsDevError, TsDevWatchdogAbortError, UpdateRefusedError, exception_for
 from .results import BatchProgress, BatchProgressCallback, TsDevErrorInfo, TsDevResult
 
 # The component types confirmed in tsdev_cli.cpp (parseType).
@@ -746,7 +746,17 @@ def _detect_elevation() -> bool:
 
 # ShellExecuteExW constants.
 _SEE_MASK_NOCLOSEPROCESS = 0x00000040
+# SEE_MASK_NO_CONSOLE: the elevated update child gets NO console at all --
+# belt-and-suspenders with the CLI's visible-console interactivity
+# predicate (a hidden console would make a confirmation need exit 28
+# instead of hanging on ReadConsoleW).
+_SEE_MASK_NO_CONSOLE = 0x00008000
 _SW_HIDE = 0
+
+# Bounded wait for the elevated `update` child (runas path): a slow-link
+# download plus the staged swap can take minutes; the floor is 10 min per
+# the update design (tmp/UPDATE_DESIGN.md Section 10).
+_UPDATE_WAIT_TIMEOUT_MS = 15 * 60 * 1000
 _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
 
@@ -1891,6 +1901,268 @@ class TsDevClient:
         return self._batch_dir("upsert", type, dir_path, extensions, on_progress,
                                backup_cache=backup_cache, restore_cache=restore_cache,
                                cache_backup_policy=cache_backup_policy)
+
+    # -- self-update (non-TS operation; update design Section 10) ----------
+
+    def check_update(self) -> TsDevResult:
+        """Check whether a newer release is available (read-only).
+
+        Runs ``tsdev_cli --json update check``.  Never raises for the
+        "up to date"/"ahead"/"dev build" verdicts -- those are results,
+        not failures (the ``exists`` not-found precedent); inspect
+        ``result.update_available``/``result.latest_version``/
+        ``result.dev_build``.  Feed failures raise
+        :class:`~tsdev_automation.exceptions.UpdateCheckError` (exit 25).
+
+        NEVER routed through the serve broker -- the broker IS the binary
+        being replaced.  A non-elevated session launches the CLI through
+        the ``ShellExecuteExW`` runas path (one UAC prompt per call)
+        regardless of ``use_serve``.
+        """
+        return self._update_op(["update", "check"])
+
+    def update(
+        self,
+        version: str | None = None,
+        *,
+        yes: bool = False,
+        force: bool = False,
+    ) -> TsDevResult:
+        """Self-update (or downgrade) to a release.
+
+        ``version=None`` (or ``"latest"``) installs the latest published
+        release; ``"v0.1.5"``/``"0.1.5"`` install exactly that version
+        (the CLI validates the spelling).  ``yes=True`` forwards
+        ``--yes`` (pre-answers the capability-loss confirmation);
+        ``force=True`` forwards ``--force`` (dev-build / non-bundle /
+        same-version overrides).
+
+        NEVER routed through the serve broker -- the broker IS the binary
+        being replaced.  A non-elevated session launches the CLI through
+        the ``ShellExecuteExW`` runas path (one UAC prompt per call)
+        regardless of ``use_serve``; a declined prompt raises
+        ``CancelledError`` (exit 12) and a non-interactive refusal raises
+        :class:`~tsdev_automation.exceptions.UpdateRefusedError` (exit
+        28, whose message carries the ``yes=True`` remedy).
+
+        On success, when this client owns a LIVE serve broker the broker
+        is left running (it keeps serving the old version) and
+        ``"broker_restart_required"`` is added to ``result.notes`` --
+        shut the client down (or start a new ``TsDevClient``) to pick up
+        the new binary.
+        """
+        args = ["update"]
+        if version is not None:
+            args.append(version)
+        if yes:
+            args.append("--yes")
+        if force:
+            args.append("--force")
+        result = self._update_op(args)
+        if (
+            result.success
+            and self._broker is not None
+            and self._broker._started
+        ):
+            notes = list(result.notes or [])
+            if "broker_restart_required" not in notes:
+                notes.append("broker_restart_required")
+            result.notes = notes
+        return result
+
+    def _update_op(self, update_args: list[str]) -> TsDevResult:
+        """Dispatch an ``update`` subcommand, never through the broker.
+
+        ``update_args`` is the update-local argv tail (``["check"]`` or
+        ``["update", <version>?, --yes?, --force?]``).  Elevated session:
+        plain ``_run_cli``.  Non-elevated session (regardless of
+        ``use_serve``): elevated runas launch + ``--update-result-file``
+        capture (design Section 10).
+        """
+        if self._is_elevated:
+            cmd = self._base_cmd() + ["--json"] + update_args
+            result = self._run_cli(cmd)
+        else:
+            result = self._run_update_elevated(update_args)
+        if not result.success:
+            assert result.error is not None
+            self._raise_update_error(result)
+        return result
+
+    @staticmethod
+    def _raise_update_error(result: TsDevResult) -> None:
+        """Raise the mapped exception for a failed update result.
+
+        Exit-28 refinement (design Section 10): on a missed capability-
+        loss confirmation the CLI's stderr guidance is invisible through
+        the runas launch, so the raised UpdateRefusedError carries the
+        actionable ``yes=True`` remedy.
+        """
+        assert result.error is not None
+        if result.error.code == "update_refused" and result.requires_confirmation:
+            raise UpdateRefusedError(
+                result,
+                message=(
+                    f"{result.error.message} "
+                    "Re-run client.update(..., yes=True) to accept."
+                ),
+            )
+        raise exception_for(result)
+
+    def _build_update_parameters(self, update_args: list[str], result_path: str) -> str:
+        """Build the elevated-update command line for the runas launch.
+
+        ``runas`` does not inherit the caller's environment block, so
+        ``TSDEV_UPDATE_URL`` (when set) is forwarded explicitly as
+        ``--update-url`` -- the same env->flag convention
+        :func:`_build_serve_parameters` applies.
+        """
+        args: list[str] = []
+        if self.ts_path:
+            args.extend(("--ts-path", self.ts_path))
+        args.extend(("--json", "--update-result-file", result_path))
+        update_url = os.environ.get("TSDEV_UPDATE_URL")
+        if update_url:
+            args.extend(("--update-url", update_url))
+        args.extend(update_args)
+        args.extend(["-v"] * self.verbose)
+        return subprocess.list2cmdline(args)
+
+    def _run_update_elevated(self, update_args: list[str]) -> TsDevResult:
+        """Launch ``update`` elevated via ``ShellExecuteExW`` runas.
+
+        Copies the :meth:`_ServeBroker.start` launch shape and adds
+        ``SEE_MASK_NO_CONSOLE`` so the console-subsystem child gets no
+        console at all (a hidden console's confirmation prompt would
+        hang forever on ``ReadConsoleW``; with no console the CLI's
+        interactivity predicate exits 28 instead).  stdout cannot be
+        captured from a ``runas`` child, so the result JSON is read from
+        the global ``--update-result-file`` the CLI writes at every
+        JSON-frame emission point.  The wait is bounded at 15 minutes;
+        on timeout the child is terminated (safe -- the apply phase's
+        rollback + ``*.old`` recovery points bound the damage) and
+        ``TsDevError`` is raised.
+        """
+        if not self.cli_path.is_file():
+            raise FileNotFoundError(f"tsdev_cli.exe not found at {self.cli_path!s}")
+        # Temp path for the result file: create it so the path is valid,
+        # then remove the placeholder -- the CLI writes it atomically
+        # (<path>.tmp + rename, the --serve-pipe-file precedent).
+        fd, tmp_path = tempfile.mkstemp(suffix=".json", prefix="tsdev_update_")
+        try:
+            os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+            params = self._build_update_parameters(update_args, tmp_path)
+            sei = _SHELLEXECUTEINFOW()
+            sei.cbSize = ctypes.sizeof(sei)
+            sei.fMask = _SEE_MASK_NOCLOSEPROCESS | _SEE_MASK_NO_CONSOLE
+            sei.hwnd = None
+            sei.lpVerb = "runas"
+            sei.lpFile = str(self.cli_path)
+            sei.lpParameters = params
+            sei.lpDirectory = None
+            sei.nShow = _SW_HIDE
+
+            ok = _shell32.ShellExecuteExW(ctypes.byref(sei))
+            if not ok:
+                err = ctypes.windll.kernel32.GetLastError()
+                raise PermissionError(f"UAC declined or ShellExecuteExW failed (err={err})")
+            if (
+                sei.hProcess is None
+                or int(sei.hProcess) == 0
+                or int(sei.hProcess) == _INVALID_HANDLE_VALUE
+            ):
+                raise PermissionError("UAC declined: no process handle returned")
+            process_handle = int(sei.hProcess)
+            try:
+                if not _wait_for_exit(process_handle, _UPDATE_WAIT_TIMEOUT_MS):
+                    # _wait_for_exit already attempted TerminateProcess;
+                    # mid-swap termination is permitted because the apply
+                    # phase's rollback + *.old recovery points bound the
+                    # damage (design Section 10).
+                    raise TsDevError(message="update timed out")
+                exit_dword = wintypes.DWORD()
+                ok2 = _kernel32.GetExitCodeProcess(
+                    wintypes.HANDLE(process_handle), ctypes.byref(exit_dword)
+                )
+                exit_code = int(exit_dword.value) if ok2 else None
+            finally:
+                _kernel32.CloseHandle(wintypes.HANDLE(process_handle))
+            return self._read_update_result(tmp_path, exit_code)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _read_update_result(self, result_path: str, exit_code: int | None) -> TsDevResult:
+        """Map the elevated update child's outcome over the four
+        exit/file combinations (design Section 10).
+
+        The result file is written at every point a ``--json`` frame
+        would be emitted, so "no file" means the child died before
+        result emission.
+        """
+        text: str | None = None
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            text = None
+        if exit_code == 0:
+            if text is None or not text.strip():
+                raise TsDevError(
+                    message=(
+                        "update result capture failed: the CLI exited 0 "
+                        "but wrote no result file -- the update itself may "
+                        "have succeeded; check the install dir"
+                    )
+                )
+        elif text is None or not text.strip():
+            # The child died before result emission (watchdog kill and
+            # SEH crashes emit no frame).  runas captures no stderr.
+            if exit_code is not None:
+                is_crash, crash_type = _is_crash_exit(exit_code)
+                if is_crash:
+                    raise TsDevCrashError(
+                        message=(
+                            f"tsdev_cli.exe crashed during update "
+                            f"({crash_type}, exit code "
+                            f"0x{exit_code & 0xFFFFFFFF:08X})."
+                        ),
+                        exit_code=exit_code,
+                    )
+                raise TsDevError(
+                    message=(
+                        f"elevated update exited {exit_code} before "
+                        "producing a result (stderr is not capturable "
+                        "on the elevated launch)"
+                    )
+                )
+            raise TsDevError(
+                message=(
+                    "elevated update produced no result and its exit "
+                    "code is unavailable (stderr is not capturable on "
+                    "the elevated launch)"
+                )
+            )
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            raise TsDevError(
+                message=f"update result file is not valid JSON: {text!r}"
+            )
+        result = TsDevResult.from_json(obj, stderr="")
+        if exit_code == 0 and not result.success:
+            # exit 0 + a failure frame is not a spec'd combination; treat
+            # the file as authoritative (nonzero+file maps through the
+            # error table -- a failure frame maps the same way).
+            self._raise_update_error(result)
+        return result
 
     # -- internals ---------------------------------------------------------
 

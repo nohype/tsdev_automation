@@ -9063,3 +9063,396 @@ class TestCacheResultShapes:
         )
         r = client.delete("strategy", "X", backup_cache=True)
         assert r.cache is None
+
+
+# ---------------------------------------------------------------------------
+# Self-update (update design Section 10) -- never via the serve broker
+# ---------------------------------------------------------------------------
+
+
+def _update_check_json(**overrides) -> str:
+    obj = {
+        "op": "update",
+        "action": "check",
+        "success": True,
+        "exit_code": 0,
+        "current_version": "v0.1.5",
+        "dev_build": False,
+        "latest_version": "v0.1.6",
+        "update_available": True,
+        "target_version": "v0.1.6",
+        "asset": {
+            "name": "tsdev_automation_v0.1.6.zip",
+            "size_bytes": 2488114,
+            "sha256": "ab" * 32,
+            "url": "https://example.test/asset.zip",
+        },
+    }
+    obj.update(overrides)
+    return json.dumps(obj)
+
+
+def _update_apply_json(**overrides) -> str:
+    obj = {
+        "op": "update",
+        "action": "apply",
+        "success": True,
+        "exit_code": 0,
+        "from_version": "v0.1.5",
+        "to_version": "v0.1.6",
+        "downgrade": False,
+        "files_replaced": 27,
+        "install_dir": "C:\\Tools\\tsdev",
+        "notes": ["other_instances_running"],
+    }
+    obj.update(overrides)
+    return json.dumps(obj)
+
+
+def _update_failure_json(code: str, message: str, exit_code: int, **overrides) -> str:
+    obj = {
+        "op": "update",
+        "action": "apply",
+        "success": False,
+        "exit_code": exit_code,
+        "error": {"code": code, "message": message},
+    }
+    obj.update(overrides)
+    return json.dumps(obj)
+
+
+class TestUpdate:
+    """Unit tests for ``check_update``/``update`` (mocked subprocess and
+    mocked runas launch; no real exe / UAC / network)."""
+
+    # -- elevated (direct subprocess) path ---------------------------------
+
+    def _capture_argv(self, monkeypatch, stdout_json: str, returncode: int = 0):
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(list(cmd))
+            return _make_completed(stdout_json, returncode=returncode)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        return calls
+
+    def test_update_bare_argv(self, client: TsDevClient, monkeypatch) -> None:
+        calls = self._capture_argv(monkeypatch, _update_apply_json())
+        r = client.update()
+        assert calls[0] == [str(client.cli_path), "--json", "update"]
+        assert r.success is True
+
+    def test_check_update_argv(self, client: TsDevClient, monkeypatch) -> None:
+        calls = self._capture_argv(monkeypatch, _update_check_json())
+        r = client.check_update()
+        assert calls[0] == [str(client.cli_path), "--json", "update", "check"]
+        assert r.success is True
+
+    def test_update_version_yes_force_argv(self, client: TsDevClient, monkeypatch) -> None:
+        calls = self._capture_argv(monkeypatch, _update_apply_json())
+        client.update("v0.1.5", yes=True, force=True)
+        assert calls[0] == [
+            str(client.cli_path), "--json", "update", "v0.1.5", "--yes", "--force",
+        ]
+
+    def test_update_never_uses_broker(self, client: TsDevClient, monkeypatch) -> None:
+        """Even with use_serve=True the elevated path is subprocess.run."""
+        client._use_serve = True
+        calls = self._capture_argv(monkeypatch, _update_apply_json())
+        client.update()
+        assert len(calls) == 1
+
+    # -- result field mapping ----------------------------------------------
+
+    def test_check_result_fields(self, client: TsDevClient, monkeypatch) -> None:
+        self._capture_argv(monkeypatch, _update_check_json())
+        r = client.check_update()
+        assert r.current_version == "v0.1.5"
+        assert r.latest_version == "v0.1.6"
+        assert r.update_available is True
+        assert r.target_version == "v0.1.6"
+        assert r.dev_build is False
+        assert r.asset["name"] == "tsdev_automation_v0.1.6.zip"
+        assert r.asset["sha256"] == "ab" * 32
+
+    def test_apply_result_fields(self, client: TsDevClient, monkeypatch) -> None:
+        self._capture_argv(monkeypatch, _update_apply_json())
+        r = client.update()
+        assert r.from_version == "v0.1.5"
+        assert r.to_version == "v0.1.6"
+        assert r.downgrade is False
+        assert r.files_replaced == 27
+        assert r.notes == ["other_instances_running"]
+
+    def test_check_update_verdicts_do_not_raise(self, client: TsDevClient, monkeypatch) -> None:
+        """up-to-date / ahead / dev-build / empty-feed are verdicts, not failures."""
+        for overrides in (
+            {"update_available": False, "latest_version": "v0.1.5", "target_version": None},
+            {"update_available": False, "latest_version": "v0.1.6", "target_version": None},
+            {"current_version": "0.0.0-dev", "dev_build": True, "requires_force": True},
+            {"update_available": False, "latest_version": None, "target_version": None, "asset": None},
+        ):
+            monkeypatch.setattr(
+                subprocess, "run",
+                lambda *a, **k: _make_completed(_update_check_json(**overrides)),
+            )
+            r = client.check_update()
+            assert r.success is True
+
+    def test_update_fields_default_none_on_other_ops(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: _make_completed(_success_json("delete", "strategy", "X")),
+        )
+        r = client.delete("strategy", "X")
+        assert r.update_available is None
+        assert r.notes is None
+        assert r.requires_confirmation is None
+
+    # -- exception mapping -------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "code, exit_code, exc_cls",
+        [
+            ("update_check_failed", 25, exc.UpdateCheckError),
+            ("update_not_found", 26, exc.UpdateNotFoundError),
+            ("update_failed", 27, exc.UpdateFailedError),
+            ("update_refused", 28, exc.UpdateRefusedError),
+            ("cancelled", 12, exc.CancelledError),
+        ],
+    )
+    def test_error_code_mapping(
+        self, client: TsDevClient, monkeypatch, code, exit_code, exc_cls
+    ) -> None:
+        self._capture_argv(
+            monkeypatch,
+            _update_failure_json(code, f"{code} message", exit_code),
+            returncode=exit_code,
+        )
+        with pytest.raises(exc_cls) as ei:
+            client.update()
+        assert ei.value.result.exit_code == exit_code
+        assert ei.value.result.error.code == code
+
+    def test_retry_after_secs_on_error_info(self, client: TsDevClient, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subprocess, "run",
+            lambda *a, **k: _make_completed(
+                json.dumps({
+                    "op": "update", "action": "check", "success": False,
+                    "exit_code": 25,
+                    "error": {
+                        "code": "update_check_failed",
+                        "message": "rate limited",
+                        "retry_after_secs": 2700,
+                    },
+                }),
+                returncode=25,
+            ),
+        )
+        with pytest.raises(exc.UpdateCheckError) as ei:
+            client.check_update()
+        assert ei.value.result.error.retry_after_secs == 2700
+
+    def test_update_refused_confirmation_remedy(self, client: TsDevClient, monkeypatch) -> None:
+        """A missed capability-loss confirmation carries the yes=True remedy."""
+        self._capture_argv(
+            monkeypatch,
+            _update_failure_json(
+                "update_refused", "requires confirmation", 28,
+                requires_confirmation=True,
+            ),
+            returncode=28,
+        )
+        with pytest.raises(exc.UpdateRefusedError) as ei:
+            client.update("v1.4")
+        assert "yes=True" in str(ei.value)
+
+    def test_update_refused_without_confirmation_keeps_message(
+        self, client: TsDevClient, monkeypatch
+    ) -> None:
+        self._capture_argv(
+            monkeypatch,
+            _update_failure_json("update_refused", "dev build", 28),
+            returncode=28,
+        )
+        with pytest.raises(exc.UpdateRefusedError) as ei:
+            client.update(force=False)
+        assert "yes=True" not in str(ei.value)
+
+    def test_cancelled_raises_on_decline(self, client: TsDevClient, monkeypatch) -> None:
+        self._capture_argv(
+            monkeypatch,
+            _update_failure_json("cancelled", "Update cancelled.", 12),
+            returncode=12,
+        )
+        with pytest.raises(exc.CancelledError):
+            client.update("v0.1.4")
+
+    def test_broker_restart_required_note(self, client: TsDevClient, monkeypatch) -> None:
+        """A live client-owned broker adds broker_restart_required to notes."""
+        client._broker = MagicMock()
+        client._broker._started = True
+        self._capture_argv(monkeypatch, _update_apply_json())
+        r = client.update()
+        assert "broker_restart_required" in r.notes
+        # Broker is left running, not shut down.
+        client._broker.shutdown.assert_not_called()
+
+    def test_no_broker_note_without_live_broker(self, client: TsDevClient, monkeypatch) -> None:
+        self._capture_argv(monkeypatch, _update_apply_json())
+        r = client.update()
+        assert "broker_restart_required" not in (r.notes or [])
+
+
+    # -- non-elevated runas path -------------------------------------------
+
+    @pytest.fixture
+    def non_elevated_client(self, fake_cli: Path) -> TsDevClient:
+        """use_serve=False + non-elevated: update must still take the runas
+        path (never ElevationRequiredError, never the broker)."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
+        c._is_elevated = False
+        return c
+
+    def _fake_runas(
+        self,
+        monkeypatch,
+        *,
+        result_json: str | None = None,
+        exit_code: int = 0,
+        wait_ok: bool = True,
+    ):
+        """Mock the ShellExecuteExW runas launch end to end.
+
+        Returns a state dict carrying the captured lpParameters, fMask,
+        nShow, lpVerb, and the result-file path.  The canned result JSON
+        is written into the result-file path inside the fake wait (the
+        point where the real child would have finished).
+        """
+        state: dict = {"params": None, "result_path": None}
+
+        def fake_shell_execute(sei):
+            info = ctypes.cast(sei, ctypes.POINTER(_SHELLEXECUTEINFOW)).contents
+            state["params"] = info.lpParameters
+            state["fMask"] = info.fMask
+            state["nShow"] = info.nShow
+            state["lpVerb"] = info.lpVerb
+            info.hProcess = 4242
+            return True
+
+        def fake_get_exit(handle, p):
+            ctypes.cast(p, ctypes.POINTER(wintypes.DWORD)).contents.value = exit_code
+            return True
+
+        orig_build = TsDevClient._build_update_parameters
+
+        def capturing_build(self, update_args, result_path):
+            state["result_path"] = result_path
+            return orig_build(self, update_args, result_path)
+
+        def wait_and_write(*a, **k):
+            if result_json is not None and state["result_path"]:
+                Path(state["result_path"]).write_text(result_json, encoding="utf-8")
+            return wait_ok
+
+        monkeypatch.setattr(TsDevClient, "_build_update_parameters", capturing_build)
+        monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+        monkeypatch.setattr("tsdev_automation.client._wait_for_exit", wait_and_write)
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.GetExitCodeProcess", fake_get_exit
+        )
+        monkeypatch.setattr("tsdev_automation.client._kernel32.CloseHandle", lambda h: True)
+        return state
+
+    def test_runas_launch_shape_and_result_file(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        state = self._fake_runas(monkeypatch, result_json=_update_apply_json())
+        r = non_elevated_client.update("v0.1.6", yes=True)
+        assert r.success is True
+        assert r.to_version == "v0.1.6"
+        # SEE_MASK_NO_CONSOLE + NOCLOSEPROCESS in fMask; SW_HIDE; runas verb.
+        assert state["fMask"] & 0x00008000  # SEE_MASK_NO_CONSOLE
+        assert state["fMask"] & 0x00000040  # SEE_MASK_NOCLOSEPROCESS
+        assert state["nShow"] == 0
+        assert state["lpVerb"] == "runas"
+        # Global --update-result-file on the command line.
+        assert "--update-result-file" in state["params"]
+        assert "--yes" in state["params"]
+
+    def test_runas_forwards_update_url_env(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """TSDEV_UPDATE_URL is forwarded as --update-url (runas drops env)."""
+        monkeypatch.setenv("TSDEV_UPDATE_URL", "http://127.0.0.1:9999")
+        state = self._fake_runas(monkeypatch, result_json=_update_apply_json())
+        non_elevated_client.update()
+        assert "--update-url" in state["params"]
+        assert "http://127.0.0.1:9999" in state["params"]
+
+    def test_runas_no_update_url_env(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        monkeypatch.delenv("TSDEV_UPDATE_URL", raising=False)
+        state = self._fake_runas(monkeypatch, result_json=_update_apply_json())
+        non_elevated_client.update()
+        assert "--update-url" not in state["params"]
+
+    def test_runas_uac_decline_raises_permission_error(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            ctypes.windll.shell32, "ShellExecuteExW", lambda sei: False
+        )
+        monkeypatch.setattr(
+            "tsdev_automation.client._kernel32.GetLastError", lambda: 1223
+        )
+        with pytest.raises(PermissionError):
+            non_elevated_client.update()
+
+    def test_runas_exit0_no_file_raises(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """exit 0 + no result file -> TsDevError (capture failed, op may
+        have succeeded)."""
+        self._fake_runas(monkeypatch, result_json=None, exit_code=0)
+        with pytest.raises(TsDevError, match="capture failed"):
+            non_elevated_client.update()
+
+    def test_runas_nonzero_with_file_maps_exception(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        self._fake_runas(
+            monkeypatch,
+            result_json=_update_failure_json("update_not_found", "no release", 26),
+            exit_code=26,
+        )
+        with pytest.raises(exc.UpdateNotFoundError):
+            non_elevated_client.update("v9.9.9")
+
+    def test_runas_nonzero_no_file_crash(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """nonzero + no file + SEH-class code -> TsDevCrashError."""
+        self._fake_runas(monkeypatch, result_json=None, exit_code=0xC0000005)
+        with pytest.raises(TsDevCrashError):
+            non_elevated_client.update()
+
+    def test_runas_nonzero_no_file_generic(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """nonzero + no file + non-SEH code -> generic TsDevError noting
+        stderr was not capturable."""
+        self._fake_runas(monkeypatch, result_json=None, exit_code=15)
+        with pytest.raises(TsDevError, match="not capturable"):
+            non_elevated_client.update()
+
+    def test_runas_timeout_terminates_and_raises(
+        self, non_elevated_client: TsDevClient, monkeypatch
+    ) -> None:
+        """A wait-bound expiry raises TsDevError("update timed out")."""
+        self._fake_runas(monkeypatch, result_json=None, exit_code=0, wait_ok=False)
+        with pytest.raises(TsDevError, match="update timed out"):
+            non_elevated_client.update()

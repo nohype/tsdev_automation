@@ -30,6 +30,7 @@ from .client import BatchItem, TsDevClient
 from .exceptions import (
     AlreadyExistsError,
     ArtifactMissingError,
+    CancelledError,
     CompileError,
     ElevationRequiredError,
     EllMissingError,
@@ -46,6 +47,10 @@ from .exceptions import (
     TsDevError,
     TsDevWatchdogAbortError,
     UnknownTypeError,
+    UpdateCheckError,
+    UpdateFailedError,
+    UpdateNotFoundError,
+    UpdateRefusedError,
     UsageError,
 )
 from .results import (
@@ -83,6 +88,11 @@ __all__ = [
     "TsDevWatchdogAbortError",
     "TsDevCacheError",
     "TsDevCacheCancelledError",
+    "UpdateCheckError",
+    "UpdateNotFoundError",
+    "UpdateFailedError",
+    "UpdateRefusedError",
+    "CancelledError",
     "main",
 ]
 

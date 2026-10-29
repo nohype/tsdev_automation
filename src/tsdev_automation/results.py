@@ -41,6 +41,9 @@ class TsDevErrorInfo:
     existing_prog_id: int | None = None
     """ProgId of the pre-existing component (exit 5, insert)."""
 
+    retry_after_secs: int | None = None
+    """Seconds until the update service rate limit resets (exit 25)."""
+
 
 @dataclass
 class TsDevResult:
@@ -61,6 +64,23 @@ class TsDevResult:
     # (and serve backup-cache/restore-cache responses): the "cache" dict, or
     # {"backup": ..., "restore": ...} when both flags ran.  None otherwise.
     cache: dict | None = None
+    # Update-op payload (``update``/``update check`` results), mirrored flat
+    # like ``.exists``/``.stored_name``.  All None on non-update ops.
+    current_version: str | None = None
+    latest_version: str | None = None
+    update_available: bool | None = None
+    target_version: str | None = None
+    dev_build: bool | None = None
+    asset: dict | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    downgrade: bool | None = None
+    already_current: bool | None = None
+    files_replaced: int | None = None
+    notes: list[str] | None = None
+    rolled_back: bool | None = None
+    requires_force: bool | None = None
+    requires_confirmation: bool | None = None
     # Raw subprocess output retained for debugging.
     stdout: str = ""
     stderr: str = ""
@@ -77,6 +97,7 @@ class TsDevResult:
                 prog_id=err_obj.get("prog_id"),
                 compile_errors=err_obj.get("compile_errors"),
                 existing_prog_id=err_obj.get("existing_prog_id"),
+                retry_after_secs=err_obj.get("retry_after_secs"),
             )
         cache = obj.get("cache")
         if not isinstance(cache, dict):
@@ -99,6 +120,21 @@ class TsDevResult:
             stored_name=str(obj.get("stored_name", "")),
             source=str(obj.get("source", "")),
             cache=cache,
+            current_version=obj.get("current_version"),
+            latest_version=obj.get("latest_version"),
+            update_available=obj.get("update_available"),
+            target_version=obj.get("target_version"),
+            dev_build=obj.get("dev_build"),
+            asset=obj.get("asset") if isinstance(obj.get("asset"), dict) else None,
+            from_version=obj.get("from_version"),
+            to_version=obj.get("to_version"),
+            downgrade=obj.get("downgrade"),
+            already_current=obj.get("already_current"),
+            files_replaced=obj.get("files_replaced"),
+            notes=obj.get("notes") if isinstance(obj.get("notes"), list) else None,
+            rolled_back=obj.get("rolled_back"),
+            requires_force=obj.get("requires_force"),
+            requires_confirmation=obj.get("requires_confirmation"),
             stdout=stdout,
             stderr=stderr,
         )
