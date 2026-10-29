@@ -105,6 +105,9 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_recycle_whserver_flag';  RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_recycle_resume';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_version_stamp';          RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_update_feed';            RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_update_apply';           RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_update_cmd';             RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_path_discovery';         RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_finalization_lifecycle'; RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_insert';                 RequiresTs = $true  }

@@ -136,10 +136,17 @@ add_library(tsdev_lib STATIC
     src/whserver_recycle.cpp
     src/ts_install.cpp
     src/cache_backup.cpp
-    src/vss_snapshot.cpp)
+    src/vss_snapshot.cpp
+    src/update_feed.cpp
+    src/update_apply.cpp)
 target_include_directories(tsdev_lib PUBLIC src)
+# third_party: update_feed.cpp parses the releases feed with the vendored
+# nlohmann/json.hpp (same vendor copy the CLI uses for --json output).
+target_include_directories(tsdev_lib PRIVATE third_party)
 target_link_libraries(tsdev_lib PUBLIC orlib_resolver)
-target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid)
+# winhttp/bcrypt: update_feed (feed fetch) and update_apply/update_feed
+# (sha256) live here so the CLI's update subcommand resolves them.
+target_link_libraries(tsdev_lib PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid winhttp bcrypt)
 # TVS (CLI log levels): the former `target_compile_definitions(tsdev_lib
 # PRIVATE TSDEV_DEBUG)` is REMOVED — TSDEV_DBG diagnostics are now gated at
 # runtime by the process-global log level (tsdev_log_set_level, default
@@ -177,10 +184,13 @@ add_library(tsdev_lib_diag STATIC
     src/whserver_recycle.cpp
     src/ts_install.cpp
     src/cache_backup.cpp
-    src/vss_snapshot.cpp)
+    src/vss_snapshot.cpp
+    src/update_feed.cpp
+    src/update_apply.cpp)
 target_include_directories(tsdev_lib_diag PUBLIC src)
+target_include_directories(tsdev_lib_diag PRIVATE third_party)
 target_link_libraries(tsdev_lib_diag PUBLIC orlib_resolver tsdev_diag)
-target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid)
+target_link_libraries(tsdev_lib_diag PRIVATE Ole32 OleAut32 shell32 vssapi wbemuuid winhttp bcrypt)
 target_compile_definitions(tsdev_lib_diag PRIVATE TSDEV_DIAG)
 
 # --- INSERT integration test (historical TDD red-green) --------------------------------
@@ -744,6 +754,55 @@ add_executable(test_version_stamp tests/test_version_stamp.cpp)
 target_include_directories(test_version_stamp PRIVATE third_party)
 target_link_libraries(test_version_stamp tsdev_lib)
 add_dependencies(test_version_stamp siggen)
+
+# --- Self-update release-feed unit test --------------------------------------
+# Pure unit test for src/update_feed.cpp (self-update design
+# tmp/UPDATE_DESIGN.md): semver parse/compare, releases-JSON parse + skip
+# rules, selectLatest/findRelease/pickBundleAsset/publishedSemverRange,
+# sha256BytesHex/sha256FileHex on known content, and the error-classification
+# surface. The module .cpp is compiled directly into the test (same pattern
+# as test_cache_backup); third_party is needed for the vendored
+# nlohmann/json.hpp it includes; winhttp/bcrypt resolve its WinHTTP/BCrypt
+# calls. NO live network -- canned JSON is injected through the parse seam.
+# PURE UNIT TEST (no orlib20, no TSDevLib), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_update_feed
+    tests/test_update_feed.cpp
+    src/update_feed.cpp)
+target_include_directories(test_update_feed PRIVATE src third_party)
+target_link_libraries(test_update_feed PRIVATE winhttp bcrypt)
+
+# --- Self-update apply/swap unit test ----------------------------------------
+# Pure unit test for src/update_apply.cpp: staged swap, completeness gate,
+# rollback, deferred apply, mutex-name determinism, stale-.old reaping, and
+# the renamed_exe/other_instances_running notes -- all on REAL temp dirs
+# under %TEMP% with test-built zips (tar.exe). The module .cpp plus its
+# sha256 dependency (update_feed.cpp) are compiled directly into the test.
+# PURE UNIT TEST (no orlib20, no TSDevLib), so it is NOT in
+# TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_update_apply
+    tests/test_update_apply.cpp
+    src/update_apply.cpp
+    src/update_feed.cpp)
+target_include_directories(test_update_apply PRIVATE src third_party)
+target_link_libraries(test_update_apply PRIVATE winhttp bcrypt)
+
+# --- Self-update CLI decision unit test --------------------------------------
+# Pure unit test for the update-decision helpers in src/tsdev_cli.cpp:
+# decideUpdateAction (all spec decision paths -- verdicts, capability-loss
+# confirm trigger, dev/non-bundle refusals, kMin boundary, flag grammar)
+# and the update-arg parser. The helpers live inside the anonymous
+# namespace in src/tsdev_cli.cpp (internal linkage), so the test #includes
+# the .cpp directly (same TU) and #defines TSDEV_CLI_TEST to exclude its
+# main() -- the same mechanism used by test_pbar. The test needs the
+# third_party include dir (nlohmann/json) because the included tsdev_cli.cpp
+# uses it, and links tsdev_lib for the TsDevLib/update_* symbols referenced
+# by the included CLI code. It is a PURE UNIT TEST (no orlib20 access), so
+# it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_update_cmd tests/test_update_cmd.cpp)
+target_include_directories(test_update_cmd PRIVATE third_party)
+target_link_libraries(test_update_cmd tsdev_lib)
+add_dependencies(test_update_cmd siggen)
 
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
@@ -1435,6 +1494,9 @@ add_dependencies(test_regression
     test_recycle_whserver_flag
     test_recycle_resume
     test_version_stamp
+    test_update_feed
+    test_update_apply
+    test_update_cmd
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
