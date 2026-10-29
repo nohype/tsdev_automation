@@ -31,11 +31,13 @@
 //      <basename>.exe.old (9.12).
 //   8. Detached .old cleanup helper REALLY EXECUTES (regression for the
 //      DETACHED_PROCESS bug: powershell exited 0 without running
-//      -Command, so the helper was a silent no-op). A dead wait-PID
-//      makes the helper act at once; the .old set must actually vanish.
+//      -Command, so the helper was a silent no-op). The helper waits on
+//      a live test-controlled sleeper PID (the production-faithful
+//      Wait-Process path); the test then terminates the sleeper so the
+//      helper proceeds, and the .old set must actually vanish.
 //   9. Deferred-apply helper copies ONLY the whitelisted members (a
 //      stray staged file must NOT land in the install dir) and removes
-//      the staging dir.
+//      the staging dir. Same live-sleeper wait-PID pattern as check8.
 //
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
@@ -149,10 +151,24 @@ void installOldVersion(const std::wstring& install) {
     writeFileW(install + L"\\README.md", "# old readme");
 }
 
-// Return a PID that is guaranteed dead: spawn `cmd.exe /c exit`, wait for
-// it, reuse its PID (PID reuse within a test run is a non-issue).
-DWORD deadPid() {
-    std::wstring cmd = L"cmd.exe /c exit";
+// A live, test-controlled long-running process used as the wait-PID for
+// the detached helpers (checks 8/9). This is production-faithful: the
+// helper's Wait-Process path waits on a real running process and
+// proceeds when it exits; the test ends that wait deterministically
+// with TerminateProcess. A dead PID is NOT used -- on a busy CI runner
+// a recycled PID can resolve to a live process and Wait-Process would
+// block up to its timeout, outliving the poll window.
+struct Sleeper {
+    HANDLE handle = nullptr;
+    DWORD  pid = 0;
+};
+
+// Spawn `ping -n 300 127.0.0.1` (~5 min of runtime). ping.exe is used
+// directly (no cmd wrapper) so TerminateProcess kills the sleeper
+// itself rather than orphaning a child.
+Sleeper spawnSleeper() {
+    Sleeper s;
+    std::wstring cmd = L"ping.exe -n 300 127.0.0.1";
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
@@ -162,13 +178,22 @@ DWORD deadPid() {
     buf.push_back(L'\0');
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        return 0;  // PID 0 (System Idle) is never Wait-Process-blocked
+        return s;
     }
-    WaitForSingleObject(pi.hProcess, 30000);
-    const DWORD pid = pi.dwProcessId;
-    CloseHandle(pi.hProcess);
+    s.handle = pi.hProcess;
+    s.pid = pi.dwProcessId;
     CloseHandle(pi.hThread);
-    return pid;
+    return s;
+}
+
+// Terminate the sleeper and close its handle.
+void killSleeper(Sleeper& s) {
+    if (s.handle) {
+        TerminateProcess(s.handle, 0);
+        WaitForSingleObject(s.handle, 5000);
+        CloseHandle(s.handle);
+        s.handle = nullptr;
+    }
 }
 
 // Poll `path` for absence up to `ms` (detached helpers are out-of-process;
@@ -178,7 +203,7 @@ bool waitGone(const std::wstring& path, DWORD ms) {
     do {
         std::error_code ec;
         if (!fs::exists(fs::path(path), ec)) return true;
-        Sleep(200);
+        Sleep(500);
     } while (GetTickCount() < deadline);
     return false;
 }
@@ -487,10 +512,15 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 8: the detached .old cleanup helper REALLY EXECUTES. The swap
-    // leaves a live .old set; scheduleOldCleanup is invoked with a dead
-    // wait-PID so the helper acts at once. The .old files must actually
-    // vanish within ~15 s -- the only observable proof the detached
-    // powershell command ran (the DETACHED_PROCESS bug regression test).
+    // leaves a live .old set; scheduleOldCleanup is invoked with a LIVE
+    // sleeper PID the test controls (the same Wait-Process path as a
+    // real exiting PID). The test then terminates the sleeper so the
+    // helper proceeds deterministically. The .old files must actually
+    // vanish -- the only observable proof the detached powershell
+    // command ran (the DETACHED_PROCESS bug regression test). A dead
+    // wait-PID is not used: on a busy CI runner a recycled PID can
+    // resolve to a live process and Wait-Process would block up to its
+    // 60 s timeout, outliving the poll window.
     // ------------------------------------------------------------------
     {
         const std::wstring install = makeTempDir(L"c8i");
@@ -508,18 +538,44 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check8: .old set missing before helper", 82);
             return 0;
         }
-        if (!scheduleOldCleanup(install, deadPid())) {
+        Sleeper sleeper = spawnSleeper();
+        if (!sleeper.handle) {
+            ec = fail("check8: sleeper process did not spawn", 85);
+            return 0;
+        }
+        if (!scheduleOldCleanup(install, sleeper.pid)) {
+            killSleeper(sleeper);
             ec = fail("check8: cleanup helper did not spawn", 83); return 0;
         }
-        if (!waitGone(install + L"\\tsdev_cli.exe.old", 15000) ||
-            !waitGone(install + L"\\README.md.old", 15000) ||
-            !waitGone(install + L"\\tsdev_automation.old", 15000)) {
+        // End the helper's Wait-Process deterministically.
+        killSleeper(sleeper);
+        // Generous window for contended CI runners; normally seconds.
+        const DWORD t0 = GetTickCount();
+        const bool gone =
+            waitGone(install + L"\\tsdev_cli.exe.old", 90000) &&
+            waitGone(install + L"\\README.md.old", 90000) &&
+            waitGone(install + L"\\tsdev_automation.old", 90000);
+        if (!gone) {
+            std::fprintf(stderr,
+                         "\n[diag] check8 still-present after %lu ms:",
+                         GetTickCount() - t0);
+            const wchar_t* olds[] = {L"\\tsdev_cli.exe.old",
+                                     L"\\README.md.old",
+                                     L"\\tsdev_automation.old"};
+            for (const wchar_t* o : olds) {
+                std::error_code xec;
+                if (fs::exists(fs::path(install + o), xec)) {
+                    std::fprintf(stderr, " %ls", o);
+                }
+            }
+            std::fprintf(stderr, "\n");
             ec = fail("check8: detached helper did NOT remove .old set "
-                      "(command never ran)", 84);
+                      "within 90s (command never ran or helper stuck)",
+                      84);
             return 0;
         }
         std::fprintf(stdout, "    check8 detached .old cleanup executes "
-                     "PASS\n");
+                     "PASS (%lu ms)\n", GetTickCount() - t0);
         fs::remove_all(zip);
         fs::remove_all(payload);
         fs::remove_all(install);
@@ -537,15 +593,29 @@ DWORD WINAPI runTest(LPVOID param) {
         buildPayloadDir(staging, true, "c9");
         // A stray non-whitelisted entry that a wildcard copy would drag in.
         writeFileW(staging + L"\\stray.exe", "MZ-STRAY");
-        const DWORD pid = deadPid();
-        if (!scheduleDeferredApply(staging, install, pid)) {
+        // Live sleeper wait-PID (same rationale as check8): the helper
+        // exercises the real Wait-Process path and proceeds once the
+        // test terminates the sleeper.
+        Sleeper sleeper = spawnSleeper();
+        if (!sleeper.handle) {
+            ec = fail("check9: sleeper process did not spawn", 94);
+            return 0;
+        }
+        if (!scheduleDeferredApply(staging, install, sleeper.pid)) {
+            killSleeper(sleeper);
             ec = fail("check9: deferred helper did not spawn", 90);
             return 0;
         }
+        killSleeper(sleeper);
         // Staging removal is the helper's last step: once it is gone the
-        // copies have completed.
-        if (!waitGone(staging, 20000)) {
-            ec = fail("check9: staging dir not consumed by helper", 91);
+        // copies have completed. Generous window for contended CI.
+        const DWORD t0 = GetTickCount();
+        if (!waitGone(staging, 90000)) {
+            std::fprintf(stderr,
+                         "\n[diag] check9 staging still present after "
+                         "%lu ms\n", GetTickCount() - t0);
+            ec = fail("check9: staging dir not consumed by helper "
+                      "within 90s", 91);
             return 0;
         }
         if (readFileW(install + L"\\tsdev_cli.exe") != "MZ-FAKE-EXE-c9" ||
