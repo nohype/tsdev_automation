@@ -26,6 +26,31 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
         "before configuring with Ninja. Detected sizeof(void*)=${CMAKE_SIZEOF_VOID_P}.")
 endif()
 
+# --- Build-time version stamp ------------------------------------------------
+# Self-update design (tmp/UPDATE_DESIGN.md Appendix B): resolve
+# `git describe --tags --exact-match HEAD` at configure time. On a tag vX.Y.Z
+# the stamp is X.Y.Z (leading v stripped); every other case (missing git,
+# non-git source tree, untagged HEAD) stamps 0.0.0-dev. Applied to both CLI
+# targets via -DTSDEV_VERSION_STRING below; tsdev_cli.cpp carries an #ifndef
+# fallback so same-TU unit tests build without the define.
+set(TSDEV_VERSION_STRING "0.0.0-dev")
+find_program(TSDEV_GIT_EXECUTABLE git)
+if(TSDEV_GIT_EXECUTABLE)
+    execute_process(
+        COMMAND ${TSDEV_GIT_EXECUTABLE} describe --tags --exact-match HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        RESULT_VARIABLE TSDEV_GIT_DESCRIBE_RESULT
+        OUTPUT_VARIABLE TSDEV_GIT_DESCRIBE_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(TSDEV_GIT_DESCRIBE_RESULT EQUAL 0 AND
+       TSDEV_GIT_DESCRIBE_TAG MATCHES "^v[0-9]+\\.[0-9]+\\.[0-9]+$")
+        string(REGEX REPLACE "^v" "" TSDEV_VERSION_STRING
+               "${TSDEV_GIT_DESCRIBE_TAG}")
+    endif()
+endif()
+message(STATUS "tsdev_cli version stamp: ${TSDEV_VERSION_STRING}")
+
 # --- Workstream G: distribution output directories ---------------------------
 # NOTE: These directories live in the SOURCE TREE (${CMAKE_SOURCE_DIR}), NOT the
 # build tree. This is INTENTIONAL: the goal is a root-level gitignored dist/
@@ -702,6 +727,24 @@ target_include_directories(test_recycle_resume PRIVATE third_party)
 target_link_libraries(test_recycle_resume tsdev_lib)
 add_dependencies(test_recycle_resume siggen)
 
+# --- Version stamp / --version helper unit test --------------------------------
+# Pure unit test for the version-stamp helpers in src/tsdev_cli.cpp:
+# kTsdevCliVersion (the TSDEV_VERSION_STRING build stamp with its #ifndef
+# 0.0.0-dev fallback), versionStampIsSemver (strict X.Y.Z classification),
+# versionStampIsDev (non-semver -> dev build), and versionStampDisplay
+# (v-prefix rule). The helpers live inside the anonymous namespace in
+# src/tsdev_cli.cpp (internal linkage), so the test #includes the .cpp
+# directly (same TU) and #defines TSDEV_CLI_TEST to exclude its main() --
+# the same mechanism used by test_pbar. The test needs the third_party
+# include dir (nlohmann/json) because the included tsdev_cli.cpp uses it,
+# and links tsdev_lib for the TsDevLib symbols referenced by the included
+# CLI code. It is a PURE UNIT TEST (no orlib20 access -- only pure helpers
+# are exercised), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_version_stamp tests/test_version_stamp.cpp)
+target_include_directories(test_version_stamp PRIVATE third_party)
+target_link_libraries(test_version_stamp tsdev_lib)
+add_dependencies(test_version_stamp siggen)
+
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
 # Sha256FileStatus (Hashed/Absent/Error) classification. The helper lives inside
@@ -1163,6 +1206,8 @@ target_link_libraries(test_stress_batch tsdev_lib psapi user32)
 add_executable(tsdev_cli src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli PRIVATE third_party)
 target_link_libraries(tsdev_cli tsdev_lib)
+target_compile_definitions(tsdev_cli PRIVATE
+    TSDEV_VERSION_STRING="${TSDEV_VERSION_STRING}")
 
 # --- §7.1 diagnostic CLI (tsdev_cli_diag) ------------------------------------
 # Field-diagnostic build of the CLI: same sources + TSDEV_DIAG. Every diag
@@ -1175,7 +1220,8 @@ target_link_libraries(tsdev_cli tsdev_lib)
 add_executable(tsdev_cli_diag src/tsdev_cli.cpp)
 target_include_directories(tsdev_cli_diag PRIVATE third_party)
 target_link_libraries(tsdev_cli_diag tsdev_lib_diag)
-target_compile_definitions(tsdev_cli_diag PRIVATE TSDEV_DIAG)
+target_compile_definitions(tsdev_cli_diag PRIVATE
+    TSDEV_DIAG TSDEV_VERSION_STRING="${TSDEV_VERSION_STRING}")
 
 # --- Admin-privilege manifest for TS-accessing executables -------------------
 # When ON, every executable that accesses the TradeStation TSDev Library (which
@@ -1205,7 +1251,7 @@ option(TSDEV_REQUIRE_ADMIN
 # / test_tsdev_com_init_seam
 # / test_persistence_integrity / test_create_path_cleanup
 # / test_preop_hash_classification / test_delete_disk_cleanup
-# / test_close_warehouse / test_directory_batch
+# / test_close_warehouse / test_directory_batch / test_version_stamp
 # (pure unit tests, no TSDev Library access, run in CI under -NoTs from a
 # non-elevated runner).
 set(TSDEV_ADMIN_TARGETS
@@ -1388,6 +1434,7 @@ add_dependencies(test_regression
     test_cache_cli_units
     test_recycle_whserver_flag
     test_recycle_resume
+    test_version_stamp
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists

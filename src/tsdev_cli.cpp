@@ -19,6 +19,10 @@
 //   tsdev_cli [--json] [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]
 //   tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]
+//   tsdev_cli [--json] --version
+//                 (global metadata flag: print the version stamp, exit 0;
+//                 evaluated before the elevation guard and wins over any
+//                 subcommand)
 //   tsdev_cli [--json] [--ts-path <directory>] --backup-cache|--restore-cache [--cache-backup-policy=<mode>]
 //                 (standalone cache maintenance — the flags also run before
 //                 any subcommand, fixed order backup -> restore -> op)
@@ -298,6 +302,16 @@
 using namespace tsdev;
 using ordered_json = nlohmann::ordered_json;  // preserves insertion order
 
+// Build-time version stamp (self-update design tmp/UPDATE_DESIGN.md
+// Appendix B): CMake resolves `git describe --tags --exact-match HEAD` and
+// passes -DTSDEV_VERSION_STRING="X.Y.Z" (leading v stripped) on a tagged
+// HEAD; every other build (missing git, non-git source tree, untagged HEAD)
+// stamps 0.0.0-dev. The #ifndef fallback keeps same-TU unit tests (which
+// compile this file without the define) building.
+#ifndef TSDEV_VERSION_STRING
+#define TSDEV_VERSION_STRING "0.0.0-dev"
+#endif
+
 namespace {
 
 // P4 gap-e own-process fatal-termination containment. The definitions —
@@ -375,7 +389,47 @@ TsDevLogLevel LogLevelFromVerbosityCount(int count) {
     return TsDevLogLevel::Debug;
 }
 
+// --- Version stamp helpers (--version flag + usage header) ------------------
+// kTsdevCliVersion is the build-time stamp (TSDEV_VERSION_STRING). Only a
+// STRICT X.Y.Z stamp classifies as a release build -- every other stamp
+// (the 0.0.0-dev fallback, odd strings) is a development build.
+constexpr char kTsdevCliVersion[] = TSDEV_VERSION_STRING;
+
+// Strict X.Y.Z semver check on the build stamp: exactly two dots separating
+// three non-empty all-digit components.
+bool versionStampIsSemver(const std::string& stamp) {
+    int dots = 0;
+    size_t compLen = 0;
+    for (char c : stamp) {
+        if (c == '.') {
+            if (compLen == 0) return false;
+            compLen = 0;
+            ++dots;
+        } else if (c >= '0' && c <= '9') {
+            ++compLen;
+        } else {
+            return false;
+        }
+    }
+    return dots == 2 && compLen > 0;
+}
+
+// Dev-stamp classification: the inverse of the strict semver check. Only a
+// strict X.Y.Z is a release build; everything else reports dev_build:true.
+bool versionStampIsDev(const std::string& stamp) {
+    return !versionStampIsSemver(stamp);
+}
+
+// Display rendering: a strict semver stamp renders with a "v" prefix
+// ("0.1.5" -> "v0.1.5"); any other stamp renders verbatim.
+std::string versionStampDisplay(const std::string& stamp) {
+    return versionStampIsSemver(stamp) ? ("v" + stamp) : stamp;
+}
+
 void printUsage() {
+    std::fprintf(stderr,
+        "tsdev_cli %s -- manage the TSDev library without the TSDev UI\n",
+        versionStampDisplay(kTsdevCliVersion).c_str());
     std::fprintf(stderr,
         "Usage:\n"
         "  tsdev_cli [--json] [--ts-path <directory>] insert  <type> <name> "
@@ -399,6 +453,7 @@ void printUsage() {
         "  tsdev_cli [--json] [--ts-path <directory>] batch-delete-dir  <type> <dir_path> [-t <ext>...]\n"
         "  tsdev_cli [--json] [--ts-path <directory>] batch-upsert-dir  <type> <dir_path> [-t <ext>...]\n"
         "  tsdev_cli [--json] [--ts-path <directory>] serve [--serve-pipe-file <path>]\n"
+        "  tsdev_cli [--json] --version\n"
         "  <type>         strategy | function | indicator | tradingapp | showme (case-insensitive)\n"
         "  <name>         component name\n"
         "  <source_file>  path to a file containing EasyLanguage source "
@@ -8359,6 +8414,7 @@ int main(int argc, char** argv) {
     const char* logFileArg = nullptr;  // --log-file <path> (space or = form)
     std::string logFileStr;            // holds the equals-form value
     bool jsonMode = false;
+    bool versionFlag = false;  // --version (metadata print, exit 0)
     bool pbar = false;        // --pbar (stderr progress bar)
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
@@ -8473,6 +8529,10 @@ int main(int argc, char** argv) {
             // Boolean switch: presence enables JSON output. Any value
             // after '=' is ignored (presence == true).
             jsonMode = true;
+        } else if (arg == "--version" || arg.rfind("--version=", 0) == 0) {
+            // Boolean switch like --json: presence selects the version
+            // print; a '=' value is ignored; repeats are harmless.
+            versionFlag = true;
         } else if (arg == "--pbar" || arg.rfind("--pbar=", 0) == 0) {
             // Boolean switch like --json: presence enables the stderr
             // progress bar; any value after '=' is ignored. Repeats are
@@ -8735,6 +8795,25 @@ int main(int argc, char** argv) {
         } else {
             reducedArgv.push_back(argv[i]);
         }
+    }
+
+    // --version is a metadata question, not an operation: handled right
+    // after the global flag pre-scan (so --json is honored), BEFORE the
+    // elevation guard, and it wins over any subcommand -- print and exit 0
+    // regardless of the remaining args.
+    if (versionFlag) {
+        CliResult r;
+        r.op = "version";
+        r.success = true;
+        r.exitCode = 0;
+        const bool devBuild = versionStampIsDev(kTsdevCliVersion);
+        const std::string display = versionStampDisplay(kTsdevCliVersion);
+        r.humanStdout = "tsdev_cli " + display +
+                        (devBuild ? " (development build)\n" : "\n");
+        r.extraPayload["version"] = display;
+        if (devBuild) r.extraPayload["dev_build"] = true;
+        emitOutput(r, jsonMode);
+        return 0;
     }
 
     // TVS-1b: TSDEV_WHSERVER_* env mirrors for the VAS-headroom guard,
