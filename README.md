@@ -1,5 +1,7 @@
 # TSDev Automation
 
+> **WORK IN PROGRESS -- PRE-STABLE.** This tool is under active development and is not finished software. In rare cases it can crash TradeStation or its background processes. Make sure you have a backup of your work before using it.
+
 Manage your TradeStation EasyLanguage library -- insert, update, delete, check, and retrieve items -- from the command line or a script, **without opening the TSDev window**.
 
 ## Before you start
