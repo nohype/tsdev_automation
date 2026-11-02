@@ -537,6 +537,20 @@ add_executable(test_name_index_outcome tests/test_name_index_outcome.cpp)
 target_include_directories(test_name_index_outcome PRIVATE src)
 target_link_libraries(test_name_index_outcome PRIVATE tsdev_lib)
 
+# --- Master-records SEH ownership unit test (RC-13, TDD) ---------------------
+# Pure unit test for the _LoadMasterRecsEX SEH ownership contract: if the
+# callee raises AFTER allocating its OUT HGLOBAL buffer, the
+# callLoadMasterRecsExImpl __except handler takes ownership (GlobalFree +
+# NULL the slot) so enumerateReverseDependents cannot leak it on its SEH
+# branch. The test drives the exact production helper through the
+# test-only seam invokeLoadMasterRecsExForTest with stub callees (real
+# GlobalAlloc handles + RaiseException). It does not construct TsDevLib,
+# load orlib20.dll, or touch the TradeStation installation. It is not an
+# administrator/TS-dependent test and runs under -NoTs.
+add_executable(test_master_recs_seh tests/test_master_recs_seh.cpp)
+target_include_directories(test_master_recs_seh PRIVATE src)
+target_link_libraries(test_master_recs_seh PRIVATE tsdev_lib)
+
 # --- Diagnostic file-sink unit test (§7.1 diag build, TDD) --------------------
 # Pure unit test for the §7.1 diagnostic file sink (src/diag_log.h/.cpp):
 # per-write flush (record present in the file immediately after the log call,
@@ -1557,6 +1571,7 @@ add_dependencies(test_regression
     test_delete_disk_cleanup
     test_close_warehouse
     test_name_index_outcome
+    test_master_recs_seh
     test_diag_log
     test_whserver_health
     test_whserver_census

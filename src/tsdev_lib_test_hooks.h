@@ -240,6 +240,19 @@ EnumerateResult makeNameIndexOutcomeForTest(bool mechanismOk, bool found,
                                             const std::string& verbatimName,
                                             int progId);
 
+// Test-only seam for the SEH-protected _LoadMasterRecsEX call (RC-13). The
+// production callee reports its record buffer through an OUT HGLOBAL* slot;
+// if it raises AFTER allocating, the Impl __except handler takes ownership
+// (GlobalFree + NULL the slot) so callers cannot leak it. Tests inject a
+// stub that stores a real GlobalAlloc handle then raises, without
+// constructing TsDevLib or loading orlib20.dll. This delegates to the exact
+// helper used by TsDevLib::enumerateReverseDependents().
+using LoadMasterRecsExTestFn = int (__stdcall *)(int, HGLOBAL*,
+                                                const char*, int);
+bool invokeLoadMasterRecsExForTest(LoadMasterRecsExTestFn fn, int category,
+                                   HGLOBAL* outBuf, const char* path,
+                                   int filterMode, int* outResult);
+
 // Test-only factory. DECLARED here and DEFINED in src/tsdev_lib.cpp as a
 // thin wrapper around the private TsDevLib(const wchar_t*,
 // const TsDevLibTestConfig&) constructor. Returns a std::unique_ptr<TsDevLib>

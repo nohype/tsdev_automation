@@ -843,6 +843,14 @@ bool callLoadMasterRecsExImpl(LoadMasterRecsExFn fn, int category,
     __try {
         out->result = fn(category, outBuf, path, filterMode);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // RC-13: the callee may have allocated *outBuf before raising. The
+        // buffer is GlobalAlloc-owned by callee contract, so take ownership
+        // here (free it and NULL the slot) -- otherwise the single call
+        // site (enumerateReverseDependents) leaks it on its SEH branch.
+        if (outBuf && *outBuf) {
+            GlobalFree(*outBuf);
+            *outBuf = NULL;
+        }
         return false;
     }
     return true;
@@ -855,6 +863,25 @@ bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
     __try { ok = callLoadMasterRecsExImpl(fn, category, outBuf, path, filterMode, out); }
     __finally { dispatchLeave(); }
     return ok;
+}
+
+// RC-13: Win32 GlobalUnlock contract for HGLOBALs this TU locks exactly
+// once before GlobalFree. GlobalUnlock returns FALSE both when the lock
+// count drops to zero (benign: GetLastError() == NO_ERROR -- the normal
+// single-lock outcome at every call site below) and on a real failure
+// (GetLastError() != NO_ERROR, diagnosed here). The buffer is always
+// freed by the caller afterwards either way. TRUE (still locked) cannot
+// happen at these single-lock sites; it is diagnosed as a lock imbalance.
+static void unlockHGlobalBeforeFree(HGLOBAL hMem, const char* where) {
+    if (!hMem) return;
+    if (GlobalUnlock(hMem)) {
+        TSDEV_DBG("unlockHGlobalBeforeFree: %s still locked\n", where);
+        return;
+    }
+    if (GetLastError() != NO_ERROR) {
+        TSDEV_DBG("unlockHGlobalBeforeFree: %s unlock failed\n", where);
+    }
+    // FALSE + NO_ERROR: our single lock was released -- the normal case.
 }
 
 // SEH-protected call to _GetMasterRecByType@16 (__stdcall, 4 args).
@@ -1812,6 +1839,23 @@ TsDevLib::TsDevLib(const wchar_t* tsPathOverride,
     initAfterCom(tsPathOverride);
 }
 
+// Test-only wrapper for the SEH-protected _LoadMasterRecsEX call (RC-13).
+// Declared only in src/tsdev_lib_test_hooks.h; delegates to the exact
+// helper used by TsDevLib::enumerateReverseDependents(). No TsDevLib
+// instance or orlib20 state is needed, so the seam remains a pure
+// unit-test boundary (no dispatchEnter/dispatchLeave side effects: the
+// Impl helper owns only the __try/__except block).
+bool invokeLoadMasterRecsExForTest(LoadMasterRecsExTestFn fn, int category,
+                                   HGLOBAL* outBuf, const char* path,
+                                   int filterMode, int* outResult) {
+    LoadMasterRecsExSehResult seh;
+    bool ok = callLoadMasterRecsExImpl(
+        reinterpret_cast<LoadMasterRecsExFn>(fn), category, outBuf, path,
+        filterMode, &seh);
+    if (outResult) *outResult = seh.result;
+    return ok;
+}
+
 // Test-only wrapper for the SEH-protected close call. It is declared only in
 // src/tsdev_lib_test_hooks.h and delegates to the exact helper used by the
 // production TsDevLib::closeWarehouse() implementation. No TsDevLib instance
@@ -2069,7 +2113,9 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
                 std::string decryptResult;
                 if (decryptText) {
                     decryptResult = std::string(decryptText);
-                    GlobalUnlock(decryptHMem);
+                    // RC-13: Win32-correct unlock (FALSE + NO_ERROR is the
+                    // benign single-lock release); freed below either way.
+                    unlockHGlobalBeforeFree(decryptHMem, "decryptHMem");
                 }
                 GlobalFree(decryptHMem);
                 return decryptResult;
@@ -2096,7 +2142,9 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
     std::string result;
     if (text) {
         result = std::string(text);
-        GlobalUnlock(hMem);
+        // RC-13: Win32-correct unlock (FALSE + NO_ERROR is the benign
+        // single-lock release); freed below either way.
+        unlockHGlobalBeforeFree(hMem, "hMem");
     }
     GlobalFree(hMem);
     return result;
@@ -2860,7 +2908,12 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
                                   (const char*)NULL, 1, &lmrSeh)) {
             TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
                            "cat=%d when=reverse-enum ok=0 seh=1", cat);
-            continue;  // SEH — skip this category
+            // RC-13: callLoadMasterRecsExImpl takes ownership of any
+            // partially allocated buffer on the raise path (frees *outBuf
+            // and NULLs it), so buf is NULL here; the guard is
+            // defense-in-depth only.
+            if (buf) GlobalFree(buf);
+            continue;  // SEH -- skip this category
         }
         TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
                        "cat=%d when=reverse-enum count=%d", cat,
@@ -3014,7 +3067,9 @@ std::vector<TsDevLib::ReverseDependent> TsDevLib::enumerateReverseDependents(
             }
         }
 
-        GlobalUnlock(buf);
+        // RC-13: Win32-correct unlock (FALSE + NO_ERROR is the benign
+        // single-lock release); freed below either way.
+        unlockHGlobalBeforeFree(buf, "buf");
         GlobalFree(buf);
     }
 

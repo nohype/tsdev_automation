@@ -97,6 +97,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_delete_disk_cleanup';    RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_close_warehouse';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_name_index_outcome';     RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_master_recs_seh';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_preop_hash_classification'; RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_orlib_resolver';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_diag_log';               RequiresTs = $false }
