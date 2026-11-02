@@ -846,7 +846,8 @@ DWORD WINAPI runTest(LPVOID param) {
                 "BATCH START [2/3] op=insert type=\"bogus\" name=\"\"";
             const std::string expDone =
                 "BATCH FAILED [2/3] op=insert type=\"bogus\" name=\"\""
-                " exit_code=2 message=\"unknown type 'bogus'\"";
+                " exit_code=2 message=\"unknown type \\\"bogus\\\" (expected "
+                "strategy/function/indicator/tradingapp/showme)\"";
             if (lines.first != expStart || lines.second != expDone) {
                 ec = fail("check17a: human progress pair mismatch", 173);
                 return 0;
@@ -1296,6 +1297,12 @@ DWORD WINAPI runTest(LPVOID param) {
             "{\"op\":\"list\",\"type\":\"bogus\"}",
             "{\"op\":\"list\",\"type\":\"\"}",
         };
+        const char* unknownTypeMsg[] = {
+            "unknown type \"bogus\" (expected "
+            "strategy/function/indicator/tradingapp/showme)",
+            "unknown type \"\" (expected "
+            "strategy/function/indicator/tradingapp/showme)",
+        };
         for (int i = 0; i < 2; ++i) {
             ordered_json rq = ordered_json::parse(unknownType[i]);
             ServeRequest o;
@@ -1306,6 +1313,11 @@ DWORD WINAPI runTest(LPVOID param) {
                 errorCodeString(rr.exitCode, rr.op) != "unknown_type") {
                 ec = fail("check24d: empty/unknown type must reject "
                           "exit 2", 264);
+                return 0;
+            }
+            if (rr.errorMessage != unknownTypeMsg[i]) {
+                ec = fail("check24d: unknown type message must match the "
+                          "shared builder wording", 266);
                 return 0;
             }
         }
@@ -1331,9 +1343,10 @@ DWORD WINAPI runTest(LPVOID param) {
             const GateCase gateCases[] = {
                 {"{\"op\":\"list\",\"type\":\"strategy\","
                  "\"batch\":{\"id\":\"b-1\",\"index\":1,\"total\":2}}",
-                 "batch"},
+                 "invalid 'batch' metadata"},
                 {"{\"op\":\"list\",\"type\":\"strategy\","
-                 "\"policy\":\"skip\"}", "policy"},
+                 "\"policy\":\"skip\"}",
+                 "only valid for op 'backup-cache'"},
             };
             for (int i = 0; i < 2; ++i) {
                 ordered_json rq = ordered_json::parse(gateCases[i].json);
@@ -1342,7 +1355,8 @@ DWORD WINAPI runTest(LPVOID param) {
                 std::fprintf(stdout, "  [24f.%d] gate: %s\n", i,
                              cliResultToJson(rr).dump().c_str());
                 if (rr.success || rr.exitCode != 1 ||
-                    !contains(rr.errorMessage, gateCases[i].msgSub)) {
+                    !contains(rr.errorMessage, gateCases[i].msgSub) ||
+                    contains(rr.errorMessage, "unexpected field")) {
                     ec = fail("check24f: batch/policy on list must reject "
                               "exit 1 via its gate", 280 + i);
                     return 0;

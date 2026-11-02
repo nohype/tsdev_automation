@@ -352,6 +352,13 @@ bool parseType(const std::string& s, ComponentType& out) {
     return false;
 }
 
+// Single unknown-type message builder shared by the direct commands and
+// parseServeRequest: double quotes + hint, exactly as the direct path emits.
+std::string unknownTypeMessage(const std::string& typeStr) {
+    return std::string("unknown type \"") + typeStr +
+           "\" (expected strategy/function/indicator/tradingapp/showme)";
+}
+
 // Read an entire file into a string. Returns false on failure.
 bool readFile(const std::string& path, std::string& out) {
     std::ifstream f(path, std::ios::binary);
@@ -4074,10 +4081,9 @@ int cmdList(const std::string& typeStr,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") +
+                        unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -7409,7 +7415,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
             r.exitCode = 2;
             r.op = op;
             r.typeStr = typeStr;
-            r.errorMessage = "unknown type '" + typeStr + "'";
+            r.errorMessage = unknownTypeMessage(typeStr);
             return r;
         }
         out.op = op;
@@ -7441,7 +7447,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         r.exitCode = 2;
         r.op = op;
         r.typeStr = typeStr;
-        r.errorMessage = "unknown type '" + typeStr + "'";
+        r.errorMessage = unknownTypeMessage(typeStr);
         return r;
     }
 
