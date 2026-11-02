@@ -158,4 +158,4 @@ Methods: `insert`, `modify`, `upsert`, `delete`, `exists`, `list_items`, `get_so
 - **How it works:** `tsdev_cli.exe` is 32-bit and drives the same `orlib20.dll`/WHServer machinery `TSDev.exe` uses -- no UI automation. Built-in guards watch WHServer's health and abort rather than let a runaway batch damage the library.
 - **Deep documentation:** project rules and process in `AGENTS.md`; reverse-engineered facts about TSDev/orlib20 in `docs/KNOWLEDGE_BASE.md`; WHServer internals and recovery design in `docs/HANDOFF_WHServer_VAS_recovery.md`; the complete flag/exit-code/Python reference in `docs/BUNDLE_README.md`.
 - **Tests:** `tests\run_regression.ps1` (use `-NoTs` on machines without TradeStation); C++ unit-test inventory in `tests\run_unit_tests.ps1`.
-- **Exit codes:** `0` success; `11` not elevated; `8` compile failure; `5` not found / already exists; `14`/`15`/`18`/`19` safety-abort family (the run stopped before it could do harm -- see `docs/BUNDLE_README.md` for the full table).
+- **Exit codes:** `0` means success; anything else means the run stopped before it could do harm -- see the Exit codes table in `docs/BUNDLE_README.md` for the full list.

@@ -109,15 +109,53 @@ Windows asks for administrator permission when the command runs -- that is norma
 - **Another `tsdev_cli.exe` running** (for example a `serve` broker) does not block the update; the broker keeps serving the OLD version until it is restarted -- a NOTE is printed in that case.
 - **Power loss mid-install:** if the tool folder is left broken -- the exe missing and `*.old` files present -- rename the `*.old` files back to their original names to recover, or unzip the release over the folder.
 
-Update exit codes (in addition to `0` success, `1` usage error, `11` not elevated):
+### Exit codes (complete table -- SSOT)
+
+This is the single authoritative exit-code table for every `tsdev_cli.exe`
+subcommand (item ops, batch aggregates, cache phase, WHServer guard/recycle,
+watchdogs, and `update`). Success is always `0`; any nonzero exit means the
+operation did not succeed. `error.code` is the machine-readable string in
+`--json` failure frames (`op` disambiguates exit `3` -- `get-source` reports
+`output_write_error`, other ops report `source_file_error` -- and exit `5` --
+`insert` reports `already_exists`, other ops report `not_found`). Codes
+`13`/`15`/`20-24` and SEH crashes terminate the process directly and emit no
+JSON frame. Batch aggregates reuse `0`/`1`/`2`/`3`/`14` with the batch
+meanings noted below. (Sources: `src/tsdev_cli.cpp` header comment +
+`errorCodeString`, `src/dispatch_watchdog.cpp`,
+`src/diag_watchdog.cpp`, `docs/UPDATE_DESIGN.md` section 5.)
 
 | Exit | `error.code` | Meaning |
 |---|---|---|
-| 25 | `update_check_failed` | Could not check for updates: offline/DNS, HTTP error, rate limit, unreadable feed. Try again later. |
-| 26 | `update_not_found` | The requested version is not a published release, or that release has no `tsdev_automation_<tag>.zip` bundle. |
-| 27 | `update_failed` | Download/verify/install failure: checksum mismatch, missing checksum, corrupt zip, write error. Nothing was changed, or everything was rolled back. |
-| 28 | `update_refused` | Needs explicit consent: dev build or non-bundle folder (pass `--force`), or a required confirmation on a non-interactive console (pass `--yes`). |
-| 12 | `cancelled` | You answered no (or just pressed Enter) at the confirmation prompt. |
+| 0 | - | Success: the operation succeeded (`list` with zero items and `update check` with no new version are successes). Batch aggregate: all items succeeded. |
+| 1 | `usage_error` | Usage/argument error (bad subcommand, flags, or version token). Batch aggregate: batch did not run (manifest missing/empty/unusable). |
+| 2 | `unknown_type` | Unknown component type. Batch aggregate: batch ran but one or more items failed (per-item detail on stderr, or the `--json` results array). |
+| 3 | `source_file_error` (`output_write_error` on `get-source`) | Source file unreadable, or `get-source` output write failure. Batch aggregate: cooperatively cancelled via `--batch-progress-control` (stdout array stays full length; unattempted items are exit-12 `cancelled` markers). |
+| 4 | `init_failure` | TradeStation 9.5 / orlib20 / warehouse init or lookup failure (install not found -- pass `--ts-path` -- or a name-index lookup failure, which fails loudly). |
+| 5 | `already_exists` (`insert`) / `not_found` (other ops) | `insert`: name already taken (also: `restore-cache` with no backup found). `modify`/`delete`/etc.: name not in the warehouse. |
+| 6 | `entry_op_failure` | Warehouse entry operation failed (create/delete entry). |
+| 7 | `save_source_failure` | Saving the EasyLanguage source into the warehouse failed. |
+| 8 | `compile_error` | EasyLanguage compile/verify failed (compiler errors printed; nothing was added or changed). |
+| 9 | `artifact_missing` | Post-op `.ell`/artifact check failed (file missing or unreadable). |
+| 10 | `thread_failure` | `CreateThread` failure (dispatch/worker thread could not start). |
+| 11 | `not_elevated` | Process is not elevated -- re-run from an administrator terminal (`--version` is exempt: it is evaluated before the guard). |
+| 12 | `cancelled` | User declined a confirmation prompt (update capability-loss prompt, cooperative batch cancel). Also the per-item marker for unattempted batch items and the Python client elevation-required marker. |
+| 13 | (no JSON frame) | Watchdog abort in DIAG builds only (`tsdev_cli_diag`; see `src/diag_watchdog.cpp`). Production watchdog aborts are exit 15. |
+| 14 | `whserver_vas_abort` | Below-floor WHServer free-VAS breach: batch aborted (remaining items become exit-12 not-run markers) or, on `serve`, the one mutating request refused without executing. |
+| 15 | (no JSON frame) | Dispatch watchdog abort: an orlib20 warehouse dispatch exceeded `--dispatch-timeout-secs` (or WHServer crashed/vanished mid-call). Stderr prints `WATCHDOG ABORT: ... exiting with code 15`. |
+| 16 | `cache_io_error` | `--backup-cache`/`--restore-cache` I/O failure (cache dir or backup root unreachable, locked-cache restore). |
+| 17 | `cache_cancelled` | Cache backup cancelled (`--cache-backup-policy=abort` or `C` at the prompt). |
+| 18 | `whserver_recycled` | WHServer.exe was recycled at the recycle boundary (explicit `--recycle-whserver`, or the default abort-floor rescue) -- resume in a fresh process / respawned broker. |
+| 19 | `whserver_recycle_refused` | Recycle refused (gate or fail-closed stage) and the batch aborted. |
+| 20 | (no JSON frame) | `std::terminate` containment (unhandled C++ exception / noexcept violation). |
+| 21 | (no JSON frame) | `abort()` / SIGABRT containment. |
+| 22 | (no JSON frame) | CRT invalid-parameter fatal containment. |
+| 23 | (no JSON frame) | Pure virtual call containment. |
+| 24 | (no JSON frame) | UEF invoked with no exception record (defensive) containment. |
+| 25 | `update_check_failed` | Cannot check for updates: offline/DNS, HTTP error, rate limit, malformed feed. (While the GitHub repo is still private every check fails this way -- expected pre-flip.) |
+| 26 | `update_not_found` | Feed worked but the requested version is not a published release, or its release has no `tsdev_automation_<tag>.zip` bundle asset. |
+| 27 | `update_failed` | Fetch/verify/install failure: checksum mismatch, missing checksum, corrupt zip, disk/write error, swap failure (rolled back when possible), concurrent-update lock held. |
+| 28 | `update_refused` | Policy refusal needing explicit opt-in: dev build or non-bundle dir without `--force`, or a required confirmation on a non-interactive channel without `--yes`. |
+| crash | (no JSON frame) | Any other fatal crash exits with the SEH/NTSTATUS exception code itself (e.g. `0xC0000005`), never through WER/TSCrashReport. |
 
 **Testing/internal overrides** (hidden from usage text; not supported end-user flags): `--update-url <base>` (env mirror `TSDEV_UPDATE_URL`, flag wins) replaces the release-feed API base URL entirely -- used by test fixtures. `--update-result-file <path>` (global flag, valid only with the `update` subcommand) atomically writes the JSON result frame to `<path>` at every point where `--json` would emit one -- used by the Python client's elevated launch and by test harnesses.
 

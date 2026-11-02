@@ -462,7 +462,9 @@ still prompts or exits 28.)
 
 ## 5. Error cases -- exit codes + exact messages
 
-New production codes (see 0.2 -- 13 and 20-24 are taken):
+New production codes (see 0.2 -- 13 and 20-24 are taken). The full CLI
+table (all codes) lives in `docs/BUNDLE_README.md` (Exit codes section) --
+that table is authoritative; the rows below cover only the `update` feature:
 
 | Exit | `error.code` | Meaning |
 |---|---|---|
@@ -865,16 +867,9 @@ Deliberately excluded (and why):
 
 ## Appendix A -- Exit-code map (all codes after this feature)
 
-`0` success | `1` usage | `2` unknown type | `3` source/output file |
-`4` init | `5` not_found/already_exists | `6` entry op | `7` saveSource |
-`8` compile | `9` artifact | `10` thread | `11` not_elevated |
-`12` cancelled (batch markers, Python elevation-required, AND update
-decline) | `13` diag watchdog (diag build only) | `14` VAS abort |
-`15` dispatch watchdog | `16` cache I/O | `17` cache cancelled |
-`18` WHServer recycled | `19` recycle refused | `20-24` fatal
-termination containment | **`25` update_check_failed** |
-**`26` update_not_found** | **`27` update_failed** |
-**`28` update_refused** | SEH NTSTATUS on crash.
+Superseded by the single authoritative table in `docs/BUNDLE_README.md`
+(Exit codes section) -- see it for every code, `error.code` string, and
+meaning. The update-feature rows live in section 5 above.
 
 ## Appendix B -- Version stamping (build contract)
 
