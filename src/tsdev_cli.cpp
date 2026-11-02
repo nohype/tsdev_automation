@@ -3982,6 +3982,14 @@ std::string listHumanStdout(const std::vector<std::string>& names) {
     return out;
 }
 
+// doList enumerate-failure text: the exact CliResult.errorMessage (and the
+// humanStderr body after the "tsdev_cli: " prefix) when the item
+// enumeration itself fails. Pinned by tests/test_list_cmd.cpp check 5, which
+// asserts against this constant (same-TU include) so the production text
+// cannot drift unpinned.
+static const char* const kListEnumerateFailure =
+    "init failed: could not enumerate items";
+
 // doList: enumerate the stored names of all items of a given type. This is
 // a QUERY, not a mutation: an empty category is a valid result (NOT an
 // error). Names arrive in warehouse name-index walk order and are sorted
@@ -4002,8 +4010,9 @@ CliResult doList(TsDevLib& lib, ComponentType type,
     if (!lib.listItems(type, names)) {
         r.success = false;
         r.exitCode = 4;
-        r.errorMessage = "init failed: could not enumerate items";
-        r.humanStderr = "tsdev_cli: init failed: could not enumerate items\n";
+        r.errorMessage = kListEnumerateFailure;
+        r.humanStderr =
+            std::string("tsdev_cli: ") + kListEnumerateFailure + "\n";
         return r;
     }
 

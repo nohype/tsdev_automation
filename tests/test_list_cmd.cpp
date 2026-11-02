@@ -170,7 +170,13 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 5: cliResultToJson list failure (exit 4): the standard error
-    //   object with code/message and NO "names" key.
+    //   object with code/message and NO "names" key. The input errorMessage
+    //   below is the pasted production text (what doList stores on
+    //   enumerate failure); the assert compares against
+    //   kListEnumerateFailure in src/tsdev_cli.cpp (visible via the
+    //   same-TU include). The paste is the pin: editing the production
+    //   literal without updating the paste (or vice versa) turns this
+    //   check red.
     // ------------------------------------------------------------------
     {
         CliResult r;
@@ -196,7 +202,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         if (j["error"]["message"].get<std::string>() !=
-            "init failed: could not enumerate items") {
+            kListEnumerateFailure) {
             ec = fail("check5: error.message mismatch", 53);
             return 0;
         }
@@ -296,6 +302,48 @@ DWORD WINAPI runTest(LPVOID param) {
             std::fprintf(stderr, "  got %s want %s\n",
                          joinNames(names).c_str(), joinNames(want).c_str());
             ec = fail("check10: ASCII byte order mismatch", 100);
+            return 0;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Check 11: sortNamesForOutput large tie run (40 names equal ignoring
+    //   case) framed by distinct keys -> the tie run keeps its source
+    //   order (stable), N=42 total. The 40 tie names are distinct
+    //   case-variants of "abcdef" (mask bit i uppercases position i) in
+    //   descending-mask source order, framed by "zzz"/"aaa" so the input is
+    //   unsorted. Exceeds the MSVC insertion-sort cutoff (32): an unstable
+    //   std::sort reorders the tie run here (red), stable_sort preserves
+    //   it (green). Deterministic data, exact output order asserted.
+    // ------------------------------------------------------------------
+    {
+        const std::string base = "abcdef";
+        std::vector<std::string> tie;
+        for (int m = 39; m >= 0; --m) {
+            std::string s = base;
+            for (size_t i = 0; i < s.size(); ++i) {
+                if (m & (1 << static_cast<int>(i))) {
+                    s[i] = static_cast<char>(s[i] - 'a' + 'A');
+                }
+            }
+            tie.push_back(s);
+        }
+        std::vector<std::string> names;
+        names.push_back("zzz");
+        names.insert(names.end(), tie.begin(), tie.end());
+        names.push_back("aaa");
+        sortNamesForOutput(names);
+        std::vector<std::string> want;
+        want.push_back("aaa");
+        want.insert(want.end(), tie.begin(), tie.end());
+        want.push_back("zzz");
+        std::fprintf(stdout,
+                     "  [11] sortNamesForOutput(40-tie run, N=42): %s\n",
+                     joinNames(names).c_str());
+        if (names != want) {
+            std::fprintf(stderr, "  got %s want %s\n",
+                         joinNames(names).c_str(), joinNames(want).c_str());
+            ec = fail("check11: large tie run order not preserved", 110);
             return 0;
         }
     }
