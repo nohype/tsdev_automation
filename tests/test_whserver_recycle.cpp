@@ -1250,6 +1250,41 @@ int main() {
         }
     }
 
+    // -- Group 27: RC-19 serve never-attached exit-18 response-frame -----
+    // contract. A successful never-attached engine run returns Recycled /
+    // exit 18 (never 0 / continue-in-process): the serve never-attached
+    // site turns this result into the exit-18 refusal frame "WHServer
+    // recycled (reason); resubmit on the respawned broker", and the
+    // client respawns + resubmits. The batch pre-flight site instead
+    // continues in-process; that policy lives in the caller -- the
+    // engine result pinned here is always 18.
+    {
+        Fixture f;
+        f.rp.ownSessionExists = false;
+        f.sampler.census = passCensus(4243);
+        f.sampler.deaths = deadStream(3);
+        f.attach.status = tsdev::RecycleAttachStatus::Ok;
+        tsdev::RecycleResult r = f.run();
+        if (r.outcome != tsdev::RecycleOutcome::Recycled ||
+            r.exitCode != 18) {
+            return fail("RC-19: never-attached success -> exit 18", 270);
+        }
+        if (r.terminateSelf || !r.safeToDeleteLib) {
+            return fail("RC-19: exit 18 is normal teardown, not self-kill",
+                        271);
+        }
+        if (r.reason.empty()) {
+            return fail("RC-19: exit-18 frame needs a reason", 272);
+        }
+        if (f.closeCalls != 0) {
+            return fail("RC-19: never-attached runs no close stage", 273);
+        }
+        if (f.attach.calls != 1) {
+            return fail("RC-19: never-attached success runs attach once",
+                        274);
+        }
+    }
+
     std::printf("  all checks passed\n");
     return 0;
 }
