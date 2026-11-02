@@ -33,6 +33,7 @@ Counts, listings, and details that could drift live in ONE authoritative locatio
 - **Exists:** given type and name, return whether it exists, its verbatim stored name, and its ProgId when found. C++ uses `--case-insensitive`; Python uses `case_insensitive=True`. Human output is `exists=N`, `stored_name=...`, `progId=N`; `--json` selects JSON. Without the flag, search is case-sensitive. Never use source comments for the stored name.
 - **Get source:** given type and name, emit raw EasyLanguage to stdout or use `--output <file_path>`; decrypt internal encrypted items automatically, as TSDev does.
 - **Upsert:** given type, name, and a source file, modify if present or insert otherwise.
+- **List (additional query op, outside the six-operation acceptance target):** given a type, list the stored names of ALL items of that type (`tsdev_cli list <type>` / `TsDevClient.list_items(type)`). Human output = one stored name per line (zero items -> no output = success); `--json` = `names` array (always present on success). Sorted by name (case-insensitive ASCII, stable ties), no dedup, names verbatim (case-preserved). Exit codes follow **Exists** (0 incl. empty / 1 usage / 2 unknown type / 4 init-lookup failure (fails loudly) / 10 thread / 11 not elevated).
 
 **Non-TS operation:** `tsdev_cli update` self-updates the CLI from GitHub releases; it never contacts the warehouse/orlib20. Exit codes `25`-`28` plus `cancelled` (`12`). The full UX/contract -- grammar, exact output, hidden testing overrides `--update-url`/`TSDEV_UPDATE_URL` and `--update-result-file` -- lives in `docs/UPDATE_DESIGN.md`.
 
@@ -96,7 +97,7 @@ Read this file first. Read the following on demand:
 
 The PM keeps this list current and identifies the next step toward 100% acceptance; update it as project state changes.
 
-**Current (2026-10-21):** WHServer gated auto-recycle (`--recycle-whserver`) is fully implemented and live-verified end-to-end on this machine -- refuse arm (`census_lock` exit 19) and commit arm (exit-18 defer -> resume -> ForceShutDown -> SCM respawn) through CLI + Python surfaces, in a user-authorized desktop-closed window. Details: `docs/HANDOFF_WHServer_VAS_recovery.md` Section 8, KB Section 21. Live recycle tests still require the desktop CLOSED (foreign clients hold `m_nLock`). Machine remains offline-mode TS. Live ledger: `docs/WORKING_MEMORY.md`.
+**Current (2026-11-02):** `list <type>` / `TsDevClient.list_items` COMPLETE and live-verified (CLI + Python + broker; WHServer COM name enumeration, KB Sec 22-25) including the companion `exists` description-false-positive root-cause fix (name-index-only lookups, fail-loud tri-state). All slices adversarially reviewed and approved; final live gate passed. Known anomalies for the next team (pytest harness flake under concurrent load; elevated-shell broker bypass by design): `docs/WORKING_MEMORY.md`. Live recycle tests require the desktop CLOSED (foreign clients hold `m_nLock`); machine remains offline-mode TS.
 
 - Keep it clean, minimal and relevant:
    - DO NOT keep history/records that are not critically relevant for future development (e.g. decision history, list of completed work)
