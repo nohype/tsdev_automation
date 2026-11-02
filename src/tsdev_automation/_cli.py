@@ -10,6 +10,7 @@ Usage::
     tsdev-automation modify  strategy MyName ./source.el
     tsdev-automation delete  strategy MyName
     tsdev-automation exists  strategy MyName
+    tsdev-automation list  strategy
     tsdev-automation get-source  strategy MyName [--output ./out.el]
     tsdev-automation upsert  strategy MyName ./source.el
     tsdev-automation batch-insert  ./manifest.txt
@@ -215,6 +216,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="match the name case-insensitively (default: exact match)",
     )
 
+    sp = sub.add_parser("list", help="list the stored names of all items of a type.")
+    sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
+
     sp = sub.add_parser("get-source", help="retrieve a component's EasyLanguage source.")
     sp.add_argument("type", help="strategy | function | indicator | tradingapp | showme")
     sp.add_argument("name", help="component name")
@@ -298,6 +302,12 @@ def _main(argv: list[str] | None = None) -> int:
                 print(f"[OK] exists {r.type} {r.name!r} -> ProgId={r.prog_id} stored_name={r.stored_name!r}")
             else:
                 print(f"[OK] exists {r.type} {r.name!r} -> not found")
+            return 0
+        if args.command == "list":
+            r = client.list_items(args.type, **cache_kwargs)
+            print(f"[OK] list {r.type} -> {len(r.names)} items")
+            for n in r.names:
+                print(n)
             return 0
         if args.command == "get-source":
             r = client.get_source(args.type, args.name, output_file=args.output, **cache_kwargs)

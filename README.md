@@ -2,7 +2,7 @@
 
 > **WORK IN PROGRESS -- PRE-STABLE.** This tool is under active development and is not finished software. In rare cases it can crash TradeStation or its background processes. Make sure you have a backup of your work before using it.
 
-Manage your TradeStation EasyLanguage library -- insert, update, delete, check, and retrieve items -- from the command line or a script, **without opening the TSDev window**.
+Manage your TradeStation EasyLanguage library -- insert, update, delete, check, list, and retrieve items -- from the command line or a script, **without opening the TSDev window**.
 
 ## Before you start
 
@@ -31,6 +31,14 @@ Your EasyLanguage code lives in ordinary text files (`.el` or `.txt`).
 ```
 
 prints `exists=1` plus the stored name and ProgId, or `exists=0` when absent. The name must match exactly; add `--case-insensitive` to ignore letter case.
+
+**List all items of a type:**
+
+```powershell
+.\tsdev_cli.exe list function
+```
+
+prints one stored name per line, sorted by name and exactly as stored; when the type has no items it prints nothing -- that is success, not an error. With `--json` the result carries a `names` array.
 
 **Get an item's source back out:**
 
@@ -138,7 +146,7 @@ src = client.get_source('function', 'MyFn')
 client.delete('function', 'MyFn')
 ```
 
-Methods: `insert`, `modify`, `upsert`, `delete`, `exists`, `get_source`, plus `batch_insert`/`batch_modify`/`batch_upsert`/`batch_delete` (and `*_dir` variants). Full details: `docs/BUNDLE_README.md`.
+Methods: `insert`, `modify`, `upsert`, `delete`, `exists`, `list_items`, `get_source`, plus `batch_insert`/`batch_modify`/`batch_upsert`/`batch_delete` (and `*_dir` variants). Full details: `docs/BUNDLE_README.md`.
 
 ---
 

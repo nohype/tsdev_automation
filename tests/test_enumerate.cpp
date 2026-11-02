@@ -18,11 +18,15 @@
 //   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
 //   4. saveSource(Strategy, progId, source) — assert success
 //   5. verifyModule(Strategy, progId) — assert no errors
-//   6. enumerateRecords(Strategy, nameUpper) — ASSERT exists == true,
-//      storedName == kTestName (verbatim, correct case), progId > 0
-//   7. enumerateRecords(Strategy, "NONEXISTENTNAMEXYZ") — ASSERT exists ==
-//      false, storedName == "", progId == 0
-//   8. deleteEntry(Strategy, name) — cleanup
+//   6. enumerateRecords(Strategy, nameUpper) -- ASSERT exists == true,
+//      storedName == kTestName (verbatim, correct case), progId > 0,
+//      lookupOk == true
+//   7. enumerateRecords(Strategy, "NONEXISTENTNAMEXYZ") -- ASSERT exists ==
+//      false, storedName == "", progId == 0, lookupOk == true (a missing
+//      item is a clean answer, NOT degraded mode)
+//   7b. enumerateRecords for live-proven record DESCRIPTION texts -- ASSERT
+//      exists == false: a description is never a name (KB Sec. 22/23)
+//   8. deleteEntry(Strategy, name) -- cleanup
 //   9. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -56,6 +60,17 @@ const char* kTestNameUpper = "ZZZ_TEST_CI_PROBE";
 
 // A name that is guaranteed not to exist in the warehouse.
 const char* kNonExistentName = "NONEXISTENTNAMEXYZ";
+
+// Live-proven master-record DESCRIPTION texts (docs/KNOWLEDGE_BASE.md
+// Sec. 22/23): the 0x10A-byte record family carries NO stored name -- record
+// +0x17 is a DESCRIPTION/summary field, and the name index is the ONLY
+// authority for name existence. A description string must therefore NEVER
+// resolve as an item name. These two strings are the live-proven
+// false-positive cases of the pre-fix record-text matching (2026-11-01);
+// they are query fixtures only (no item of these names exists).
+const char* kDescriptionTextIndicator = "Plots the %R indicator.";
+const char* kDescriptionTextFunction =
+    "Returns the next label in the cycle for ActivityBar cells";
 
 // Minimal valid EasyLanguage strategy source. In EasyLanguage `{ ... }` is a
 // multi-line COMMENT block, so the actual code must be OUTSIDE it. The brace
@@ -194,12 +209,32 @@ DWORD WINAPI runTest(LPVOID param) {
         delete lib;
         return 0;
     }
+    if (!result.lookupOk) {
+        st->exitCode = fail(
+            "enumerateRecords reported degraded lookup (lookupOk == false) "
+            "for a healthy found result",
+            53);
+        lib->deleteEntry(ComponentType::Strategy, kTestName);
+        delete lib;
+        return 0;
+    }
     std::fprintf(stdout,
                  "    PASS: case-insensitive match found (storedName=\"%s\", "
                  "progId=%d)\n",
                  result.storedName.c_str(), result.progId);
 
     // --- Step 7: enumerateRecords for a NONEXISTENT name — ASSERT not found ---
+    // Fail-loud note (tri-state contract, docs/KNOWLEDGE_BASE.md Sec. 22/23):
+    // this fixture covers ONLY the honest missing-item shape -- the BST search
+    // answers "not found" AND stores no node (a consistent answer), which must
+    // stay a clean exists=false, lookupOk=true. A contradictory-but-SEH-free
+    // BST answer ("found" with a null node, or "not found" with a non-null
+    // node) is broken machinery and must yield lookupOk=false, never this
+    // clean shape; it is classified in TsDevLib::enumerateRecords()
+    // (src/tsdev_lib.cpp, the callBstSearchWrapper boundary) and cannot be
+    // provoked from a healthy warehouse, so it is verified by code inspection
+    // there (the pure seam tests/test_name_index_outcome.cpp covers the
+    // outcome contract it folds into).
     std::fprintf(stdout,
                  "\n[7] enumerateRecords(Strategy, \"%s\") -- "
                  "asserting item does NOT exist...\n",
@@ -225,10 +260,60 @@ DWORD WINAPI runTest(LPVOID param) {
             "enumerateRecords returned non-empty storedName for a nonexistent "
             "item",
             62);
+    } else if (!notFound.lookupOk) {
+        // A missing item is a CLEAN answer (lookupOk == true). lookupOk ==
+        // false here would mean the lookup system is broken and the caller
+        // must surface an error, not a silent "not found".
+        st->exitCode = fail(
+            "enumerateRecords reported degraded lookup (lookupOk == false) "
+            "for a healthy not-found result",
+            63);
     } else {
         std::fprintf(stdout,
                      "    PASS: nonexistent item not found (exists=false, "
                      "storedName=\"\", progId=0)\n");
+    }
+
+    // --- Step 7b: record DESCRIPTION texts must NEVER resolve as names ---
+    // Master records carry NO stored name: record +0x17 is a
+    // DESCRIPTION/summary field (docs/KNOWLEDGE_BASE.md Sec. 22/23). The two
+    // strings below are live-proven description texts of dictionary items;
+    // the pre-fix record-text matching falsely reported them as existing
+    // items. The name-index lookup must return a clean not-found for them.
+    std::fprintf(stdout,
+                 "\n[7b] enumerateRecords for record DESCRIPTION texts -- "
+                 "asserting they do NOT resolve as names...\n");
+    struct DescriptionProbe {
+        const char*   text;
+        ComponentType type;
+        const char*   typeLabel;
+    };
+    const DescriptionProbe kDescriptionProbes[] = {
+        {kDescriptionTextIndicator, ComponentType::Indicator, "Indicator"},
+        {kDescriptionTextFunction, ComponentType::Function, "Function"},
+    };
+    for (const DescriptionProbe& probe : kDescriptionProbes) {
+        EnumerateResult desc = lib->enumerateRecords(probe.type, probe.text);
+        std::fprintf(stdout,
+                     "    enumerateRecords(%s, \"%s\"): exists=%d, "
+                     "storedName=\"%s\", progId=%d\n",
+                     probe.typeLabel, probe.text, desc.exists ? 1 : 0,
+                     desc.storedName.c_str(), desc.progId);
+        if (!desc.lookupOk) {
+            st->exitCode = fail(
+                "enumerateRecords reported degraded lookup (lookupOk == "
+                "false) for a description-text query",
+                64);
+        } else if (desc.exists || !desc.storedName.empty() || desc.progId != 0) {
+            st->exitCode = fail(
+                "enumerateRecords reported a record DESCRIPTION text as an "
+                "existing item (the name index is the only name authority)",
+                65);
+        } else {
+            std::fprintf(stdout,
+                         "    PASS: description text did not resolve as a "
+                         "name\n");
+        }
     }
 
     // --- Step 8: Cleanup — delete the probe entry ---

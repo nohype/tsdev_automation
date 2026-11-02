@@ -17,6 +17,8 @@
 #include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "dispatch_watchdog.h"  // TVS-3: production in-flight dispatch marker + watchdog
 #include "ts_install.h"         // install-root resolution (extracted, was anonymous-namespace)
+#include "whserver_names.h"     // WHServer name-index enumeration (listItems)
+#include "whserver_recycle.h"   // resolveMyWorkDirFromBinPath (shared MyWork path helper)
 
 // TVS-L.13: the test-only construction seam (private ctor
 // TsDevLib::TsDevLib(const wchar_t*, const TsDevLibTestConfig&) and the
@@ -1324,8 +1326,8 @@ std::vector<DepListEntry> parseDepList(const unsigned char* buf, size_t bufLen) 
 
 // DEAD CODE — retained for reference. Superseded by callBstSearchWrapper +
 // callVerbatimNameGetter. FUN_101a42d0 returns the ProgId (not the name) in
-// non-server mode (DAT_1023aa8f == 0, which is our case). The new Phase 2
-// calls FUN_101d05e0 + FUN_101c36d0 directly instead.
+// non-server mode (DAT_1023aa8f == 0, which is our case). The name-index
+// lookup calls FUN_101d05e0 + FUN_101c36d0 directly instead.
 //
 // SEH-protected __fastcall call to FUN_101a42d0 (find item + get verbatim name).
 // __fastcall: ECX=searchName (char*), EDX=componentType (int).
@@ -1894,7 +1896,9 @@ TsDevLib::~TsDevLib() {
 // Public API
 // ============================================================================
 
-int TsDevLib::findExistPos(const std::string& name, ComponentType type) {
+int TsDevLib::findExistPos(const std::string& name, ComponentType type,
+                           bool* sehFailed) {
+    if (sehFailed) *sehFailed = false;
     // §7.1 diag (review F5b): bracket the _FindExistPos crossing — every
     // op path (insert/modify/delete/exists/get-source/enumerate) starts
     // here, and a hang here previously ended the log unnamed (only the
@@ -1905,6 +1909,7 @@ int TsDevLib::findExistPos(const std::string& name, ComponentType type) {
     if (!callFindExistPos(m_pFindExistPos, name.c_str(),
                           getCategory(type), &seh)) {
         // SEH exception — treat as "not found"
+        if (sehFailed) *sehFailed = true;
         TSDEV_DIAG_LOG("dispatch.FindExistPos.leave",
                        "cat=%d name=%s ok=0 seh=1 result=0",
                        getCategory(type), name.c_str());
@@ -2097,95 +2102,76 @@ std::string TsDevLib::getSource(ComponentType type, const std::string& name) {
     return result;
 }
 
-EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
-                                           const std::string& searchName) {
+// --- Master-record layout (no orlib20 / TS dependency) -----------------------
+// Layout of one master record in the buffer returned by _LoadMasterRecsEX@16
+// (and _GetMasterRecByType@16), per the proven layout in
+// docs/KNOWLEDGE_BASE.md Sec. 22: 0x10A (266) bytes per record, short ProgId
+// at 0x00, DESCRIPTION/summary text (char[0x3D]) at 0x17, category/sub-type
+// byte at 0xE9. Records carry NO stored name anywhere -- item names live in
+// the warehouse name index (KB Sec. 23), which is therefore the ONLY
+// authority for name existence. The 0x17 field (a historical "name offset"
+// misnomer) is a description/summary field and must NEVER be matched against
+// a name query. The enumerateReverseDependents record walk keeps its own
+// copies of the offsets.
+namespace {
+
+// Pure tri-state contract handling for a name-index lookup result
+// (docs/KNOWLEDGE_BASE.md Sec. 22/23). Two states MUST stay distinct:
+//   - a MISSING item  -> lookupOk == true, exists == false (clean answer)
+//   - a BROKEN lookup -> lookupOk == false (FAILURE: the caller must
+//     surface an error -- init-failure semantics -- NEVER a silent
+//     "not found"; exists/storedName/progId carry no answer at all)
+// Unit-tested via the test-only seam tsdev::makeNameIndexOutcomeForTest.
+// mechanismOk is false when the name-index machinery is missing, SEH-failing
+// at the mechanism level, or answered with a contradictory BST result/node
+// pair (see TsDevLib::enumerateRecords()); found/verbatimName/progId are the
+// healthy-path lookup facts (progId is the raw FindExistPos result).
+EnumerateResult makeNameIndexOutcome(bool mechanismOk, bool found,
+                                     const std::string& verbatimName,
+                                     int progId) {
     EnumerateResult result;
-
-    int category = getCategory(type);
-    int subType = getSubType(type);
-
-    // --- Phase 1: Try _LoadMasterRecsEX@16 (COM interface cache) ---
-    // This works for records that existed before this process started.
-    // Newly created records may not be in the COM interface cache.
-    //
-    // We try twice: first WITHOUT refreshCache() (the COM interface
-    // initialized by OrlibInit already has pre-existing records), then
-    // WITH refreshCache() (which dispatches cmd 0x0F + cmd 0x4E to get a
-    // fresh server-side interface that reflects in-session creates).
-    if (m_loadMasterRecsEx) {
-        for (int pass = 0; pass < 2 && !result.exists; pass++) {
-            if (pass == 1) {
-                refreshCache();
-            }
-
-            HGLOBAL buf = NULL;
-            LoadMasterRecsExSehResult seh;
-            // §7.1 diag: _LoadMasterRecsEX@16 triggers worker cmds
-            // 0x07/0x08/0x09 — bracket the dispatch call site.
-            TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.enter",
-                           "cat=%d pass=%d when=enumerateRecords", category,
-                           pass);
-            if (callLoadMasterRecsEx(m_loadMasterRecsEx, category, &buf,
-                                      (const char*)NULL, 1, &seh)) {
-                TSDEV_DIAG_LOG("dispatch.LoadMasterRecsEX.leave",
-                               "cat=%d pass=%d when=enumerateRecords count=%d",
-                               category, pass, seh.result);
-                int count = seh.result;
-
-                if (count > 0 && buf != NULL) {
-                    char* records = (char*)GlobalLock(buf);
-                    if (records) {
-                        const int kRecordSize   = 0x10A;   // 266 bytes per master record
-                        const int kNameOffset   = 0x17;    // inline long name
-                        const int kProgIdOffset = 0x00;    // short ProgId
-                        const int kSubTypeOffset = 0xE9;   // category/subtype byte
-
-                        for (int i = 0; i < count; i++) {
-                            char* rec = records + i * kRecordSize;
-                            const char* storedName = rec + kNameOffset;
-
-                            // For category 2 (Indicator), filter by subtype so
-                            // TradingApp queries only match TradingApp records,
-                            // Indicator queries only match Indicator records, and
-                            // ShowMe queries only match ShowMe records. Indicator
-                            // now properly excludes ALL non-Indicator category-2
-                            // subtypes (PaintBar, ShowMe, Expert, etc.) by
-                            // accepting only raw subtypes 0x00 and 0x01.
-                            // ShowMe records use raw subtype 0x03 or 0x05 (both
-                            // map to the ShowMe power type / expanded whType;
-                            // authoritative mapping in
-                            // docs/TS_COMPONENT_TYPES.md).
-                            if (category == 2) {
-                                unsigned char recSubType =
-                                    (unsigned char)rec[kSubTypeOffset];
-                                if (subType == 0x14 && recSubType != 0x14) continue;
-                                if (subType == 0x00 && recSubType != 0x00 && recSubType != 0x01) continue;
-                                if (subType == 0x05 && recSubType != 0x05 && recSubType != 0x03) continue;
-                            }
-
-                            if (_stricmp(storedName, searchName.c_str()) == 0) {
-                                result.exists = true;
-                                result.storedName = std::string(storedName);
-                                result.progId = *(short*)(rec + kProgIdOffset);
-                                break;
-                            }
-                        }
-                        GlobalUnlock(buf);
-                    }
-                }
-                if (buf) GlobalFree(buf);
-            }
-        }
-    }
-
-    if (result.exists) {
+    if (!mechanismOk) {
+        result.lookupOk = false;
         return result;
     }
+    if (found) {
+        result.exists = true;
+        result.storedName = verbatimName;
+        // A found name with a non-positive FindExistPos result keeps the
+        // established contract (exists=1, progId=0): the lookup answered,
+        // only the ProgId channel is unavailable.
+        result.progId = progId > 0 ? progId : 0;
+    }
+    return result;
+}
+} // namespace
 
-    // --- Phase 2: Direct BST search + verbatim name getter ---
-    // Phase 1 uses _LoadMasterRecsEX@16 which reads from the COM server's
-    // enumeration cache. This cache is populated at warehouse initialization
-    // and is NOT updated when new records are created in-session.
+// Test-only wrapper for the pure name-index outcome classifier above. It is
+// declared only in src/tsdev_lib_test_hooks.h and delegates to the exact
+// helper used by the production TsDevLib::enumerateRecords() result
+// contract. No TsDevLib instance, orlib20, or TradeStation is needed, so the
+// seam remains a pure unit-test boundary.
+//
+// Defined directly here (NOT in a re-opened namespace tsdev {} block) because
+// this entire TU is already inside `namespace tsdev` (opened at the top of the
+// file). Re-opening it would create a nested tsdev::tsdev namespace and the
+// symbol would not match the declaration in tsdev_lib_test_hooks.h.
+EnumerateResult makeNameIndexOutcomeForTest(bool mechanismOk, bool found,
+                                            const std::string& verbatimName,
+                                            int progId) {
+    return makeNameIndexOutcome(mechanismOk, found, verbatimName, progId);
+}
+
+EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
+                                           const std::string& searchName) {
+    int category = getCategory(type);
+
+    // --- Name-index lookup: the ONLY authority for name existence ---
+    // Master records carry NO stored name (record +0x17 is a
+    // DESCRIPTION/summary field -- docs/KNOWLEDGE_BASE.md Sec. 22/23), so
+    // record text is NEVER matched against the query: a description string
+    // is not proof of existence. The lookup is the warehouse name-index
+    // path:
     //
     // FUN_101a42d0 returns the ProgId (not the name) in non-server mode
     // (DAT_1023aa8f == 0, which is our case), so we call FUN_101d05e0
@@ -2194,43 +2180,73 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
     // server/non-server branch since FUN_101c36d0 works in both modes.
     // The stored name comes from the WAREHOUSE, not from source text
     // (HARD RULE 0).
-    if (m_pBstSearchWrapper && m_pVerbatimNameGetter &&
-        m_pBuildTypeArray && m_pGetWarehouse) {
-        void* warehouse = nullptr;
-        if (callGetWarehouse(
-                reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse),
-                0, &warehouse) && warehouse) {
+    //
+    // Degraded mode fails LOUDLY: missing machinery or any SEH failure at
+    // the mechanism level yields EnumerateResult::lookupOk == false (an
+    // error to surface -- init-failure semantics), never a silent
+    // "not found". A missing item is a clean exists == false with
+    // lookupOk == true.
+    bool mechanismOk =
+        m_pGetWarehouse && m_pBuildTypeArray && m_pBstSearchWrapper &&
+        m_pVerbatimNameGetter && m_pFindExistPos;
+    bool found = false;
+    std::string verbatimName;
+    int progId = 0;
 
+    if (mechanismOk) {
+        void* warehouse = nullptr;
+        if (!callGetWarehouse(
+                reinterpret_cast<GetWarehouseFn>(m_pGetWarehouse),
+                0, &warehouse) || !warehouse) {
+            // SEH in GetWarehouse, or no warehouse singleton: the name
+            // index cannot be searched at all.
+            mechanismOk = false;
+        } else {
             // Build the type filter array via FUN_101d43a0 (same as
             // FUN_101a42d0 does internally). FUN_101d43a0 is __stdcall:
             // arg1=category, arg2=*outBuf, RET 0x8. Returns outBuf pointer.
             int typeFilterBuf[16] = {};
-            if (callBuildTypeArray(m_pBuildTypeArray, category, typeFilterBuf)) {
-
+            if (!callBuildTypeArray(m_pBuildTypeArray, category,
+                                    typeFilterBuf)) {
+                mechanismOk = false;  // SEH in the type-filter build
+            } else {
                 // Call FUN_101d05e0 (BST search wrapper).
                 // __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode),
                 // RET 0xC. Returns bool (1=found, 0=not found). Stores BST node
                 // pointer in *outNode.
                 void* nodePtr = nullptr;
                 int bstResult = 0;
-                if (callBstSearchWrapper(
+                if (!callBstSearchWrapper(
                         m_pBstSearchWrapper, warehouse, typeFilterBuf,
-                        searchName.c_str(), &nodePtr, &bstResult) &&
-                    bstResult != 0 && nodePtr) {
-
+                        searchName.c_str(), &nodePtr, &bstResult)) {
+                    mechanismOk = false;  // SEH in the BST name search
+                } else if ((bstResult != 0) != (nodePtr != nullptr)) {
+                    // Contradictory-but-SEH-free answer: the search says
+                    // "found" but stored no node, or says "not found" yet
+                    // stored a node. A mechanism answering inconsistently
+                    // is BROKEN machinery -- never a silent "not found".
+                    // (The only clean missing-item answer is "not found"
+                    // with NO node, which falls through below.)
+                    mechanismOk = false;
+                } else if (bstResult != 0 && nodePtr) {
                     // Call FUN_101c36d0 (verbatim name getter).
                     // __fastcall: ECX=node pointer, no stack args, RET.
                     // Returns char* to the verbatim stored name at node+0x1D.
-                    const char* verbatimName = nullptr;
-                    if (callVerbatimNameGetter(
-                            m_pVerbatimNameGetter, nodePtr, &verbatimName) &&
-                        verbatimName) {
-                        result.exists = true;
-                        result.storedName = std::string(verbatimName);
+                    const char* verbatim = nullptr;
+                    if (!callVerbatimNameGetter(
+                            m_pVerbatimNameGetter, nodePtr, &verbatim) ||
+                        !verbatim) {
+                        mechanismOk = false;  // SEH / no name on the node
+                    } else {
+                        found = true;
+                        verbatimName = std::string(verbatim);
                         // Get ProgId separately via FindExistPos (BST).
-                        result.progId = findExistPos(searchName, type);
-                        if (result.progId <= 0) {
-                            result.progId = 0;  // shouldn't happen, but be safe
+                        bool sehFailed = false;
+                        progId = findExistPos(searchName, type, &sehFailed);
+                        if (sehFailed) {
+                            // SEH in the authoritative ProgId lookup: the
+                            // lookup system is broken, not the name absent.
+                            mechanismOk = false;
                         }
                     }
                 }
@@ -2238,7 +2254,41 @@ EnumerateResult TsDevLib::enumerateRecords(ComponentType type,
         }
     }
 
-    return result;
+    return makeNameIndexOutcome(mechanismOk, found, verbatimName, progId);
+}
+
+bool TsDevLib::listItems(ComponentType type,
+                         std::vector<std::string>& outNames) {
+    outNames.clear();
+
+    // WHServer name-index enumeration (src/whserver_names.h): the master
+    // record family carries NO stored name, so the IWHouse name index
+    // (ProgramsCountByType / NextId / ProgramById -> Name) is the only
+    // authoritative source. The pure walk lives in collectTypeNames() over
+    // the IWhNameSource seam (unit-tested with a fake provider); the real
+    // COM provider binds the proven activation chain (KB Sec. 17) on THIS
+    // thread -- the owning STA the COM apartment guard initialized (see the
+    // same-thread contract in tsdev_lib.h).
+    const std::wstring myWorkDir =
+        resolveMyWorkDirFromBinPath(m_myWorkBin.c_str());
+    if (myWorkDir.empty()) {
+        return false;  // MyWork dir unresolved: WHouseEx Create=1 must never
+                       // run against an unresolved/guessed path
+    }
+    try {
+        WhComNameSource source(myWorkDir);
+        return collectTypeNames(source, type, outNames);
+    } catch (const std::exception& e) {
+        // COM activation/bind failure (the ctor throws with the failing
+        // stage + HRESULT). Documented state: outNames stays EMPTY.
+        tsdev_log_message(TsDevLogLevel::Warning, "tsdev: listItems: %s\n",
+                          e.what());
+        outNames.clear();
+        return false;
+    } catch (...) {
+        outNames.clear();
+        return false;
+    }
 }
 
 std::string TsDevLib::verifyModule(ComponentType type, int progId,
@@ -2703,10 +2753,11 @@ void TsDevLib::refreshCache() {
     // does NOT refresh the COM server enumeration cache at [warehouse+0xAE]
     // used by _LoadMasterRecsEX@16. Newly created records are visible to
     // FindExistPos (which uses the in-memory BST) but not to
-    // _LoadMasterRecsEX@16's get-all-records method. The two-phase
-    // enumerateRecords() handles this by falling back to FindExistPos +
-    // _GetMasterRecByType@16 in Phase 2 (reading the stored name from the
-    // warehouse record, not from source text).
+    // _LoadMasterRecsEX@16's get-all-records method. Name lookup
+    // (enumerateRecords) handles this by searching the in-memory BST name
+    // index (FUN_101d05e0 + FUN_101c36d0) with the ProgId from FindExistPos
+    // -- never through the record buffer, which carries no stored name
+    // (docs/KNOWLEDGE_BASE.md Sec. 22/23).
 
     // Step 1: Get the warehouse.
     void* warehouse = nullptr;
@@ -2750,9 +2801,9 @@ void TsDevLib::refreshCache() {
     // attempt, we cannot safely dispatch cmd 0x4E (it dereferences the
     // IWHouse interface at [warehouse+0x5E], causing ACCESS_VIOLATION on
     // NULL). This happens in serve mode after a delete operation corrupts
-    // the warehouse interface. Skip the refresh — the caller
-    // (enumerateRecords) will fall back to Phase 2 (findExistPos +
-    // _GetMasterRecByType@16) which does not need the IWHouse interface.
+    // the warehouse interface. Skip the refresh -- name lookup
+    // (enumerateRecords) searches the in-memory BST name index and does not
+    // need the IWHouse interface.
     if (!iface5E) {
         TSDEV_DBG("tsdev: refreshCache -- [warehouse+0x5E] is NULL after cmd 0x0F, "
                   "skipping cmd 0x4E (interface cannot be re-initialized)\n");
@@ -2764,8 +2815,7 @@ void TsDevLib::refreshCache() {
     // obtain a fresh COM interface — has been removed. In our CLI context
     // the COM server cannot provide a fresh interface, so cmd 0x0D
     // returns null and clears [warehouse+0x5E], making it useless.
-    // The new Phase 2 of enumerateRecords uses _GetMasterRecByType@16
-    // instead, which dispatches cmd 0x0D via a DIFFERENT path
+    // _GetMasterRecByType@16 dispatches cmd 0x0D via a DIFFERENT path
     // (FUN_101d15c0) and returns a single warehouse record by ProgId.)
     *reinterpret_cast<int*>(wh + 0x12) = 0xC;
     // §7.1 diag: enter/leave around the cmd 0x4E (cache refresh) dispatch
@@ -3882,8 +3932,8 @@ void TsDevLib::applyThreadCheckPatches() {
     // Thread-check 11: verbatim name getter (FUN_101c36d0) thread-check INT3.
     // The INT3 fires when FUN_101cfce0 returns 0 (failed to get ProgId).
     // Required for the direct FUN_101d05e0 + FUN_101c36d0 call path used by
-    // enumerateRecords() Phase 2. The INT3 is at offset 0x6A (106) from
-    // function entry.
+    // enumerateRecords()'s name-index lookup. The INT3 is at offset 0x6A
+    // (106) from function entry.
     PatchSiteDescriptor tc11 = m_resolver->resolvePatchSite("FUN_101c36d0_thread_check_INT3");
     m_threadCheckRvas[10] = tc11.patchRva;
     m_threadCheckOriginalBytes[10] = *reinterpret_cast<const unsigned char*>(

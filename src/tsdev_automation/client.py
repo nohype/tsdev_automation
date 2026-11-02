@@ -81,7 +81,7 @@ def _serve_cache_policy(policy: str) -> str:
     return policy
 
 # Subcommand name per high-level operation.
-_SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "get-source": "get-source", "upsert": "upsert"}
+_SINGLE_SUBCMD: dict[str, str] = {"insert": "insert", "modify": "modify", "delete": "delete", "exists": "exists", "list": "list", "get-source": "get-source", "upsert": "upsert"}
 _BATCH_SUBCMD: dict[str, str] = {"insert": "batch-insert", "modify": "batch-modify", "delete": "batch-delete", "upsert": "batch-upsert"}
 
 
@@ -1703,6 +1703,47 @@ class TsDevClient:
             raise exception_for(result)
         return result
 
+    def list_items(
+        self,
+        type: str,
+        *,
+        backup_cache: bool = False,
+        restore_cache: bool = False,
+        cache_backup_policy: str | None = None,
+    ) -> TsDevResult:
+        """List the stored names of every item of `type` in the TSDev Library.
+
+        Returns a TsDevResult with ``.names`` (``list[str]``) holding the
+        stored names in the CLI-emitted order: sorted by name
+        (case-insensitive ASCII, stable order for names differing only by
+        case).  The Python layer passes them through verbatim in that CLI
+        order -- never re-sorting, never deduplicating -- empty when the
+        type has zero items.
+
+        An empty list is a success, not an error.  Raises typed exceptions on
+        real errors (unknown_type, usage_error, etc.).
+
+        ``backup_cache``/``restore_cache``/``cache_backup_policy`` run the CLI's
+        cache phase before the operation (see :meth:`_cache_flag_args`).
+        """
+        t = _validate_type(type)
+        # Serve-broker routing for list.
+        if self._serve_active():
+            self._serve_cache_phase(backup_cache, restore_cache, cache_backup_policy)
+            return self._call_broker_list(t)
+        sub = _SINGLE_SUBCMD["list"]
+        cmd = (
+            self._base_cmd()
+            + ["--json"]
+            + self._cache_flag_args(backup_cache, restore_cache, cache_backup_policy)
+            + [sub, t]
+        )
+        result = self._run_cli(cmd)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
     def get_source(
         self,
         type: str,
@@ -2361,6 +2402,17 @@ class TsDevClient:
         request: dict = {"op": "exists", "type": type_, "name": name}
         if case_insensitive:
             request["case_insensitive"] = True
+        broker = self._ensure_broker()
+        obj = broker.call(request)
+        result = TsDevResult.from_json(obj)
+        if not result.success:
+            assert result.error is not None
+            raise exception_for(result)
+        return result
+
+    def _call_broker_list(self, type_: str) -> TsDevResult:
+        """Route a ``list`` query through the broker."""
+        request: dict = {"op": "list", "type": type_}
         broker = self._ensure_broker()
         obj = broker.call(request)
         result = TsDevResult.from_json(obj)

@@ -60,6 +60,12 @@ class TsDevResult:
     exists: bool = False
     stored_name: str = ""
     source: str = ""
+    # Stored item names for ``list`` results: CLI-emitted order, sorted by
+    # name (case-insensitive ASCII, stable order for names differing only by
+    # case); the Python layer passes them through verbatim in that order,
+    # never re-sorting or deduplicating.  Empty when the type has zero items
+    # (and on non-list ops).
+    names: list[str] = field(default_factory=list)
     # Cache-phase payload for standalone --backup-cache/--restore-cache runs
     # (and serve backup-cache/restore-cache responses): the "cache" dict, or
     # {"backup": ..., "restore": ...} when both flags ran.  None otherwise.
@@ -119,6 +125,7 @@ class TsDevResult:
             exists=bool(obj.get("exists", False)),
             stored_name=str(obj.get("stored_name", "")),
             source=str(obj.get("source", "")),
+            names=[str(n) for n in obj.get("names")] if isinstance(obj.get("names"), list) else [],
             cache=cache,
             current_version=obj.get("current_version"),
             latest_version=obj.get("latest_version"),

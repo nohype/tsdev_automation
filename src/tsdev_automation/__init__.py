@@ -6,9 +6,11 @@ This package provides a high-level, stdlib-only Python API
 :meth:`TsDevClient.insert`, :meth:`TsDevClient.modify`,
 :meth:`TsDevClient.delete`, :meth:`TsDevClient.exists`,
 :meth:`TsDevClient.get_source`, and :meth:`TsDevClient.upsert`.
-It also provides batch methods :meth:`TsDevClient.batch_insert`,
-:meth:`TsDevClient.batch_modify`, :meth:`TsDevClient.batch_delete`, and
-:meth:`TsDevClient.batch_upsert`, plus directory-batch methods
+It also provides the type-level query :meth:`TsDevClient.list_items`
+(stored names of every item of a type) and batch methods
+:meth:`TsDevClient.batch_insert`, :meth:`TsDevClient.batch_modify`,
+:meth:`TsDevClient.batch_delete`, and :meth:`TsDevClient.batch_upsert`,
+plus directory-batch methods
 :meth:`TsDevClient.batch_insert_dir`, :meth:`TsDevClient.batch_modify_dir`,
 :meth:`TsDevClient.batch_delete_dir`, and
 :meth:`TsDevClient.batch_upsert_dir`, against the TradeStation Development

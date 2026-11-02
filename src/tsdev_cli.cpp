@@ -7,6 +7,7 @@
 //   tsdev_cli [--json] [--ts-path <directory>] modify  <type> <name> <source_file>
 //   tsdev_cli [--json] [--ts-path <directory>] delete  <type> <name>
 //   tsdev_cli [--json] [--ts-path <directory>] exists  <type> <name> [--case-insensitive]
+//   tsdev_cli [--json] [--ts-path <directory>] list  <type>
 //   tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> [--output <file>]
 //   tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>
 //   tsdev_cli [--json] [--ts-path <directory>] upsert <type> <name> <source_file>
@@ -447,6 +448,7 @@ void printUsage() {
         "  tsdev_cli [--json] [--ts-path <directory>] delete  <type> <name>\n"
         "  tsdev_cli [--json] [--ts-path <directory>] exists  <type> <name> "
         "[--case-insensitive]\n"
+        "  tsdev_cli [--json] [--ts-path <directory>] list  <type>\n"
         "  tsdev_cli [--json] [--ts-path <directory>] get-source <type> <name> "
         "[--output <file>]\n"
         "  tsdev_cli [--json] [--ts-path <directory>] dependents <type> <name>\n"
@@ -709,6 +711,12 @@ struct CliResult {
     // warehouse-level cmd 0x0D → cmd 0x3B path. Empty when the op is not
     // "dependents" or when no callers were found.
     std::vector<TsDevLib::CallerInfo> callers;
+    // "list" op: stored names of all items of the given type, in the
+    // canonical output order (sortNamesForOutput: case-insensitive ASCII,
+    // stable ties, no dedup) established once in doList. Serialized as
+    // the "names" array on success -- always present there (empty array when
+    // the category has zero items).
+    std::vector<std::string> names;
     // Serve cache ops (backup-cache/restore-cache): extra top-level members
     // merged into the success JSON response — carries the exact standalone
     // --json cache payload (the "cache" member object). Null/empty for all
@@ -830,6 +838,15 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
                 arr.push_back(entry);
             }
             j["dependents"] = arr;
+        }
+        // "list" op: emit the stored-name array. ALWAYS present on success
+        // (empty array when the category has zero items). Entries keep the
+        // CliResult order (the canonical sort is applied once in doList) --
+        // the serializer neither re-sorts nor dedups.
+        if (r.op == "list") {
+            ordered_json arr = ordered_json::array();
+            for (const auto& n : r.names) arr.push_back(n);
+            j["names"] = arr;
         }
         // Extra top-level payload (serve cache ops): merge each member so
         // the response carries the standalone --json cache/backup/restore
@@ -3340,6 +3357,10 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
 // case-insensitive), then post-compares the stored name with the query
 // name using exact (case-sensitive) comparison. Only reports exists=1
 // when the names match exactly.
+//
+// Degraded lookup mode (EnumerateResult::lookupOk == false: the name-index
+// machinery is missing or SEH-failing) is a FAILURE, not a query answer:
+// exit 4 (init_failure), never a silent exists=0.
 CliResult doExists(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
                    bool caseInsensitive) {
@@ -3349,6 +3370,15 @@ CliResult doExists(TsDevLib& lib, ComponentType type,
     r.name = name;
 
     EnumerateResult er = lib.enumerateRecords(type, name);
+    if (!er.lookupOk) {
+        // Broken lookup system (not a missing item): init-failure semantics.
+        r.success = false;
+        r.exitCode = 4;
+        r.errorMessage = "init failed: name-index lookup machinery unavailable";
+        r.humanStderr = "tsdev_cli: init failed: name-index lookup "
+                        "machinery unavailable\n";
+        return r;
+    }
     if (er.exists) {
         if (caseInsensitive || er.storedName == name) {
             r.success = true;
@@ -3904,6 +3934,181 @@ int cmdExists(const std::string& typeStr, const std::string& name,
     return params.result.exitCode;
 }
 
+// --- The LIST subcommand ---
+
+// sortNamesForOutput: THE canonical "list" output ordering, applied exactly
+// once in doList -- NOT in the renderers -- so the human stdout, the JSON
+// "names" array, and any serve path sharing doList see one identical order.
+// Contract: sort by name, case-insensitive ASCII comparison (primary key =
+// the name lowercased with ASCII tolower semantics: only 'A'-'Z' map to
+// 'a'-'z'), STABLE ties (names equal ignoring case keep their source
+// order), NO dedup (duplicates are preserved). Lowercased bytes compare as
+// unsigned chars (ASCII byte order). Deliberately locale-free: no
+// std::locale comparison, no stricmp -- the order is deterministic across
+// locales.
+// File-local so the same-TU unit test (tests/test_list_cmd.cpp) can exercise
+// the ordering.
+void sortNamesForOutput(std::vector<std::string>& names) {
+    // ASCII tolower: cast to unsigned char first (only 'A'-'Z' fold).
+    auto asciiLower = [](unsigned char c) -> unsigned char {
+        return (c >= 'A' && c <= 'Z')
+                   ? static_cast<unsigned char>(c - 'A' + 'a')
+                   : c;
+    };
+    // Lexicographic byte compare of the ASCII-lowercased names (unsigned
+    // bytes); equal-lowered names are neither less nor greater, so
+    // stable_sort keeps their source order.
+    auto less = [&asciiLower](const std::string& a, const std::string& b) {
+        const size_t n = (a.size() < b.size()) ? a.size() : b.size();
+        for (size_t i = 0; i < n; ++i) {
+            const unsigned char ca =
+                asciiLower(static_cast<unsigned char>(a[i]));
+            const unsigned char cb =
+                asciiLower(static_cast<unsigned char>(b[i]));
+            if (ca != cb) return ca < cb;
+        }
+        return a.size() < b.size();
+    };
+    std::stable_sort(names.begin(), names.end(), less);
+}
+
+// listHumanStdout: the pure human-mode stdout rendering for "list" -- one
+// stored name per line. An empty result renders NOTHING (empty string).
+// File-local so the same-TU unit test (tests/test_list_cmd.cpp) can exercise
+// the shaping.
+std::string listHumanStdout(const std::vector<std::string>& names) {
+    std::string out;
+    for (const auto& n : names) out += n + "\n";
+    return out;
+}
+
+// doList: enumerate the stored names of all items of a given type. This is
+// a QUERY, not a mutation: an empty category is a valid result (NOT an
+// error). Names arrive in warehouse name-index walk order and are sorted
+// exactly once here (sortNamesForOutput: case-insensitive ASCII, stable
+// ties, no dedup) so the human stdout, the JSON "names" array, and any
+// serve path sharing doList see one canonical order.
+//
+// Returns exit 0 on success (including zero names) and exit 4 when the
+// item enumeration itself fails (init failure or SEH -- see
+// TsDevLib::listItems).
+CliResult doList(TsDevLib& lib, ComponentType type,
+                 const std::string& typeStr) {
+    CliResult r;
+    r.op = "list";
+    r.typeStr = typeStr;
+
+    std::vector<std::string> names;
+    if (!lib.listItems(type, names)) {
+        r.success = false;
+        r.exitCode = 4;
+        r.errorMessage = "init failed: could not enumerate items";
+        r.humanStderr = "tsdev_cli: init failed: could not enumerate items\n";
+        return r;
+    }
+
+    // THE canonical order: sorted exactly once at this result-shaping point,
+    // before the names reach CliResult/renderers.
+    sortNamesForOutput(names);
+
+    r.success = true;
+    r.exitCode = 0;
+    r.names = names;
+    r.humanStdout = listHumanStdout(names);
+    return r;
+}
+
+// Parameters passed to the worker thread.
+struct ListParams {
+    ComponentType  type;
+    std::string    typeStr;
+    const wchar_t* tsPathOverride;  // nullptr = auto-discover
+    CliResult      result;          // populated by runList
+};
+
+// The LIST flow, running on a large-stack worker thread. TsDevLib is
+// constructed AND destructed here so the thread-affine EDIT control lives
+// and dies on the same thread that uses it.
+DWORD WINAPI runList(LPVOID param) {
+    installThreadFatalContainment();  // P4-e: per-thread terminate guard
+    ListParams* p = static_cast<ListParams*>(param);
+
+    // Construct TsDevLib.
+    TsDevLib* lib = nullptr;
+    try {
+        lib = new TsDevLib(p->tsPathOverride);
+    } catch (const std::exception& e) {
+        CliResult& r = p->result;
+        r.op = "list";
+        r.typeStr = p->typeStr;
+        r.exitCode = 4;
+        r.errorMessage = std::string("init failed: ") + e.what();
+        r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
+        return 0;
+    }
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
+    // re-assert ours outermost before any warehouse call (idempotent).
+    installProcessUef();
+
+    p->result = doList(*lib, p->type, p->typeStr);
+
+    delete lib; // calls OrlibExit + destroys EDIT control (same thread)
+    return 0;
+}
+
+int cmdList(const std::string& typeStr,
+            const wchar_t* tsPathOverride, bool jsonMode, bool pbar) {
+    CliResult r;
+    r.op = "list";
+    r.typeStr = typeStr;
+
+    ComponentType type;
+    if (!parseType(typeStr, type)) {
+        r.exitCode = 2;
+        r.errorMessage = std::string("unknown type \"") + typeStr
+                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
+        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
+                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        emitOutput(r, jsonMode);
+        return 2;
+    }
+
+    // Run the orlib flow on a 64 MB-stack worker thread.
+    ListParams params;
+    params.type     = type;
+    params.typeStr  = typeStr;
+    params.tsPathOverride = tsPathOverride;
+
+    HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
+                                  runList, &params, 0, nullptr);
+    if (!hThread) {
+        r.exitCode = 10;
+        r.errorMessage = std::string("CreateThread failed: ")
+                         + std::to_string(GetLastError());
+        r.humanStderr = std::string("tsdev_cli: CreateThread failed: ")
+                        + std::to_string(GetLastError()) + "\n";
+        emitOutput(r, jsonMode);
+        return 10;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    CloseHandle(hThread);
+
+    // --pbar: the op ran to completion -- emit the single-item bar in one
+    // draw sequence: 0/1 labelled <type>, then filled to 1/1 (with " -- 1
+    // failed" on failure), pinned by a newline. stderr only; stdout and the
+    // result contract are untouched.
+    if (pbar) {
+        PbarRenderer bar("list", 1);
+        bar.itemStarted(typeStr, "");
+        if (!params.result.success) bar.noteFailure();
+        bar.itemCompleted();
+        bar.finish();
+    }
+
+    emitOutput(params.result, jsonMode);
+    return params.result.exitCode;
+}
+
 // --- The DEPENDENTS subcommand (M.4b.1) ---
 
 // doDependents: enumerate reverse dependents (callers) of a library item by
@@ -3920,6 +4125,15 @@ CliResult doDependents(TsDevLib& lib, ComponentType type,
     // First check the root item exists (enumerateRecords is case-insensitive
     // and returns the verbatim stored name + ProgId).
     EnumerateResult er = lib.enumerateRecords(type, name);
+    if (!er.lookupOk) {
+        // Broken lookup system (not a missing item): init-failure semantics.
+        r.success = false;
+        r.exitCode = 4;
+        r.errorMessage = "init failed: name-index lookup machinery unavailable";
+        r.humanStderr = "tsdev_cli: init failed: name-index lookup "
+                        "machinery unavailable\n";
+        return r;
+    }
     if (!er.exists) {
         r.success = false;
         r.exitCode = 5;
@@ -6980,7 +7194,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 // TsDevLib and is validated via E2E in K.6a).
 
 // ServeRequest is the parsed, validated form of a single broker request.
-//   op            insert/modify/delete/exists/upsert/get-source/quit/
+//   op            insert/modify/delete/exists/upsert/get-source/list/quit/
 //                 backup-cache/restore-cache
 //   type          ComponentType (resolved from typeStr)
 //   typeStr       the original type string verbatim (for CliResult)
@@ -7035,7 +7249,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
     // 2. Validate the op against the known set.
     const std::string knownOps[] = {
         "insert", "modify", "delete", "exists", "upsert", "get-source",
-        "quit", "backup-cache", "restore-cache"
+        "list", "quit", "backup-cache", "restore-cache"
     };
     bool opKnown = false;
     for (const std::string& k : knownOps) {
@@ -7152,6 +7366,53 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         return r;
     }
 
+    // 3a. 'list' takes EXACTLY 'type' -- a category-wide query with no
+    // 'name' and no flags ('case_insensitive' is 'exists'-only). An
+    // absent/non-string 'type' is a usage error (exit 1); an empty-string
+    // 'type' is NOT -- it falls through to type resolution below and
+    // rejects as unknown_type (exit 2), exactly like the direct path
+    // `list ""` and like every other serve op (exists/insert/... all pass
+    // the type string to parseType). Any other member is a usage error too
+    // ('batch'/'policy' never reach here -- their gates above reject them
+    // first).
+    if (op == "list") {
+        if (!req.contains("type") || !req["type"].is_string()) {
+            r.success = false;
+            r.exitCode = 1;
+            r.op = op;
+            r.errorMessage = "op 'list' requires 'type'";
+            return r;
+        }
+        for (auto it = req.begin(); it != req.end(); ++it) {
+            if (it.key() != "op" && it.key() != "type") {
+                r.success = false;
+                r.exitCode = 1;
+                r.op = op;
+                r.errorMessage = "unexpected field '" + it.key() +
+                    "' (op 'list' accepts only 'op' and 'type')";
+                return r;
+            }
+        }
+        std::string typeStr = req["type"].get<std::string>();
+        ComponentType type;
+        if (!parseType(typeStr, type)) {
+            r.success = false;
+            r.exitCode = 2;
+            r.op = op;
+            r.typeStr = typeStr;
+            r.errorMessage = "unknown type '" + typeStr + "'";
+            return r;
+        }
+        out.op = op;
+        out.type = type;
+        out.typeStr = typeStr;
+        r.success = true;
+        r.exitCode = 0;
+        r.op = op;
+        r.typeStr = typeStr;
+        return r;
+    }
+
     // 4. All other ops require 'type' and 'name'.
     if (!req.contains("type") || !req["type"].is_string() ||
         !req.contains("name") || !req["name"].is_string()) {
@@ -7260,7 +7521,7 @@ std::pair<std::string, std::string> taggedParseFailureLines(
 // exists/get-source which need the warehouse open) to crash with
 // ACCESS_VIOLATION in orlib20. Persistence is guaranteed by OrlibExit (in
 // the TsDevLib destructor) and the explicit closeWarehouse() in runServe.
-// Read-only ops (exists/get-source) need no flush. "quit" returns a success
+// Read-only ops (exists/get-source/list) need no flush. "quit" returns a success
 // CliResult with op="quit" (the broker layer in K.4 handles the actual
 // shutdown). "backup-cache"/"restore-cache" are pure filesystem — they take
 // no lib state, so they run through runCachePhase's serve path even though
@@ -7311,6 +7572,9 @@ CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
     }
     if (req.op == "exists") {
         return doExists(lib, req.type, req.typeStr, req.name, req.caseInsensitive);
+    }
+    if (req.op == "list") {
+        return doList(lib, req.type, req.typeStr);
     }
     if (req.op == "get-source") {
         return doGetSource(lib, req.type, req.typeStr, req.name, req.outputPath);
@@ -10194,6 +10458,24 @@ int main(int argc, char** argv) {
         }
         return cmdExists(exArgs[0], exArgs[1], caseInsensitive,
                          tsPathWidePtr, jsonMode, pbar);
+    }
+
+    if (iequals(subcommand, "list")) {
+        // list takes exactly 1 argument: <type>. No op-specific flags.
+        // Valid form: list <type>  (reducedArgc == 3)
+        if (reducedArgc != 3) {
+            CliResult r;
+            r.op = "list";
+            r.exitCode = 1;
+            r.errorMessage = "list requires exactly 1 argument: <type>";
+            if (jsonMode) {
+                emitOutput(r, jsonMode);
+            } else {
+                printUsage();
+            }
+            return 1;
+        }
+        return cmdList(reducedArgvPtr[2], tsPathWidePtr, jsonMode, pbar);
     }
 
     if (iequals(subcommand, "dependents")) {

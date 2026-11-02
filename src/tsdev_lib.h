@@ -148,11 +148,23 @@ struct Result {
     int         progId  = 0;  // valid when success is true (where applicable)
 };
 
-// Result of a case-insensitive enumeration-based existence query.
+// Result of a name-index existence query (enumerateRecords).
+//
+// The warehouse name index is the ONLY authority for name existence: the
+// 0x10A-byte master record family carries NO stored name (its +0x17 field is
+// a DESCRIPTION/summary text), so a match against record text is never proof
+// of existence. See docs/KNOWLEDGE_BASE.md Sec. 22/23.
 struct EnumerateResult {
     bool        exists = false;
     std::string storedName;  // verbatim stored name (empty if not found)
     int         progId  = 0; // ProgId (0 if not found)
+    // Tri-state contract handling: false means the name-index lookup
+    // machinery is missing or SEH-failing (a BROKEN lookup system). That
+    // state is a FAILURE to be surfaced as an error (init-failure
+    // semantics), NEVER a silent "not found"; exists/storedName/progId then
+    // carry no lookup answer at all. A clean answer (exists true or false)
+    // always has lookupOk == true.
+    bool        lookupOk = true;
 };
 
 // RAII wrapper for an orlib20 session.
@@ -231,7 +243,12 @@ public:
 
     // Look up an existing component by name.
     // Returns ProgId (>0) if found, 0 if not found.
-    int findExistPos(const std::string& name, ComponentType type);
+    // sehFailed (optional): set to true only when the underlying
+    // _FindExistPos call raised an SEH exception (a broken lookup system --
+    // NOT the same as "not found"); false otherwise. Default nullptr keeps
+    // every existing caller's contract unchanged.
+    int findExistPos(const std::string& name, ComponentType type,
+                     bool* sehFailed = nullptr);
 
     // Create a new entry in the warehouse.
     // Returns ProgId on success, 0 on failure (inspect errCode for detail).
@@ -252,11 +269,11 @@ public:
     // (not found or internal error).
     std::string getSource(ComponentType type, const std::string& name);
 
-    // Case-insensitive existence query. Uses a two-phase approach:
-    //   Phase 1: _LoadMasterRecsEX@16 (COM interface cache) — works for
-    //     records that existed before this process started. Searches
-    //     records case-insensitively via _stricmp.
-    //   Phase 2: FUN_101d05e0 (BST search wrapper, __thiscall:
+    // Name-index existence query. The warehouse name index (KB Sec. 22/23)
+    // is the ONLY authority for name existence -- master records carry NO
+    // stored name (record +0x17 is a DESCRIPTION/summary field), so record
+    // text is never matched against the query. The lookup is the name-index
+    // path: FUN_101d05e0 (BST search wrapper, __thiscall:
     //     ECX=warehouse, stack=(typeFilter, name, *outNode); RET 0xC) +
     //     FUN_101c36d0 (verbatim name getter, __fastcall: ECX=node pointer,
     //     no stack args; RET — returns char* from the warehouse node at
@@ -268,10 +285,29 @@ public:
     //     m_pFindItemGetName for reference only.) The stored name comes
     //     from the WAREHOUSE, not from source text (HARD RULE 0).
     //     ProgId is obtained separately via FindExistPos.
-    // For TradingApp (category 2, subtype 0x14), Phase 1 filters by
-    // rec[0xE9].
+    // Degraded mode fails loudly (EnumerateResult::lookupOk == false) when
+    // the name-index machinery is missing or SEH-failing: a broken lookup
+    // system is an error, never a silent "not found".
     EnumerateResult enumerateRecords(ComponentType type,
                                      const std::string& searchName);
+
+    // List the verbatim stored names of ALL items of a given type, from the
+    // WHServer IWHouse name index (src/whserver_names.h -- the proven
+    // ProgramsCountByType/NextId/ProgramById walk; the 0x10A-byte master
+    // record carries NO stored name, so the name index is the only
+    // authoritative name source). Runs on the owning thread (same-thread
+    // contract above): the COM provider binds on that STA and never marshals
+    // a QI across apartments. `outNames` is filled (previous contents
+    // discarded) with the names in name-index walk order - NO sorting, NO
+    // deduplication. An empty type is SUCCESS with zero names. The returned
+    // vector length is the AUTHORITATIVE element count: when it disagrees
+    // with the server-side count the walk wins and a Warning is logged.
+    // Returns false only on real failure (COM activation failure, RPC/Invoke
+    // errors, SEH in a COM call, thread failure); on failure `outNames` is
+    // left EMPTY (any partial names are discarded). The orchestration itself
+    // is the pure, unit-tested collectTypeNames() over an IWhNameSource
+    // seam (tests/test_list_items.cpp drives it with a fake provider).
+    bool listItems(ComponentType type, std::vector<std::string>& outNames);
 
     // Compile and verify an entry. Persists the .ell file on success.
     // Creates a CELCompiler object, sets its fields, calls
@@ -662,22 +698,23 @@ private:
     // (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
     // outVerbatimName; RET 0x8). Stored as void* and invoked via inline asm
     // in callFindItemGetName. SUPERSEDED / DEAD CODE (retained for
-    // reference only): was the original Phase 2 candidate but was found to
+    // reference only): was the original lookup candidate but was found to
     // return the ProgId (not the verbatim name) in non-server mode, so it
-    // cannot be used to get the verbatim name. enumerateRecords() Phase 2
-    // now uses FUN_101d05e0 (m_pBstSearchWrapper) + FUN_101c36d0
-    // (m_pVerbatimNameGetter) instead.
+    // cannot be used to get the verbatim name. enumerateRecords()'s
+    // name-index lookup uses FUN_101d05e0 (m_pBstSearchWrapper) +
+    // FUN_101c36d0 (m_pVerbatimNameGetter) instead.
     void*                   m_pFindItemGetName   = nullptr;
     // FUN_101d05e0 — BST search wrapper (non-server mode)
     // (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);
     // RET 0xC). Stored as void* and invoked via inline asm in
-    // callBstSearchWrapper. Used by enumerateRecords() Phase 2 to find the
-    // BST node for a given item name.
+    // callBstSearchWrapper. Used by enumerateRecords()'s name-index lookup
+    // to find the BST node for a given item name.
     void*                   m_pBstSearchWrapper   = nullptr;
     // FUN_101c36d0 — verbatim name getter (__fastcall: ECX=node pointer,
     // no stack args; RET). Stored as void* and invoked via inline asm in
-    // callVerbatimNameGetter. Used by enumerateRecords() Phase 2 to get the
-    // verbatim stored name from the BST node found by FUN_101d05e0.
+    // callVerbatimNameGetter. Used by enumerateRecords()'s name-index
+    // lookup to get the verbatim stored name from the BST node found by
+    // FUN_101d05e0.
     void*                   m_pVerbatimNameGetter = nullptr;
 
     // --- Workstream M slice M.1: test-only compiler-ready hook ---

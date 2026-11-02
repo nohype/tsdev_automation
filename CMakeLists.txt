@@ -118,6 +118,10 @@ add_custom_target(siggen DEPENDS ${GEN_INCLUDE_DIR}/signatures.gen.h)
 # deps) ships in tsdev_lib so the production tsdev_cli's runBatch VAS guard
 # and every unit test that #includes tsdev_cli.cpp resolve it transitively.
 # The diag build already receives the same TU via tsdev_diag (below).
+# src/whserver_names.cpp implements the WHServer name-index enumeration
+# (TsDevLib::listItems' name source: pure collectTypeNames orchestration +
+# the COM provider; Ole32/OleAut32, already linked above) and is compiled in
+# BOTH production and diag builds.
 # TVS-3: src/dispatch_watchdog.cpp implements the production in-flight
 # dispatch marker + bounded-wait watchdog (TerminateProcess(15) fire path).
 # It is pure Win32 (kernel32 + toolhelp + whserver_health) — NO new .lib
@@ -131,6 +135,7 @@ add_library(tsdev_lib STATIC
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
     src/whserver_health.cpp
+    src/whserver_names.cpp
     src/dispatch_watchdog.cpp
     src/whserver_census.cpp
     src/whserver_recycle.cpp
@@ -179,6 +184,7 @@ add_library(tsdev_lib_diag STATIC
     src/persistence_integrity.cpp
     src/create_path_cleanup.cpp
     src/delete_disk_cleanup.cpp
+    src/whserver_names.cpp
     src/dispatch_watchdog.cpp
     src/whserver_census.cpp
     src/whserver_recycle.cpp
@@ -259,6 +265,30 @@ target_link_libraries(test_tradingapp_type tsdev_lib)
 # project's test harness convention.
 add_executable(test_showme_type tests/test_showme_type.cpp)
 target_link_libraries(test_showme_type tsdev_lib)
+
+# --- list names pure unit test (listItems / collectTypeNames) ----------------
+# Pure unit test for the name-listing orchestration collectTypeNames() (the
+# testable core of TsDevLib::listItems) driven against a FAKE IWhNameSource.
+# No orlib20 dependency; runs on a 64 MB-stack worker thread to match the
+# project's test harness convention.
+add_executable(test_list_items tests/test_list_items.cpp)
+target_link_libraries(test_list_items tsdev_lib)
+
+# --- CLI `list <type>` output shaping unit test --------------------------------
+# Pure unit test for the listHumanStdout() human renderer and the "list"
+# success/failure JSON shapes of cliResultToJson(). listHumanStdout() and
+# cliResultToJson() live inside an anonymous namespace in src/tsdev_cli.cpp
+# (internal linkage), so the test #includes the .cpp directly (same TU) to
+# reach them. This pulls in tsdev_cli.cpp's main(); the test #defines
+# TSDEV_CLI_TEST to exclude it (main() is wrapped in #ifndef TSDEV_CLI_TEST).
+# The test needs the third_party include dir (nlohmann/json) because the
+# included tsdev_cli.cpp uses it, and links tsdev_lib for the TsDevLib symbols
+# referenced by the included CLI code. It is a PURE UNIT TEST (no orlib20
+# access), so it is NOT in TSDEV_ADMIN_TARGETS and runs under -NoTs.
+add_executable(test_list_cmd tests/test_list_cmd.cpp)
+target_include_directories(test_list_cmd PRIVATE third_party)
+target_link_libraries(test_list_cmd tsdev_lib)
+add_dependencies(test_list_cmd siggen)
 
 # --- Elevation guard unit test (TVS-K.1) -------------------------------------
 # Pure unit test for the isElevated() helper and the errorCodeString(11) entry
@@ -467,6 +497,19 @@ target_link_libraries(test_delete_disk_cleanup PRIVATE tsdev_lib)
 add_executable(test_close_warehouse tests/test_close_warehouse.cpp)
 target_include_directories(test_close_warehouse PRIVATE src)
 target_link_libraries(test_close_warehouse PRIVATE tsdev_lib)
+
+# --- Name-index lookup outcome contract unit test -----------------------------
+# Pure unit test for the tri-state result contract of the name-index lookup
+# (EnumerateResult: a MISSING item is a clean exists=false; a BROKEN lookup
+# system is lookupOk=false, surfaced as an error and never a silent
+# "not found" -- docs/KNOWLEDGE_BASE.md Sec. 22/23). The test drives the exact
+# helper used by TsDevLib::enumerateRecords() through the internal test-only
+# seam; it does not construct TsDevLib, load orlib20.dll, or touch the
+# TradeStation installation. It is not an administrator/TS-dependent test and
+# runs under -NoTs.
+add_executable(test_name_index_outcome tests/test_name_index_outcome.cpp)
+target_include_directories(test_name_index_outcome PRIVATE src)
+target_link_libraries(test_name_index_outcome PRIVATE tsdev_lib)
 
 # --- Diagnostic file-sink unit test (§7.1 diag build, TDD) --------------------
 # Pure unit test for the §7.1 diagnostic file sink (src/diag_log.h/.cpp):
@@ -1469,6 +1512,8 @@ add_dependencies(test_regression
     test_no_hardcoded_rvas
     test_tradingapp_type
     test_showme_type
+    test_list_items
+    test_list_cmd
     test_elevation_guard
     test_crash_handler
     test_json_serialize
@@ -1484,6 +1529,7 @@ add_dependencies(test_regression
     test_preop_hash_classification
     test_delete_disk_cleanup
     test_close_warehouse
+    test_name_index_outcome
     test_diag_log
     test_whserver_health
     test_whserver_census

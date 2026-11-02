@@ -79,9 +79,11 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_no_hardcoded_rvas';      RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_tradingapp_type';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_showme_type';            RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_list_items';             RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_elevation_guard';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_crash_handler';          RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_json_serialize';         RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_list_cmd';               RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_log_levels';             RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_serve_dispatch';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_serve_framing';          RequiresTs = $false }
@@ -93,6 +95,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_create_path_cleanup';    RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_delete_disk_cleanup';    RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_close_warehouse';        RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_name_index_outcome';     RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_preop_hash_classification'; RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_orlib_resolver';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_diag_log';               RequiresTs = $false }

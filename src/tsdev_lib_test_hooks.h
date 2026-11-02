@@ -228,6 +228,18 @@ namespace tsdev {
 using CloseWarehouseTestFn = void (__stdcall *)(int);
 bool invokeCloseWarehouseForTest(CloseWarehouseTestFn fn);
 
+// Test-only seam for the pure name-index lookup outcome classifier (the
+// tri-state contract handling of EnumerateResult: a MISSING item is a clean
+// exists == false; a BROKEN lookup system is lookupOk == false, to be
+// surfaced as an error and never a silent "not found" -- see
+// docs/KNOWLEDGE_BASE.md Sec. 22/23). It is declared only here and delegates
+// to the exact helper used by the production TsDevLib::enumerateRecords()
+// result contract. Pure: no TsDevLib instance, orlib20, or TradeStation is
+// needed.
+EnumerateResult makeNameIndexOutcomeForTest(bool mechanismOk, bool found,
+                                            const std::string& verbatimName,
+                                            int progId);
+
 // Test-only factory. DECLARED here and DEFINED in src/tsdev_lib.cpp as a
 // thin wrapper around the private TsDevLib(const wchar_t*,
 // const TsDevLibTestConfig&) constructor. Returns a std::unique_ptr<TsDevLib>

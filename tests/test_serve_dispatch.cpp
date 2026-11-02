@@ -101,6 +101,24 @@
 //      standalone --json payload serializes its members at top level via
 //      cliResultToJson (the seam dispatchServeRequest returns through).
 //
+// Checks (op 'list' -- the list serve slice):
+//  24. Request grammar: exactly {"op":"list","type":"<type>"} accepted --
+//      type only, no name and NO flags/fields (case_insensitive is
+//      exists-only). Absent/non-string 'type' -> exit 1 (usage_error,
+//      message names 'type'); empty-string 'type' is NOT a usage error --
+//      it falls through to type resolution -> exit 2 (unknown_type),
+//      exactly like the direct path `list ""` and like every other serve
+//      op; any extra field (name/case_insensitive/source/output_path/
+//      unknown) -> exit 1 ("unexpected field"); 'batch'/'policy' -> exit 1
+//      via their pre-existing gates (24f); unknown nonempty type -> exit 2
+//      (unknown_type); unknown op -> exit 1 (the generic case is check 6;
+//      24e pins a list-shaped one).
+//  25. Response JSON shape via cliResultToJson (the exact frame
+//      dispatchServeRequest returns through): success carries "names"
+//      ALWAYS -- an empty array when zero items -- in the CliResult order
+//      (the serializer never re-sorts or dedups; the canonical sort is
+//      applied once in doList); failure frames carry no "names" member.
+//
 // Exit code: 0 only if ALL checks pass; distinct nonzero codes per failure.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
@@ -1182,6 +1200,231 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::fprintf(stdout,
                      "    PASS: extraPayload merged into response frame\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 24: op 'list' request grammar.
+    //   Accepted: exactly {"op":"list","type":"<type>"} -- type only, no
+    //   name and NO flags/fields ('batch'/'policy' never reach this
+    //   grammar: their gates above reject them first).
+    //   (a) valid request -> parse succeeds, out.op=="list",
+    //       out.type==ComponentType::Strategy, out.typeStr=="strategy",
+    //       out.name empty, out.hasBatch false.
+    //   (b) absent / non-string type -> exitCode==1 (usage_error),
+    //       message names "type".
+    //   (c) any extra field (name/case_insensitive/source/output_path/
+    //       unknown) -> exitCode==1, message contains "unexpected field"
+    //       and the offending key.
+    //   (d) empty-string / unknown nonempty type -> exitCode==2
+    //       (unknown_type).
+    //   (e) unknown op with a list-shaped payload -> exitCode==1,
+    //       message contains "unknown op".
+    //   (f) 'batch'/'policy' -> exitCode==1 via their pre-existing gates,
+    //       message names the offending member.
+    // ------------------------------------------------------------------
+    {
+        // (a) accepted request shape.
+        ordered_json req = ordered_json::parse(
+            "{\"op\":\"list\",\"type\":\"strategy\"}");
+        ServeRequest out;
+        CliResult r = parseServeRequest(req, out);
+        std::fprintf(stdout, "  [24a] valid list: %s\n",
+                     cliResultToJson(r).dump().c_str());
+        if (!r.success || r.exitCode != 0) {
+            ec = fail("check24a: parse should succeed (success/exit 0)", 260);
+            return 0;
+        }
+        if (out.op != "list" || out.type != ComponentType::Strategy ||
+            out.typeStr != "strategy" || !out.name.empty() || out.hasBatch) {
+            ec = fail("check24a: out fields mismatch for list request", 261);
+            return 0;
+        }
+        // (b) absent / non-string 'type' (empty-string is NOT here: it
+        // resolves via parseType -> exit 2, pinned in (d)).
+        const char* badType[] = {
+            "{\"op\":\"list\"}",
+            "{\"op\":\"list\",\"type\":7}",
+            "{\"op\":\"list\",\"type\":true}",
+            "{\"op\":\"list\",\"type\":null}",
+            "{\"op\":\"list\",\"type\":[]}",
+        };
+        for (int i = 0; i < 5; ++i) {
+            ordered_json rq = ordered_json::parse(badType[i]);
+            ServeRequest o;
+            CliResult rr = parseServeRequest(rq, o);
+            std::fprintf(stdout, "  [24b.%d] bad type: %s\n", i,
+                         cliResultToJson(rr).dump().c_str());
+            if (rr.success || rr.exitCode != 1 ||
+                !contains(rr.errorMessage, "type")) {
+                ec = fail("check24b: absent/non-string type must "
+                          "reject exit 1 naming 'type'", 262);
+                return 0;
+            }
+        }
+        // (c) extra/unknown fields -- list accepts ONLY op and type. The
+        // gate names the offending key in "unexpected field '<key>'".
+        const char* extra[] = {
+            "{\"op\":\"list\",\"type\":\"strategy\",\"name\":\"X\"}",
+            "{\"op\":\"list\",\"type\":\"strategy\","
+            "\"case_insensitive\":true}",
+            "{\"op\":\"list\",\"type\":\"strategy\",\"source\":\"x\"}",
+            "{\"op\":\"list\",\"type\":\"strategy\","
+            "\"output_path\":\"C:\\\\t.el\"}",
+            "{\"op\":\"list\",\"type\":\"strategy\",\"foo\":1}",
+        };
+        const char* extraKey[] = {
+            "name", "case_insensitive", "source", "output_path", "foo",
+        };
+        for (int i = 0; i < 5; ++i) {
+            ordered_json rq = ordered_json::parse(extra[i]);
+            ServeRequest o;
+            CliResult rr = parseServeRequest(rq, o);
+            std::fprintf(stdout, "  [24c.%d] extra field: %s\n", i,
+                         cliResultToJson(rr).dump().c_str());
+            if (rr.success || rr.exitCode != 1 ||
+                !contains(rr.errorMessage, "unexpected field") ||
+                !contains(rr.errorMessage, extraKey[i])) {
+                ec = fail("check24c: extra field on list must reject "
+                          "exit 1 as 'unexpected field <key>'", 263);
+                return 0;
+            }
+        }
+        // (d) empty-string and unknown nonempty type -> exit 2
+        // (unknown_type), exactly like the direct path `list ""` and every
+        // other serve op (they all resolve type via parseType).
+        const char* unknownType[] = {
+            "{\"op\":\"list\",\"type\":\"bogus\"}",
+            "{\"op\":\"list\",\"type\":\"\"}",
+        };
+        for (int i = 0; i < 2; ++i) {
+            ordered_json rq = ordered_json::parse(unknownType[i]);
+            ServeRequest o;
+            CliResult rr = parseServeRequest(rq, o);
+            std::fprintf(stdout, "  [24d.%d] unknown type: %s\n", i,
+                         cliResultToJson(rr).dump().c_str());
+            if (rr.success || rr.exitCode != 2 ||
+                errorCodeString(rr.exitCode, rr.op) != "unknown_type") {
+                ec = fail("check24d: empty/unknown type must reject "
+                          "exit 2", 264);
+                return 0;
+            }
+        }
+        // (e) unknown op (list-shaped) -> exit 1 "unknown op".
+        {
+            ordered_json rq = ordered_json::parse(
+                "{\"op\":\"lst\",\"type\":\"strategy\"}");
+            ServeRequest o;
+            CliResult rr = parseServeRequest(rq, o);
+            std::fprintf(stdout, "  [24e] unknown op: %s\n",
+                         cliResultToJson(rr).dump().c_str());
+            if (rr.success || rr.exitCode != 1 ||
+                !contains(rr.errorMessage, "unknown op")) {
+                ec = fail("check24e: unknown op must reject exit 1", 265);
+                return 0;
+            }
+        }
+        // (f) 'batch'/'policy' never reach the list grammar: their
+        // pre-existing gates reject them first (exit 1), naming the
+        // offending member.
+        {
+            struct GateCase { const char* json; const char* msgSub; };
+            const GateCase gateCases[] = {
+                {"{\"op\":\"list\",\"type\":\"strategy\","
+                 "\"batch\":{\"id\":\"b-1\",\"index\":1,\"total\":2}}",
+                 "batch"},
+                {"{\"op\":\"list\",\"type\":\"strategy\","
+                 "\"policy\":\"skip\"}", "policy"},
+            };
+            for (int i = 0; i < 2; ++i) {
+                ordered_json rq = ordered_json::parse(gateCases[i].json);
+                ServeRequest o;
+                CliResult rr = parseServeRequest(rq, o);
+                std::fprintf(stdout, "  [24f.%d] gate: %s\n", i,
+                             cliResultToJson(rr).dump().c_str());
+                if (rr.success || rr.exitCode != 1 ||
+                    !contains(rr.errorMessage, gateCases[i].msgSub)) {
+                    ec = fail("check24f: batch/policy on list must reject "
+                              "exit 1 via its gate", 280 + i);
+                    return 0;
+                }
+            }
+        }
+        std::fprintf(stdout, "    PASS: list request grammar enforced\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 25: response JSON shape for op 'list' via cliResultToJson --
+    //   the exact frame the serve dispatch returns through (check 23's
+    //   seam). dispatchServeRequest/doList need a real TsDevLib, so the
+    //   result objects are built directly here.
+    //   (a) success: "names" ALWAYS present, elements in the CliResult
+    //       order verbatim (serializer never re-sorts or dedups).
+    //   (b) empty success: "names" present as [].
+    //   (c) failure frame (the lookupOk=false fail-loud path, exit 4):
+    //       no "names" member; error.code=="init_failure".
+    // ------------------------------------------------------------------
+    {
+        // (a) success with names (deliberately NOT sorted here: the
+        // canonical sort runs once in doList; the serializer must pass the
+        // CliResult order through verbatim).
+        CliResult r;
+        r.op = "list";
+        r.typeStr = "strategy";
+        r.success = true;
+        r.exitCode = 0;
+        r.names = {"b", "a", "A"};
+        const ordered_json j = cliResultToJson(r);
+        std::fprintf(stdout, "  [25a] list success: %s\n", j.dump().c_str());
+        if (!j.contains("names") || !j["names"].is_array() ||
+            j["names"].size() != 3) {
+            ec = fail("check25a: names array missing or wrong size", 270);
+            return 0;
+        }
+        if (j["names"][0] != "b" || j["names"][1] != "a" ||
+            j["names"][2] != "A") {
+            ec = fail("check25a: serializer re-sorted/deduped names", 271);
+            return 0;
+        }
+        if (j["op"] != "list" || j["type"] != "strategy" ||
+            j["success"] != true || j["exit_code"] != 0) {
+            ec = fail("check25a: frame members mismatch", 272);
+            return 0;
+        }
+        if (j.contains("name") || j.contains("error")) {
+            ec = fail("check25a: unexpected name/error members", 273);
+            return 0;
+        }
+        // (b) empty success: names present as [].
+        CliResult re;
+        re.op = "list";
+        re.typeStr = "function";
+        re.success = true;
+        re.exitCode = 0;
+        const ordered_json je = cliResultToJson(re);
+        std::fprintf(stdout, "  [25b] empty success: %s\n", je.dump().c_str());
+        if (!je.contains("names") || !je["names"].is_array() ||
+            !je["names"].empty()) {
+            ec = fail("check25b: empty success must carry names: []", 274);
+            return 0;
+        }
+        // (c) failure frame (doList's exit-4 fail-loud path): no "names".
+        CliResult rf;
+        rf.op = "list";
+        rf.typeStr = "strategy";
+        rf.success = false;
+        rf.exitCode = 4;
+        rf.errorMessage = "init failed: could not enumerate items";
+        const ordered_json jf = cliResultToJson(rf);
+        std::fprintf(stdout, "  [25c] list failure: %s\n", jf.dump().c_str());
+        if (jf.contains("names")) {
+            ec = fail("check25c: failure frame must not carry names", 275);
+            return 0;
+        }
+        if (!jf.contains("error") || jf["error"]["code"] != "init_failure") {
+            ec = fail("check25c: error.code != init_failure", 276);
+            return 0;
+        }
+        std::fprintf(stdout, "    PASS: list response JSON shape pinned\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

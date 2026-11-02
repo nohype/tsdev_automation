@@ -40,6 +40,8 @@ from tsdev_automation import (
     TsDevError,
     TsDevResult,
     TsDevWatchdogAbortError,
+    UnknownTypeError,
+    UsageError,
 )
 from tsdev_automation import exceptions as exc
 from tsdev_automation import _pipe
@@ -214,6 +216,8 @@ class TestSingleItem:
             client.upsert("bogus", "X", "x;")
         with pytest.raises(ValueError):
             client.get_source("bogus", "X")
+        with pytest.raises(ValueError):
+            client.list_items("bogus")
 
     def test_string_source_temp_file_cleaned(self, client: TsDevClient, monkeypatch, tmp_path: Path) -> None:
         seen: dict = {}
@@ -508,6 +512,155 @@ class TestExists:
         assert r.prog_id == 0
         assert r.stored_name == ""
         assert "--case-insensitive" in seen["cmd"]
+
+
+def _list_json(type_: str, names: list[str]) -> str:
+    """Fake stdout for the ``list`` subcommand (success payload).
+
+    Mirrors the pinned CLI contract: ``names`` is ALWAYS present on success
+    (empty array when the type has zero items), in CLI-emitted order: sorted
+    by name (case-insensitive ASCII, stable order for names differing only
+    by case).  The Python layer passes names through verbatim in that CLI
+    order (never re-sorted, never deduplicated).
+    """
+    return json.dumps(
+        {"op": "list", "type": type_, "success": True, "exit_code": 0, "names": names}
+    )
+
+
+def _list_failure_json(type_: str | None, code: str, message: str, exit_code: int) -> str:
+    """Fake stdout for a failed ``list`` invocation (failure payload).
+
+    ``name`` is absent (``list`` takes none) and ``type`` may be absent too:
+    ``op``/``type``/``name`` may be omitted from a usage-error object.
+    """
+    obj: dict = {"op": "list", "success": False, "exit_code": exit_code,
+                 "error": {"code": code, "message": message}}
+    if type_ is not None:
+        obj["type"] = type_
+    return json.dumps(obj)
+
+
+class TestListItems:
+    def test_list_success(self, client: TsDevClient, monkeypatch) -> None:
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_list_json("strategy", ["Name1", "Name2"]))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        r = client.list_items("strategy")
+        assert isinstance(r, TsDevResult)
+        assert r.success is True
+        assert r.op == "list"
+        assert r.type == "strategy"
+        assert r.names == ["Name1", "Name2"]
+        # The command tail must be exactly: --json list <type>
+        assert seen["cmd"][-3:] == ["--json", "list", "strategy"]
+
+    def test_list_empty_names_success(self, client: TsDevClient, monkeypatch) -> None:
+        """Zero items is a success: ``names`` is an empty list, no raise."""
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed(_list_json("strategy", []))
+        )
+        r = client.list_items("strategy")
+        assert r.success is True
+        assert r.names == []
+
+    def test_list_names_verbatim_cli_order(self, client: TsDevClient, monkeypatch) -> None:
+        """Names pass through verbatim: no sorting, no dedup."""
+        names = ["zzz", "Aaa", "zzz", "Name 2"]
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _make_completed(_list_json("strategy", names))
+        )
+        r = client.list_items("strategy")
+        assert r.names == names
+
+    def test_list_unknown_type_frame_raises_typed(self, client: TsDevClient, monkeypatch) -> None:
+        """An unknown-type failure frame (exit 2) raises UnknownTypeError.
+
+        Wholly-unknown type tokens are rejected client-side (ValueError, see
+        ``test_unknown_type_raises_valueerror``); this covers the CLI-side
+        exit-2 frame mapping for a type token the Python layer accepted.
+        """
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _list_failure_json("strategy", "unknown_type", "unknown component type", 2),
+                returncode=2,
+            ),
+        )
+        with pytest.raises(UnknownTypeError):
+            client.list_items("strategy")
+
+    def test_list_usage_error_frame_raises_typed(self, client: TsDevClient, monkeypatch) -> None:
+        """A usage-error failure frame (exit 1) raises UsageError."""
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _make_completed(
+                _list_failure_json(None, "usage_error", "missing required argument", 1),
+                returncode=1,
+            ),
+        )
+        with pytest.raises(UsageError):
+            client.list_items("strategy")
+
+    def test_result_names_default_empty_list(self) -> None:
+        """``from_json`` defaults ``names`` to an empty list when absent."""
+        r = TsDevResult.from_json(
+            {"op": "insert", "type": "strategy", "name": "X", "success": True, "exit_code": 0}
+        )
+        assert r.names == []
+
+    def test_result_names_elements_coerced_to_str(self) -> None:
+        """``from_json`` coerces ``names`` elements with ``str(...)``.
+
+        Mirrors the ``stored_name=str(...)`` coercion: the ``names``
+        annotation is ``list[str]``.
+        """
+        r = TsDevResult.from_json(
+            {"op": "list", "type": "strategy", "success": True, "exit_code": 0,
+             "names": [1, "A"]}
+        )
+        assert r.names == ["1", "A"]
+
+    def test_result_names_non_list_stays_empty(self) -> None:
+        """A malformed non-list ``names`` field yields ``[]`` (no raise)."""
+        r = TsDevResult.from_json(
+            {"op": "list", "type": "strategy", "success": True, "exit_code": 0,
+             "names": "Name1"}
+        )
+        assert r.names == []
+
+    def test_list_with_cache_flags_forwarded(self, client: TsDevClient, monkeypatch) -> None:
+        """Cache kwargs land in the argv tail ahead of the ``list`` subcommand."""
+        seen: dict = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return _make_completed(_list_json("strategy", ["Name1"]))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        client.list_items(
+            "strategy", backup_cache=True, restore_cache=True,
+            cache_backup_policy="overwrite",
+        )
+        assert "--backup-cache" in seen["cmd"]
+        assert "--restore-cache" in seen["cmd"]
+        assert "--cache-backup-policy=overwrite" in seen["cmd"]
+        assert seen["cmd"].index("--backup-cache") < seen["cmd"].index("list")
+        # The command tail must be exactly: --json <cache fragment> list <type>
+        assert seen["cmd"][-6:] == [
+            "--json",
+            "--backup-cache",
+            "--cache-backup-policy=overwrite",
+            "--restore-cache",
+            "list",
+            "strategy",
+        ]
 
 
 def _get_source_json(type_: str, name: str, source: str = "inputs: MyVar;\nplot MyVar;\n") -> str:
@@ -2694,6 +2847,62 @@ class TestCliNewSubcommands:
         assert "MyStrat" in out
         assert "1234" in out
 
+    def test_cli_list_dispatch(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
+
+            def list_items(self, type_):
+                calls["list"] = (type_,)
+                return TsDevResult(
+                    op="list", type=type_, name=None, success=True, exit_code=0,
+                    names=["Name1", "Name2"],
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["list", "strategy"])
+        out = capsys.readouterr().out
+        # The client method must be dispatched with the parsed positional type.
+        assert calls["list"] == ("strategy",)
+        assert rc == 0
+        # Header line plus one name per line, in CLI order.
+        assert out.splitlines() == ["[OK] list strategy -> 2 items", "Name1", "Name2"]
+
+    def test_cli_list_empty(self, monkeypatch, capsys) -> None:
+        calls: dict = {}
+
+        class FakeClient:
+            def __init__(self, cli_path=None, ts_path=None, timeout=None, verbose=0):
+                calls["init"] = {"cli_path": cli_path, "ts_path": ts_path, "timeout": timeout, "verbose": verbose}
+
+            def list_items(self, type_):
+                calls["list"] = (type_,)
+                return TsDevResult(
+                    op="list", type=type_, name=None, success=True, exit_code=0, names=[]
+                )
+
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", FakeClient)
+        from tsdev_automation._cli import _main
+
+        rc = _main(["list", "indicator"])
+        out = capsys.readouterr().out
+        # Zero items is a success: header only.
+        assert calls["list"] == ("indicator",)
+        assert rc == 0
+        assert out.splitlines() == ["[OK] list indicator -> 0 items"]
+
+    def test_cli_list_rejects_extra_flags(self, monkeypatch) -> None:
+        """``list`` takes only a positional type (no --case-insensitive)."""
+        monkeypatch.setattr("tsdev_automation._cli.TsDevClient", lambda **kw: None)
+        from tsdev_automation._cli import _main
+
+        with pytest.raises(SystemExit):
+            _main(["list", "strategy", "--case-insensitive"])
+
     def test_cli_get_source_stdout(self, monkeypatch, capsys) -> None:
         calls: dict = {}
 
@@ -3799,6 +4008,46 @@ class TestServeRouting:
         c.exists("strategy", "X")
         sent = fake_broker.call.call_args[0][0]
         assert "case_insensitive" not in sent
+
+    def test_broker_list_request_shape(self, fake_cli: Path) -> None:
+        """``list`` routes through the broker as ``{"op": "list", "type": ...}``."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_list_json("strategy", ["Name1", "Name2"]))
+        c._broker = fake_broker
+
+        r = c.list_items("strategy")
+        assert r.names == ["Name1", "Name2"]
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "list", "type": "strategy"}
+
+    def test_broker_list_empty_names_success(self, fake_cli: Path) -> None:
+        """A zero-item ``list`` broker response is a success (empty names)."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(_list_json("indicator", []))
+        c._broker = fake_broker
+
+        r = c.list_items("indicator")
+        assert r.success is True
+        assert r.names == []
+        sent = fake_broker.call.call_args[0][0]
+        assert sent == {"op": "list", "type": "indicator"}
+
+    def test_broker_list_failure_raises_typed_exception(self, fake_cli: Path) -> None:
+        """A failed broker ``list`` response is surfaced via the typed exception path."""
+        c = TsDevClient(cli_path=str(fake_cli), use_serve=True)
+        c._is_elevated = False
+        fake_broker = MagicMock()
+        fake_broker.call.return_value = json.loads(
+            _list_failure_json(None, "usage_error", "bad request", 1)
+        )
+        c._broker = fake_broker
+
+        with pytest.raises(UsageError):
+            c.list_items("strategy")
 
     def test_broker_get_source_request_includes_output_path(
         self, fake_cli: Path

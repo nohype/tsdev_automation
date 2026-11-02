@@ -301,6 +301,8 @@ The warehouse category (low 8 bits of `whType`) controls whether TSDev.exe treat
 | `+0x7B` | USHORT | `0x0401` | Low byte = warehouse category 1; bit 10 (`0x400`) set = internal-encryption flag |
 | `+0x109` | byte | `0x18` | Baseline byte for a fresh, production-path function |
 
+Cross-ref (2026-11-01): the name-field finding and the offsets it documents are in Section 22 -- the record contains NO stored-name field; do not treat any record offset as an item name.
+
 ### TSDev.exe category assignment
 
 | Fact | Address / Source | Evidence |
@@ -494,3 +496,57 @@ Live-proven on this machine during the gated-recycle end-to-end verification (de
 - **TerminateProcess orphans the +7:** a client killed via TerminateProcess leaves its +7 registered on WHServer for >=5.6 min (observed floor; possibly longer) - the COM release RPCs never run and ORPC rundown does not arrive on census timescales, so any census reads `census_lock` indefinitely. Explains the earlier long-lived WHServer linger cases (sections 18/20). [PROVEN: live]
 - **Consequence for the recycle census:** the engine census can NEVER pass inside an attached process - the process's own +7 always counts. The engine is only meaningful at a never-attached site (own contribution 0). Shipped rule: `recycleSiteDefers` in `src\tsdev_cli.cpp`. [PROVEN: live]
 - **ForceShutDown live signature:** `m_nLock` reads 0, then briefly `0xFFFFFFF9` (-7, the forced negation), then the server dies. Distinguishes a real ForceShutDown kill from a self-reap (0 -> READ_FAIL, no negative phase). [PROVEN: live]
+
+## 22. orlib20 master-record (0x10A) layout: NO stored-name field (2026-11-01)
+
+The master record returned by `_LoadMasterRecsEX@16` (export ord 568, RVA `0x001A5360`) and `_GetMasterRecByType@16` (export ord 510, RVA `0x001A0460`) is **0x10A (266) bytes** and contains **no stored-name field anywhere**. Layout proven by the `_GetMasterRecByType@16` record copy (`memcpy` at export entry `0x101A0460` -- Ghidra-only detail, see the evidence-form note) plus live byte dumps of the full `_LoadMasterRecsEX@16` buffer.
+
+| Offset | Size | Field | Evidence |
+|--------|------|-------|----------|
+| `+0x00` | 2 | ProgId (short) | live byte-dump field read (`+0x00` = 10569 for a probe strategy; dump label "ProgId (short)") + Ghidra `_GetMasterRecByType@16` memcpy @ `0x101A0460` (Ghidra-only -- see the evidence-form note) |
+| `+0x02` | 2 | header: category | live byte dump (`tmp\tvs1_raw_rec_dump.txt`, `tmp\tvs1_bulk_dump_out*.txt`) |
+| `+0x04` | 2 | header: subtype | live byte dump |
+| `+0x06` | 4 | header: pointer | live byte dump |
+| `+0x0A` | -- | truncated dictionary name-chars only (e.g. `abel`, `nsCall`, `Strike`) -- not a name field | live byte dump (printable-ASCII-run scan, `tmp\tvs1_bulk_dump_out2.txt`) |
+| `+0x17` | -- | DESCRIPTION/summary string field (empty for CLI/user items; populated text for dictionary items; max observed length 60 in the byte dumps) | live byte dump (`str@0x017` runs, `tmp\tvs1_bulk_dump_out2.txt`) |
+| `+0xE9` | 1 | subtype | live byte-dump field read (`+0xe9` = 0 for subtype-0 items) |
+| anywhere | -- | **no stored-name field** | live byte-dump proven: full ASCII-run scan of every dumped record finds no stored name (`tmp\tvs1_bulk_dump.cpp` -> `tmp\tvs1_bulk_dump_out*.txt`) |
+
+- The item NAME is routed to the warehouse name-index insert `FUN_101cf990` by `_CreateEntryEX@24` (export ord 389, RVA `0x00159610`, abs `0x10159610`; call at `0x101596EB`) -- never into the record. [PROVEN: Ghidra]
+- Consequence: a consumer reading a "name" from the record buffer (`+0x17`) reads a description, not the stored name. [PROVEN: live byte dumps]
+- Evidence-form note: the `FUN_101cf990` name-routing claim, the `_CreateEntryEX@24` call site `0x101596EB`, and the `memcpy` record copy at `0x101A0460` are Ghidra-only findings with no local artifact (`FUN_101cf990` has no `signatures\v9.50.01.3344.json` entry) -- re-verification needs Ghidra.
+
+### Master-record enumeration quirks (live)
+
+- **Stale rows after insert/delete churn:** the `_LoadMasterRecsEX` buffer can retain a stale row for a deleted probe. Observed in one probe cycle: strategy 762 (extra row progId=10568) -> 761 and function 85 (extra row progId=193) -> 84 once the churn settled; neither id resolved in any name lookup then or later. The name-index count was correct all along (it never counted the stale rows). Master-record row counts are NOT trustworthy mid-churn. [PROVEN: live, `tmp\tvs1_bulk_dump_out2.txt` set-diff via `tmp\diff_counts2.py`]
+- **cat-2 buffer rows 415 vs type-filtered count 384 is subtype coverage, not drift:** 415 = 314 indicator (st 0) + 61 showme (st 5) + 9 tradingapp (st 20) + 29 PaintBar (st 4) + 2 ProbabilityMap (st 18); the 5 supported types cover st 0/5/20 only, while cat-2 master-rec enumeration returns all cat-2 subtypes. [PROVEN: live subtype scan, `tmp\enum_scan.txt`, `tmp\enum_walk_st4.txt`, `tmp\enum_walk_st18.txt`]
+
+## 23. Warehouse name index -- the authoritative item-name store (2026-11-01)
+
+Item names live in the warehouse name index, not in the master record (Section 22).
+
+- BST search `FUN_101d05e0` (abs `0x101d05e0`, RVA `0x1D05E0`): `__thiscall`, ECX = warehouse, stack = (typeFilter, name, *outNode), RET 0xC; stores the BST node pointer in `*outNode`. [PROVEN: Ghidra; `signatures\v9.50.01.3344.json` `FUN_101d05e0_bst_search_wrapper`]
+- Verbatim name getter `FUN_101c36d0` (abs `0x101c36d0`, RVA `0x1C36D0`): `__fastcall`, ECX = node (from `FUN_101d05e0` `*outNode`); returns `char*` to the verbatim name at **node+0x1D**. [PROVEN: Ghidra; `signatures\v9.50.01.3344.json` `FUN_101c36d0_verbatim_name_getter`]
+- This is the true name source used by `exists` and by `FindExistPos` (export ord 453, RVA `0x001A4230`) -- the authoritative name->position/ProgId lookup behind get-source/modify/delete. [PROVEN: live]
+
+### Latent defect: description false-positive in the lookup path
+
+- The `+0x17` description semantics are proven by the byte dumps (Section 22): record `+0x17` holds a DESCRIPTION/summary string, never the stored name.
+- Master-record `+0x17` description matching can false-positive a lookup: a DESCRIPTION string is reported as an existing item's `stored_name`/ProgId where the authoritative name-index lookup says not-found. [observed during 2026-11-01 live verification (TVS-1 gate); re-proof corpus `tmp\exists_fix_corpus\` -- RED transcripts `20261102_063636_pre_fix_*` show exists=1 with stored_name=<description> and a prog_id vs get-source not_found, GREEN transcripts `20261102_074323_post_fix_*` show both cases now exists=0 exit 0 with 1229/1229 name parity; FIXED in the code as of 2026-11-02 -- Phase-1 description matching removed, name-index-only lookups, broken lookup machinery fails loudly; behavioral consequence recorded in `docs\WORKING_MEMORY.md`]
+- Behavioral consequence: the description-matching phase of a lookup can return found with a description string as `stored_name` and a wrong ProgId, for an item that does not exist; the FindExistPos-backed operations (get-source/modify/delete) correctly report not-found. The two paths can disagree on the same query. [same observation status as the bullet above]
+- **Discriminator: the name-index lookup is authoritative.** A description-text match is never proof of existence. [derived from the name-index authority above + the observed false-positive]
+
+## 24. WHServer IWHouse COM item enumeration (PROVEN live, 2026-11-01)
+
+- Mechanism: `ProgramsCountByType(type)` + `ProgramById` walk + IProgram `Name` member -- pure IDispatch, every member resolved by name via `GetIDsOfNames` (no hardcoded dispids). Type argument = expanded whType: Strategy=0, Function=1, Indicator=2, ShowMe=1282 (0x0502), TradingApp=5122 (0x1402). Typelib evidence: `IWHouse`/`IProgram` in `WHServer.exe` type library `{7CEEA906}` -- `ProgramsCountByType` memid `0x19` (I2 -> I4), `ProgramById` memid `0x04` (I2,I4 -> DISPATCH), `IProgram::Name` memid `0x02` (-> BSTR) (`tmp\tlbdump_full.txt`). [PROVEN: live + typelib]
+- Completeness: walk rows == `ProgramsCountByType` exactly for all 5 types (live: 761 strategy / 84 function / 314 indicator / 61 showme / 9 tradingapp). The id space is sparse (`NextId` is a per-category bound); `ProgramById` on absent ids returns null (not an error); zero Invoke errors observed. [PROVEN: live, `tmp\enum_run_base.txt`]
+- Names are verbatim, case-preserved, including user items (real names contain spaces, `&`, `<`, `>`, apostrophes). Cross-checked 100% against `tsdev_cli exists` lookups only (the scan script `tmp\verify_names.ps1` invoked `exists` per name -- no get-source): exhaustive scan 1229/1229 names, byte-identical `stored_name`, `prog_id == IProgram::Id`. [PROVEN: live, `tmp\verify_names.ps1` -> `tmp\verify_names_results.txt`]
+- Insert/delete lifecycle tracked exactly (+1/-1) by this enumeration through the 2026-11-01 19:56 probe cycle: 762->761 strategy / 85->84 function, with each probe row enumerated verbatim post-insert and absent post-delete (`tmp\probe_walk_post_insert_0/1.txt`, `tmp\probe_walk_post_delete_0/1.txt`). `tmp\probe_lifecycle_results.txt` records the same cycle, but its ENUM summary lines (match=False/present=True) are a summary-line parsing bug that contradicts its own walk transcripts -- the walk transcripts are the proof. Contrast, not simultaneity: the stale master-record rows of Section 22 came from the earlier TVS-1 churn (18:47 dump) and were already gone by the 19:09 snapshot, before this probe cycle -- this COM enumeration never counted a stale row in any run. [PROVEN: live, `tmp\probe_walk_post_*.txt`]
+- Activation chain = the Section 17 chain (each client creates its own IWHouse on its own STA thread; cross-apartment QI -> `RPC_E_WRONG_THREAD`). All calls on the creating STA succeeded. [PROVEN: live]
+
+## 25. ORELUI20 CELFileOpenDialog::LoadList name enumeration (2026-11-01)
+
+- ORELUI20 (TSDev UI DLL) `CELFileOpenDialog::LoadList` -- export ord 1291 `?LoadList@CELFileOpenDialog@@IAEXHPAVCAnalysisTypeInfo@@@Z` (RVA `0x00012290`), driven via the exported dialog ctor ord 17/18 -- targets full verbatim item-name enumeration including user items, case-preserved (the archived script `tmp\frida_enum_final.js` implements the LoadList walk plus a verbatim/case check on `E2eTvs7_EnumFn_MixedCase`, lines 148-158). [observed in archived Frida script logic; not independently archived as a run transcript; the RE report `tmp\enum_mechanism_report.md` lists this candidate NOT PURSUED]
+- Names come from the CELTechInfo populated per item by `FUN_10044b90` (ORELUI20 abs `0x10044b90`, RVA `0x00044B90`, populate-CELTechInfo, called per item from `LoadList`), read at **CELTechInfo+0x10** (`tmp\frida_enum_final.js`: `readCString(celTi.add(0x10))`; `FUN_10044b90` hook in `tmp\frida_enum_trace.js`) -- NOT from the master record (Section 22). The earlier object+0x46 wide-string claim was an unverified note with no supporting artifact (the RE report records that offset as NOT needed and NOT used); it is superseded by the CELTechInfo+0x10 reads. [observed in archived Frida scripts]
+- Blockers for direct reuse: the required `CAnalysisTypeInfo` ctor is NOT exported (export table: `tmp\exp_orelui20.txt`), and the CELTechInfo/CMap name-extraction layouts are internal. [PROVEN: export table + archived Frida scripts]
+- Verdict: strictly more binary internals than the Section 24 COM enumeration; recorded for reference, not used. [recorded observation]
