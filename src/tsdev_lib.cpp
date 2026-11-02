@@ -2320,6 +2320,8 @@ bool TsDevLib::listItems(ComponentType type,
     const std::wstring myWorkDir =
         resolveMyWorkDirFromBinPath(m_myWorkBin.c_str());
     if (myWorkDir.empty()) {
+        tsdev_log_message(TsDevLogLevel::Warning,
+                          "tsdev: listItems: %s\n", "mywork_unresolved");
         return false;  // MyWork dir unresolved: WHouseEx Create=1 must never
                        // run against an unresolved/guessed path
     }
@@ -2334,6 +2336,8 @@ bool TsDevLib::listItems(ComponentType type,
         outNames.clear();
         return false;
     } catch (...) {
+        tsdev_log_message(TsDevLogLevel::Warning,
+                          "tsdev: listItems: %s\n", "unknown exception");
         outNames.clear();
         return false;
     }
