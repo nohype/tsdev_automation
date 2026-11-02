@@ -2895,13 +2895,15 @@ class TestCliNewSubcommands:
         assert rc == 0
         assert out.splitlines() == ["[OK] list indicator -> 0 items"]
 
-    def test_cli_list_rejects_extra_flags(self, monkeypatch) -> None:
+    def test_cli_list_rejects_extra_flags(self, monkeypatch, capsys) -> None:
         """``list`` takes only a positional type (no --case-insensitive)."""
         monkeypatch.setattr("tsdev_automation._cli.TsDevClient", lambda **kw: None)
         from tsdev_automation._cli import _main
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as ei:
             _main(["list", "strategy", "--case-insensitive"])
+        assert ei.value.code == 2
+        assert "unrecognized arguments: --case-insensitive" in capsys.readouterr().err
 
     def test_cli_get_source_stdout(self, monkeypatch, capsys) -> None:
         calls: dict = {}
