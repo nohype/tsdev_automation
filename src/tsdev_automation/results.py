@@ -105,6 +105,11 @@ class TsDevResult:
                 existing_prog_id=err_obj.get("existing_prog_id"),
                 retry_after_secs=err_obj.get("retry_after_secs"),
             )
+        raw_names = obj.get("names")
+        if "names" in obj and not isinstance(raw_names, list):
+            raise TypeError(
+                f"malformed 'names' member: expected list, got {type(raw_names).__name__}"
+            )
         cache = obj.get("cache")
         if not isinstance(cache, dict):
             # Two-flag standalone object: "backup"/"restore" payloads.
@@ -125,7 +130,7 @@ class TsDevResult:
             exists=bool(obj.get("exists", False)),
             stored_name=str(obj.get("stored_name", "")),
             source=str(obj.get("source", "")),
-            names=[str(n) for n in obj.get("names")] if isinstance(obj.get("names"), list) else [],
+            names=[str(n) for n in raw_names] if isinstance(raw_names, list) else [],
             cache=cache,
             current_version=obj.get("current_version"),
             latest_version=obj.get("latest_version"),

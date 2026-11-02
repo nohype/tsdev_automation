@@ -628,12 +628,12 @@ class TestListItems:
         assert r.names == ["1", "A"]
 
     def test_result_names_non_list_stays_empty(self) -> None:
-        """A malformed non-list ``names`` field yields ``[]`` (no raise)."""
-        r = TsDevResult.from_json(
-            {"op": "list", "type": "strategy", "success": True, "exit_code": 0,
-             "names": "Name1"}
-        )
-        assert r.names == []
+        """A present-but-non-list ``names`` field fails loudly (no masking)."""
+        with pytest.raises(TypeError):
+            TsDevResult.from_json(
+                {"op": "list", "type": "strategy", "success": True, "exit_code": 0,
+                 "names": "Name1"}
+            )
 
     def test_list_with_cache_flags_forwarded(self, client: TsDevClient, monkeypatch) -> None:
         """Cache kwargs land in the argv tail ahead of the ``list`` subcommand."""
