@@ -596,7 +596,7 @@ void printUsage() {
         "                 only when the batch was not fully clean.\n"
         "                 Not with --json; not valid with serve.\n"
         "  --backup-cache  Back up <TS>\\Program\\Cache to\n"
-        "                 %LOCALAPPDATA%\\tsdev_cli\\cache-backup before the\n"
+        "                 %%LOCALAPPDATA%%\\tsdev_cli\\cache-backup before the\n"
         "                 subcommand (fixed order: backup -> restore -> op).\n"
         "                 Standalone: tsdev_cli --backup-cache\n"
         "                 [--cache-backup-policy=...].\n"

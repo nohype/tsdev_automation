@@ -195,8 +195,13 @@ DWORD WINAPI runTest(LPVOID param) {
                 regRootW[regRootW.size()-2] != L':') {
                 regRootW.pop_back();
             }
-            // Convert to narrow (ASCII-safe, same as test's existing approach).
-            std::string regRoot(regRootW.begin(), regRootW.end());
+            // Explicit narrow (no iterator-range construction): the
+            // registry root is ASCII in practice; fold any non-ASCII
+            // wchar out to '?' rather than silently truncating wchar->char.
+            std::string regRoot;
+            regRoot.reserve(regRootW.size());
+            for (wchar_t wc : regRootW)
+                regRoot.push_back(wc <= 0x7F ? static_cast<char>(wc) : '?');
             std::fprintf(stdout, "    Registry RootDirectory: %s\n",
                          regRoot.c_str());
 

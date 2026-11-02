@@ -195,9 +195,14 @@ void dispatchEnter(const char* site, uint32_t aux) {
     LARGE_INTEGER qpc;
     QueryPerformanceCounter(&qpc);
     std::lock_guard<std::mutex> lock(g_markerMutex);
-    std::strncpy(g_marker.site, site ? site : "(unnamed)",
-                 sizeof(g_marker.site) - 1);
-    g_marker.site[sizeof(g_marker.site) - 1] = '\0';
+    // Explicitly-sized copy (no strncpy): copy at most capacity-1 bytes
+    // and always NUL-terminate. Truncation keeps the prefix, matching the
+    // old strncpy behavior without the deprecation warning.
+    const char* src = site ? site : "(unnamed)";
+    size_t n = std::strlen(src);
+    if (n > sizeof(g_marker.site) - 1) n = sizeof(g_marker.site) - 1;
+    std::memcpy(g_marker.site, src, n);
+    g_marker.site[n] = '\0';
     g_marker.aux      = aux;
     g_marker.enterQpc = static_cast<uint64_t>(qpc.QuadPart);
     g_marker.depth++;
