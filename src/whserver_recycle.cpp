@@ -662,9 +662,12 @@ void WhRecycleSampler::sleepMs(unsigned ms) {
 // vtbl+0x20 create -> QI IDispatch -> GetIDsOfNames("WHouseEx") ->
 // Invoke(DISPATCH_PROPERTYGET, args reversed [0]=I4 Create=1, [1]=BSTR
 // MyWork) -> GetIDsOfNames("ForceShutDown") -> Invoke(DISPATCH_METHOD).
-// Refs stay held until release() (§2 step 6). CoInitializeEx on the worker
-// STA returns S_FALSE (the TsDevLib apartment guard already initialized it);
-// CoUninitialize is NEVER called — the apartment belongs to the guard.
+// Refs stay held until release() (§2 step 6). No CoInitializeEx of our own
+// here: the engine worker STA is the TsDevLib guard-owned apartment (each
+// successful CoInitializeEx, including S_FALSE, needs exactly one
+// same-thread CoUninitialize per com_apartment_guard.cpp:24-28, so a
+// redundant confirm would add an unpaid balance); CoUninitialize is NEVER
+// called - the apartment belongs to the guard.
 
 ComRecycleAttach::ComRecycleAttach(const std::wstring& myWorkDir)
     : m_myWorkDir(myWorkDir) {
@@ -721,11 +724,14 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     // a wedged server fires exit 15, fail-closed (§2 step 4).
     DispatchInFlightGuard guard("WhServerRecycle", 0);
 
-    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(coHr) && coHr != S_FALSE) {
-        detail = hrDetail("CoInitializeEx", coHr);
-        return RecycleAttachStatus::AttachFailed;
-    }
+    // No COM init/uninit of our own here. This runs on the engine worker
+    // STA thread, whose apartment the TsDevLib COM apartment guard already
+    // entered; per COM rules each successful CoInitializeEx, including the
+    // S_FALSE one, must be balanced by exactly one same-thread
+    // CoUninitialize (see com_apartment_guard.cpp:24-28), so a redundant
+    // confirm call would add a balance owed with no owner to pay it. The
+    // guard owns the apartment; attach only uses it and release() only
+    // drops COM refs.
 
     // Multi-pid contract: run the sequence once per pid. Class-to-pid
     // binding is ambiguous under >1 pid but MOOT — verify-death requires

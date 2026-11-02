@@ -95,9 +95,11 @@ bool collectTypeNames(IWhNameSource& source, ComponentType type,
 // HARD precondition: it must be the RESOLVED TradeStation MyWork directory
 // (WHouseEx Create=1 must never run against an unresolved/guessed path).
 // Same-thread contract: construct, use, and destroy on ONE STA thread (the
-// TsDevLib owning thread). CoInitializeEx here only confirms the apartment
-// (S_OK/S_FALSE expected -- the TsDevLib COM apartment guard initialized
-// it); CoUninitialize is NEVER called (the apartment belongs to the guard).
+// TsDevLib owning thread). No CoInitializeEx/CoUninitialize of our own here:
+// per COM rules each successful CoInitializeEx, including the S_FALSE one,
+// must be balanced by exactly one same-thread CoUninitialize (see
+// com_apartment_guard.cpp:24-28) -- the TsDevLib COM apartment guard owns
+// this STA, so bind only uses the apartment and release() only drops refs.
 // Every COM call is SEH-wrapped (returns false, never crashes through).
 // The constructor throws std::runtime_error (with the failing stage and the
 // HRESULT) when the chain cannot be bound.

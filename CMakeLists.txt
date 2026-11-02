@@ -374,6 +374,28 @@ add_executable(test_com_apartment_guard
 target_include_directories(test_com_apartment_guard PRIVATE src)
 target_link_libraries(test_com_apartment_guard PRIVATE Ole32)
 
+# --- RC-01 COM-balance regression test ---------------------------------------
+# Pure unit test pinning the RC-01 fix: the two WHServer bind sites
+# (WhComNameSource::bind in src/whserver_names.cpp and
+# ComRecycleAttach::attachAndForceShutDown in src/whserver_recycle.cpp) run
+# on the TsDevLib guard-owned STA and must perform zero COM init/uninit
+# calls of their own -- each successful CoInitializeEx including S_FALSE
+# owes exactly one same-thread CoUninitialize
+# (src/com_apartment_guard.cpp:24-28), so the old redundant confirm calls
+# leaked one balance per bind. Checks 1-2 pin the governing rule through
+# the mock ComApi seam (exactly 1 init + 1 uninit per successful init);
+# checks 3-6 scan both bind bodies for CoInitializeEx(/CoUninitialize(
+# calls. PURE UNIT TEST (no orlib20, no TsDevLib, no real COM), -NoTs.
+#
+# Sources: tests/test_rc01_com_balance.cpp + src/com_apartment_guard.cpp.
+# Ole32 resolves the default-ComApi address-of references (same rationale
+# as test_com_apartment_guard above); the mock path is what runs.
+add_executable(test_rc01_com_balance
+    tests/test_rc01_com_balance.cpp
+    src/com_apartment_guard.cpp)
+target_include_directories(test_rc01_com_balance PRIVATE src)
+target_link_libraries(test_rc01_com_balance PRIVATE Ole32)
+
 # --- TsDevLib COM-init injection seam unit test (TVS-L.13, TDD GREEN) ----------
 # Pure unit test for the PRIVATE/test-only construction seam that lets a unit
 # test drive TsDevLib initialization with injected COM HRESULTs (S_OK,
@@ -1564,6 +1586,7 @@ add_dependencies(test_regression
     test_batch_progress
     test_pbar
     test_com_apartment_guard
+    test_rc01_com_balance
     test_tsdev_com_init_seam
     test_persistence_integrity
     test_create_path_cleanup

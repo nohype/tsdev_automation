@@ -310,13 +310,13 @@ bool WhComNameSource::bind(std::string& detail) {
         return false;
     }
 
-    // The TsDevLib COM apartment guard already initialized this thread's
-    // STA; the call here only confirms it (S_OK / S_FALSE expected).
-    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(coHr) && coHr != S_FALSE) {
-        detail = hrDetail("CoInitializeEx", coHr);
-        return false;
-    }
+    // No COM init/uninit of our own here. This runs on the TsDevLib owning
+    // STA thread, whose apartment the COM apartment guard already entered;
+    // per COM rules each successful CoInitializeEx, including the S_FALSE
+    // one, must be balanced by exactly one same-thread CoUninitialize
+    // (see com_apartment_guard.cpp:24-28), so a redundant confirm call
+    // would add a balance owed with no owner to pay it. The guard owns
+    // the apartment; bind only uses it and release() only drops COM refs.
 
     CLSID clsidCtl;
     IID   iidFactory;

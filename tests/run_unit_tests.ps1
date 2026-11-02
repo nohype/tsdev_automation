@@ -91,6 +91,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_batch_progress';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_pbar';                   RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_com_apartment_guard';    RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_rc01_com_balance';       RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_tsdev_com_init_seam';    RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_persistence_integrity';  RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_create_path_cleanup';    RequiresTs = $false }
