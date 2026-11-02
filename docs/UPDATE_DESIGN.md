@@ -226,8 +226,9 @@ Checking for updates ...
 Downloading tsdev_automation_v0.1.6.zip (2.4 MB) ...
 Installing v0.1.6 ...
 ```
-With `--pbar`, a determinate pinned bar (Content-Length based) replaces
-the `Downloading ...` line; other lines unchanged.
+`--pbar` is accepted for `update` but renders the same plain progress
+lines above (no pinned bar: the update fetch path exposes no
+byte-progress callback, so there is nothing determinate to pin).
 
 Success, stdout:
 ```
@@ -493,6 +494,7 @@ Exact human messages (stderr unless noted; `<dir>`/`v*` substituted):
 | Version not found | `tsdev_cli: ERROR no release "v9.9.9" was found. Published releases run from v0.1.0 to v0.1.5.` (range = min..max published semver; the whole `Published releases run from ...` clause is OMITTED when the feed has no published releases -- `update <v>` on an empty feed prints just `no release "v9.9.9" was found.`) | 26 |
 | No bundle asset on the release | `tsdev_cli: ERROR release v0.1.6 has no install bundle. Reinstall manually from github.com/nohype/tsdev_automation/releases.` | 26 |
 | Missing `digest` on asset | `tsdev_cli: ERROR release v0.1.6 cannot be verified (no checksum published); refusing to install it.` | 27 |
+| Download fetch fails | `tsdev_cli: ERROR the update download failed (the update service could not deliver the file). Nothing was changed. Try again; if it repeats, reinstall manually.` | 27 |
 | Hash mismatch | `tsdev_cli: ERROR the downloaded update failed its integrity check and was discarded. Nothing was changed. Try again; if it repeats, reinstall manually.` | 27 |
 | Corrupt zip / extract fail | `tsdev_cli: ERROR the update archive could not be unpacked (corrupt download). It was discarded; nothing was changed.` | 27 |
 | No unpacker on this OS (tar.exe AND Expand-Archive absent) | `tsdev_cli: ERROR cannot unpack the update archive on this Windows version. Reinstall manually from github.com/nohype/tsdev_automation/releases.` | 27 |

@@ -403,6 +403,27 @@ DWORD WINAPI runTest(LPVOID param) {
                      "    capableDowngradeNotice + errTooMany PASS\n");
     }
 
+    // ------------------------------------------------------------------
+    // Check 9: shipped download-failure message pin (RC-24).
+    //   kUpdateDownloadFailedMsg (used verbatim by cmdUpdate's fail(27,
+    //   ...) arm) must equal the docs/UPDATE_DESIGN.md section 5 message
+    //   table row byte-for-byte. Editing either side without the other
+    //   turns this check red.
+    // ------------------------------------------------------------------
+    {
+        const std::string want =
+            "the update download failed (the update service could not "
+            "deliver the file). Nothing was changed. Try again; if it "
+            "repeats, reinstall manually.";
+        if (std::string(kUpdateDownloadFailedMsg) != want) {
+            ec = fail("check9: download-fail message != spec table row",
+                      100);
+            return 0;
+        }
+        std::fprintf(stdout,
+                      "    download-failure message pin PASS\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }

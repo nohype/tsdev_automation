@@ -9077,6 +9077,15 @@ std::wstring updateInstallDir() {
 // update never touches orlib20/the warehouse, so no 64 MB worker is
 // required. `args` are the update-local tokens (already validated by
 // parseUpdateArgs in the dispatch).
+//
+// Shipped download-failure text (docs/UPDATE_DESIGN.md section 5 message
+// table). Named constant so tests/test_update_cmd.cpp can pin the exact
+// bytes; cmdUpdate uses it verbatim, so spec == implementation holds by
+// construction.
+constexpr char kUpdateDownloadFailedMsg[] =
+    "the update download failed (the update service could not "
+    "deliver the file). Nothing was changed. Try again; if it "
+    "repeats, reinstall manually.";
 int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
     using namespace tsdev::update;
 
@@ -9423,10 +9432,7 @@ int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
             dl.retryAfterSecs >= 0) {
             r.extraErrorFields["retry_after_secs"] = dl.retryAfterSecs;
         }
-        return fail(27,
-            "the update download failed (the update service could not "
-            "deliver the file). Nothing was changed. Try again; if it "
-            "repeats, reinstall manually.");
+        return fail(27, kUpdateDownloadFailedMsg);
     }
 
     std::string gotHash;
