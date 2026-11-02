@@ -544,8 +544,8 @@ green (pinned messages unchanged), and the mandatory E2E still passes.
 
 ### RC-16 -- check_ts_state.ps1 "ABSENT (ANOMALY)" false alarm
 
-Current state + evidence (verified): the script lives ONLY at
-`tmp\check_ts_state.ps1` (gitignored; NOT in tests/). Line 13 prints
+Current state + evidence (verified): the script now lives at
+`tests\check_ts_state.ps1` (tracked; moved from gitignored `tmp\`). Line 13 prints
 "WHServer: ABSENT (ANOMALY)" whenever no WHServer process exists. Idle
 self-reap is NORMAL: transient servers self-reap <17 s idle
 (`docs/HANDOFF_WHServer_VAS_recovery.md:45`), so post-run snapshots
@@ -1073,7 +1073,7 @@ all tmp\ citations are volatile (see RC-21).
 | RC-13 | RE-VERIFIED + scope corrected: exactly ONE call site remains (src/tsdev_lib.cpp:2859-2863); leak path confirmed present |
 | RC-14 | sources verified (src/dispatch_watchdog.cpp:198, tests/test_path_discovery.cpp:199, src/tsdev_cli.cpp:592 in the printUsage literal); warning set confirmed per Appendix C |
 | RC-15 | measured: 7,551 non-ASCII bytes (see Appendix D) |
-| RC-16 | verified present (tmp\check_ts_state.ps1:13 -- script lives ONLY in tmp\) |
+| RC-16 | verified present (tests\check_ts_state.ps1:13 -- script now tracked in tests\, moved from tmp\) |
 | RC-17 | verified present (src/tsdev_cli.cpp:5335-5336, :6391-6395, reason :5678) |
 | RC-18 | verified present (src/whserver_recycle.cpp:136-146 bypass kill; emission exists only for the return-false paths src/tsdev_cli.cpp:6408-6411, :6803-6816) |
 | RC-19 | verified present (src/tsdev_cli.cpp:7884-7887, :7908-7914; contrast :6508-6518) |

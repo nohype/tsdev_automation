@@ -31,7 +31,7 @@
 - Pre-existing HEAD warnings: C4476 (tsdev_cli.cpp usage text), strncpy deprecation (dispatch_watchdog.cpp), C4244 (test_path_discovery/xutility).
 - Serve never-attached site exits 18 even after successful engine run (3-broker choreography) -- by design.
 - Source-code COMMENTS still contain non-ASCII (~421 em-dashes) -- outside docs/CLI-output rule scope.
-- check_ts_state.ps1 "WHServer ABSENT (ANOMALY)" label false-alarms post-run.
+- tests\check_ts_state.ps1 "WHServer ABSENT (ANOMALY)" label false-alarms post-run.
 - Review MINORs (approved, unaddressed by choice): whserver_names.cpp CoInitializeEx non-balancing (pattern debt, 2 sites); EXCEPINFO BSTR leak on SEH Invoke path (edge-only); test_serve_dispatch 24f asserts only key-substring (gate-specific message unpinned) and 24d message text unpinned; test_enumerate 7b fixtures depend on live dictionary description strings; test_list_cmd tie-runs are N<=4 (std::stable_sort not discriminated from std::sort at >16).
 - Theoretical HGLOBAL leak on _LoadMasterRecsEX SEH path (pre-existing 3-site pattern).
 - test_enumerate (RequiresTs) creates/deletes its own fixtures when run live; skipped under -NoTs by design.
