@@ -4840,6 +4840,16 @@ def _recycled_marker_json(op: str, type_: str, name: str) -> dict:
         "WHServer recycled; resubmit remaining items")
 
 
+def _recycle_deferred_marker_json(op: str, type_: str, name: str) -> dict:
+    """Defer-boundary marker: the attached-site breach stages this tail
+    (no engine recycle ran -- the close did).  The resume contract keys on
+    exit 12 / exit 18 / the event name, never on the marker wording, so
+    both exit-18 texts flow through identically -- pinned here verbatim."""
+    return _batch_item_json(
+        op, type_, name, False, 12, "cancelled",
+        "WHServer recycle deferred; resubmit remaining items")
+
+
 def _recycled_event(manifest: str | None) -> str:
     """The ``whserver_recycled`` NDJSON event line for mocked stderr."""
     obj: dict = {"event": "whserver_recycled",
@@ -4865,7 +4875,10 @@ class TestDirectBatchRecycleResume:
                                               tmp_path) -> None:
         """Exit 18 + manifest event -> one resubmission of the resume
         manifest; merged results keep the attempted head, the manifest is
-        deleted after the resumed batch returns."""
+        deleted after the resumed batch returns.  The mocked boundary wears
+        the deferred wording (the attached-site defer is the common
+        production path for a mid-batch breach) -- resume keys on exit 12 /
+        exit 18 / the event name, never on the marker text."""
         manifest = tmp_path / "tsdev_resume_1_2.manifest"
         manifest.write_text("strategy B C:/b.el\nstrategy C C:/c.el\n")
         calls: list[list[str]] = []
@@ -4875,8 +4888,10 @@ class TestDirectBatchRecycleResume:
             if len(calls) == 1:
                 arr = [
                     _batch_item_json("insert", "strategy", "A", True, 0),
-                    _recycled_marker_json("insert", "strategy", "B"),
-                    _recycled_marker_json("insert", "strategy", "C"),
+                    _recycle_deferred_marker_json(
+                        "insert", "strategy", "B"),
+                    _recycle_deferred_marker_json(
+                        "insert", "strategy", "C"),
                 ]
                 return _make_completed(
                     json.dumps(arr), stderr=_recycled_event(str(manifest)),
@@ -5028,8 +5043,8 @@ class TestDirectBatchRecycleResume:
         assert calls == 1
         assert [r.exit_code for r in results] == [0, 12]
         # The marker tail is re-worded: a missing manifest means nothing
-        # can be resubmitted — the generic "resubmit" text would advise
-        # an impossible action.
+        # can be resubmitted — the "resubmit remaining items" tail would
+        # advise an impossible action.
         assert results[1].error is not None
         # Neutral wording: "unavailable", and NO "may exist on disk"
         # claim — without a stderr diagnostic there is no evidence a

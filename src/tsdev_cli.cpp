@@ -5344,13 +5344,30 @@ std::string whserverZombieRefusalMessage(const std::string& op,
 // Not-run marker messages for the recycle paths (design §4.1 — the markers
 // are distinct from kVasAbortMarkerMessage so the array says WHY the item
 // never ran). These are the shipped marker texts — pinned verbatim by the
-// Python client (_RECYCLE_REFUSED_MARKER_MESSAGE mirrors the refusal text;
-// the "resubmit remaining items" text is the resumable-tail marker the
-// client replaces when no resubmission can happen).
+// unit test (check 6); the refusal text is additionally mirrored by the
+// Python client constant. The exit-18 texts share the "resubmit remaining
+// items" resumable-tail suffix; the client keys on exit 12 / exit 18-19
+// and the event names, never on the marker text.
 static const char* const kRecycledMarkerMessage =
     "WHServer recycled; resubmit remaining items";
+// The granted DEFER's text (RC-17): outcome-Recycled but NO recycle
+// happened — only the bounded close ran; the engine resumes in the fresh
+// process — so "recycled" would misreport what ran.
+static const char* const kRecycleDeferredMarkerMessage =
+    "WHServer recycle deferred; resubmit remaining items";
 static const char* const kRecycleRefusedMarkerMessage =
     "WHServer recycle refused before this item was attempted";
+
+// RC-17: reason is the truthful marker discriminator — the granted defer
+// (recycle_deferred_own_session) is outcome-Recycled but must not wear
+// the "recycled" text.
+const char* recycleMarkerMessage(const tsdev::RecycleResult& rec) {
+    if (rec.reason == "recycle_deferred_own_session")
+        return kRecycleDeferredMarkerMessage;
+    return (rec.outcome == tsdev::RecycleOutcome::Recycled)
+        ? kRecycledMarkerMessage
+        : kRecycleRefusedMarkerMessage;
+}
 
 // Free-text detail for recycle events/messages. The reason tokens
 // ("census_lock" etc.) are pinned protocol tokens parsed nowhere as text
@@ -5575,6 +5592,82 @@ bool writeResumeManifest(const std::string& dir,
 // results array from the WORKER before TerminateProcess-self — the main
 // thread never gets a turn on that path (design §4.1 emission ordering).
 void emitBatchOutput(const std::vector<CliResult>& results);
+
+// §4.1 step-2 writer shared by the pre-stage and the post-close tail.
+// Writes the resume manifest for [attempted, total), emitting the loud
+// diagnostics through emitLine (a writer refusal names the refusing item
+// and writes nothing; a written manifest whose path cannot ride the JSON
+// event channel is reported and dropped from the event). Returns the
+// event-carriable path — empty when no manifest exists.
+std::string writeRecycleBoundaryManifest(
+    const std::vector<BatchItem>& items,
+    size_t attempted,
+    bool needsSource,
+    const std::string& resumeManifestDir,
+    const std::function<void(const std::string&)>& emitLine) {
+    std::string manifestPath;
+    if (attempted >= items.size()) return manifestPath;
+    std::string manifestErr;
+    if (!writeResumeManifest(resumeManifestDir, items, attempted,
+                             needsSource, manifestPath, manifestErr)) {
+        emitLine("tsdev_cli: " + manifestErr +
+                 " (resume the remaining items manually)");
+        return manifestPath;
+    }
+    // The event carries the path as JSON text; this is an ANSI (ACP)
+    // build, so a non-ASCII path would serialize as U+FFFD and the
+    // client would resubmit a nonexistent file. Fail closed: report
+    // that auto-resume cannot use the path and emit the event WITHOUT
+    // a manifest member (the file itself still exists on disk for
+    // forensics).
+    const bool pathIsAscii = std::all_of(
+        manifestPath.begin(), manifestPath.end(),
+        [](char c) {
+            const unsigned char u = static_cast<unsigned char>(c);
+            return u >= 0x20 && u <= 0x7E;
+        });
+    if (!manifestPath.empty() && !pathIsAscii) {
+        emitLine("tsdev_cli: resume manifest path is not "
+                 "representable in the JSON event stream "
+                 "(non-ASCII) -- automatic resume cannot use it; "
+                 "resume the remaining items manually");
+        manifestPath.clear();
+    }
+    return manifestPath;
+}
+
+// RC-18 (opt 1): pre-stage the recycle boundary BEFORE the §5 close stage
+// runs. A close that hangs never returns — its monitor kills the process
+// from its own thread, bypassing every post-close emission — so the
+// durable record is staged up front in pinned §4.1 order: marker tail +
+// stdout array (JSON mode only — human modes stream per-item completions
+// and carry no stdout array) + resume manifest. The close outcome then
+// affects only the event line and the exit code. Sets resultsEmitted so
+// the post-close tail and runBatchAndEmit never double-emit the array;
+// returns the staged manifest path for the post-close event to carry.
+// The tail wears the RC-17 deferred text: this runs only on the defer
+// path, where no recycle happens.
+std::string prestageRecycleBoundary(
+    const std::string& op,
+    const std::vector<BatchItem>& items,
+    size_t attempted,
+    bool needsSource,
+    const std::string& resumeManifestDir,
+    std::vector<CliResult>& results,
+    bool jsonProgress,
+    const std::function<void(const std::string&)>& emitLine,
+    bool& resultsEmitted) {
+    for (size_t j = attempted; j < items.size(); ++j) {
+        results.push_back(cancelledBatchItemResult(
+            op, items[j], kRecycleDeferredMarkerMessage));
+    }
+    if (jsonProgress) {
+        emitBatchOutput(results);
+        resultsEmitted = true;
+    }
+    return writeRecycleBoundaryManifest(items, attempted, needsSource,
+                                        resumeManifestDir, emitLine);
+}
 
 // Run ONE recycle attempt through the engine (design §2 steps 1-6) with the
 // production seams: the real census/death sampler and the raw-COM attach.
@@ -6040,6 +6133,14 @@ struct BatchParams {
     // `delete lib` on exit-18 and TerminateProcess-self on close_failed);
     // runBatchAndEmit then skips its own emit — no double-emit.
     bool                    resultsEmitted = false;
+    // RC-18: the worker pre-stages the recycle boundary (marker tail +
+    // stdout array + resume manifest) BEFORE the defer close stage, which
+    // may hang and die without returning. boundaryPrestaged tells
+    // recycleExit the array/manifest are already durable so it only adds
+    // the event + summary + exit; prestagedManifestPath is the staged
+    // manifest the post-close event carries.
+    bool                    boundaryPrestaged = false;
+    std::string             prestagedManifestPath;
 };
 
 // The batch worker: constructs ONE TsDevLib, loops over items IN ORDER using
@@ -6389,7 +6490,11 @@ DWORD WINAPI runBatch(LPVOID param) {
     // which never ran the engine but DID run the §5 close stage). It
     // appends the recycle not-run markers
     // itself (the tail's marker loop would re-append with the wrong
-    // message), SKIPS the tail
+    // message) — except on the pre-staged defer path, where
+    // prestageRecycleBoundary already appended + emitted them BEFORE the
+    // close stage (RC-18: a hanging close never returns, so the array +
+    // manifest are staged up front and only event + summary follow here).
+    // It SKIPS the tail
     // closeWarehouse + exit-6 rewrite + batchAggregateExitCode (a failed
     // SECOND close could never downgrade 18/19), then runs the §5 teardown:
     // `delete lib` — the identical post-close path a normal batch end runs,
@@ -6404,13 +6509,19 @@ DWORD WINAPI runBatch(LPVOID param) {
     // the +7 (R2, live-proven 2026-10-21).
     // p->exitCode is set directly to 18/19.
     auto recycleExit = [&](const tsdev::RecycleResult& rec) -> DWORD {
-        const char* markerMsg =
-            (rec.outcome == tsdev::RecycleOutcome::Recycled)
-                ? kRecycledMarkerMessage
-                : kRecycleRefusedMarkerMessage;
-        for (size_t j = attempted; j < total; ++j) {
-            p->results.push_back(
-                cancelledBatchItemResult(op, p->items[j], markerMsg));
+        // RC-17: the marker text follows the reason, not the outcome.
+        const char* markerMsg = recycleMarkerMessage(rec);
+        // RC-18: on the pre-staged defer path the tail is already
+        // appended (and already emitted + flushed, see the §4.1 order
+        // below) — never append twice. The staged tail wears the
+        // deferred text; a refused close still reports truthfully via
+        // the event + exit code (and the client re-words exit-12
+        // markers on every non-resumed boundary).
+        if (!p->boundaryPrestaged) {
+            for (size_t j = attempted; j < total; ++j) {
+                p->results.push_back(
+                    cancelledBatchItemResult(op, p->items[j], markerMsg));
+            }
         }
         // §4.1 pinned order: results array -> resume manifest -> event
         // line -> batch_completed summary -> fflush -> exit. The results
@@ -6419,8 +6530,9 @@ DWORD WINAPI runBatch(LPVOID param) {
         // dispatch toward the just-killed/torn server — UNPROVEN shape)
         // and BEFORE any TerminateProcess-self (the main thread never
         // runs again on that path). The flag stops runBatchAndEmit from
-        // re-emitting the array.
-        if (p->jsonProgress) {
+        // re-emitting the array (and skips the re-emit when the array
+        // was already staged pre-close).
+        if (p->jsonProgress && !p->resultsEmitted) {
             emitBatchOutput(p->results);
             p->resultsEmitted = true;
         }
@@ -6429,36 +6541,16 @@ DWORD WINAPI runBatch(LPVOID param) {
         // that carries its path. Caller-owned cleanup: the CLI never
         // deletes it. A write failure is loud (stderr line; the event
         // then carries no manifest member) — the array's marker tail
-        // still pins the boundary (§4.4).
+        // still pins the boundary (§4.4). RC-18: the pre-staged defer
+        // path reuses the already-written file — writing again would
+        // leak a second pid_ticks manifest.
         std::string manifestPath;
-        if (attempted < total) {
-            std::string manifestErr;
-            if (!writeResumeManifest(p->resumeManifestDir, p->items,
-                                     attempted, needsSource,
-                                     manifestPath, manifestErr)) {
-                emitLine("tsdev_cli: " + manifestErr +
-                         " (resume the remaining items manually)");
-            }
-            // The event carries the path as JSON text; this is an ANSI
-            // (ACP) build, so a non-ASCII path would serialize as U+FFFD
-            // and the client would resubmit a nonexistent file. Fail
-            // closed: report that auto-resume cannot use the path and
-            // emit the event WITHOUT a manifest member (the client then
-            // applies its manifest-absent marker text; the file itself
-            // still exists on disk for forensics).
-            const bool pathIsAscii = std::all_of(
-                manifestPath.begin(), manifestPath.end(),
-                [](char c) {
-                    const unsigned char u = static_cast<unsigned char>(c);
-                    return u >= 0x20 && u <= 0x7E;
-                });
-            if (!manifestPath.empty() && !pathIsAscii) {
-                emitLine("tsdev_cli: resume manifest path is not "
-                         "representable in the JSON event stream "
-                         "(non-ASCII) -- automatic resume cannot use it; "
-                         "resume the remaining items manually");
-                manifestPath.clear();
-            }
+        if (p->boundaryPrestaged) {
+            manifestPath = p->prestagedManifestPath;
+        } else {
+            manifestPath = writeRecycleBoundaryManifest(
+                p->items, attempted, needsSource, p->resumeManifestDir,
+                emitLine);
         }
         // Step 3 — the event AFTER the manifest exists (it carries the
         // path) with the full §4.1 field set: breaching pid, free_mb,
@@ -6692,13 +6784,26 @@ DWORD WINAPI runBatch(LPVOID param) {
             // rescue; a band breach can only reach it in Full mode).
             if (aborted && p->recycle.mode != tsdev::RecycleMode::Off) {
                 tsdev::WhRecycleSampler deferSampler;
-                const tsdev::RecycleResult rec =
-                    recycleSiteDefers(anyOpDispatched)
-                        ? recycleDeferredResult(
-                              [lib] { return lib->closeWarehouse(); },
-                              &deferSampler)
-                        : runWhserverRecycleCli(
-                              lib, /*ownSessionExists=*/false);
+                tsdev::RecycleResult rec;
+                if (recycleSiteDefers(anyOpDispatched)) {
+                    // RC-18 (opt 1): stage the boundary BEFORE the close
+                    // stage below — a close that hangs never returns (its
+                    // monitor kills the process without returning,
+                    // bypassing recycleExit), so the array + manifest are
+                    // already durable when the close runs; the close
+                    // outcome affects only the event + exit code.
+                    p->prestagedManifestPath = prestageRecycleBoundary(
+                        op, p->items, attempted, needsSource,
+                        p->resumeManifestDir, p->results, p->jsonProgress,
+                        emitLine, p->resultsEmitted);
+                    p->boundaryPrestaged = true;
+                    rec = recycleDeferredResult(
+                        [lib] { return lib->closeWarehouse(); },
+                        &deferSampler);
+                } else {
+                    rec = runWhserverRecycleCli(
+                        lib, /*ownSessionExists=*/false);
+                }
                 if (vasRefuseAllowsContinue(rec.reason.c_str(),
                                             abortBelowFloor)) {
                     // census_lock above the abort floor -- reachable ONLY

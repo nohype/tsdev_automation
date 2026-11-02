@@ -41,6 +41,8 @@
 #include <fstream>
 #include <vector>
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 
 namespace {
 
@@ -379,7 +381,9 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 6: recycle marker shape — cancelledBatchItemResult with the
     // pinned recycle messages (exit 12 / "cancelled", verbatim message,
-    // op/type/name preserved).
+    // op/type/name preserved). RC-17: the granted DEFER carries its own
+    // text — outcome-Recycled but no recycle happened — keyed on reason,
+    // keeping the resumable-tail suffix.
     // ------------------------------------------------------------------
     {
         BatchItem it; it.typeStr = "function"; it.name = "Tail9";
@@ -387,12 +391,16 @@ DWORD WINAPI runTest(LPVOID param) {
                                                 kRecycledMarkerMessage);
         CliResult r2 = cancelledBatchItemResult("insert", it,
                                                 kRecycleRefusedMarkerMessage);
+        CliResult r3 = cancelledBatchItemResult(
+            "insert", it, kRecycleDeferredMarkerMessage);
         if (r1.exitCode != 12 || r1.success ||
             r1.errorMessage != "WHServer recycled; resubmit remaining items" ||
             r1.op != "insert" || r1.typeStr != "function" ||
             r1.name != "Tail9" ||
             r2.errorMessage !=
-                "WHServer recycle refused before this item was attempted") {
+                "WHServer recycle refused before this item was attempted" ||
+            r3.errorMessage !=
+                "WHServer recycle deferred; resubmit remaining items") {
             ec = fail("check6: recycle marker shape wrong", 60);
             return 0;
         }
@@ -400,8 +408,45 @@ DWORD WINAPI runTest(LPVOID param) {
         // the array says WHY.
         if (std::string(kRecycledMarkerMessage) == kVasAbortMarkerMessage ||
             std::string(kRecycleRefusedMarkerMessage) ==
-                kVasAbortMarkerMessage) {
+                kVasAbortMarkerMessage ||
+            std::string(kRecycleDeferredMarkerMessage) ==
+                kVasAbortMarkerMessage ||
+            std::string(kRecycleDeferredMarkerMessage) ==
+                kRecycledMarkerMessage) {
             ec = fail("check6: marker messages collide", 61);
+            return 0;
+        }
+        // Reason-keyed selection: the defer reason wins over the
+        // outcome-Recycled default; the engine reason keeps the recycled
+        // text; any refuse reason keeps the refusal text.
+        tsdev::RecycleResult defRec;
+        defRec.outcome = tsdev::RecycleOutcome::Recycled;
+        defRec.reason  = "recycle_deferred_own_session";
+        tsdev::RecycleResult engRec;
+        engRec.outcome = tsdev::RecycleOutcome::Recycled;
+        engRec.reason  = "whserver_recycled";
+        tsdev::RecycleResult refRec;
+        refRec.outcome = tsdev::RecycleOutcome::RefuseCloseFailed;
+        refRec.reason  = "close_timeout";
+        if (std::string(recycleMarkerMessage(defRec)) !=
+                kRecycleDeferredMarkerMessage ||
+            std::string(recycleMarkerMessage(engRec)) !=
+                kRecycledMarkerMessage ||
+            std::string(recycleMarkerMessage(refRec)) !=
+                kRecycleRefusedMarkerMessage) {
+            ec = fail("check6: reason-keyed marker selection wrong", 62);
+            return 0;
+        }
+        // The resumable-tail suffix is shared by both exit-18 texts.
+        const std::string resumableTail = "resubmit remaining items";
+        if (std::string(kRecycledMarkerMessage).rfind(resumableTail) !=
+                std::string(kRecycledMarkerMessage).size() -
+                    resumableTail.size() ||
+            std::string(kRecycleDeferredMarkerMessage).rfind(resumableTail) !=
+                std::string(kRecycleDeferredMarkerMessage).size() -
+                    resumableTail.size()) {
+            ec = fail("check6: exit-18 markers lost the resumable tail",
+                      63);
             return 0;
         }
         std::fprintf(stdout, "    PASS: recycle markers\n");
@@ -1407,6 +1452,158 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         std::fprintf(stdout, "    PASS: tri-state recycle config pins\n");
+    }
+
+    // ------------------------------------------------------------------
+    // Check 17 (RC-18 opt 1): the recycle boundary is PRE-STAGED before
+    // the defer close stage runs. A close that hangs never returns — its
+    // monitor kills the process without returning, bypassing every
+    // post-close emission — so the durable record (results array on
+    // stdout + resume manifest) is staged up front; the close outcome
+    // then affects only the event line and the exit code. Scripted
+    // close-hang: pre-stage with an attempted head, then run a hanging
+    // close with the injected non-fatal bound action — the defer refuses
+    // close_timeout while stdout ALREADY carries the full array (the
+    // attempted head + deferred marker tail).
+    // ------------------------------------------------------------------
+    {
+        std::error_code fsEc;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(fsEc) /
+            "tsdev_r4_prestage";
+        if (fsEc) {
+            ec = fail("check17: temp_directory_path failed", 180);
+            return 0;
+        }
+        std::filesystem::remove_all(dir, fsEc);
+        std::filesystem::create_directories(dir, fsEc);
+        if (fsEc) {
+            ec = fail("check17: scratch dir create failed", 181);
+            return 0;
+        }
+        std::vector<BatchItem> items;
+        for (const char* nm : {"P1", "P2", "P3"}) {
+            BatchItem b; b.typeStr = "function"; b.name = nm;
+            items.push_back(b);
+        }
+        CliResult head;
+        head.op = "insert"; head.typeStr = "function"; head.name = "P1";
+        head.success = true; head.exitCode = 0;
+        std::vector<CliResult> staged;
+        staged.push_back(head);
+        std::vector<std::string> diagLines;
+        auto testEmit = [&](const std::string& s) {
+            diagLines.push_back(s);
+        };
+        // Capture the pre-stage's stdout array emission with the same
+        // _dup/_dup2 idiom the stderr captures use.
+        FILE* tmp = std::tmpfile();
+        if (!tmp) {
+            ec = fail("check17: tmpfile() failed", 182);
+            return 0;
+        }
+        std::fflush(stdout);
+        int savedFd = _dup(_fileno(stdout));
+        if (savedFd < 0) {
+            std::fclose(tmp);
+            ec = fail("check17: _dup(stdout) failed", 183);
+            return 0;
+        }
+        if (_dup2(_fileno(tmp), _fileno(stdout)) != 0) {
+            _close(savedFd);
+            std::fclose(tmp);
+            ec = fail("check17: _dup2(tmp, stdout) failed", 184);
+            return 0;
+        }
+        _setmode(_fileno(stdout), _O_BINARY);
+        bool stagedEmitted = false;
+        std::string mpath = prestageRecycleBoundary(
+            "insert", items, /*attempted=*/1, /*needsSource=*/false,
+            dir.string(), staged, /*jsonProgress=*/true, testEmit,
+            stagedEmitted);
+        std::fflush(stdout);
+        bool restored = (_dup2(savedFd, _fileno(stdout)) == 0);
+        _close(savedFd);
+        _setmode(_fileno(stdout), _O_TEXT);
+        if (!restored) {
+            std::fclose(tmp);
+            ec = fail("check17: stdout restore failed", 185);
+            return 0;
+        }
+        std::string got;
+        std::fseek(tmp, 0, SEEK_SET);
+        char buf[1024];
+        size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
+            got.append(buf, n);
+        std::fclose(tmp);
+        if (!stagedEmitted || staged.size() != 3 ||
+            staged[1].exitCode != 12 || staged[2].exitCode != 12 ||
+            staged[1].errorMessage != kRecycleDeferredMarkerMessage ||
+            staged[2].errorMessage != kRecycleDeferredMarkerMessage ||
+            !diagLines.empty() || mpath.empty()) {
+            ec = fail("check17: pre-stage boundary shape wrong", 186);
+            return 0;
+        }
+        // The stdout record is a full-length array: attempted head +
+        // deferred marker tail.
+        ordered_json arr;
+        try {
+            arr = ordered_json::parse(got);
+        } catch (const std::exception&) {
+            ec = fail("check17: pre-staged stdout is not a JSON array",
+                      187);
+            return 0;
+        }
+        if (!arr.is_array() || arr.size() != 3 ||
+            !arr[0].value("success", false) ||
+            arr[1].value("exit_code", -1) != 12 ||
+            arr[2].value("exit_code", -1) != 12 ||
+            arr[1].value("error", ordered_json::object())
+                    .value("message", std::string()) !=
+                kRecycleDeferredMarkerMessage) {
+            ec = fail("check17: pre-staged array head/tail wrong", 188);
+            return 0;
+        }
+        // The staged manifest covers exactly the not-run tail (P2, P3).
+        std::vector<BatchItem> back;
+        if (!parseManifest(mpath, /*needsSource=*/false, back) ||
+            back.size() != 2 || !back[0].preValid ||
+            !back[1].preValid || back[0].name != "P2" ||
+            back[1].name != "P3") {
+            ec = fail("check17: pre-staged manifest tail wrong", 189);
+            return 0;
+        }
+        // THEN the close stage hangs: the injected non-fatal action
+        // records the fire and unblocks the scripted close — the late
+        // return is never trusted, so the defer refuses close_timeout
+        // on the terminateSelf contract. The stdout record above was
+        // already complete BEFORE this close ran (production's default
+        // action would have killed the process here with no further
+        // emission — the array + manifest survive it).
+        {
+            DeferSampler sampler;
+            HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (ev == nullptr) {
+                ec = fail("check17: CreateEvent for hang failed", 190);
+                return 0;
+            }
+            bool abortFired = false;
+            const tsdev::RecycleResult ref = recycleDeferredResult(
+                [&] { WaitForSingleObject(ev, INFINITE); return true; },
+                &sampler, /*closeBoundSecs=*/0.2,
+                [&] { abortFired = true; SetEvent(ev); });
+            CloseHandle(ev);
+            if (!abortFired || ref.reason != "close_timeout" ||
+                ref.exitCode != 19 || !ref.terminateSelf) {
+                ec = fail("check17: hang -> close_timeout refuse wrong",
+                          191);
+                return 0;
+            }
+        }
+        std::filesystem::remove_all(dir, fsEc);
+        std::fprintf(stdout, "    PASS: recycle boundary pre-stage + "
+                             "close-hang record\n");
     }
 
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");

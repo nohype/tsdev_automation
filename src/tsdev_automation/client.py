@@ -314,10 +314,11 @@ def _resume_manifest_path(stderr: str) -> str | None:
     return path
 
 
-# Marker text replacing the CLI's generic "resubmit remaining items"
-# tail when the exit-18 event carried no usable manifest path: the tail
-# was never re-attempted AND there is no path to resubmit — the generic
-# text would advise an impossible action. The wording stays neutral:
+# Marker text replacing the CLI's "resubmit remaining items" tail (shared
+# by both exit-18 marker wordings -- the engine-recycled text and the
+# deferred-boundary text) when the exit-18 event carried no usable
+# manifest path: the tail was never re-attempted AND there is no path to
+# resubmit -- the tail would advise an impossible action. The wording stays neutral:
 # "unavailable" rather than "absent" — the stderr diagnostic (appended
 # via _resume_manifest_diagnostic when present) distinguishes a writer
 # refusal (NO manifest exists) from a written manifest whose path was
@@ -375,9 +376,9 @@ def _rewrite_marker_message(result: TsDevResult, message: str) -> TsDevResult:
 
     Used when a not-run tail is returned without a resubmission (missing
     manifest / recycle bound): the CLI-emitted "resubmit remaining items"
-    text would claim an action that did not and cannot happen, so the
-    markers are re-worded to state the real reason.  Non-marker results
-    pass through unchanged.
+    tail (both exit-18 wordings share it) would claim an action that did
+    not and cannot happen, so the markers are re-worded to state the real
+    reason.  Non-marker results pass through unchanged.
     """
     if result.exit_code != 12:
         return result
@@ -3336,9 +3337,9 @@ class TsDevClient:
         item is ever dropped or duplicated.  Bounded by ``max_recycles``;
         bound exhaustion (or a missing/unusable manifest reference)
         returns the boundary array with the markers re-worded to state
-        WHY the tail was never re-attempted (the generic "resubmit
-        remaining items" text would advise an action that cannot
-        happen).  Exit 19 returns the array with its refusal-marker
+        WHY the tail was never re-attempted (the "resubmit remaining
+        items" tail both exit-18 wordings carry would advise an action
+        that cannot happen).  Exit 19 returns the array with its refusal-marker
         tail re-worded to name the retained manifest path (or the
         stderr diagnostic when the refused event names none).  The
         resume manifest is
