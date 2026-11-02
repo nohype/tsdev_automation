@@ -186,18 +186,24 @@ bool callGetIds(IDispatch* disp, const wchar_t* name, DISPID* outId,
 bool callInvokeImpl(IDispatch* disp, DISPID dispid, WORD flags,
                     DISPPARAMS* dp, VARIANT* result, HRESULT* outHr) {
     *outHr = E_FAIL;
+    // EXCEPINFO is POD: hoisted out of __try so the __except handler can
+    // free its BSTRs (RC-02). Invoke may fill them and THEN raise SEH.
+    EXCEPINFO exc = {};
     __try {
-        EXCEPINFO exc = {};
         UINT argErr = 0;
         *outHr = disp->Invoke(dispid, IID_NULL, LOCALE_SYSTEM_DEFAULT, flags,
                               dp, result, &exc, &argErr);
-        // EXCEPINFO BSTRs are owned by the caller even on failure.
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Caller-owned BSTRs even on the SEH path: free exactly as below.
         if (exc.bstrSource) SysFreeString(exc.bstrSource);
         if (exc.bstrDescription) SysFreeString(exc.bstrDescription);
         if (exc.bstrHelpFile) SysFreeString(exc.bstrHelpFile);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+    // EXCEPINFO BSTRs are owned by the caller even on failure.
+    if (exc.bstrSource) SysFreeString(exc.bstrSource);
+    if (exc.bstrDescription) SysFreeString(exc.bstrDescription);
+    if (exc.bstrHelpFile) SysFreeString(exc.bstrHelpFile);
     return true;
 }
 

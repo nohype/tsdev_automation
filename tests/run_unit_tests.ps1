@@ -80,6 +80,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_tradingapp_type';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_showme_type';            RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_list_items';             RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_invoke_excepinfo';       RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_elevation_guard';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_crash_handler';          RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_json_serialize';         RequiresTs = $false }

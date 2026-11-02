@@ -274,6 +274,32 @@ target_link_libraries(test_showme_type tsdev_lib)
 add_executable(test_list_items tests/test_list_items.cpp)
 target_link_libraries(test_list_items tsdev_lib)
 
+# --- EXCEPINFO SEH-free unit test (RC-02, TDD) --------------------------------
+# Pure unit test for the EXCEPINFO BSTR ownership contract in
+# src/whserver_names.cpp callInvokeImpl(): a fake IDispatch fills all three
+# EXCEPINFO BSTRs then raises SEH; the Impl must return false AND free all
+# three (hoisted POD EXCEPINFO, freed in __except exactly as the normal
+# path). SysAllocString/SysFreeString are counted through a tracking seam
+# (#defines around a direct #include of the production .cpp, same-TU pattern
+# as test_list_cmd), so a leak is allocs != frees. The .cpps are compiled
+# directly (same-TU pattern as test_list_cmd; it must NOT also be listed
+# as a compiled source - that would duplicate every symbol). Only the
+# dispatch-watchdog/health TUs are compiled in for dispatchEnter/Leave.
+# Ole32/OleAut32 resolve the raw-COM TU - never invoked here (all COM
+# objects are fakes). PURE UNIT TEST (no orlib20, no TsDevLib), NOT in
+# TSDEV_ADMIN_TARGETS, runs under -NoTs.
+add_executable(test_invoke_excepinfo
+    tests/test_invoke_excepinfo.cpp
+    src/dispatch_watchdog.cpp
+    src/whserver_health.cpp)
+target_include_directories(test_invoke_excepinfo PRIVATE src)
+target_link_libraries(test_invoke_excepinfo PRIVATE Ole32 OleAut32)
+# The test reaches callInvokeImpl via #include of the production .cpp, which
+# MSBuild dependency tracking does not see: declare it explicitly so edits
+# to src/whserver_names.cpp rebuild this test (no stale false-greens).
+set_property(SOURCE tests/test_invoke_excepinfo.cpp PROPERTY OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/whserver_names.cpp")
+
 # --- CLI `list <type>` output shaping unit test --------------------------------
 # Pure unit test for the listHumanStdout() human renderer and the "list"
 # success/failure JSON shapes of cliResultToJson(). listHumanStdout() and
@@ -1513,6 +1539,7 @@ add_dependencies(test_regression
     test_tradingapp_type
     test_showme_type
     test_list_items
+    test_invoke_excepinfo
     test_list_cmd
     test_elevation_guard
     test_crash_handler
