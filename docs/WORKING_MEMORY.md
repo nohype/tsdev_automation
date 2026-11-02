@@ -1,6 +1,10 @@
 # Working memory
 
-## Current state (2026-11-02) -- `list <type>` feature COMPLETE, ready to commit
+## Current state (2026-11-02) -- residuals cleanup in progress (PM orchestration)
+
+- HEAD c2c206c: RC-02 (EXCEPINFO BSTR SEH free + test_invoke_excepinfo, red 10 green 0) and RC-13 (HGLOBAL SEH free + unlock helper + test_master_recs_seh, red 12 green 0) IMPLEMENTED, independently REVIEWED/APPROVED, COMMITTED as 7863dba + c2c206c. Tree clean. Unpushed: 5 (9bb1842, 0abe7c0, 60429da handoff, 7863dba, c2c206c).
+- Owner decisions (2026-11-02): RC-21 archive evidence to tracked paths; RC-18 pre-stage results array (opt 1); RC-19 document exit-18 contract; RC-25/26 tag da74dc1 then delete both; RC-23 license research deferred to very end (copyleft + attribution + no-liability + dual commercial premium -- compare options).
+- Next: P1 RC-18 + RC-11, then P2 test-strength/contract batch, then P3. Handoff: docs/HANDOFF_residuals.md.
 
 - Feature DELIVERED and live-verified end to end: `tsdev_cli list <type>` + `TsDevClient.list_items(type)` + broker route. Contract: human = one stored name per line (zero items -> no output = success); `--json` names array always on success; sorted by name (case-insensitive ASCII, stable ties) applied ONCE in doList (renderers/Python passthrough); no dedup; names verbatim case-preserved; exit codes follow `exists` (0/1/2/4/10/11; 4 = fail-loud, never a false empty list).
 - Name source: WHServer IWHouse COM enumeration (`ProgramsCountByType` + `NextId` + `ProgramById` walk + `IProgram::Name`), pure GetIDsOfNames, whType 0/1/2/1282/5122, KB Sec 17 activation chain, one STA thread. Only non-typelib contract: factory IID {7CEEACBC} + vtbl slot 8. New module src/whserver_names.{h,cpp} (IWhNameSource seam + pure collectTypeNames + WhComNameSource). SSOT for the RE: tmp\enum_mechanism_report.md; KB Sec 22-25 records all discovered facts.
