@@ -1,0 +1,47 @@
+RC-12: one-off pytest-shutdown zipfile.__del__ OSError (Errno 9 Bad FD)
+Status: observed once (exit 0), stdlib-internal, ACCEPTED. See trigger below.
+
+Observation
+- A single pytest run ended exit 0 but printed an interpreter-shutdown
+  OSError [Errno 9] Bad file descriptor from zipfile.ZipFile.__del__.
+- No traceback was preserved (tmp\pytest_*.log grepped clean) and the
+  originating test is unknown. It did not recur in 3 follow-up runs at
+  the time, and did not recur in 3 more runs for this task (2026-11-02,
+  tests/test_tsdev_client.py -m "not e2e": 466 passed x3, stderr empty).
+
+Handle audit (tests/test_tsdev_client.py + tests/test_serve_e2e.py)
+- No zipfile/ZipFile usage exists in ANY repo .py (grep clean), so the
+  frame owner is stdlib/pytest-internal, not test code.
+- No unclosed handles found; NO handle-closing edits made (none missing):
+  - Every fake_mkstemp os.open() fd is ownership-transferred to
+    _ServeBroker.start(), which os.close()s it exactly once
+    (src/tsdev_automation/client.py:979-985).
+  - The three test-setup os.open() fds (uac-decline / missing-handle /
+    polling-exception tests) are closed by production via the
+    monkeypatched real_close wrapper; fake_unlink call counts balanced.
+  - All other file writes are Path.write_text (self-closing).
+  - _FakeCliProc pipes are in-memory only and are closed by production
+    _close_pipes() on every exit path (normal + _reap_after_timeout);
+    communicte() is unused dead code, left alone.
+- Hygiene proof: run 3 used `python -W always::ResourceWarning -m pytest`
+  and stderr was still 0 bytes (no ResourceWarning, no traceback).
+
+Capture mechanism (exact redirect for the NEXT occurrence)
+- The shutdown error goes to the real process stderr AFTER the pytest
+  summary, so stdout-only capture loses it. Always redirect stderr:
+  powershell:
+  python -m pytest tests/test_tsdev_client.py -q -m "not e2e" -p no:cacheprovider 2> tmp/pytest_RC12_next.stderr.log
+  - tmp/*.log is gitignored (scratch). If the traceback recurs, copy the
+    FULL stderr text into THIS file (docs/RC12_zipfile_shutdown.txt,
+    tracked, .txt so *.log ignore does not apply) under "Recurrence",
+    naming the owning frame (module + function + line) and the test
+    running when shutdown began, then notify the PM.
+- PowerShell note: `2>` captures native-stderr shutdown errors; do NOT
+  pipe through Select-Object for the preserved copy (it re-renders).
+
+Re-occurrence trigger
+- If it recurs WITH a traceback naming only stdlib/pytest frames and no
+  repo frame: extend "observed once" count here, still accept, no code.
+- If it recurs naming a repo frame (test helper, client.py, fake pipe):
+  that frame owns a real handle bug; file a follow-up RC and fix there.
+  Blanket warning suppression is NOT authorized.

@@ -1,0 +1,11 @@
+RC-12 no-recurrence evidence (2026-11-02)
+Command: python -W always::ResourceWarning -m pytest tests/test_tsdev_client.py -q -m "not e2e" -p no:cacheprovider 2> docs/RC12_norecur_stderr.txt
+CWD: C:\Users\freek\projects\tsdev_automation
+Date (UTC): 2026-11-02
+Result: 466 passed, 18 deselected, 7 warnings in 12.14s
+Exit code: 0 (PYTEST_EXIT=0)
+Warnings: 7 x UserWarning (recycle_whserver, stdout summary only); no ResourceWarning on stdout
+Stderr file: docs/RC12_norecur_stderr.txt
+Stderr bytes: 0
+Stderr grep (ResourceWarning|zipfile|Bad file|Traceback): no match
+No zipfile.__del__ OSError observed. Warnings NOT suppressed (-W always::ResourceWarning).
