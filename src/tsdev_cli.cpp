@@ -678,7 +678,11 @@ void printUsage() {
 //   typeStr       the <type> argument verbatim (empty when unknown).
 //   name          the component name (empty when unknown).
 //   success       true iff the operation succeeded (exit 0).
-//   exitCode      the exit code (unchanged in both modes).
+//   exitCode      the exit code (unchanged in both modes). Defaults to
+//                 10 (thread_failure): an unfilled worker result must
+//                 never emit success=false + exit_code=0, so the
+//                 default is a failure code (every success path sets
+//                 exitCode=0 explicitly).
 //   progId        the ProgId, when known (success, and some error cases).
 //   ellPath       the .ell file path (success insert/modify only; absent for
 //                 delete success).
@@ -697,7 +701,7 @@ struct CliResult {
     std::string typeStr;
     std::string name;
     bool        success = false;
-    int         exitCode = 0;
+    int         exitCode = 10;  // RC-28 fail-safe: never exit 0 unfilled
     int         progId = 0;
     std::string ellPath;
     int         existingProgId = 0;

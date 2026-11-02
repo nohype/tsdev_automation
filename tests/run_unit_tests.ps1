@@ -114,6 +114,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_update_feed';            RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_update_apply';           RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_update_cmd';             RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_cliresult_default';    RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_path_discovery';         RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_finalization_lifecycle'; RequiresTs = $true  }
     [pscustomobject]@{ Name = 'test_insert';                 RequiresTs = $true  }

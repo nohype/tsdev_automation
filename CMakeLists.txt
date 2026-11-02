@@ -909,6 +909,17 @@ target_include_directories(test_update_cmd PRIVATE third_party)
 target_link_libraries(test_update_cmd tsdev_lib)
 add_dependencies(test_update_cmd siggen)
 
+# --- CliResult fail-safe default seam test (RC-28) -----------------------------
+# Pure unit test for the CliResult default member initializer in
+# src/tsdev_cli.cpp: a default-constructed (unfilled worker) result must
+# never carry exit 0. Same-TU include + TSDEV_CLI_TEST main() exclusion,
+# third_party include dir (nlohmann/json), links tsdev_lib. PURE UNIT TEST
+# (no orlib20 access), runs under -NoTs.
+add_executable(test_cliresult_default tests/test_cliresult_default.cpp)
+target_include_directories(test_cliresult_default PRIVATE third_party)
+target_link_libraries(test_cliresult_default tsdev_lib)
+add_dependencies(test_cliresult_default siggen)
+
 # --- Pre-op hash classification unit test -------------------------------------
 # Pure unit test for the sha256FileCli() helper and its Sha256FileResult /
 # Sha256FileStatus (Hashed/Absent/Error) classification. The helper lives inside
@@ -1608,6 +1619,7 @@ add_dependencies(test_regression
     test_update_feed
     test_update_apply
     test_update_cmd
+    test_cliresult_default
     test_insert_tradingapp
     test_modify_tradingapp
     test_exists
