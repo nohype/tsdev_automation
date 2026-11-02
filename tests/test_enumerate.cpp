@@ -24,6 +24,11 @@
 //   7. enumerateRecords(Strategy, "NONEXISTENTNAMEXYZ") -- ASSERT exists ==
 //      false, storedName == "", progId == 0, lookupOk == true (a missing
 //      item is a clean answer, NOT degraded mode)
+//   7a. FIXTURE PRECONDITION (RC-08): verify each step-7b string still
+//      appears in some record +0x17 DESCRIPTION field via _LoadMasterRecsEX
+//      before using it as a probe; stale fixture => fail 66/67, broken
+//      record walk => fail 68 (loud + distinct, never confused with the
+//      step-7b "found" failure 65); step 7b is skipped when 7a fails
 //   7b. enumerateRecords for live-proven record DESCRIPTION texts -- ASSERT
 //      exists == false: a description is never a name (KB Sec. 22/23)
 //   8. deleteEntry(Strategy, name) -- cleanup
@@ -80,6 +85,90 @@ const char* kDescriptionTextFunction =
 const char* kTestSource =
     "{ zzz_test_ci_probe }\r\n"
     "Buy (\"EnterLong\") next bar at Market;\r\n";
+
+// RC-08 fixture-precondition helpers: verify a step-7b probe string still
+// appears in some record's +0x17 DESCRIPTION field (KB Sec. 22) by walking
+// the master records via _LoadMasterRecsEX@16 -- the same orlib20 export the
+// library and the diag record walks use (ord 568; __stdcall, 4 args;
+// returns count, allocates count * 0x10A bytes). orlib20.dll is already
+// loaded in-process by the TsDevLib instance, so GetModuleHandleA finds it
+// with no extra linkage. Read-only: no record is modified, no item is
+// created or deleted.
+typedef int (__stdcall *LoadMasterRecsExFn)(int category, HGLOBAL* outBuf,
+                                            const char* path, int filterMode);
+
+// POD-only SEH wrapper (no C++ objects -- MSVC C2712 forbids them together
+// with __try/__except in one function).
+struct LoadRecsSehResult { int count; };
+bool callLoadMasterRecs(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
+                        LoadRecsSehResult* out) {
+    out->count = -1;
+    __try { out->count = fn(category, outBuf, NULL, /*filterMode=*/1); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// Bounded exact-match scan of the +0x17 DESCRIPTION field over `count`
+// 0x10A-byte records. The field is a null-terminated string (max observed
+// length 60); the bound (0x10A - 0x17) keeps an unterminated field inside
+// its own record. On match, the first matching record's ProgId (+0x00
+// short) is reported in *outProgId (0 when no match).
+bool descriptionPresentInRecords(const char* records, int count,
+                                 const char* want, short* outProgId) {
+    const int kRecordSize = 0x10A;
+    const int kDescOffset = 0x17;
+    const int kDescMax = 0x10A - 0x17;
+    *outProgId = 0;
+    size_t wantLen = std::strlen(want);
+    if (wantLen == 0 || wantLen >= (size_t)kDescMax) return false;
+    for (int i = 0; i < count; i++) {
+        const char* rec = records + (size_t)i * kRecordSize;
+        const char* f = rec + kDescOffset;
+        size_t j = 0;
+        while (j < wantLen && f[j] == want[j]) j++;
+        if (j == wantLen && f[j] == '\0') {
+            short pid = 0;
+            std::memcpy(&pid, rec, sizeof(pid));
+            *outProgId = pid;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Check one fixture string against the live record descriptions of
+// `category` (warehouse category: 1 = Function, 2 = Indicator).
+// Returns 0 = present (precondition holds), 1 = absent (fixture stale),
+// 2 = record walk broken (module/export missing, SEH, lock failure).
+int checkDescriptionFixturePresent(int category, const char* want,
+                                   short* outProgId) {
+    *outProgId = 0;
+    HMODULE orlib = GetModuleHandleA("orlib20.dll");
+    if (!orlib) return 2;
+    LoadMasterRecsExFn loadFn = reinterpret_cast<LoadMasterRecsExFn>(
+        GetProcAddress(orlib, "_LoadMasterRecsEX@16"));
+    if (!loadFn) return 2;
+    HGLOBAL buf = NULL;
+    LoadRecsSehResult seh;
+    if (!callLoadMasterRecs(loadFn, category, &buf, &seh)) {
+        return 2;
+    }
+    int count = seh.count;
+    if (count <= 0 || buf == NULL) {
+        if (buf) GlobalFree(buf);
+        return 2;
+    }
+    const char* records = (const char*)GlobalLock(buf);
+    if (!records) {
+        GlobalFree(buf);
+        return 2;
+    }
+    bool present = descriptionPresentInRecords(records, count, want,
+                                              outProgId);
+    GlobalUnlock(buf);
+    GlobalFree(buf);
+    return present ? 0 : 1;
+}
 
 // Print a failure banner and return the given code.
 int fail(const char* msg, int code) {
@@ -274,7 +363,64 @@ DWORD WINAPI runTest(LPVOID param) {
                      "storedName=\"\", progId=0)\n");
     }
 
+    // --- Step 7a: fixture-precondition check (RC-08) ---
+    // The step-7b probes are live dictionary DESCRIPTION strings: they only
+    // guard the false-positive root cause while they still appear in some
+    // record's +0x17 DESCRIPTION field. A dictionary update could silently
+    // remove them and turn 7b into a vacuous check, so assert the
+    // precondition here, BEFORE using them as probes. Failure is loud and
+    // distinct: 66/67 = fixture stale (the dictionary no longer carries the
+    // text -- NOT a lookup failure), 68 = record walk itself broken
+    // (precondition unverifiable). Step 7b is skipped when 7a fails.
+    std::fprintf(stdout,
+                 "\n[7a] Verifying description fixtures still present in "
+                 "live record descriptions...\n");
+    lib->refreshCache();
+    struct FixtureCheck {
+        const char*   text;
+        int           category;
+        const char*   label;
+        int           staleCode;
+    };
+    const FixtureCheck kFixtureChecks[] = {
+        {kDescriptionTextIndicator, getCategory(ComponentType::Indicator),
+         "Indicator", 66},
+        {kDescriptionTextFunction, getCategory(ComponentType::Function),
+         "Function", 67},
+    };
+    for (const FixtureCheck& fc : kFixtureChecks) {
+        short holderProgId = 0;
+        int pre = checkDescriptionFixturePresent(fc.category, fc.text,
+                                                &holderProgId);
+        if (pre == 0) {
+            std::fprintf(stdout,
+                         "    PRECONDITION OK: %s description still present "
+                         "(holder ProgId=%d)\n",
+                         fc.label, (int)holderProgId);
+        } else if (pre == 1) {
+            char msg[512];
+            std::snprintf(msg, sizeof(msg),
+                          "description fixture is STALE (not found in any "
+                          "%s record description field): \"%s\" -- the "
+                          "dictionary changed; step 7b would be vacuous",
+                          fc.label, fc.text);
+            st->exitCode = fail(msg, fc.staleCode);
+            break;
+        } else {
+            st->exitCode = fail(
+                "record-walk precondition check failed (orlib20 handle / "
+                "_LoadMasterRecsEX@16 / SEH / lock) -- fixture presence "
+                "unverifiable",
+                68);
+            break;
+        }
+    }
+
     // --- Step 7b: record DESCRIPTION texts must NEVER resolve as names ---
+    // Skipped when step 7a failed (a stale/unverifiable fixture would make
+    // this probe vacuous or misleading); the 7a code already singles out
+    // the cause.
+    if (st->exitCode == 0) {
     // Master records carry NO stored name: record +0x17 is a
     // DESCRIPTION/summary field (docs/KNOWLEDGE_BASE.md Sec. 22/23). The two
     // strings below are live-proven description texts of dictionary items;
@@ -315,6 +461,7 @@ DWORD WINAPI runTest(LPVOID param) {
                          "name\n");
         }
     }
+    } // end Step 7b guard (skipped when Step 7a failed)
 
     // --- Step 8: Cleanup — delete the probe entry ---
     std::fprintf(stdout, "\n[8] Cleanup: deleteEntry(Strategy, \"%s\")...\n",
