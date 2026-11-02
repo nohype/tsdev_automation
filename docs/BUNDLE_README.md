@@ -20,7 +20,7 @@ Function, Indicator, ShowMe, Strategy, and TradingApp are supported. ActivityBar
 
 Direct `tsdev_cli.exe` calls must run in an elevated administrator process; otherwise the CLI exits with code `11`.
 
-`TsDevClient(use_serve=True)` (the default) starts an elevated `tsdev_cli serve` broker server with one UAC prompt for the whole session. With `use_serve=False` (no persistent broker), a non-elevated Python session raises `ElevationRequiredError` before launch.
+`TsDevClient(use_serve=True)` (the default) starts an elevated `tsdev_cli serve` broker server with one UAC prompt for the whole session. With `use_serve=False` (no persistent broker), a non-elevated Python session raises `ElevationRequiredError` before launch. Gotcha: in an ALREADY-elevated shell, `use_serve=True` BYPASSES the broker by design (`_serve_active = use_serve AND not elevated`) and runs the direct path -- results look identical either way. To verify the broker contract, run the client UNELEVATED with `use_serve=True` (or force the branch in tests by stubbing `_is_elevated`/`_serve_active`) and confirm via `broker_process_handle()` (`client.py:2325`) -- non-None means the broker ran.
 
 ## Native CLI (`tsdev_cli.exe`)
 
