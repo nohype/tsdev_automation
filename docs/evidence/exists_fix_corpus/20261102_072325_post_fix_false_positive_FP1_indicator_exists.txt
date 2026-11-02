@@ -1,0 +1,7 @@
+# false-positive case FP1 -- exists (post-fix)
+# command: build\Release\tsdev_cli.exe --json exists indicator Plots the %R indicator.
+# exit_code: 0
+# stdout:
+{"op":"exists","type":"indicator","name":"Plots the %R indicator.","success":true,"exit_code":0,"exists":false,"stored_name":""}
+# stderr:
+

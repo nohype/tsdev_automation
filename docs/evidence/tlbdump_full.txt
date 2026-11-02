@@ -1,0 +1,173 @@
+TypeInfoCount=11
+
+=== [0] _IWHouseEvents (typekind=4 guid=7CEEA90D-D59E-11D3 cFuncs=7 cImplTypes=1) ===
+  [f00] memid=0x01(1) OnBeginImport invkind=1 callconv=4 cParams=0 ret=HRESULT params=(none)
+  [f01] memid=0x02(2) OnEndImport invkind=1 callconv=4 cParams=0 ret=HRESULT params=(none)
+  [f02] memid=0x03(3) OnRenameProgram invkind=1 callconv=4 cParams=3 ret=HRESULT params=I2/0x0(shType),BSTR/0x0(OldName),BSTR/0x0(NewName)
+  [f03] memid=0x04(4) OnCreateProgram invkind=1 callconv=4 cParams=2 ret=HRESULT params=I2/0x0(shType),BSTR/0x0(bstrName)
+  [f04] memid=0x05(5) OnRemoveProgram invkind=1 callconv=4 cParams=2 ret=HRESULT params=I2/0x0(shType),BSTR/0x0(bstrName)
+  [f05] memid=0x06(6) OnCategoryChange invkind=1 callconv=4 cParams=4 ret=HRESULT params=I4/0x0(lCategoryID),BSTR/0x0(bstrCategoryName),I4/0x0(lMemberCount),VARIANT/0x0(saMembers)
+  [f06] memid=0x07(7) OnProgramChanged invkind=1 callconv=4 cParams=3 ret=HRESULT params=I4/0x0(lWHType),I4/0x0(lRec),UDT/0x0(ect)
+
+=== [1] enChangeType (typekind=0 guid=00000000-0000-0000 cFuncs=0 cImplTypes=0) ===
+
+=== [2] WHouse (typekind=5 guid=7CEEA907-D59E-11D3 cFuncs=0 cImplTypes=2) ===
+
+=== [3] IWHouse (typekind=4 guid=7CEEA903-D59E-11D3 cFuncs=58 cImplTypes=1) ===
+  [f00] memid=0x60000000(1610612736) QueryInterface invkind=1 callconv=4 cParams=2 ret=VOID params=PTR/0x1(riid),PTR/0x2(ppvObj)
+  [f01] memid=0x60000001(1610612737) AddRef invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f02] memid=0x60000002(1610612738) Release invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f03] memid=0x60010000(1610678272) GetTypeInfoCount invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x2(pctinfo)
+  [f04] memid=0x60010001(1610678273) GetTypeInfo invkind=1 callconv=4 cParams=3 ret=VOID params=UINT/0x1(itinfo),UI4/0x1(lcid),PTR/0x2(pptinfo)
+  [f05] memid=0x60010002(1610678274) GetIDsOfNames invkind=1 callconv=4 cParams=5 ret=VOID params=PTR/0x1(riid),PTR/0x1(rgszNames),UINT/0x1(cNames),UI4/0x1(lcid),PTR/0x2(rgdispid)
+  [f06] memid=0x60010003(1610678275) Invoke invkind=1 callconv=4 cParams=8 ret=VOID params=I4/0x1(dispidMember),PTR/0x1(riid),UI4/0x1(lcid),UI2/0x1(wFlags),PTR/0x1(pdispparams),PTR/0x2(pvarResult),PTR/0x2(pexcepinfo),PTR/0x2(puArgErr)
+  [f07] memid=0x02(2) CreateProgram invkind=1 callconv=4 cParams=2 ret=VOID params=I2/0x0(Type),BSTR/0x0(Name)
+  [f08] memid=0x04(4) ProgramById invkind=2 callconv=4 cParams=2 ret=DISPATCH params=I2/0x0(Type),I4/0x0(Id)
+  [f09] memid=0x05(5) ProgramByName invkind=2 callconv=4 cParams=2 ret=DISPATCH params=I2/0x0(Type),BSTR/0x0(Name)
+  [f10] memid=0x07(7) NextId invkind=2 callconv=4 cParams=1 ret=I4 params=I2/0x0(Type)
+  [f11] memid=0x08(8) RemoveProgram invkind=1 callconv=4 cParams=2 ret=VOID params=I2/0x0(Type),I4/0x0(Id)
+  [f12] memid=0x09(9) Flush invkind=2 callconv=4 cParams=0 ret=I4 params=(none)
+  [f13] memid=0x09(9) Flush invkind=4 callconv=4 cParams=1 ret=VOID params=I4/0x1
+  [f14] memid=0x0A(10) MasterRecById invkind=2 callconv=4 cParams=2 ret=VARIANT params=I2/0x0(Type),I4/0x0(Id)
+  [f15] memid=0x0A(10) MasterRecById invkind=4 callconv=4 cParams=3 ret=VOID params=I2/0x0(Type),I4/0x0(Id),VARIANT/0x1
+  [f16] memid=0x0B(11) MasterRecByName invkind=2 callconv=4 cParams=2 ret=VARIANT params=I2/0x0(Type),BSTR/0x0(Name)
+  [f17] memid=0x0B(11) MasterRecByName invkind=4 callconv=4 cParams=3 ret=VOID params=I2/0x0(Type),BSTR/0x0(Name),VARIANT/0x1
+  [f18] memid=0x0C(12) MasterRecByIdTypes invkind=2 callconv=4 cParams=2 ret=VARIANT params=VARIANT/0x0(Types),I4/0x0(nId)
+  [f19] memid=0x0D(13) MasterRecByNameTypes invkind=2 callconv=4 cParams=2 ret=VARIANT params=VARIANT/0x0(Types),BSTR/0x0(Name)
+  [f20] memid=0x0E(14) CreateCategory invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x0(Name)
+  [f21] memid=0x0F(15) RemoveCategory invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x0(Name)
+  [f22] memid=0x10(16) SourceRecById invkind=2 callconv=4 cParams=2 ret=VARIANT params=I2/0x0(Type),I4/0x0(Id)
+  [f23] memid=0x10(16) SourceRecById invkind=4 callconv=4 cParams=3 ret=VOID params=I2/0x0(Type),I4/0x0(Id),VARIANT/0x1
+  [f24] memid=0x11(17) CodeRecById invkind=2 callconv=4 cParams=2 ret=VARIANT params=I2/0x0(Type),I4/0x0(Id)
+  [f25] memid=0x11(17) CodeRecById invkind=4 callconv=4 cParams=3 ret=VOID params=I2/0x0(Type),I4/0x0(Id),VARIANT/0x1
+  [f26] memid=0x13(19) Category invkind=2 callconv=4 cParams=1 ret=DISPATCH params=BSTR/0x0(Name)
+  [f27] memid=0x14(20) ProgramsList invkind=2 callconv=4 cParams=1 ret=VARIANT params=I2/0x0(Type)
+  [f28] memid=0x15(21) MasterRecsByType invkind=2 callconv=4 cParams=1 ret=VARIANT params=I2/0x0(Type)
+  [f29] memid=0x15(21) MasterRecsByType invkind=4 callconv=4 cParams=2 ret=VOID params=I2/0x0(Type),VARIANT/0x1
+  [f30] memid=0x16(22) CategoriesList invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f31] memid=0x17(23) MasterRecByList invkind=2 callconv=4 cParams=1 ret=VARIANT params=VARIANT/0x0(List)
+  [f32] memid=0x18(24) FlushCache invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f33] memid=0x19(25) ProgramsCountByType invkind=2 callconv=4 cParams=1 ret=I4 params=I2/0x0(Type)
+  [f34] memid=0x1A(26) MasterRecsByTypes invkind=2 callconv=4 cParams=1 ret=VARIANT params=VARIANT/0x0(Types)
+  [f35] memid=0x1B(27) TransactedMode invkind=2 callconv=4 cParams=0 ret=I4 params=(none)
+  [f36] memid=0x1B(27) TransactedMode invkind=4 callconv=4 cParams=1 ret=VOID params=I4/0x1
+  [f37] memid=0x1C(28) RenameProgram invkind=1 callconv=4 cParams=3 ret=VOID params=I2/0x0(Type),I4/0x0(Id),BSTR/0x0(NewName)
+  [f38] memid=0x1D(29) SetFileName invkind=1 callconv=4 cParams=2 ret=VOID params=BSTR/0x0(StdName),BSTR/0x0(NewName)
+  [f39] memid=0x1E(30) Trace invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x0(Message)
+  [f40] memid=0x1F(31) ClearVerifyFlagByType invkind=1 callconv=4 cParams=1 ret=VOID params=I2/0x0(Type)
+  [f41] memid=0x20(32) ClearDependencyLists invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f42] memid=0x21(33) ProgramByIdTypes invkind=2 callconv=4 cParams=2 ret=DISPATCH params=VARIANT/0x0(Types),I4/0x0(Id)
+  [f43] memid=0x22(34) ProgramByNameTypes invkind=2 callconv=4 cParams=2 ret=DISPATCH params=VARIANT/0x0(Types),BSTR/0x0(Name)
+  [f44] memid=0x23(35) BeginImport invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f45] memid=0x24(36) EndImport invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f46] memid=0x25(37) OpenMapPage invkind=2 callconv=4 cParams=2 ret=I4 params=I4/0x0(Length),BSTR/0x0(Name)
+  [f47] memid=0x26(38) CheckVersion invkind=1 callconv=4 cParams=2 ret=VOID params=BSTR/0x0(strVersion),PTR/0x0(pbValue)
+  [f48] memid=0x27(39) SetVersion invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x0(strVersion)
+  [f49] memid=0x28(40) GetPropertiesList invkind=1 callconv=4 cParams=5 ret=VOID params=I2/0x1(shType),PTR/0x2(plCount),PTR/0x2(pvItems),PTR/0x2(pvSignalRecords),PTR/0x2(pvXmls)
+  [f50] memid=0x29(41) DumpProcessAttached invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f51] memid=0x2A(42) SetProcessId invkind=1 callconv=4 cParams=1 ret=VOID params=I4/0x1(processId)
+  [f52] memid=0x2B(43) ForceShutDown invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f53] memid=0x2C(44) SetLastWorkareaUpdateDateTime invkind=1 callconv=4 cParams=1 ret=VOID params=VARIANT/0x0(vDate)
+  [f54] memid=0x2D(45) GetLastWorkareaUpdateDateTime invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x0(pvDate)
+  [f55] memid=0x2E(46) GetVersion invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x2(strVersion)
+  [f56] memid=0x2F(47) SetBuildNumber invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x0(strBuildNumber)
+  [f57] memid=0x30(48) ReleaseRemainingPrograms invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+
+=== [4] _IProgramEvents (typekind=4 guid=7CEEA90B-D59E-11D3 cFuncs=3 cImplTypes=1) ===
+  [f00] memid=0x01(1) Update invkind=1 callconv=4 cParams=1 ret=HRESULT params=I4/0x0(Item)
+  [f01] memid=0x02(2) Verify invkind=1 callconv=4 cParams=1 ret=HRESULT params=BOOL/0x0(IsVerified)
+  [f02] memid=0x03(3) ChangedVerified invkind=1 callconv=4 cParams=1 ret=HRESULT params=BOOL/0x0(IsVerified)
+
+=== [5] Program (typekind=5 guid=7CEEA908-D59E-11D3 cFuncs=0 cImplTypes=2) ===
+
+=== [6] IProgram (typekind=4 guid=7CEEA904-D59E-11D3 cFuncs=48 cImplTypes=1) ===
+  [f00] memid=0x60000000(1610612736) QueryInterface invkind=1 callconv=4 cParams=2 ret=VOID params=PTR/0x1(riid),PTR/0x2(ppvObj)
+  [f01] memid=0x60000001(1610612737) AddRef invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f02] memid=0x60000002(1610612738) Release invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f03] memid=0x60010000(1610678272) GetTypeInfoCount invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x2(pctinfo)
+  [f04] memid=0x60010001(1610678273) GetTypeInfo invkind=1 callconv=4 cParams=3 ret=VOID params=UINT/0x1(itinfo),UI4/0x1(lcid),PTR/0x2(pptinfo)
+  [f05] memid=0x60010002(1610678274) GetIDsOfNames invkind=1 callconv=4 cParams=5 ret=VOID params=PTR/0x1(riid),PTR/0x1(rgszNames),UINT/0x1(cNames),UI4/0x1(lcid),PTR/0x2(rgdispid)
+  [f06] memid=0x60010003(1610678275) Invoke invkind=1 callconv=4 cParams=8 ret=VOID params=I4/0x1(dispidMember),PTR/0x1(riid),UI4/0x1(lcid),UI2/0x1(wFlags),PTR/0x1(pdispparams),PTR/0x2(pvarResult),PTR/0x2(pexcepinfo),PTR/0x2(puArgErr)
+  [f07] memid=0x01(1) Type invkind=2 callconv=4 cParams=0 ret=I2 params=(none)
+  [f08] memid=0x02(2) Name invkind=2 callconv=4 cParams=0 ret=BSTR params=(none)
+  [f09] memid=0x03(3) Property invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f10] memid=0x03(3) Property invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f11] memid=0x04(4) Id invkind=2 callconv=4 cParams=0 ret=I4 params=(none)
+  [f12] memid=0x05(5) Source invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f13] memid=0x05(5) Source invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f14] memid=0x06(6) Callers invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f15] memid=0x06(6) Callers invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f16] memid=0x07(7) Callees invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f17] memid=0x07(7) Callees invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f18] memid=0x08(8) Clear invkind=1 callconv=4 cParams=1 ret=VOID params=INT/0x1(nModule)
+  [f19] memid=0x09(9) Code invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f20] memid=0x09(9) Code invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f21] memid=0x0A(10) Categories invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f22] memid=0x0B(11) Header invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f23] memid=0x0B(11) Header invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f24] memid=0x0C(12) EnableEventUpdate invkind=2 callconv=4 cParams=1 ret=I4 params=I4/0x0(Type)
+  [f25] memid=0x0C(12) EnableEventUpdate invkind=4 callconv=4 cParams=2 ret=VOID params=I4/0x0(Type),I4/0x1
+  [f26] memid=0x0D(13) ELDAddRef invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f27] memid=0x0E(14) ELDRelease invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f28] memid=0x0F(15) AlertInfo invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f29] memid=0x0F(15) AlertInfo invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f30] memid=0x10(16) OrderColors invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f31] memid=0x10(16) OrderColors invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f32] memid=0x11(17) DataType invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f33] memid=0x11(17) DataType invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f34] memid=0x12(18) HistoryReferenced invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f35] memid=0x12(18) HistoryReferenced invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f36] memid=0x13(19) ExtendedProperties invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f37] memid=0x13(19) ExtendedProperties invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f38] memid=0x14(20) PartialClass invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f39] memid=0x14(20) PartialClass invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f40] memid=0x15(21) Icons invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f41] memid=0x15(21) Icons invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f42] memid=0x16(22) Localization invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f43] memid=0x16(22) Localization invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f44] memid=0x17(23) AddResource invkind=1 callconv=4 cParams=2 ret=VOID params=BSTR/0x1(Name),VARIANT/0x1(newVal)
+  [f45] memid=0x18(24) GetResource invkind=1 callconv=4 cParams=1 ret=VARIANT params=BSTR/0x1(Name)
+  [f46] memid=0x19(25) DeleteResource invkind=1 callconv=4 cParams=1 ret=VOID params=BSTR/0x1(Name)
+  [f47] memid=0x1A(26) GetResourceNames invkind=1 callconv=4 cParams=0 ret=BSTR params=(none)
+
+=== [7] Category (typekind=5 guid=7CEEA909-D59E-11D3 cFuncs=0 cImplTypes=1) ===
+
+=== [8] ICategory (typekind=4 guid=7CEEA905-D59E-11D3 cFuncs=26 cImplTypes=1) ===
+  [f00] memid=0x60000000(1610612736) QueryInterface invkind=1 callconv=4 cParams=2 ret=VOID params=PTR/0x1(riid),PTR/0x2(ppvObj)
+  [f01] memid=0x60000001(1610612737) AddRef invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f02] memid=0x60000002(1610612738) Release invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f03] memid=0x60010000(1610678272) GetTypeInfoCount invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x2(pctinfo)
+  [f04] memid=0x60010001(1610678273) GetTypeInfo invkind=1 callconv=4 cParams=3 ret=VOID params=UINT/0x1(itinfo),UI4/0x1(lcid),PTR/0x2(pptinfo)
+  [f05] memid=0x60010002(1610678274) GetIDsOfNames invkind=1 callconv=4 cParams=5 ret=VOID params=PTR/0x1(riid),PTR/0x1(rgszNames),UINT/0x1(cNames),UI4/0x1(lcid),PTR/0x2(rgdispid)
+  [f06] memid=0x60010003(1610678275) Invoke invkind=1 callconv=4 cParams=8 ret=VOID params=I4/0x1(dispidMember),PTR/0x1(riid),UI4/0x1(lcid),UI2/0x1(wFlags),PTR/0x1(pdispparams),PTR/0x2(pvarResult),PTR/0x2(pexcepinfo),PTR/0x2(puArgErr)
+  [f07] memid=0x01(1) Name invkind=2 callconv=4 cParams=0 ret=BSTR params=(none)
+  [f08] memid=0x02(2) ShortName invkind=2 callconv=4 cParams=0 ret=BSTR params=(none)
+  [f09] memid=0x02(2) ShortName invkind=4 callconv=4 cParams=1 ret=VOID params=BSTR/0x1
+  [f10] memid=0x03(3) IsDeveloper invkind=2 callconv=4 cParams=0 ret=I4 params=(none)
+  [f11] memid=0x03(3) IsDeveloper invkind=4 callconv=4 cParams=1 ret=VOID params=I4/0x1
+  [f12] memid=0x04(4) Discrimination invkind=2 callconv=4 cParams=0 ret=I4 params=(none)
+  [f13] memid=0x04(4) Discrimination invkind=4 callconv=4 cParams=1 ret=VOID params=I4/0x1
+  [f14] memid=0x05(5) Members invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f15] memid=0x05(5) Members invkind=4 callconv=4 cParams=1 ret=VOID params=VARIANT/0x1
+  [f16] memid=0x06(6) Flush invkind=1 callconv=4 cParams=0 ret=VOID params=(none)
+  [f17] memid=0x07(7) MembersList invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f18] memid=0x08(8) Type invkind=2 callconv=4 cParams=0 ret=INT params=(none)
+  [f19] memid=0x08(8) Type invkind=4 callconv=4 cParams=1 ret=VOID params=INT/0x1
+  [f20] memid=0x09(9) Count invkind=2 callconv=4 cParams=0 ret=INT params=(none)
+  [f21] memid=0x0A(10) Category invkind=2 callconv=4 cParams=1 ret=PTR params=VARIANT/0x0(vCategory)
+  [f22] memid=0x0B(11) AddCategory invkind=1 callconv=4 cParams=1 ret=INT params=BSTR/0x0(sName)
+  [f23] memid=0x0C(12) RemoveCategory invkind=1 callconv=4 cParams=1 ret=VOID params=VARIANT/0x0(vCategory)
+  [f24] memid=0x0D(13) CategoriesList invkind=2 callconv=4 cParams=0 ret=VARIANT params=(none)
+  [f25] memid=0x0E(14) FullQualifiedName invkind=2 callconv=4 cParams=0 ret=BSTR params=(none)
+
+=== [9] Control (typekind=5 guid=7CEEA90C-D59E-11D3 cFuncs=0 cImplTypes=1) ===
+
+=== [10] IControl (typekind=4 guid=7CEEA90A-D59E-11D3 cFuncs=8 cImplTypes=1) ===
+  [f00] memid=0x60000000(1610612736) QueryInterface invkind=1 callconv=4 cParams=2 ret=VOID params=PTR/0x1(riid),PTR/0x2(ppvObj)
+  [f01] memid=0x60000001(1610612737) AddRef invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f02] memid=0x60000002(1610612738) Release invkind=1 callconv=4 cParams=0 ret=UI4 params=(none)
+  [f03] memid=0x60010000(1610678272) GetTypeInfoCount invkind=1 callconv=4 cParams=1 ret=VOID params=PTR/0x2(pctinfo)
+  [f04] memid=0x60010001(1610678273) GetTypeInfo invkind=1 callconv=4 cParams=3 ret=VOID params=UINT/0x1(itinfo),UI4/0x1(lcid),PTR/0x2(pptinfo)
+  [f05] memid=0x60010002(1610678274) GetIDsOfNames invkind=1 callconv=4 cParams=5 ret=VOID params=PTR/0x1(riid),PTR/0x1(rgszNames),UINT/0x1(cNames),UI4/0x1(lcid),PTR/0x2(rgdispid)
+  [f06] memid=0x60010003(1610678275) Invoke invkind=1 callconv=4 cParams=8 ret=VOID params=I4/0x1(dispidMember),PTR/0x1(riid),UI4/0x1(lcid),UI2/0x1(wFlags),PTR/0x1(pdispparams),PTR/0x2(pvarResult),PTR/0x2(pexcepinfo),PTR/0x2(puArgErr)
+  [f07] memid=0x01(1) WHouseEx invkind=2 callconv=4 cParams=2 ret=DISPATCH params=BSTR/0x0(DirName),I4/0x0(Create)

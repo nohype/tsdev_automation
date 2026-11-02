@@ -1,0 +1,7 @@
+# false-positive case FP1 -- get-source
+# command: build\Release\tsdev_cli.exe --json get-source indicator "Plots the %R indicator."
+# exit_code: 5
+# stdout:
+{"op":"get-source","type":"indicator","name":"Plots the %R indicator.","success":false,"exit_code":5,"error":{"code":"not_found","message":"indicator \"Plots the %R indicator.\" not found or source unavailable."}}
+# stderr:
+

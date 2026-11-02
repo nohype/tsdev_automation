@@ -1,0 +1,9 @@
+{"op":"exists","type":"tradingapp","name":"!ex_DataGridViewSample","success":true,"exit_code":0,"prog_id":410,"exists":true,"stored_name":"!ex_DataGridViewSample"}
+{"op":"exists","type":"tradingapp","name":"MultiStratOrderExporter","success":true,"exit_code":0,"prog_id":409,"exists":true,"stored_name":"MultiStratOrderExporter"}
+{"op":"exists","type":"tradingapp","name":"ProtegeDNPRunner_TS10","success":true,"exit_code":0,"prog_id":405,"exists":true,"stored_name":"ProtegeDNPRunner_TS10"}
+{"op":"exists","type":"tradingapp","name":"TA_Feedback_Feedback","success":true,"exit_code":0,"prog_id":399,"exists":true,"stored_name":"TA_Feedback_Feedback"}
+{"op":"exists","type":"tradingapp","name":"TA_Intraday_Short_Locate_Intraday Short Locate","success":true,"exit_code":0,"prog_id":401,"exists":true,"stored_name":"TA_Intraday_Short_Locate_Intraday Short Locate"}
+{"op":"exists","type":"tradingapp","name":"TA_Market_Insights_Market Insights","success":true,"exit_code":0,"prog_id":402,"exists":true,"stored_name":"TA_Market_Insights_Market Insights"}
+{"op":"exists","type":"tradingapp","name":"TA_TSAlgos_TSAlgos","success":true,"exit_code":0,"prog_id":403,"exists":true,"stored_name":"TA_TSAlgos_TSAlgos"}
+{"op":"exists","type":"tradingapp","name":"TA_VideoStation_VideoStation","success":true,"exit_code":0,"prog_id":400,"exists":true,"stored_name":"TA_VideoStation_VideoStation"}
+{"op":"exists","type":"tradingapp","name":"testapp","success":true,"exit_code":0,"prog_id":404,"exists":true,"stored_name":"testapp"}

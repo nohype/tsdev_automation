@@ -1,0 +1,23 @@
+=== probe lifecycle 20261101195618 ===
+probes: strategy=zz_enumprobe_strat_20261101195618 function=zz_enumprobe_fn_20261101195618
+PRE exists strategy=zz_enumprobe_strat_20261101195618 -> exists=False
+PRE exists function=zz_enumprobe_fn_20261101195618 -> exists=False
+POPUP-AUDIT pre-insert : FOUND crash=[] windows=[explorer(10288):'C:\Program Files (x86)\TradeStation 9.5 and 2 more tabs - File Explorer']
+INSERT strategy exit=0 out={"op":"insert","type":"strategy","name":"zz_enumprobe_strat_20261101195618","success":true,"exit_code":0,"prog_id":10570,"ell_path":"C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_0_10570.ell"}
+INSERT function exit=0 out={"op":"insert","type":"function","name":"zz_enumprobe_fn_20261101195618","success":true,"exit_code":0,"prog_id":195,"ell_path":"C:\\Program Files (x86)\\TradeStation 9.5\\MyWork\\Bin\\elmodule_1_195.ell"}
+POPUP-AUDIT post-insert : FOUND crash=[] windows=[explorer(10288):'C:\Program Files (x86)\TradeStation 9.5 and 2 more tabs - File Explorer']
+GT after insert: strategy exists=True prog_id=10570 stored=<zz_enumprobe_strat_20261101195618>
+GT after insert: function exists=True prog_id=195 stored=<zz_enumprobe_fn_20261101195618>
+WALK post_insert tv=0 exit=0 -> C:\Users\freek\projects\tsdev_automation\tmp\probe_walk_post_insert_0.txt
+WALK post_insert tv=1 exit=0 -> C:\Users\freek\projects\tsdev_automation\tmp\probe_walk_post_insert_1.txt
+ENUM post-insert: strategy probe id-in-walk= (expected 10570) match=False
+ENUM post-insert: function probe id-in-walk= (expected 195) match=False
+DELETE strategy exit=0 out={"op":"delete","type":"strategy","name":"zz_enumprobe_strat_20261101195618","success":true,"exit_code":0,"prog_id":10570}
+DELETE function exit=0 out={"op":"delete","type":"function","name":"zz_enumprobe_fn_20261101195618","success":true,"exit_code":0,"prog_id":195}
+POPUP-AUDIT post-delete : FOUND crash=[] windows=[explorer(10288):'C:\Program Files (x86)\TradeStation 9.5 and 2 more tabs - File Explorer']
+WALK post_delete tv=0 exit=0 -> C:\Users\freek\projects\tsdev_automation\tmp\probe_walk_post_delete_0.txt
+WALK post_delete tv=1 exit=0 -> C:\Users\freek\projects\tsdev_automation\tmp\probe_walk_post_delete_1.txt
+ENUM post-delete: strategy probe present=True (expect absent)
+ENUM post-delete: function probe present=True (expect absent)
+CLEANUP exists=False / exists=False (expect 0 / 0)
+POPUP-AUDIT final : FOUND crash=[] windows=[explorer(10288):'C:\Program Files (x86)\TradeStation 9.5 and 2 more tabs - File Explorer']

@@ -1,0 +1,314 @@
+{"op":"exists","type":"indicator","name":"%Chg","success":true,"exit_code":0,"prog_id":1,"exists":true,"stored_name":"%Chg"}
+{"op":"exists","type":"indicator","name":"%R","success":true,"exit_code":0,"prog_id":2,"exists":true,"stored_name":"%R"}
+{"op":"exists","type":"indicator","name":"52 Wk Channel","success":true,"exit_code":0,"prog_id":3,"exists":true,"stored_name":"52 Wk Channel"}
+{"op":"exists","type":"indicator","name":"52 Wk High","success":true,"exit_code":0,"prog_id":4,"exists":true,"stored_name":"52 Wk High"}
+{"op":"exists","type":"indicator","name":"52 Wk High-Low","success":true,"exit_code":0,"prog_id":5,"exists":true,"stored_name":"52 Wk High-Low"}
+{"op":"exists","type":"indicator","name":"52 Wk Low","success":true,"exit_code":0,"prog_id":6,"exists":true,"stored_name":"52 Wk Low"}
+{"op":"exists","type":"indicator","name":"Absolute Breadth","success":true,"exit_code":0,"prog_id":7,"exists":true,"stored_name":"Absolute Breadth"}
+{"op":"exists","type":"indicator","name":"Accel Decel Oscillator","success":true,"exit_code":0,"prog_id":8,"exists":true,"stored_name":"Accel Decel Oscillator"}
+{"op":"exists","type":"indicator","name":"Accum Dist - BuyPr","success":true,"exit_code":0,"prog_id":9,"exists":true,"stored_name":"Accum Dist - BuyPr"}
+{"op":"exists","type":"indicator","name":"Accum Dist - PrVol","success":true,"exit_code":0,"prog_id":10,"exists":true,"stored_name":"Accum Dist - PrVol"}
+{"op":"exists","type":"indicator","name":"Accum Swing Index","success":true,"exit_code":0,"prog_id":11,"exists":true,"stored_name":"Accum Swing Index"}
+{"op":"exists","type":"indicator","name":"Advance-Decl Line","success":true,"exit_code":0,"prog_id":12,"exists":true,"stored_name":"Advance-Decl Line"}
+{"op":"exists","type":"indicator","name":"Advance-Decl Ratio","success":true,"exit_code":0,"prog_id":13,"exists":true,"stored_name":"Advance-Decl Ratio"}
+{"op":"exists","type":"indicator","name":"ADX","success":true,"exit_code":0,"prog_id":14,"exists":true,"stored_name":"ADX"}
+{"op":"exists","type":"indicator","name":"ADXR","success":true,"exit_code":0,"prog_id":15,"exists":true,"stored_name":"ADXR"}
+{"op":"exists","type":"indicator","name":"Algo - Bracket Orders - Entry OCO with Exit Bracket","success":true,"exit_code":0,"prog_id":16,"exists":true,"stored_name":"Algo - Bracket Orders - Entry OCO with Exit Bracket"}
+{"op":"exists","type":"indicator","name":"Algo - Bracket Orders WinForm - Entry OCO with OSO Exit","success":true,"exit_code":0,"prog_id":17,"exists":true,"stored_name":"Algo - Bracket Orders WinForm - Entry OCO with OSO Exit"}
+{"op":"exists","type":"indicator","name":"Algo - Pairs Trading","success":true,"exit_code":0,"prog_id":18,"exists":true,"stored_name":"Algo - Pairs Trading"}
+{"op":"exists","type":"indicator","name":"Algo - Simple Algos WinForm","success":true,"exit_code":0,"prog_id":19,"exists":true,"stored_name":"Algo - Simple Algos WinForm"}
+{"op":"exists","type":"indicator","name":"Alligator","success":true,"exit_code":0,"prog_id":20,"exists":true,"stored_name":"Alligator"}
+{"op":"exists","type":"indicator","name":"Arms Index (TRIN)","success":true,"exit_code":0,"prog_id":21,"exists":true,"stored_name":"Arms Index (TRIN)"}
+{"op":"exists","type":"indicator","name":"Aroon Indicator","success":true,"exit_code":0,"prog_id":22,"exists":true,"stored_name":"Aroon Indicator"}
+{"op":"exists","type":"indicator","name":"Aroon Oscillator","success":true,"exit_code":0,"prog_id":23,"exists":true,"stored_name":"Aroon Oscillator"}
+{"op":"exists","type":"indicator","name":"Ask","success":true,"exit_code":0,"prog_id":24,"exists":true,"stored_name":"Ask"}
+{"op":"exists","type":"indicator","name":"Ask Date","success":true,"exit_code":0,"prog_id":25,"exists":true,"stored_name":"Ask Date"}
+{"op":"exists","type":"indicator","name":"Ask Exch","success":true,"exit_code":0,"prog_id":26,"exists":true,"stored_name":"Ask Exch"}
+{"op":"exists","type":"indicator","name":"Ask Size","success":true,"exit_code":0,"prog_id":27,"exists":true,"stored_name":"Ask Size"}
+{"op":"exists","type":"indicator","name":"Ask Time","success":true,"exit_code":0,"prog_id":28,"exists":true,"stored_name":"Ask Time"}
+{"op":"exists","type":"indicator","name":"Average True Range","success":true,"exit_code":0,"prog_id":29,"exists":true,"stored_name":"Average True Range"}
+{"op":"exists","type":"indicator","name":"Awesome Oscillator","success":true,"exit_code":0,"prog_id":30,"exists":true,"stored_name":"Awesome Oscillator"}
+{"op":"exists","type":"indicator","name":"Balance Sheet MRQ","success":true,"exit_code":0,"prog_id":31,"exists":true,"stored_name":"Balance Sheet MRQ"}
+{"op":"exists","type":"indicator","name":"Bar Close","success":true,"exit_code":0,"prog_id":32,"exists":true,"stored_name":"Bar Close"}
+{"op":"exists","type":"indicator","name":"Bar High","success":true,"exit_code":0,"prog_id":33,"exists":true,"stored_name":"Bar High"}
+{"op":"exists","type":"indicator","name":"Bar Low","success":true,"exit_code":0,"prog_id":34,"exists":true,"stored_name":"Bar Low"}
+{"op":"exists","type":"indicator","name":"Bar Open","success":true,"exit_code":0,"prog_id":35,"exists":true,"stored_name":"Bar Open"}
+{"op":"exists","type":"indicator","name":"Bar Volume","success":true,"exit_code":0,"prog_id":36,"exists":true,"stored_name":"Bar Volume"}
+{"op":"exists","type":"indicator","name":"Beta","success":true,"exit_code":0,"prog_id":37,"exists":true,"stored_name":"Beta"}
+{"op":"exists","type":"indicator","name":"Bid","success":true,"exit_code":0,"prog_id":38,"exists":true,"stored_name":"Bid"}
+{"op":"exists","type":"indicator","name":"Bid & Ask","success":true,"exit_code":0,"prog_id":39,"exists":true,"stored_name":"Bid & Ask"}
+{"op":"exists","type":"indicator","name":"Bid & Ask Vol Ratio","success":true,"exit_code":0,"prog_id":40,"exists":true,"stored_name":"Bid & Ask Vol Ratio"}
+{"op":"exists","type":"indicator","name":"Bid Date","success":true,"exit_code":0,"prog_id":41,"exists":true,"stored_name":"Bid Date"}
+{"op":"exists","type":"indicator","name":"Bid Dir","success":true,"exit_code":0,"prog_id":42,"exists":true,"stored_name":"Bid Dir"}
+{"op":"exists","type":"indicator","name":"Bid Exch","success":true,"exit_code":0,"prog_id":43,"exists":true,"stored_name":"Bid Exch"}
+{"op":"exists","type":"indicator","name":"Bid Size","success":true,"exit_code":0,"prog_id":44,"exists":true,"stored_name":"Bid Size"}
+{"op":"exists","type":"indicator","name":"Bid Time","success":true,"exit_code":0,"prog_id":45,"exists":true,"stored_name":"Bid Time"}
+{"op":"exists","type":"indicator","name":"Bid-Ask","success":true,"exit_code":0,"prog_id":46,"exists":true,"stored_name":"Bid-Ask"}
+{"op":"exists","type":"indicator","name":"Black-Scholes","success":true,"exit_code":0,"prog_id":47,"exists":true,"stored_name":"Black-Scholes"}
+{"op":"exists","type":"indicator","name":"Block Trade < Bid","success":true,"exit_code":0,"prog_id":48,"exists":true,"stored_name":"Block Trade < Bid"}
+{"op":"exists","type":"indicator","name":"Block Trade > Ask","success":true,"exit_code":0,"prog_id":49,"exists":true,"stored_name":"Block Trade > Ask"}
+{"op":"exists","type":"indicator","name":"Block Trades per Bar","success":true,"exit_code":0,"prog_id":50,"exists":true,"stored_name":"Block Trades per Bar"}
+{"op":"exists","type":"indicator","name":"Bollinger %B","success":true,"exit_code":0,"prog_id":51,"exists":true,"stored_name":"Bollinger %B"}
+{"op":"exists","type":"indicator","name":"Bollinger Bands","success":true,"exit_code":0,"prog_id":52,"exists":true,"stored_name":"Bollinger Bands"}
+{"op":"exists","type":"indicator","name":"Bollinger Bandwidth","success":true,"exit_code":0,"prog_id":53,"exists":true,"stored_name":"Bollinger Bandwidth"}
+{"op":"exists","type":"indicator","name":"BOSM_USD_COEFFICIENT_INDI","success":true,"exit_code":0,"prog_id":414,"exists":true,"stored_name":"BOSM_USD_COEFFICIENT_INDI"}
+{"op":"exists","type":"indicator","name":"bounce2.0","success":true,"exit_code":0,"prog_id":416,"exists":true,"stored_name":"bounce2.0"}
+{"op":"exists","type":"indicator","name":"Breadth - Custom","success":true,"exit_code":0,"prog_id":54,"exists":true,"stored_name":"Breadth - Custom"}
+{"op":"exists","type":"indicator","name":"Cash Flow","success":true,"exit_code":0,"prog_id":55,"exists":true,"stored_name":"Cash Flow"}
+{"op":"exists","type":"indicator","name":"Category","success":true,"exit_code":0,"prog_id":56,"exists":true,"stored_name":"Category"}
+{"op":"exists","type":"indicator","name":"CCI Average","success":true,"exit_code":0,"prog_id":57,"exists":true,"stored_name":"CCI Average"}
+{"op":"exists","type":"indicator","name":"Chaikin Money Flow","success":true,"exit_code":0,"prog_id":58,"exists":true,"stored_name":"Chaikin Money Flow"}
+{"op":"exists","type":"indicator","name":"Chaikin Osc","success":true,"exit_code":0,"prog_id":59,"exists":true,"stored_name":"Chaikin Osc"}
+{"op":"exists","type":"indicator","name":"Chaikin Volatility","success":true,"exit_code":0,"prog_id":60,"exists":true,"stored_name":"Chaikin Volatility"}
+{"op":"exists","type":"indicator","name":"Chande Momentum Osc","success":true,"exit_code":0,"prog_id":61,"exists":true,"stored_name":"Chande Momentum Osc"}
+{"op":"exists","type":"indicator","name":"ChartTrading","success":true,"exit_code":0,"prog_id":62,"exists":true,"stored_name":"ChartTrading"}
+{"op":"exists","type":"indicator","name":"Close","success":true,"exit_code":0,"prog_id":63,"exists":true,"stored_name":"Close"}
+{"op":"exists","type":"indicator","name":"Comm Channel Index","success":true,"exit_code":0,"prog_id":64,"exists":true,"stored_name":"Comm Channel Index"}
+{"op":"exists","type":"indicator","name":"Comm Sel Index","success":true,"exit_code":0,"prog_id":65,"exists":true,"stored_name":"Comm Sel Index"}
+{"op":"exists","type":"indicator","name":"Corporate Margins","success":true,"exit_code":0,"prog_id":66,"exists":true,"stored_name":"Corporate Margins"}
+{"op":"exists","type":"indicator","name":"Correlation","success":true,"exit_code":0,"prog_id":67,"exists":true,"stored_name":"Correlation"}
+{"op":"exists","type":"indicator","name":"Correlation RS","success":true,"exit_code":0,"prog_id":68,"exists":true,"stored_name":"Correlation RS"}
+{"op":"exists","type":"indicator","name":"COT Net Position","success":true,"exit_code":0,"prog_id":69,"exists":true,"stored_name":"COT Net Position"}
+{"op":"exists","type":"indicator","name":"COT Total Position","success":true,"exit_code":0,"prog_id":70,"exists":true,"stored_name":"COT Total Position"}
+{"op":"exists","type":"indicator","name":"COT Total Position %","success":true,"exit_code":0,"prog_id":71,"exists":true,"stored_name":"COT Total Position %"}
+{"op":"exists","type":"indicator","name":"Country","success":true,"exit_code":0,"prog_id":72,"exists":true,"stored_name":"Country"}
+{"op":"exists","type":"indicator","name":"Crossovers per Bar","success":true,"exit_code":0,"prog_id":73,"exists":true,"stored_name":"Crossovers per Bar"}
+{"op":"exists","type":"indicator","name":"Crossunders per Bar","success":true,"exit_code":0,"prog_id":74,"exists":true,"stored_name":"Crossunders per Bar"}
+{"op":"exists","type":"indicator","name":"Currency","success":true,"exit_code":0,"prog_id":75,"exists":true,"stored_name":"Currency"}
+{"op":"exists","type":"indicator","name":"Custom 1 Line","success":true,"exit_code":0,"prog_id":76,"exists":true,"stored_name":"Custom 1 Line"}
+{"op":"exists","type":"indicator","name":"Custom 2 Lines","success":true,"exit_code":0,"prog_id":77,"exists":true,"stored_name":"Custom 2 Lines"}
+{"op":"exists","type":"indicator","name":"Custom 3 Lines","success":true,"exit_code":0,"prog_id":78,"exists":true,"stored_name":"Custom 3 Lines"}
+{"op":"exists","type":"indicator","name":"Custom 4 Lines","success":true,"exit_code":0,"prog_id":79,"exists":true,"stored_name":"Custom 4 Lines"}
+{"op":"exists","type":"indicator","name":"Custom Note","success":true,"exit_code":0,"prog_id":80,"exists":true,"stored_name":"Custom Note"}
+{"op":"exists","type":"indicator","name":"Custom Quote","success":true,"exit_code":0,"prog_id":81,"exists":true,"stored_name":"Custom Quote"}
+{"op":"exists","type":"indicator","name":"Day Open-Hi-Lo Lines","success":true,"exit_code":0,"prog_id":82,"exists":true,"stored_name":"Day Open-Hi-Lo Lines"}
+{"op":"exists","type":"indicator","name":"Day Open-Hi-Lo RT","success":true,"exit_code":0,"prog_id":83,"exists":true,"stored_name":"Day Open-Hi-Lo RT"}
+{"op":"exists","type":"indicator","name":"Day or Session Hi-Lo Lines","success":true,"exit_code":0,"prog_id":84,"exists":true,"stored_name":"Day or Session Hi-Lo Lines"}
+{"op":"exists","type":"indicator","name":"Death Cross","success":true,"exit_code":0,"prog_id":85,"exists":true,"stored_name":"Death Cross"}
+{"op":"exists","type":"indicator","name":"Description","success":true,"exit_code":0,"prog_id":86,"exists":true,"stored_name":"Description"}
+{"op":"exists","type":"indicator","name":"Detrended Price Osc","success":true,"exit_code":0,"prog_id":87,"exists":true,"stored_name":"Detrended Price Osc"}
+{"op":"exists","type":"indicator","name":"Dividend","success":true,"exit_code":0,"prog_id":88,"exists":true,"stored_name":"Dividend"}
+{"op":"exists","type":"indicator","name":"Dividends","success":true,"exit_code":0,"prog_id":89,"exists":true,"stored_name":"Dividends"}
+{"op":"exists","type":"indicator","name":"DMI","success":true,"exit_code":0,"prog_id":90,"exists":true,"stored_name":"DMI"}
+{"op":"exists","type":"indicator","name":"Ease of Movement","success":true,"exit_code":0,"prog_id":91,"exists":true,"stored_name":"Ease of Movement"}
+{"op":"exists","type":"indicator","name":"EPS","success":true,"exit_code":0,"prog_id":92,"exists":true,"stored_name":"EPS"}
+{"op":"exists","type":"indicator","name":"EPS Basic MRQ","success":true,"exit_code":0,"prog_id":93,"exists":true,"stored_name":"EPS Basic MRQ"}
+{"op":"exists","type":"indicator","name":"EPS Diluted MRQ","success":true,"exit_code":0,"prog_id":94,"exists":true,"stored_name":"EPS Diluted MRQ"}
+{"op":"exists","type":"indicator","name":"EPS Diluted TTM","success":true,"exit_code":0,"prog_id":95,"exists":true,"stored_name":"EPS Diluted TTM"}
+{"op":"exists","type":"indicator","name":"Exch","success":true,"exit_code":0,"prog_id":96,"exists":true,"stored_name":"Exch"}
+{"op":"exists","type":"indicator","name":"Exp Date","success":true,"exit_code":0,"prog_id":97,"exists":true,"stored_name":"Exp Date"}
+{"op":"exists","type":"indicator","name":"Falter & Reverse Dn","success":true,"exit_code":0,"prog_id":98,"exists":true,"stored_name":"Falter & Reverse Dn"}
+{"op":"exists","type":"indicator","name":"Falter & Reverse Up","success":true,"exit_code":0,"prog_id":99,"exists":true,"stored_name":"Falter & Reverse Up"}
+{"op":"exists","type":"indicator","name":"Fibonacci Retrace","success":true,"exit_code":0,"prog_id":100,"exists":true,"stored_name":"Fibonacci Retrace"}
+{"op":"exists","type":"indicator","name":"Financial Strength","success":true,"exit_code":0,"prog_id":101,"exists":true,"stored_name":"Financial Strength"}
+{"op":"exists","type":"indicator","name":"Floating Text","success":true,"exit_code":0,"prog_id":102,"exists":true,"stored_name":"Floating Text"}
+{"op":"exists","type":"indicator","name":"Floor Trader Pivots","success":true,"exit_code":0,"prog_id":103,"exists":true,"stored_name":"Floor Trader Pivots"}
+{"op":"exists","type":"indicator","name":"FND","success":true,"exit_code":0,"prog_id":104,"exists":true,"stored_name":"FND"}
+{"op":"exists","type":"indicator","name":"Formula OHLC","success":true,"exit_code":0,"prog_id":105,"exists":true,"stored_name":"Formula OHLC"}
+{"op":"exists","type":"indicator","name":"Fundamental to Avg Fundamental","success":true,"exit_code":0,"prog_id":106,"exists":true,"stored_name":"Fundamental to Avg Fundamental"}
+{"op":"exists","type":"indicator","name":"Fundamntl Custom","success":true,"exit_code":0,"prog_id":107,"exists":true,"stored_name":"Fundamntl Custom"}
+{"op":"exists","type":"indicator","name":"Fundamntl Date","success":true,"exit_code":0,"prog_id":108,"exists":true,"stored_name":"Fundamntl Date"}
+{"op":"exists","type":"indicator","name":"Fundamntl TTM","success":true,"exit_code":0,"prog_id":109,"exists":true,"stored_name":"Fundamntl TTM"}
+{"op":"exists","type":"indicator","name":"Fundamntl TTM Acc","success":true,"exit_code":0,"prog_id":110,"exists":true,"stored_name":"Fundamntl TTM Acc"}
+{"op":"exists","type":"indicator","name":"Fundamntl TTM Mom","success":true,"exit_code":0,"prog_id":111,"exists":true,"stored_name":"Fundamntl TTM Mom"}
+{"op":"exists","type":"indicator","name":"FX Roll Acct Value","success":true,"exit_code":0,"prog_id":112,"exists":true,"stored_name":"FX Roll Acct Value"}
+{"op":"exists","type":"indicator","name":"FX Roll Rates","success":true,"exit_code":0,"prog_id":113,"exists":true,"stored_name":"FX Roll Rates"}
+{"op":"exists","type":"indicator","name":"Gann HiLo Activator","success":true,"exit_code":0,"prog_id":114,"exists":true,"stored_name":"Gann HiLo Activator"}
+{"op":"exists","type":"indicator","name":"Gap & Reverse Dn","success":true,"exit_code":0,"prog_id":115,"exists":true,"stored_name":"Gap & Reverse Dn"}
+{"op":"exists","type":"indicator","name":"Gap & Reverse Up","success":true,"exit_code":0,"prog_id":116,"exists":true,"stored_name":"Gap & Reverse Up"}
+{"op":"exists","type":"indicator","name":"Gapless Bar Chart","success":true,"exit_code":0,"prog_id":117,"exists":true,"stored_name":"Gapless Bar Chart"}
+{"op":"exists","type":"indicator","name":"Golden Cross","success":true,"exit_code":0,"prog_id":118,"exists":true,"stored_name":"Golden Cross"}
+{"op":"exists","type":"indicator","name":"High","success":true,"exit_code":0,"prog_id":119,"exists":true,"stored_name":"High"}
+{"op":"exists","type":"indicator","name":"HPI","success":true,"exit_code":0,"prog_id":120,"exists":true,"stored_name":"HPI"}
+{"op":"exists","type":"indicator","name":"Ichimoku Cloud","success":true,"exit_code":0,"prog_id":121,"exists":true,"stored_name":"Ichimoku Cloud"}
+{"op":"exists","type":"indicator","name":"Impl Volty - Stoch","success":true,"exit_code":0,"prog_id":122,"exists":true,"stored_name":"Impl Volty - Stoch"}
+{"op":"exists","type":"indicator","name":"Impl Volty- 1 Option","success":true,"exit_code":0,"prog_id":123,"exists":true,"stored_name":"Impl Volty- 1 Option"}
+{"op":"exists","type":"indicator","name":"Impl Volty- All Opts","success":true,"exit_code":0,"prog_id":124,"exists":true,"stored_name":"Impl Volty- All Opts"}
+{"op":"exists","type":"indicator","name":"Impl Volty- Osc","success":true,"exit_code":0,"prog_id":125,"exists":true,"stored_name":"Impl Volty- Osc"}
+{"op":"exists","type":"indicator","name":"Impl Volty- ROC","success":true,"exit_code":0,"prog_id":126,"exists":true,"stored_name":"Impl Volty- ROC"}
+{"op":"exists","type":"indicator","name":"Impl Volty/Historical Volty","success":true,"exit_code":0,"prog_id":388,"exists":true,"stored_name":"Impl Volty/Historical Volty"}
+{"op":"exists","type":"indicator","name":"Impl Volty/VoltySDev","success":true,"exit_code":0,"prog_id":127,"exists":true,"stored_name":"Impl Volty/VoltySDev"}
+{"op":"exists","type":"indicator","name":"Income Statement TTM","success":true,"exit_code":0,"prog_id":128,"exists":true,"stored_name":"Income Statement TTM"}
+{"op":"exists","type":"indicator","name":"Industry","success":true,"exit_code":0,"prog_id":129,"exists":true,"stored_name":"Industry"}
+{"op":"exists","type":"indicator","name":"Institution Acc-Dist","success":true,"exit_code":0,"prog_id":130,"exists":true,"stored_name":"Institution Acc-Dist"}
+{"op":"exists","type":"indicator","name":"Interval","success":true,"exit_code":0,"prog_id":131,"exists":true,"stored_name":"Interval"}
+{"op":"exists","type":"indicator","name":"JW_FRIDA_IND_20260828_102012","success":true,"exit_code":0,"prog_id":2952,"exists":true,"stored_name":"JW_FRIDA_IND_20260828_102012"}
+{"op":"exists","type":"indicator","name":"JW_FRIDA_TEST_IND","success":true,"exit_code":0,"prog_id":2950,"exists":true,"stored_name":"JW_FRIDA_TEST_IND"}
+{"op":"exists","type":"indicator","name":"Keltner Channel","success":true,"exit_code":0,"prog_id":132,"exists":true,"stored_name":"Keltner Channel"}
+{"op":"exists","type":"indicator","name":"Last","success":true,"exit_code":0,"prog_id":133,"exists":true,"stored_name":"Last"}
+{"op":"exists","type":"indicator","name":"LBR Three-Ten Oscillator","success":true,"exit_code":0,"prog_id":134,"exists":true,"stored_name":"LBR Three-Ten Oscillator"}
+{"op":"exists","type":"indicator","name":"Level II to Excel","success":true,"exit_code":0,"prog_id":135,"exists":true,"stored_name":"Level II to Excel"}
+{"op":"exists","type":"indicator","name":"Line at Ask","success":true,"exit_code":0,"prog_id":389,"exists":true,"stored_name":"Line at Ask"}
+{"op":"exists","type":"indicator","name":"Line at Bid","success":true,"exit_code":0,"prog_id":390,"exists":true,"stored_name":"Line at Bid"}
+{"op":"exists","type":"indicator","name":"Line at Price","success":true,"exit_code":0,"prog_id":136,"exists":true,"stored_name":"Line at Price"}
+{"op":"exists","type":"indicator","name":"Linear Reg Curve","success":true,"exit_code":0,"prog_id":137,"exists":true,"stored_name":"Linear Reg Curve"}
+{"op":"exists","type":"indicator","name":"Linear Reg Line","success":true,"exit_code":0,"prog_id":138,"exists":true,"stored_name":"Linear Reg Line"}
+{"op":"exists","type":"indicator","name":"Low","success":true,"exit_code":0,"prog_id":139,"exists":true,"stored_name":"Low"}
+{"op":"exists","type":"indicator","name":"LTD","success":true,"exit_code":0,"prog_id":140,"exists":true,"stored_name":"LTD"}
+{"op":"exists","type":"indicator","name":"MACD","success":true,"exit_code":0,"prog_id":141,"exists":true,"stored_name":"MACD"}
+{"op":"exists","type":"indicator","name":"Manage Efficient TTM","success":true,"exit_code":0,"prog_id":142,"exists":true,"stored_name":"Manage Efficient TTM"}
+{"op":"exists","type":"indicator","name":"Market Cap M","success":true,"exit_code":0,"prog_id":143,"exists":true,"stored_name":"Market Cap M"}
+{"op":"exists","type":"indicator","name":"Market Depth - Price Levels","success":true,"exit_code":0,"prog_id":144,"exists":true,"stored_name":"Market Depth - Price Levels"}
+{"op":"exists","type":"indicator","name":"Market Depth in RadarScreen","success":true,"exit_code":0,"prog_id":391,"exists":true,"stored_name":"Market Depth in RadarScreen"}
+{"op":"exists","type":"indicator","name":"Market Thrust","success":true,"exit_code":0,"prog_id":145,"exists":true,"stored_name":"Market Thrust"}
+{"op":"exists","type":"indicator","name":"Mass Index","success":true,"exit_code":0,"prog_id":146,"exists":true,"stored_name":"Mass Index"}
+{"op":"exists","type":"indicator","name":"McClellan Osc","success":true,"exit_code":0,"prog_id":147,"exists":true,"stored_name":"McClellan Osc"}
+{"op":"exists","type":"indicator","name":"Mid Range","success":true,"exit_code":0,"prog_id":148,"exists":true,"stored_name":"Mid Range"}
+{"op":"exists","type":"indicator","name":"Mkt Facilitation Idx","success":true,"exit_code":0,"prog_id":149,"exists":true,"stored_name":"Mkt Facilitation Idx"}
+{"op":"exists","type":"indicator","name":"Momentum","success":true,"exit_code":0,"prog_id":150,"exists":true,"stored_name":"Momentum"}
+{"op":"exists","type":"indicator","name":"Money Flow","success":true,"exit_code":0,"prog_id":151,"exists":true,"stored_name":"Money Flow"}
+{"op":"exists","type":"indicator","name":"Mov Avg 1 Line","success":true,"exit_code":0,"prog_id":152,"exists":true,"stored_name":"Mov Avg 1 Line"}
+{"op":"exists","type":"indicator","name":"Mov Avg 2 Lines","success":true,"exit_code":0,"prog_id":153,"exists":true,"stored_name":"Mov Avg 2 Lines"}
+{"op":"exists","type":"indicator","name":"Mov Avg 3 Lines","success":true,"exit_code":0,"prog_id":154,"exists":true,"stored_name":"Mov Avg 3 Lines"}
+{"op":"exists","type":"indicator","name":"Mov Avg Adaptive","success":true,"exit_code":0,"prog_id":155,"exists":true,"stored_name":"Mov Avg Adaptive"}
+{"op":"exists","type":"indicator","name":"Mov Avg DEMA","success":true,"exit_code":0,"prog_id":156,"exists":true,"stored_name":"Mov Avg DEMA"}
+{"op":"exists","type":"indicator","name":"Mov Avg Envelopes","success":true,"exit_code":0,"prog_id":157,"exists":true,"stored_name":"Mov Avg Envelopes"}
+{"op":"exists","type":"indicator","name":"Mov Avg Exp 2 Lines","success":true,"exit_code":0,"prog_id":392,"exists":true,"stored_name":"Mov Avg Exp 2 Lines"}
+{"op":"exists","type":"indicator","name":"Mov Avg Exp 3 Lines","success":true,"exit_code":0,"prog_id":393,"exists":true,"stored_name":"Mov Avg Exp 3 Lines"}
+{"op":"exists","type":"indicator","name":"Mov Avg Exp Ribbon","success":true,"exit_code":0,"prog_id":158,"exists":true,"stored_name":"Mov Avg Exp Ribbon"}
+{"op":"exists","type":"indicator","name":"Mov Avg Exponential","success":true,"exit_code":0,"prog_id":159,"exists":true,"stored_name":"Mov Avg Exponential"}
+{"op":"exists","type":"indicator","name":"Mov Avg Hull","success":true,"exit_code":0,"prog_id":160,"exists":true,"stored_name":"Mov Avg Hull"}
+{"op":"exists","type":"indicator","name":"Mov Avg MAMA","success":true,"exit_code":0,"prog_id":161,"exists":true,"stored_name":"Mov Avg MAMA"}
+{"op":"exists","type":"indicator","name":"Mov Avg QEMA","success":true,"exit_code":0,"prog_id":162,"exists":true,"stored_name":"Mov Avg QEMA"}
+{"op":"exists","type":"indicator","name":"Mov Avg TEMA","success":true,"exit_code":0,"prog_id":163,"exists":true,"stored_name":"Mov Avg TEMA"}
+{"op":"exists","type":"indicator","name":"Mov Avg Triangular","success":true,"exit_code":0,"prog_id":164,"exists":true,"stored_name":"Mov Avg Triangular"}
+{"op":"exists","type":"indicator","name":"Mov Avg Volume-weighted","success":true,"exit_code":0,"prog_id":165,"exists":true,"stored_name":"Mov Avg Volume-weighted"}
+{"op":"exists","type":"indicator","name":"Mov Avg Weighted","success":true,"exit_code":0,"prog_id":166,"exists":true,"stored_name":"Mov Avg Weighted"}
+{"op":"exists","type":"indicator","name":"Move AOP Lines","success":true,"exit_code":0,"prog_id":167,"exists":true,"stored_name":"Move AOP Lines"}
+{"op":"exists","type":"indicator","name":"Moving Average Gap Ratio","success":true,"exit_code":0,"prog_id":168,"exists":true,"stored_name":"Moving Average Gap Ratio"}
+{"op":"exists","type":"indicator","name":"Negative Volume Index","success":true,"exit_code":0,"prog_id":169,"exists":true,"stored_name":"Negative Volume Index"}
+{"op":"exists","type":"indicator","name":"Net %Chg","success":true,"exit_code":0,"prog_id":170,"exists":true,"stored_name":"Net %Chg"}
+{"op":"exists","type":"indicator","name":"Net %Chg (C)","success":true,"exit_code":0,"prog_id":171,"exists":true,"stored_name":"Net %Chg (C)"}
+{"op":"exists","type":"indicator","name":"Net %Chg Max Dn","success":true,"exit_code":0,"prog_id":172,"exists":true,"stored_name":"Net %Chg Max Dn"}
+{"op":"exists","type":"indicator","name":"Net %Chg Max Up","success":true,"exit_code":0,"prog_id":173,"exists":true,"stored_name":"Net %Chg Max Up"}
+{"op":"exists","type":"indicator","name":"Net %Chg OMD","success":true,"exit_code":0,"prog_id":174,"exists":true,"stored_name":"Net %Chg OMD"}
+{"op":"exists","type":"indicator","name":"Net %Chg OMU","success":true,"exit_code":0,"prog_id":175,"exists":true,"stored_name":"Net %Chg OMU"}
+{"op":"exists","type":"indicator","name":"Net %Chg Open","success":true,"exit_code":0,"prog_id":176,"exists":true,"stored_name":"Net %Chg Open"}
+{"op":"exists","type":"indicator","name":"Net Chg","success":true,"exit_code":0,"prog_id":177,"exists":true,"stored_name":"Net Chg"}
+{"op":"exists","type":"indicator","name":"Net Chg (C)","success":true,"exit_code":0,"prog_id":178,"exists":true,"stored_name":"Net Chg (C)"}
+{"op":"exists","type":"indicator","name":"Net Chg Open","success":true,"exit_code":0,"prog_id":179,"exists":true,"stored_name":"Net Chg Open"}
+{"op":"exists","type":"indicator","name":"New 52 Wk High","success":true,"exit_code":0,"prog_id":180,"exists":true,"stored_name":"New 52 Wk High"}
+{"op":"exists","type":"indicator","name":"New 52 Wk Low","success":true,"exit_code":0,"prog_id":181,"exists":true,"stored_name":"New 52 Wk Low"}
+{"op":"exists","type":"indicator","name":"New Intraday High","success":true,"exit_code":0,"prog_id":182,"exists":true,"stored_name":"New Intraday High"}
+{"op":"exists","type":"indicator","name":"New Intraday Low","success":true,"exit_code":0,"prog_id":183,"exists":true,"stored_name":"New Intraday Low"}
+{"op":"exists","type":"indicator","name":"New N-Day High","success":true,"exit_code":0,"prog_id":184,"exists":true,"stored_name":"New N-Day High"}
+{"op":"exists","type":"indicator","name":"New N-Day Low","success":true,"exit_code":0,"prog_id":185,"exists":true,"stored_name":"New N-Day Low"}
+{"op":"exists","type":"indicator","name":"Next 3rd Friday","success":true,"exit_code":0,"prog_id":186,"exists":true,"stored_name":"Next 3rd Friday"}
+{"op":"exists","type":"indicator","name":"OHLC Yesterday","success":true,"exit_code":0,"prog_id":187,"exists":true,"stored_name":"OHLC Yesterday"}
+{"op":"exists","type":"indicator","name":"On Balance Volume","success":true,"exit_code":0,"prog_id":188,"exists":true,"stored_name":"On Balance Volume"}
+{"op":"exists","type":"indicator","name":"Open","success":true,"exit_code":0,"prog_id":189,"exists":true,"stored_name":"Open"}
+{"op":"exists","type":"indicator","name":"Open Gap","success":true,"exit_code":0,"prog_id":190,"exists":true,"stored_name":"Open Gap"}
+{"op":"exists","type":"indicator","name":"Open Gap %","success":true,"exit_code":0,"prog_id":191,"exists":true,"stored_name":"Open Gap %"}
+{"op":"exists","type":"indicator","name":"Open Int","success":true,"exit_code":0,"prog_id":192,"exists":true,"stored_name":"Open Int"}
+{"op":"exists","type":"indicator","name":"Open Int - All Opts","success":true,"exit_code":0,"prog_id":193,"exists":true,"stored_name":"Open Int - All Opts"}
+{"op":"exists","type":"indicator","name":"Open Int - Calls","success":true,"exit_code":0,"prog_id":194,"exists":true,"stored_name":"Open Int - Calls"}
+{"op":"exists","type":"indicator","name":"Open Int - Puts","success":true,"exit_code":0,"prog_id":195,"exists":true,"stored_name":"Open Int - Puts"}
+{"op":"exists","type":"indicator","name":"Open Interest","success":true,"exit_code":0,"prog_id":196,"exists":true,"stored_name":"Open Interest"}
+{"op":"exists","type":"indicator","name":"Open Order Information","success":true,"exit_code":0,"prog_id":197,"exists":true,"stored_name":"Open Order Information"}
+{"op":"exists","type":"indicator","name":"Option Delta","success":true,"exit_code":0,"prog_id":198,"exists":true,"stored_name":"Option Delta"}
+{"op":"exists","type":"indicator","name":"Option Gamma","success":true,"exit_code":0,"prog_id":199,"exists":true,"stored_name":"Option Gamma"}
+{"op":"exists","type":"indicator","name":"Option Price","success":true,"exit_code":0,"prog_id":200,"exists":true,"stored_name":"Option Price"}
+{"op":"exists","type":"indicator","name":"Option Theta","success":true,"exit_code":0,"prog_id":201,"exists":true,"stored_name":"Option Theta"}
+{"op":"exists","type":"indicator","name":"Option Type","success":true,"exit_code":0,"prog_id":202,"exists":true,"stored_name":"Option Type"}
+{"op":"exists","type":"indicator","name":"Option Vega","success":true,"exit_code":0,"prog_id":203,"exists":true,"stored_name":"Option Vega"}
+{"op":"exists","type":"indicator","name":"Parabolic SAR","success":true,"exit_code":0,"prog_id":204,"exists":true,"stored_name":"Parabolic SAR"}
+{"op":"exists","type":"indicator","name":"Payout Ratios","success":true,"exit_code":0,"prog_id":205,"exists":true,"stored_name":"Payout Ratios"}
+{"op":"exists","type":"indicator","name":"Pennant Brkout Dn","success":true,"exit_code":0,"prog_id":206,"exists":true,"stored_name":"Pennant Brkout Dn"}
+{"op":"exists","type":"indicator","name":"Pennant Brkout Up","success":true,"exit_code":0,"prog_id":207,"exists":true,"stored_name":"Pennant Brkout Up"}
+{"op":"exists","type":"indicator","name":"Polarized Fractal Efficiency","success":true,"exit_code":0,"prog_id":208,"exists":true,"stored_name":"Polarized Fractal Efficiency"}
+{"op":"exists","type":"indicator","name":"Position P/L","success":true,"exit_code":0,"prog_id":209,"exists":true,"stored_name":"Position P/L"}
+{"op":"exists","type":"indicator","name":"Position P/L %","success":true,"exit_code":0,"prog_id":210,"exists":true,"stored_name":"Position P/L %"}
+{"op":"exists","type":"indicator","name":"Position P/L % Grad","success":true,"exit_code":0,"prog_id":211,"exists":true,"stored_name":"Position P/L % Grad"}
+{"op":"exists","type":"indicator","name":"Position P/L Auto","success":true,"exit_code":0,"prog_id":212,"exists":true,"stored_name":"Position P/L Auto"}
+{"op":"exists","type":"indicator","name":"Position Value","success":true,"exit_code":0,"prog_id":213,"exists":true,"stored_name":"Position Value"}
+{"op":"exists","type":"indicator","name":"Positive Volume Index","success":true,"exit_code":0,"prog_id":214,"exists":true,"stored_name":"Positive Volume Index"}
+{"op":"exists","type":"indicator","name":"PPO Oscillator","success":true,"exit_code":0,"prog_id":394,"exists":true,"stored_name":"PPO Oscillator"}
+{"op":"exists","type":"indicator","name":"Prev Close","success":true,"exit_code":0,"prog_id":215,"exists":true,"stored_name":"Prev Close"}
+{"op":"exists","type":"indicator","name":"Price Channel","success":true,"exit_code":0,"prog_id":216,"exists":true,"stored_name":"Price Channel"}
+{"op":"exists","type":"indicator","name":"Price Channel %PC","success":true,"exit_code":0,"prog_id":217,"exists":true,"stored_name":"Price Channel %PC"}
+{"op":"exists","type":"indicator","name":"Price Earnings","success":true,"exit_code":0,"prog_id":218,"exists":true,"stored_name":"Price Earnings"}
+{"op":"exists","type":"indicator","name":"Price Osc","success":true,"exit_code":0,"prog_id":219,"exists":true,"stored_name":"Price Osc"}
+{"op":"exists","type":"indicator","name":"Price Volume Trend","success":true,"exit_code":0,"prog_id":220,"exists":true,"stored_name":"Price Volume Trend"}
+{"op":"exists","type":"indicator","name":"Price/Earnings","success":true,"exit_code":0,"prog_id":221,"exists":true,"stored_name":"Price/Earnings"}
+{"op":"exists","type":"indicator","name":"PROTEGE_MARKET_MAPPING","success":true,"exit_code":0,"prog_id":412,"exists":true,"stored_name":"PROTEGE_MARKET_MAPPING"}
+{"op":"exists","type":"indicator","name":"Psychological Line","success":true,"exit_code":0,"prog_id":222,"exists":true,"stored_name":"Psychological Line"}
+{"op":"exists","type":"indicator","name":"Put/Call OI RatioAvg","success":true,"exit_code":0,"prog_id":223,"exists":true,"stored_name":"Put/Call OI RatioAvg"}
+{"op":"exists","type":"indicator","name":"Put/Call V Ratio Avg","success":true,"exit_code":0,"prog_id":224,"exists":true,"stored_name":"Put/Call V Ratio Avg"}
+{"op":"exists","type":"indicator","name":"QQE","success":true,"exit_code":0,"prog_id":395,"exists":true,"stored_name":"QQE"}
+{"op":"exists","type":"indicator","name":"RainbowEMA","success":true,"exit_code":0,"prog_id":415,"exists":true,"stored_name":"RainbowEMA"}
+{"op":"exists","type":"indicator","name":"Range","success":true,"exit_code":0,"prog_id":225,"exists":true,"stored_name":"Range"}
+{"op":"exists","type":"indicator","name":"Range %","success":true,"exit_code":0,"prog_id":226,"exists":true,"stored_name":"Range %"}
+{"op":"exists","type":"indicator","name":"Rate of Chg","success":true,"exit_code":0,"prog_id":227,"exists":true,"stored_name":"Rate of Chg"}
+{"op":"exists","type":"indicator","name":"Rate of Deviation","success":true,"exit_code":0,"prog_id":228,"exists":true,"stored_name":"Rate of Deviation"}
+{"op":"exists","type":"indicator","name":"RCI (Spearman's RCC)","success":true,"exit_code":0,"prog_id":229,"exists":true,"stored_name":"RCI (Spearman's RCC)"}
+{"op":"exists","type":"indicator","name":"Relative Strength","success":true,"exit_code":0,"prog_id":230,"exists":true,"stored_name":"Relative Strength"}
+{"op":"exists","type":"indicator","name":"Relative Strength (One Day)","success":true,"exit_code":0,"prog_id":231,"exists":true,"stored_name":"Relative Strength (One Day)"}
+{"op":"exists","type":"indicator","name":"RSI","success":true,"exit_code":0,"prog_id":232,"exists":true,"stored_name":"RSI"}
+{"op":"exists","type":"indicator","name":"RSI JP","success":true,"exit_code":0,"prog_id":233,"exists":true,"stored_name":"RSI JP"}
+{"op":"exists","type":"indicator","name":"S&P 500 Rel Strength","success":true,"exit_code":0,"prog_id":234,"exists":true,"stored_name":"S&P 500 Rel Strength"}
+{"op":"exists","type":"indicator","name":"Sector","success":true,"exit_code":0,"prog_id":235,"exists":true,"stored_name":"Sector"}
+{"op":"exists","type":"indicator","name":"Spread - Diff","success":true,"exit_code":0,"prog_id":236,"exists":true,"stored_name":"Spread - Diff"}
+{"op":"exists","type":"indicator","name":"Spread - Ratio","success":true,"exit_code":0,"prog_id":237,"exists":true,"stored_name":"Spread - Ratio"}
+{"op":"exists","type":"indicator","name":"Spread RS","success":true,"exit_code":0,"prog_id":238,"exists":true,"stored_name":"Spread RS"}
+{"op":"exists","type":"indicator","name":"Standard Error Bands","success":true,"exit_code":0,"prog_id":239,"exists":true,"stored_name":"Standard Error Bands"}
+{"op":"exists","type":"indicator","name":"Stochastic Double Slow","success":true,"exit_code":0,"prog_id":240,"exists":true,"stored_name":"Stochastic Double Slow"}
+{"op":"exists","type":"indicator","name":"Stochastic Fast","success":true,"exit_code":0,"prog_id":241,"exists":true,"stored_name":"Stochastic Fast"}
+{"op":"exists","type":"indicator","name":"Stochastic Slow","success":true,"exit_code":0,"prog_id":242,"exists":true,"stored_name":"Stochastic Slow"}
+{"op":"exists","type":"indicator","name":"Strategy Equity","success":true,"exit_code":0,"prog_id":243,"exists":true,"stored_name":"Strategy Equity"}
+{"op":"exists","type":"indicator","name":"Strike Price","success":true,"exit_code":0,"prog_id":244,"exists":true,"stored_name":"Strike Price"}
+{"op":"exists","type":"indicator","name":"Subsession OHLC","success":true,"exit_code":0,"prog_id":245,"exists":true,"stored_name":"Subsession OHLC"}
+{"op":"exists","type":"indicator","name":"Swing Index","success":true,"exit_code":0,"prog_id":246,"exists":true,"stored_name":"Swing Index"}
+{"op":"exists","type":"indicator","name":"testind","success":true,"exit_code":0,"prog_id":3006,"exists":true,"stored_name":"testind"}
+{"op":"exists","type":"indicator","name":"Time Remaining in Bar","success":true,"exit_code":0,"prog_id":396,"exists":true,"stored_name":"Time Remaining in Bar"}
+{"op":"exists","type":"indicator","name":"Time Series Forecast","success":true,"exit_code":0,"prog_id":247,"exists":true,"stored_name":"Time Series Forecast"}
+{"op":"exists","type":"indicator","name":"Total Shs Outstand M","success":true,"exit_code":0,"prog_id":248,"exists":true,"stored_name":"Total Shs Outstand M"}
+{"op":"exists","type":"indicator","name":"Trade @ Bid/Ask","success":true,"exit_code":0,"prog_id":249,"exists":true,"stored_name":"Trade @ Bid/Ask"}
+{"op":"exists","type":"indicator","name":"Trade Date","success":true,"exit_code":0,"prog_id":250,"exists":true,"stored_name":"Trade Date"}
+{"op":"exists","type":"indicator","name":"Trade Dir","success":true,"exit_code":0,"prog_id":251,"exists":true,"stored_name":"Trade Dir"}
+{"op":"exists","type":"indicator","name":"Trade Exch","success":true,"exit_code":0,"prog_id":252,"exists":true,"stored_name":"Trade Exch"}
+{"op":"exists","type":"indicator","name":"Trade Size","success":true,"exit_code":0,"prog_id":253,"exists":true,"stored_name":"Trade Size"}
+{"op":"exists","type":"indicator","name":"Trade Time","success":true,"exit_code":0,"prog_id":254,"exists":true,"stored_name":"Trade Time"}
+{"op":"exists","type":"indicator","name":"Trades","success":true,"exit_code":0,"prog_id":255,"exists":true,"stored_name":"Trades"}
+{"op":"exists","type":"indicator","name":"Trades Dn","success":true,"exit_code":0,"prog_id":256,"exists":true,"stored_name":"Trades Dn"}
+{"op":"exists","type":"indicator","name":"Trades Dn %","success":true,"exit_code":0,"prog_id":257,"exists":true,"stored_name":"Trades Dn %"}
+{"op":"exists","type":"indicator","name":"Trades Unch","success":true,"exit_code":0,"prog_id":258,"exists":true,"stored_name":"Trades Unch"}
+{"op":"exists","type":"indicator","name":"Trades Unch %","success":true,"exit_code":0,"prog_id":259,"exists":true,"stored_name":"Trades Unch %"}
+{"op":"exists","type":"indicator","name":"Trades Up","success":true,"exit_code":0,"prog_id":260,"exists":true,"stored_name":"Trades Up"}
+{"op":"exists","type":"indicator","name":"Trades Up %","success":true,"exit_code":0,"prog_id":261,"exists":true,"stored_name":"Trades Up %"}
+{"op":"exists","type":"indicator","name":"Trades UpDn","success":true,"exit_code":0,"prog_id":262,"exists":true,"stored_name":"Trades UpDn"}
+{"op":"exists","type":"indicator","name":"TrendLines Automatic","success":true,"exit_code":0,"prog_id":263,"exists":true,"stored_name":"TrendLines Automatic"}
+{"op":"exists","type":"indicator","name":"TRIX","success":true,"exit_code":0,"prog_id":264,"exists":true,"stored_name":"TRIX"}
+{"op":"exists","type":"indicator","name":"TsDeskFnProbeCaller_20260829","success":true,"exit_code":0,"prog_id":3008,"exists":true,"stored_name":"TsDeskFnProbeCaller_20260829"}
+{"op":"exists","type":"indicator","name":"Typical Price","success":true,"exit_code":0,"prog_id":265,"exists":true,"stored_name":"Typical Price"}
+{"op":"exists","type":"indicator","name":"Ulcer Index","success":true,"exit_code":0,"prog_id":266,"exists":true,"stored_name":"Ulcer Index"}
+{"op":"exists","type":"indicator","name":"Ultimate Osc","success":true,"exit_code":0,"prog_id":267,"exists":true,"stored_name":"Ultimate Osc"}
+{"op":"exists","type":"indicator","name":"Vertical Horizontal Filter","success":true,"exit_code":0,"prog_id":268,"exists":true,"stored_name":"Vertical Horizontal Filter"}
+{"op":"exists","type":"indicator","name":"Volatility","success":true,"exit_code":0,"prog_id":269,"exists":true,"stored_name":"Volatility"}
+{"op":"exists","type":"indicator","name":"Volatility Std Dev","success":true,"exit_code":0,"prog_id":270,"exists":true,"stored_name":"Volatility Std Dev"}
+{"op":"exists","type":"indicator","name":"Volty SDev Stoch","success":true,"exit_code":0,"prog_id":271,"exists":true,"stored_name":"Volty SDev Stoch"}
+{"op":"exists","type":"indicator","name":"Volume","success":true,"exit_code":0,"prog_id":272,"exists":true,"stored_name":"Volume"}
+{"op":"exists","type":"indicator","name":"Volume - All Opts","success":true,"exit_code":0,"prog_id":279,"exists":true,"stored_name":"Volume - All Opts"}
+{"op":"exists","type":"indicator","name":"Volume - All OptsOsc","success":true,"exit_code":0,"prog_id":280,"exists":true,"stored_name":"Volume - All OptsOsc"}
+{"op":"exists","type":"indicator","name":"Volume - All OptsROC","success":true,"exit_code":0,"prog_id":281,"exists":true,"stored_name":"Volume - All OptsROC"}
+{"op":"exists","type":"indicator","name":"Volume - Calls","success":true,"exit_code":0,"prog_id":282,"exists":true,"stored_name":"Volume - Calls"}
+{"op":"exists","type":"indicator","name":"Volume - Puts","success":true,"exit_code":0,"prog_id":283,"exists":true,"stored_name":"Volume - Puts"}
+{"op":"exists","type":"indicator","name":"Volume Avg","success":true,"exit_code":0,"prog_id":284,"exists":true,"stored_name":"Volume Avg"}
+{"op":"exists","type":"indicator","name":"Volume Custom","success":true,"exit_code":0,"prog_id":285,"exists":true,"stored_name":"Volume Custom"}
+{"op":"exists","type":"indicator","name":"Volume Dn","success":true,"exit_code":0,"prog_id":286,"exists":true,"stored_name":"Volume Dn"}
+{"op":"exists","type":"indicator","name":"Volume Osc","success":true,"exit_code":0,"prog_id":287,"exists":true,"stored_name":"Volume Osc"}
+{"op":"exists","type":"indicator","name":"Volume Rate of Chg","success":true,"exit_code":0,"prog_id":288,"exists":true,"stored_name":"Volume Rate of Chg"}
+{"op":"exists","type":"indicator","name":"Volume Ratio","success":true,"exit_code":0,"prog_id":289,"exists":true,"stored_name":"Volume Ratio"}
+{"op":"exists","type":"indicator","name":"Volume Ratio JP","success":true,"exit_code":0,"prog_id":290,"exists":true,"stored_name":"Volume Ratio JP"}
+{"op":"exists","type":"indicator","name":"Volume Today","success":true,"exit_code":0,"prog_id":291,"exists":true,"stored_name":"Volume Today"}
+{"op":"exists","type":"indicator","name":"Volume Up","success":true,"exit_code":0,"prog_id":292,"exists":true,"stored_name":"Volume Up"}
+{"op":"exists","type":"indicator","name":"Volume UpDn","success":true,"exit_code":0,"prog_id":293,"exists":true,"stored_name":"Volume UpDn"}
+{"op":"exists","type":"indicator","name":"Volume_Dn","success":true,"exit_code":0,"prog_id":273,"exists":true,"stored_name":"Volume_Dn"}
+{"op":"exists","type":"indicator","name":"Volume_Dn%","success":true,"exit_code":0,"prog_id":274,"exists":true,"stored_name":"Volume_Dn%"}
+{"op":"exists","type":"indicator","name":"Volume_Unch","success":true,"exit_code":0,"prog_id":275,"exists":true,"stored_name":"Volume_Unch"}
+{"op":"exists","type":"indicator","name":"Volume_Unch%","success":true,"exit_code":0,"prog_id":276,"exists":true,"stored_name":"Volume_Unch%"}
+{"op":"exists","type":"indicator","name":"Volume_Up","success":true,"exit_code":0,"prog_id":277,"exists":true,"stored_name":"Volume_Up"}
+{"op":"exists","type":"indicator","name":"Volume_Up%","success":true,"exit_code":0,"prog_id":278,"exists":true,"stored_name":"Volume_Up%"}
+{"op":"exists","type":"indicator","name":"VWAP","success":true,"exit_code":0,"prog_id":294,"exists":true,"stored_name":"VWAP"}
+{"op":"exists","type":"indicator","name":"Weighted Close","success":true,"exit_code":0,"prog_id":295,"exists":true,"stored_name":"Weighted Close"}
+{"op":"exists","type":"indicator","name":"ZigZag %","success":true,"exit_code":0,"prog_id":296,"exists":true,"stored_name":"ZigZag %"}
+{"op":"exists","type":"indicator","name":"ZigZag Pnts","success":true,"exit_code":0,"prog_id":297,"exists":true,"stored_name":"ZigZag Pnts"}

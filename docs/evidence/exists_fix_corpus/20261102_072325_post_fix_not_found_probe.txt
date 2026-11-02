@@ -1,0 +1,7 @@
+# not-found probe (post-fix)
+# command: build\Release\tsdev_cli.exe --json exists function NONEXISTENTNAMEXYZ
+# exit_code: 0
+# stdout:
+{"op":"exists","type":"function","name":"NONEXISTENTNAMEXYZ","success":true,"exit_code":0,"exists":false,"stored_name":""}
+# stderr:
+

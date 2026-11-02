@@ -1,0 +1,63 @@
+type=showme
+count=61
+Brkout of X Bar High
+Brkout of X Bar Low
+C_3WhSolds_3BlkCrows
+C_Abandoned Baby
+C_Advance Block
+C_BullEng_BearEng
+C_BullHar_BearHar
+C_Doji
+C_Hammer_HangingMan
+C_Harami Cross
+C_Inverted Hammer
+C_Kicking
+C_Marubozu
+C_Meeting Lines
+C_MornDoji_EveDoji
+C_MornStar_EveStar
+C_PierceLine_DkCloud
+C_ShootingStar
+C_Tasuki Gap
+C_Three Methods
+C_Three Stars in the South
+C_Tri Star
+Consecutive Downs
+Consecutive Ups
+Count Criteria SM
+Custom ShowMe
+EPS Postings
+Fractals
+Gap Dn Bar
+Gap Up Bar
+Head & Shoulders
+Impl Volty Consecs
+Impl Volty Pivots
+Inside Bar
+Island Reversal Dn
+Island Reversal Up
+Key Reversal Dn
+Key Reversal Up
+Narrow Range Bar
+New High for Chart
+New High for Day
+New High for Month
+New High for Week
+New High for Year
+New Intraday HiLo
+New Low for Chart
+New Low for Day
+New Low for Month
+New Low for Week
+New Low for Year
+New N-Day HiLo
+Outside Bar
+Pennant Brkout
+Pivot High
+Pivot Low
+Pivot Rev Gen - Dn
+Pivot Rev Gen - Up
+Price Reversal
+Put/Call Vol Consecs
+Vol All Opts Brkout
+Volume Brkout

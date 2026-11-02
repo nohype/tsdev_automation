@@ -1,0 +1,316 @@
+type=indicator
+count=314
+%Chg
+%R
+52 Wk Channel
+52 Wk High
+52 Wk High-Low
+52 Wk Low
+Absolute Breadth
+Accel Decel Oscillator
+Accum Dist - BuyPr
+Accum Dist - PrVol
+Accum Swing Index
+Advance-Decl Line
+Advance-Decl Ratio
+ADX
+ADXR
+Algo - Bracket Orders - Entry OCO with Exit Bracket
+Algo - Bracket Orders WinForm - Entry OCO with OSO Exit
+Algo - Pairs Trading
+Algo - Simple Algos WinForm
+Alligator
+Arms Index (TRIN)
+Aroon Indicator
+Aroon Oscillator
+Ask
+Ask Date
+Ask Exch
+Ask Size
+Ask Time
+Average True Range
+Awesome Oscillator
+Balance Sheet MRQ
+Bar Close
+Bar High
+Bar Low
+Bar Open
+Bar Volume
+Beta
+Bid
+Bid & Ask
+Bid & Ask Vol Ratio
+Bid Date
+Bid Dir
+Bid Exch
+Bid Size
+Bid Time
+Bid-Ask
+Black-Scholes
+Block Trade < Bid
+Block Trade > Ask
+Block Trades per Bar
+Bollinger %B
+Bollinger Bands
+Bollinger Bandwidth
+BOSM_USD_COEFFICIENT_INDI
+bounce2.0
+Breadth - Custom
+Cash Flow
+Category
+CCI Average
+Chaikin Money Flow
+Chaikin Osc
+Chaikin Volatility
+Chande Momentum Osc
+ChartTrading
+Close
+Comm Channel Index
+Comm Sel Index
+Corporate Margins
+Correlation
+Correlation RS
+COT Net Position
+COT Total Position
+COT Total Position %
+Country
+Crossovers per Bar
+Crossunders per Bar
+Currency
+Custom 1 Line
+Custom 2 Lines
+Custom 3 Lines
+Custom 4 Lines
+Custom Note
+Custom Quote
+Day Open-Hi-Lo Lines
+Day Open-Hi-Lo RT
+Day or Session Hi-Lo Lines
+Death Cross
+Description
+Detrended Price Osc
+Dividend
+Dividends
+DMI
+Ease of Movement
+EPS
+EPS Basic MRQ
+EPS Diluted MRQ
+EPS Diluted TTM
+Exch
+Exp Date
+Falter & Reverse Dn
+Falter & Reverse Up
+Fibonacci Retrace
+Financial Strength
+Floating Text
+Floor Trader Pivots
+FND
+Formula OHLC
+Fundamental to Avg Fundamental
+Fundamntl Custom
+Fundamntl Date
+Fundamntl TTM
+Fundamntl TTM Acc
+Fundamntl TTM Mom
+FX Roll Acct Value
+FX Roll Rates
+Gann HiLo Activator
+Gap & Reverse Dn
+Gap & Reverse Up
+Gapless Bar Chart
+Golden Cross
+High
+HPI
+Ichimoku Cloud
+Impl Volty - Stoch
+Impl Volty- 1 Option
+Impl Volty- All Opts
+Impl Volty- Osc
+Impl Volty- ROC
+Impl Volty/Historical Volty
+Impl Volty/VoltySDev
+Income Statement TTM
+Industry
+Institution Acc-Dist
+Interval
+JW_FRIDA_IND_20260828_102012
+JW_FRIDA_TEST_IND
+Keltner Channel
+Last
+LBR Three-Ten Oscillator
+Level II to Excel
+Line at Ask
+Line at Bid
+Line at Price
+Linear Reg Curve
+Linear Reg Line
+Low
+LTD
+MACD
+Manage Efficient TTM
+Market Cap M
+Market Depth - Price Levels
+Market Depth in RadarScreen
+Market Thrust
+Mass Index
+McClellan Osc
+Mid Range
+Mkt Facilitation Idx
+Momentum
+Money Flow
+Mov Avg 1 Line
+Mov Avg 2 Lines
+Mov Avg 3 Lines
+Mov Avg Adaptive
+Mov Avg DEMA
+Mov Avg Envelopes
+Mov Avg Exp 2 Lines
+Mov Avg Exp 3 Lines
+Mov Avg Exp Ribbon
+Mov Avg Exponential
+Mov Avg Hull
+Mov Avg MAMA
+Mov Avg QEMA
+Mov Avg TEMA
+Mov Avg Triangular
+Mov Avg Volume-weighted
+Mov Avg Weighted
+Move AOP Lines
+Moving Average Gap Ratio
+Negative Volume Index
+Net %Chg
+Net %Chg (C)
+Net %Chg Max Dn
+Net %Chg Max Up
+Net %Chg OMD
+Net %Chg OMU
+Net %Chg Open
+Net Chg
+Net Chg (C)
+Net Chg Open
+New 52 Wk High
+New 52 Wk Low
+New Intraday High
+New Intraday Low
+New N-Day High
+New N-Day Low
+Next 3rd Friday
+OHLC Yesterday
+On Balance Volume
+Open
+Open Gap
+Open Gap %
+Open Int
+Open Int - All Opts
+Open Int - Calls
+Open Int - Puts
+Open Interest
+Open Order Information
+Option Delta
+Option Gamma
+Option Price
+Option Theta
+Option Type
+Option Vega
+Parabolic SAR
+Payout Ratios
+Pennant Brkout Dn
+Pennant Brkout Up
+Polarized Fractal Efficiency
+Position P/L
+Position P/L %
+Position P/L % Grad
+Position P/L Auto
+Position Value
+Positive Volume Index
+PPO Oscillator
+Prev Close
+Price Channel
+Price Channel %PC
+Price Earnings
+Price Osc
+Price Volume Trend
+Price/Earnings
+PROTEGE_MARKET_MAPPING
+Psychological Line
+Put/Call OI RatioAvg
+Put/Call V Ratio Avg
+QQE
+RainbowEMA
+Range
+Range %
+Rate of Chg
+Rate of Deviation
+RCI (Spearman's RCC)
+Relative Strength
+Relative Strength (One Day)
+RSI
+RSI JP
+S&P 500 Rel Strength
+Sector
+Spread - Diff
+Spread - Ratio
+Spread RS
+Standard Error Bands
+Stochastic Double Slow
+Stochastic Fast
+Stochastic Slow
+Strategy Equity
+Strike Price
+Subsession OHLC
+Swing Index
+testind
+Time Remaining in Bar
+Time Series Forecast
+Total Shs Outstand M
+Trade @ Bid/Ask
+Trade Date
+Trade Dir
+Trade Exch
+Trade Size
+Trade Time
+Trades
+Trades Dn
+Trades Dn %
+Trades Unch
+Trades Unch %
+Trades Up
+Trades Up %
+Trades UpDn
+TrendLines Automatic
+TRIX
+TsDeskFnProbeCaller_20260829
+Typical Price
+Ulcer Index
+Ultimate Osc
+Vertical Horizontal Filter
+Volatility
+Volatility Std Dev
+Volty SDev Stoch
+Volume
+Volume - All Opts
+Volume - All OptsOsc
+Volume - All OptsROC
+Volume - Calls
+Volume - Puts
+Volume Avg
+Volume Custom
+Volume Dn
+Volume Osc
+Volume Rate of Chg
+Volume Ratio
+Volume Ratio JP
+Volume Today
+Volume Up
+Volume UpDn
+Volume_Dn
+Volume_Dn%
+Volume_Unch
+Volume_Unch%
+Volume_Up
+Volume_Up%
+VWAP
+Weighted Close
+ZigZag %
+ZigZag Pnts

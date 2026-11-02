@@ -1,0 +1,5 @@
+phase=post
+stamp=20261102_074323
+cli=C:\Users\freek\projects\tsdev_automation\build\Release\tsdev_cli.exe
+cli_version=tsdev_cli 0.0.0-dev (development build)
+captured=2026-11-02 07:43:23

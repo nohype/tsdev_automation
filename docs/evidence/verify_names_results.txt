@@ -1,0 +1,2 @@
+verify_names: rows=1229 from C:\Users\freek\projects\tsdev_automation\tmp\enum_run_base.txt
+SUMMARY total=1229 ok=1229 fail=0

@@ -1,0 +1,7 @@
+# false-positive case FP2 -- get-source (post-fix)
+# command: build\Release\tsdev_cli.exe --json get-source function Returns the next label in the cycle for ActivityBar cells
+# exit_code: 5
+# stdout:
+{"op":"get-source","type":"function","name":"Returns the next label in the cycle for ActivityBar cells","success":false,"exit_code":5,"error":{"code":"not_found","message":"function \"Returns the next label in the cycle for ActivityBar cells\" not found or source unavailable."}}
+# stderr:
+

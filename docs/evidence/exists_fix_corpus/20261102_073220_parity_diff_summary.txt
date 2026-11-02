@@ -1,0 +1,31 @@
+parity diff summary (pre-fix baseline vs post-fix)
+pre_stamp=20261102_063636
+post_stamp=20261102_071748
+corpus=C:\Users\freek\projects\tsdev_automation\tmp\exists_fix_corpus
+
+type=strategy names=761 pre_exists1=761 PASS=761 FAIL=0
+type=function names=84 pre_exists1=84 PASS=84 FAIL=0
+type=indicator names=314 pre_exists1=314 PASS=314 FAIL=0
+type=showme names=61 pre_exists1=61 PASS=61 FAIL=0
+type=tradingapp names=9 pre_exists1=9 PASS=9 FAIL=0
+
+NAME PARITY: PASS (all real names resolve identically to baseline)
+
+intended fix deltas (expected changes caused by the root-cause fix):
+  FP1 exists: pre_exists=True post_exists=False (expected 1 -> 0) OK
+  FP1 get-source: identical_pre_post=True (expected true; not-found both sides)
+  FP2 exists: pre_exists=True post_exists=False (expected 1 -> 0) OK
+  FP2 get-source: identical_pre_post=True (expected true; not-found both sides)
+  FP1:indicator:FP_wrongcase_default: pre_post_identical=True post_exists=False (expected 0 both)
+  FP1:indicator:FP_wrongcase_ci: pre_exists=True post_exists=False (expected 1 -> 0) OK
+  FP2:function:FP_wrongcase_default: pre_post_identical=True post_exists=False (expected 0 both)
+  FP2:function:FP_wrongcase_ci: pre_exists=True post_exists=False (expected 1 -> 0) OK
+
+case-semantics expectations (post-fix run):
+  all case-semantics probes PASS
+
+misc probes:
+  M1_empty_name: exit=2 pre_post_identical=True exit_is_2=True
+  M2_unknown_type: exit=2 pre_post_identical=True exit_is_2=True
+
+OVERALL: PASS

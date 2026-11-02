@@ -1,0 +1,11 @@
+type=tradingapp
+count=9
+!ex_DataGridViewSample
+MultiStratOrderExporter
+ProtegeDNPRunner_TS10
+TA_Feedback_Feedback
+TA_Intraday_Short_Locate_Intraday Short Locate
+TA_Market_Insights_Market Insights
+TA_TSAlgos_TSAlgos
+TA_VideoStation_VideoStation
+testapp

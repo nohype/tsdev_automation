@@ -1,0 +1,7 @@
+# false-positive case FP2 -- exists (post-fix)
+# command: build\Release\tsdev_cli.exe --json exists function Returns the next label in the cycle for ActivityBar cells
+# exit_code: 0
+# stdout:
+{"op":"exists","type":"function","name":"Returns the next label in the cycle for ActivityBar cells","success":true,"exit_code":0,"exists":false,"stored_name":""}
+# stderr:
+

@@ -1,0 +1,61 @@
+{"op":"exists","type":"showme","name":"Brkout of X Bar High","success":true,"exit_code":0,"prog_id":298,"exists":true,"stored_name":"Brkout of X Bar High"}
+{"op":"exists","type":"showme","name":"Brkout of X Bar Low","success":true,"exit_code":0,"prog_id":299,"exists":true,"stored_name":"Brkout of X Bar Low"}
+{"op":"exists","type":"showme","name":"C_3WhSolds_3BlkCrows","success":true,"exit_code":0,"prog_id":300,"exists":true,"stored_name":"C_3WhSolds_3BlkCrows"}
+{"op":"exists","type":"showme","name":"C_Abandoned Baby","success":true,"exit_code":0,"prog_id":301,"exists":true,"stored_name":"C_Abandoned Baby"}
+{"op":"exists","type":"showme","name":"C_Advance Block","success":true,"exit_code":0,"prog_id":302,"exists":true,"stored_name":"C_Advance Block"}
+{"op":"exists","type":"showme","name":"C_BullEng_BearEng","success":true,"exit_code":0,"prog_id":303,"exists":true,"stored_name":"C_BullEng_BearEng"}
+{"op":"exists","type":"showme","name":"C_BullHar_BearHar","success":true,"exit_code":0,"prog_id":304,"exists":true,"stored_name":"C_BullHar_BearHar"}
+{"op":"exists","type":"showme","name":"C_Doji","success":true,"exit_code":0,"prog_id":305,"exists":true,"stored_name":"C_Doji"}
+{"op":"exists","type":"showme","name":"C_Hammer_HangingMan","success":true,"exit_code":0,"prog_id":306,"exists":true,"stored_name":"C_Hammer_HangingMan"}
+{"op":"exists","type":"showme","name":"C_Harami Cross","success":true,"exit_code":0,"prog_id":307,"exists":true,"stored_name":"C_Harami Cross"}
+{"op":"exists","type":"showme","name":"C_Inverted Hammer","success":true,"exit_code":0,"prog_id":308,"exists":true,"stored_name":"C_Inverted Hammer"}
+{"op":"exists","type":"showme","name":"C_Kicking","success":true,"exit_code":0,"prog_id":309,"exists":true,"stored_name":"C_Kicking"}
+{"op":"exists","type":"showme","name":"C_Marubozu","success":true,"exit_code":0,"prog_id":310,"exists":true,"stored_name":"C_Marubozu"}
+{"op":"exists","type":"showme","name":"C_Meeting Lines","success":true,"exit_code":0,"prog_id":311,"exists":true,"stored_name":"C_Meeting Lines"}
+{"op":"exists","type":"showme","name":"C_MornDoji_EveDoji","success":true,"exit_code":0,"prog_id":312,"exists":true,"stored_name":"C_MornDoji_EveDoji"}
+{"op":"exists","type":"showme","name":"C_MornStar_EveStar","success":true,"exit_code":0,"prog_id":313,"exists":true,"stored_name":"C_MornStar_EveStar"}
+{"op":"exists","type":"showme","name":"C_PierceLine_DkCloud","success":true,"exit_code":0,"prog_id":314,"exists":true,"stored_name":"C_PierceLine_DkCloud"}
+{"op":"exists","type":"showme","name":"C_ShootingStar","success":true,"exit_code":0,"prog_id":315,"exists":true,"stored_name":"C_ShootingStar"}
+{"op":"exists","type":"showme","name":"C_Tasuki Gap","success":true,"exit_code":0,"prog_id":316,"exists":true,"stored_name":"C_Tasuki Gap"}
+{"op":"exists","type":"showme","name":"C_Three Methods","success":true,"exit_code":0,"prog_id":317,"exists":true,"stored_name":"C_Three Methods"}
+{"op":"exists","type":"showme","name":"C_Three Stars in the South","success":true,"exit_code":0,"prog_id":318,"exists":true,"stored_name":"C_Three Stars in the South"}
+{"op":"exists","type":"showme","name":"C_Tri Star","success":true,"exit_code":0,"prog_id":319,"exists":true,"stored_name":"C_Tri Star"}
+{"op":"exists","type":"showme","name":"Consecutive Downs","success":true,"exit_code":0,"prog_id":320,"exists":true,"stored_name":"Consecutive Downs"}
+{"op":"exists","type":"showme","name":"Consecutive Ups","success":true,"exit_code":0,"prog_id":321,"exists":true,"stored_name":"Consecutive Ups"}
+{"op":"exists","type":"showme","name":"Count Criteria SM","success":true,"exit_code":0,"prog_id":322,"exists":true,"stored_name":"Count Criteria SM"}
+{"op":"exists","type":"showme","name":"Custom ShowMe","success":true,"exit_code":0,"prog_id":323,"exists":true,"stored_name":"Custom ShowMe"}
+{"op":"exists","type":"showme","name":"EPS Postings","success":true,"exit_code":0,"prog_id":324,"exists":true,"stored_name":"EPS Postings"}
+{"op":"exists","type":"showme","name":"Fractals","success":true,"exit_code":0,"prog_id":398,"exists":true,"stored_name":"Fractals"}
+{"op":"exists","type":"showme","name":"Gap Dn Bar","success":true,"exit_code":0,"prog_id":325,"exists":true,"stored_name":"Gap Dn Bar"}
+{"op":"exists","type":"showme","name":"Gap Up Bar","success":true,"exit_code":0,"prog_id":326,"exists":true,"stored_name":"Gap Up Bar"}
+{"op":"exists","type":"showme","name":"Head & Shoulders","success":true,"exit_code":0,"prog_id":327,"exists":true,"stored_name":"Head & Shoulders"}
+{"op":"exists","type":"showme","name":"Impl Volty Consecs","success":true,"exit_code":0,"prog_id":328,"exists":true,"stored_name":"Impl Volty Consecs"}
+{"op":"exists","type":"showme","name":"Impl Volty Pivots","success":true,"exit_code":0,"prog_id":329,"exists":true,"stored_name":"Impl Volty Pivots"}
+{"op":"exists","type":"showme","name":"Inside Bar","success":true,"exit_code":0,"prog_id":330,"exists":true,"stored_name":"Inside Bar"}
+{"op":"exists","type":"showme","name":"Island Reversal Dn","success":true,"exit_code":0,"prog_id":331,"exists":true,"stored_name":"Island Reversal Dn"}
+{"op":"exists","type":"showme","name":"Island Reversal Up","success":true,"exit_code":0,"prog_id":332,"exists":true,"stored_name":"Island Reversal Up"}
+{"op":"exists","type":"showme","name":"Key Reversal Dn","success":true,"exit_code":0,"prog_id":333,"exists":true,"stored_name":"Key Reversal Dn"}
+{"op":"exists","type":"showme","name":"Key Reversal Up","success":true,"exit_code":0,"prog_id":334,"exists":true,"stored_name":"Key Reversal Up"}
+{"op":"exists","type":"showme","name":"Narrow Range Bar","success":true,"exit_code":0,"prog_id":335,"exists":true,"stored_name":"Narrow Range Bar"}
+{"op":"exists","type":"showme","name":"New High for Chart","success":true,"exit_code":0,"prog_id":336,"exists":true,"stored_name":"New High for Chart"}
+{"op":"exists","type":"showme","name":"New High for Day","success":true,"exit_code":0,"prog_id":337,"exists":true,"stored_name":"New High for Day"}
+{"op":"exists","type":"showme","name":"New High for Month","success":true,"exit_code":0,"prog_id":338,"exists":true,"stored_name":"New High for Month"}
+{"op":"exists","type":"showme","name":"New High for Week","success":true,"exit_code":0,"prog_id":339,"exists":true,"stored_name":"New High for Week"}
+{"op":"exists","type":"showme","name":"New High for Year","success":true,"exit_code":0,"prog_id":340,"exists":true,"stored_name":"New High for Year"}
+{"op":"exists","type":"showme","name":"New Intraday HiLo","success":true,"exit_code":0,"prog_id":341,"exists":true,"stored_name":"New Intraday HiLo"}
+{"op":"exists","type":"showme","name":"New Low for Chart","success":true,"exit_code":0,"prog_id":342,"exists":true,"stored_name":"New Low for Chart"}
+{"op":"exists","type":"showme","name":"New Low for Day","success":true,"exit_code":0,"prog_id":343,"exists":true,"stored_name":"New Low for Day"}
+{"op":"exists","type":"showme","name":"New Low for Month","success":true,"exit_code":0,"prog_id":344,"exists":true,"stored_name":"New Low for Month"}
+{"op":"exists","type":"showme","name":"New Low for Week","success":true,"exit_code":0,"prog_id":345,"exists":true,"stored_name":"New Low for Week"}
+{"op":"exists","type":"showme","name":"New Low for Year","success":true,"exit_code":0,"prog_id":346,"exists":true,"stored_name":"New Low for Year"}
+{"op":"exists","type":"showme","name":"New N-Day HiLo","success":true,"exit_code":0,"prog_id":347,"exists":true,"stored_name":"New N-Day HiLo"}
+{"op":"exists","type":"showme","name":"Outside Bar","success":true,"exit_code":0,"prog_id":348,"exists":true,"stored_name":"Outside Bar"}
+{"op":"exists","type":"showme","name":"Pennant Brkout","success":true,"exit_code":0,"prog_id":349,"exists":true,"stored_name":"Pennant Brkout"}
+{"op":"exists","type":"showme","name":"Pivot High","success":true,"exit_code":0,"prog_id":350,"exists":true,"stored_name":"Pivot High"}
+{"op":"exists","type":"showme","name":"Pivot Low","success":true,"exit_code":0,"prog_id":351,"exists":true,"stored_name":"Pivot Low"}
+{"op":"exists","type":"showme","name":"Pivot Rev Gen - Dn","success":true,"exit_code":0,"prog_id":352,"exists":true,"stored_name":"Pivot Rev Gen - Dn"}
+{"op":"exists","type":"showme","name":"Pivot Rev Gen - Up","success":true,"exit_code":0,"prog_id":353,"exists":true,"stored_name":"Pivot Rev Gen - Up"}
+{"op":"exists","type":"showme","name":"Price Reversal","success":true,"exit_code":0,"prog_id":354,"exists":true,"stored_name":"Price Reversal"}
+{"op":"exists","type":"showme","name":"Put/Call Vol Consecs","success":true,"exit_code":0,"prog_id":355,"exists":true,"stored_name":"Put/Call Vol Consecs"}
+{"op":"exists","type":"showme","name":"Vol All Opts Brkout","success":true,"exit_code":0,"prog_id":356,"exists":true,"stored_name":"Vol All Opts Brkout"}
+{"op":"exists","type":"showme","name":"Volume Brkout","success":true,"exit_code":0,"prog_id":357,"exists":true,"stored_name":"Volume Brkout"}
