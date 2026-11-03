@@ -2975,7 +2975,14 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     }
 
     // 6. Verify the .xml file exists.
-    if (!lib.xmlFileExists(type, progId)) {
+    // Slice-2 hardening #3 follow-up: same bounded poll as the .ell gate
+    // above (identical single-shot shape). The .xml artifact is written by
+    // the post-verify finalization path and its OS-level write can lag a
+    // successful verifyModule return, so poll before failing loudly with
+    // the unchanged exit-9 contract below.
+    if (!tsdev::pollUntilPresent([&]() { return lib.xmlFileExists(type, progId); },
+                                 []() { Sleep(tsdev::kEllPresencePollIntervalMs); },
+                                 tsdev::kEllPresencePollMaxSleeps)) {
         r.exitCode = 9;
         r.progId = progId;
         r.errorMessage = "compilation succeeded but .xml file not found at "
@@ -3224,7 +3231,11 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
                         + " -- finalization may be incomplete\n";
         return r;
     }
-    if (!lib.xmlFileExists(type, res.progId)) {
+    // Slice-2 hardening #3 follow-up: same bounded poll as the .ell gate
+    // above (identical single-shot shape); exit-9 contract below unchanged.
+    if (!tsdev::pollUntilPresent([&]() { return lib.xmlFileExists(type, res.progId); },
+                                 []() { Sleep(tsdev::kEllPresencePollIntervalMs); },
+                                 tsdev::kEllPresencePollMaxSleeps)) {
         r.exitCode = 9;
         r.progId = res.progId;
         r.errorMessage = "compilation succeeded but .xml file not found at "
