@@ -20,9 +20,10 @@
 //
 // The main() dispatch arg-validation for `list` is wrapped in the
 // #ifndef TSDEV_CLI_TEST guard in src/tsdev_cli.cpp and cannot be reached
-// from a unit-test TU (and cmdList/runList/doList need a live TsDevLib: TS +
-// elevation). This test therefore covers the pure output-shaping helpers
-// only.
+// from a unit-test TU (and cmdList/runList need a live TsDevLib: TS +
+// elevation). doList itself IS driven here (check 12) through the TU-local
+// failing-listItems seam above, so no live TsDevLib is constructed. This
+// test otherwise covers the pure output-shaping helpers.
 //
 // This is a PURE UNIT TEST - it does NOT load orlib20.dll, does NOT touch the
 // warehouse, and runs under -NoTs. listHumanStdout() and cliResultToJson()
@@ -38,17 +39,41 @@
 // (main() is wrapped in the #ifndef TSDEV_CLI_TEST guard in tsdev_cli.cpp.)
 #define TSDEV_CLI_TEST
 
+// --- Failing-listItems seam -------------------------------------------------
+// doList takes TsDevLib& and calls the non-virtual TsDevLib::listItems, so
+// no subclass can force its enumerate-failure path without a live
+// warehouse. Redirect the token in THIS TU only (same #define-include
+// pattern as test_invoke_excepinfo.cpp): the TsDevLib declaration from
+// tsdev_lib.h and the doList call site both compile as
+// TestSeam_listItems, defined below to fail without touching any
+// warehouse state. Production (tsdev_lib.cpp/.lib) is untouched: the only
+// code occurrences of the token are the header declaration and the doList
+// call site, so nothing else in this TU changes meaning.
 // Include the CLI source directly so anonymous-namespace internals
 // (listHumanStdout, sortNamesForOutput, cliResultToJson, CliResult,
-// ordered_json, etc.) are
+// ordered_json, doList, kListEnumerateFailure, etc.) are
 // visible.
+#define listItems TestSeam_listItems
 #include "../src/tsdev_cli.cpp"
+#undef listItems
 
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 #include <windows.h>
+
+// Definition of the TU-local failing seam declared above (via the renamed
+// TsDevLib member). Clears outNames (documented failure state) and returns
+// false. Never touches `this` or any warehouse state, so check 12 can run
+// doList against unconstructed storage with no COM, no orlib20, no TS.
+namespace tsdev {
+bool TsDevLib::TestSeam_listItems(ComponentType /*type*/,
+                                  std::vector<std::string>& outNames) {
+    outNames.clear();
+    return false;
+}
+} // namespace tsdev
 
 namespace {
 
@@ -344,6 +369,47 @@ DWORD WINAPI runTest(LPVOID param) {
             std::fprintf(stderr, "  got %s want %s\n",
                          joinNames(names).c_str(), joinNames(want).c_str());
             ec = fail("check11: large tie run order not preserved", 110);
+            return 0;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Check 12: doList enumerate-failure path through the TU-local
+    //   failing-listItems seam -> exit 4 with errorMessage ==
+    //   kListEnumerateFailure, and the JSON error.message pins the same
+    //   constant. Unlike check 5 (pasted literal through the serializer
+    //   only), this drives the real doList: replacing the production
+    //   callsite literal with a bypass string turns THIS check red.
+    //   The seam never touches `this`, so doList runs against
+    //   unconstructed aligned storage: no COM, no orlib20, no warehouse.
+    // ------------------------------------------------------------------
+    {
+        alignas(TsDevLib) unsigned char libStorage[sizeof(TsDevLib)];
+        TsDevLib& failingLib = *reinterpret_cast<TsDevLib*>(libStorage);
+        CliResult r = doList(failingLib, ComponentType::Strategy, "strategy");
+        std::fprintf(stdout, "  [12] doList enumerate failure: exit=%d msg=%s\n",
+                     r.exitCode, r.errorMessage.c_str());
+        if (r.success) {
+            ec = fail("check12: doList must fail when enumeration fails", 120);
+            return 0;
+        }
+        if (r.exitCode != 4) {
+            ec = fail("check12: enumerate failure must exit 4", 121);
+            return 0;
+        }
+        if (r.errorMessage != kListEnumerateFailure) {
+            ec = fail("check12: errorMessage drifted from constant", 122);
+            return 0;
+        }
+        ordered_json j = cliResultToJson(r);
+        if (j.contains("names")) {
+            ec = fail("check12: failure JSON must not carry a names key", 123);
+            return 0;
+        }
+        if (j["error"]["message"].get<std::string>() !=
+            kListEnumerateFailure) {
+            ec = fail("check12: JSON error.message drifted from constant",
+                      124);
             return 0;
         }
     }
