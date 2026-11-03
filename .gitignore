@@ -21,3 +21,6 @@ tmp_review_*.txt
 # Proprietary baseline fixture; tests prompt for a local copy
 tests/fixtures/*.dll
 
+# Local-only first-hand raw evidence (owner-retained 2026-11-03, not scratch)
+/local_evidence/
+
