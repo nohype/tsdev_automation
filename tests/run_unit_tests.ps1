@@ -107,6 +107,7 @@ $TestDefinitions = @(
     [pscustomobject]@{ Name = 'test_name_index_outcome';     RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_master_recs_seh';        RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_preop_hash_classification'; RequiresTs = $false }
+    [pscustomobject]@{ Name = 'test_ell_presence_poll'; RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_orlib_resolver';         RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_diag_log';               RequiresTs = $false }
     [pscustomobject]@{ Name = 'test_whserver_health';        RequiresTs = $false }

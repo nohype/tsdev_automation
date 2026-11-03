@@ -270,6 +270,7 @@
 #include "tsdev_lib.h"
 #include "persistence_integrity.h"  // TVS-L.9: shared post-verify validator
 #include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
+#include "ell_presence_poll.h"      // Slice-2 hardening #3: bounded post-verify .ell poll
 #include "diag_log.h"        // Sec. 7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "diag_watchdog.h"   // Sec. 7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "dispatch_watchdog.h"  // TVS-3: production bounded-wait dispatch containment
@@ -2951,7 +2952,12 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    warehouse is never closed here -- the batch worker closes it once at
     //    the end of the session, preserving the session lifetime.
     std::string ellPath = lib.getEllPath(type, progId);
-    if (!lib.ellFileExists(type, progId)) {
+    // Slice-2 hardening #3: the MDVault::SaveModule OS-level write can lag a
+    // successful verifyModule return, so poll (bounded ~10 s) before failing
+    // loudly with the unchanged exit-9 contract below.
+    if (!tsdev::pollUntilPresent([&]() { return lib.ellFileExists(type, progId); },
+                                 []() { Sleep(tsdev::kEllPresencePollIntervalMs); },
+                                 tsdev::kEllPresencePollMaxSleeps)) {
         r.exitCode = 9;
         r.progId = progId;
         r.errorMessage = std::string("compilation succeeded but .ell file not found: ")
@@ -3203,7 +3209,11 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     }
 
     std::string ellPath = lib.getEllPath(type, res.progId);
-    if (!lib.ellFileExists(type, res.progId)) {
+    // Slice-2 hardening #3: same bounded poll as the doInsert step-5 check
+    // above (identical single-shot shape); exit-9 contract below unchanged.
+    if (!tsdev::pollUntilPresent([&]() { return lib.ellFileExists(type, res.progId); },
+                                 []() { Sleep(tsdev::kEllPresencePollIntervalMs); },
+                                 tsdev::kEllPresencePollMaxSleeps)) {
         r.exitCode = 9;
         r.progId = res.progId;
         r.errorMessage = "compilation succeeded but .ell file not found at "

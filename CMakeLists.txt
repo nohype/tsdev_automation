@@ -941,6 +941,14 @@ target_include_directories(test_preop_hash_classification PRIVATE third_party)
 target_link_libraries(test_preop_hash_classification tsdev_lib)
 add_dependencies(test_preop_hash_classification siggen)
 
+# --- Post-verify .ell presence-poll unit test (Slice-2 hardening #3) --------
+# Pure unit test for the bounded check-then-poll seam in
+# src/ell_presence_poll.h used by the doInsert step-5 and modify post-verify
+# .ell checks. Header-only templates (no tsdev_lib symbols), so no link
+# libraries are needed. PURE UNIT TEST (no orlib20, no TsDevLib, no TS
+# install): NOT in TSDEV_ADMIN_TARGETS, runs under -NoTs.
+add_executable(test_ell_presence_poll tests/test_ell_presence_poll.cpp)
+
 # --- TradingApp INSERT integration test (TVS-C.4) ----------------------------
 # End-to-end TDD test for the TradingApp INSERT flow: createEntry, saveSource,
 # verifyModule, .ell persistence + RNAM magic check, and self-cleaning delete.
@@ -1607,6 +1615,7 @@ add_dependencies(test_regression
     test_persistence_integrity
     test_create_path_cleanup
     test_preop_hash_classification
+    test_ell_presence_poll
     test_delete_disk_cleanup
     test_close_warehouse
     test_name_index_outcome
