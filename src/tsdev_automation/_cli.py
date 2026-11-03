@@ -353,6 +353,17 @@ def _main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def unknown_type_message(type_str: str) -> str:
+    """Single Python-side copy of the C++ ``unknownTypeMessage`` builder text.
+
+    Mirrors ``src/tsdev_cli.cpp`` ``unknownTypeMessage`` exactly (double
+    quotes + expected-list hint), so manifest pre-validation failures carry
+    the same wording the CLI emits for unknown types.
+    """
+    return (f'unknown type "{type_str}" (expected '
+            "strategy/function/indicator/tradingapp/showme)")
+
+
 def _read_manifest(path: Path, needs_source: bool) -> list[BatchItem]:
     """Read a batch manifest into ``BatchItem``s.
 
@@ -400,8 +411,7 @@ def _read_manifest(path: Path, needs_source: bool) -> list[BatchItem]:
         if type_tok.strip().lower() not in _VALID_TYPES:
             items.append(BatchItem(type_tok, name_tok or "",
                                    prevalid_failure=(
-                2, f'unknown type "{type_tok}" (expected '
-                   "strategy/function/indicator/tradingapp/showme)")))
+                2, unknown_type_message(type_tok))))
             continue
         if not name_tok:
             items.append(BatchItem(type_tok, "", prevalid_failure=(

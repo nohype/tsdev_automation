@@ -3285,6 +3285,28 @@ class TestCliReadManifest:
         ec, msg = items[1].prevalid_failure or (None, "")
         assert ec == 2 and 'unknown type "strat2"' in msg
 
+    def test_unknown_type_message_matches_cpp_builder(self, tmp_path: Path) -> None:
+        """Python ``unknown_type_message`` must equal the C++ builder contract.
+
+        Hardcoded expected strings mirror ``test_serve_dispatch.cpp``
+        check 24d's exact-message pin (``unknownTypeMessage`` output for
+        ``"bogus"`` and ``""``); ``_read_manifest`` must emit the builder
+        text verbatim (single source, no inline copies)."""
+        from tsdev_automation._cli import _read_manifest, unknown_type_message
+        assert unknown_type_message("bogus") == (
+            'unknown type "bogus" (expected '
+            "strategy/function/indicator/tradingapp/showme)")
+        assert unknown_type_message("") == (
+            'unknown type "" (expected '
+            "strategy/function/indicator/tradingapp/showme)")
+        m = tmp_path / "m.txt"
+        m.write_text("bogus Name ./x.el\n", encoding="utf-8")
+        items = _read_manifest(m, needs_source=True)
+        assert len(items) == 1
+        ec, msg = items[0].prevalid_failure or (None, "")
+        assert ec == 2
+        assert msg == unknown_type_message("bogus")
+
     def test_non_utf8_manifest_raises(self, tmp_path: Path) -> None:
         """Strict UTF-8 decode -- a non-UTF-8 manifest must raise loudly
         (exit 3 via the ValueError handler), never silently corrupt
