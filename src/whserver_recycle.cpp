@@ -263,7 +263,20 @@ bool boundedCloseWarehouse(
                          "could not arm the bounded close monitor");
     }
     const bool closed = closeSession();
-    SetEvent(mon.done);
+    if (!SetEvent(mon.done)) {
+        // The completion signal never landed, so the monitor will fire
+        // the bound action on expiry. The close return is untrusted --
+        // refuse on the same close_failed contract as the unarmable
+        // monitor above (the session may still be open). Join first so
+        // the monitor thread is reaped; no success is ever reported
+        // with the monitor left armed.
+        WaitForSingleObject(reinterpret_cast<HANDLE>(th), INFINITE);
+        CloseHandle(reinterpret_cast<HANDLE>(th));
+        CloseHandle(mon.done);
+        return refuseOut("close_failed",
+                         "close completion signal failed; session may "
+                         "still be open");
+    }
     WaitForSingleObject(reinterpret_cast<HANDLE>(th), INFINITE);
     CloseHandle(reinterpret_cast<HANDLE>(th));
     CloseHandle(mon.done);
@@ -755,8 +768,11 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     // binding is ambiguous under >1 pid but MOOT -- verify-death requires
     // EVERY enumerated pid gone. Any non-death failure refuses (Sec. 2 step 4:
     // "any failed call -> release what we hold -> refuse"); a death-shaped
-    // failure is recycle-achieved. Empty set is unreachable (the engine
-    // short-circuits the census-absent case) but treated as ServerDied.
+    // failure is recycle-achieved. An empty set is unreachable through the
+    // engine -- both absent arms (census-absent, died-mid-census) return
+    // before attach, so attachPids is never empty -- but a direct caller
+    // may still pass one; ServerDied forces that caller down verify-death
+    // instead of reporting an Ok for an attach that never ran.
     bool anyOk = false;
     bool anyDied = censusPids.empty();
     for (DWORD pid : censusPids) {
@@ -790,7 +806,9 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
         const unsigned int scrambled =
             _lrotr(((tick >> 12) & 0xFFFF | 0x160000u) ^ 0x1256abefu, 6);
         wchar_t nameBuf[64];
-        _snwprintf_s(nameBuf, 64, _TRUNCATE, L"%u,%u", 268435478u, scrambled);
+        // (void): "%u,%u" needs at most 21 of 64 wchars -- truncation impossible, nonce opaque either way.
+        (void)_snwprintf_s(nameBuf, 64, _TRUNCATE, L"%u,%u", 268435478u,
+                           scrambled);
         BSTR nm = SysAllocString(nameBuf);
         void* outObj = nullptr;
         hr = create(m_fact, 0, 0, &iidCtl, nm, &outObj, &m_outName);
@@ -876,8 +894,12 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     detail.clear();
     if (anyOk) return RecycleAttachStatus::Ok;
     if (anyDied) return RecycleAttachStatus::ServerDied;
-    return RecycleAttachStatus::Ok;  // unreachable: per-pid loop always
-                                     // returns or sets anyOk
+    // Unreachable: every per-pid iteration either returns outright or sets
+    // anyOk/anyDied, and an empty set pre-sets anyDied above -- so !anyOk
+    // && !anyDied cannot hold here. Kept as Ok so a hypothetical reach
+    // still flows into step-5 verify-death; neither Ok nor ServerDied
+    // recycles without that confirmation.
+    return RecycleAttachStatus::Ok;
 }
 
 void ComRecycleAttach::release() {
@@ -912,8 +934,11 @@ std::wstring resolveMyWorkDirFromBinPath(const char* myWorkBinPath) {
                                          nullptr, 0);
     if (wlen <= 0) return L"";
     std::wstring w(static_cast<size_t>(wlen), L'\0');
-    MultiByteToWideChar(CP_ACP, 0, dir.c_str(), static_cast<int>(dir.size()),
-                        &w[0], wlen);
+    if (MultiByteToWideChar(CP_ACP, 0, dir.c_str(),
+                            static_cast<int>(dir.size()),
+                            &w[0], wlen) == 0) {
+        return L"";
+    }
     return w;
 }
 
