@@ -29,6 +29,12 @@
     Switch (--verbose). When set, print full stdout/stderr for ALL tests,
     not just for failures.
 
+.PARAMETER TimeoutSec
+    Per-test timeout in seconds (default 600). If a test executable does not
+    exit within this bound it is killed, reported as FAIL with a
+    "TIMEOUT after Ns" message plus its partial log, and the suite continues.
+    The timeout counts as a failure in the summary totals.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tests\run_unit_tests.ps1
     Runs all tests defined in `$TestDefinitions`.
@@ -51,7 +57,8 @@ param(
     [string]$BuildDir = "build\Release",
     [switch]$NoTs,
     [switch]$Verbose,
-    [switch]$SkipBaselineDllPrompt
+    [switch]$SkipBaselineDllPrompt,
+    [ValidateRange(1, 86400)][int]$TimeoutSec = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,14 +150,21 @@ $TestDefinitions = @(
 $Results = New-Object System.Collections.Generic.List[object]
 
 # ---------------------------------------------------------------------------
-# Invoke-Test: runs a single test executable, captures exit code, duration,
-# and combined stdout/stderr. Returns a result object.
+# Invoke-Test: runs a single test executable with a bounded wait, captures
+# exit code, duration, and combined stdout/stderr. If the executable does not
+# exit within TimeoutSec it is killed and reported as FAIL ("TIMEOUT after
+# Ns") with its partial log preserved; the caller continues the suite and the
+# timeout counts as a failure. Returns a result object.
+# Uses System.Diagnostics.Process with async output capture (PowerShell 5.1
+# and pwsh 7 compatible); direct "& $ExePath" invocation has no timeout and
+# would hang the whole sequential runner on one wedged test.
 # ---------------------------------------------------------------------------
 function Invoke-Test {
     param(
         [Parameter(Mandatory = $true)] [string]$Name,
         [Parameter(Mandatory = $true)] [string]$ExePath,
-        [Parameter(Mandatory = $true)] [bool]$VerboseOutput
+        [Parameter(Mandatory = $true)] [bool]$VerboseOutput,
+        [Parameter(Mandatory = $true)] [int]$TimeoutSec
     )
 
     Write-Host ""
@@ -168,28 +182,65 @@ function Invoke-Test {
         }
     }
 
-    $output = $null
+    $logLines = New-Object System.Collections.ArrayList
     $exitCode = 0
+    $timedOut = $false
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-    # Temporarily relax error preference: when a native command writes to
-    # stderr and we merge streams with 2>&1, PowerShell wraps each stderr line
-    # in a RemoteException. Under 'Stop' that becomes a terminating error,
-    # which would abort the run even though the test itself exits 0. 'Continue'
-    # lets us collect the merged output and read $LASTEXITCODE normally.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    # Fixed engine-event names: the runner is sequential, and each
+    # registration is removed in the finally block below.
+    $outEventId = "UTOut"
+    $errEventId = "UTErr"
+    $proc = $null
     try {
-        $output = & $ExePath 2>&1
-        $exitCode = $LASTEXITCODE
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $ExePath
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        # NOTE: raw add_OutputDataReceived scriptblocks run on threadpool
+        # threads with no runspace and crash the host; engine object events
+        # only enqueue (marshaled by the engine) and are drained below in our
+        # own runspace. Works on PowerShell 5.1 and pwsh 7.
+        Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -SourceIdentifier $outEventId | Out-Null
+        Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -SourceIdentifier $errEventId | Out-Null
+        [void]$proc.Start()
+        $proc.BeginOutputReadLine()
+        $proc.BeginErrorReadLine()
+        $exited = $proc.WaitForExit($TimeoutSec * 1000)
+        if (-not $exited) {
+            # Hung test: kill it, then reap it. The no-arg WaitForExit below
+            # ensures all output events are queued before draining, so the
+            # partial log is preserved.
+            $timedOut = $true
+            try { $proc.Kill() } catch { }
+        }
+        $proc.WaitForExit()
+        try { $proc.CancelOutputRead(); $proc.CancelErrorRead() } catch { }
+        if ($timedOut) {
+            $exitCode = -3
+        }
+        else {
+            $exitCode = $proc.ExitCode
+        }
+        foreach ($ev in @(@(Get-Event -SourceIdentifier $outEventId -ErrorAction SilentlyContinue) + @(Get-Event -SourceIdentifier $errEventId -ErrorAction SilentlyContinue))) {
+            $d = $ev.SourceEventArgs.Data
+            if ($d -ne $null) { [void]$logLines.Add([string]$d) }
+            $ev | Remove-Event -ErrorAction SilentlyContinue
+        }
     }
     catch {
         # Guard against unexpected runtime errors (e.g. process cannot start).
-        $output = $_.Exception.Message
+        [void]$logLines.Add($_.Exception.Message)
         $exitCode = -2
     }
     finally {
-        $ErrorActionPreference = $prevEAP
+        Unregister-Event -SourceIdentifier $outEventId -ErrorAction SilentlyContinue
+        Unregister-Event -SourceIdentifier $errEventId -ErrorAction SilentlyContinue
+        if ($proc -ne $null) { $proc.Close() }
     }
 
     $stopwatch.Stop()
@@ -198,13 +249,34 @@ function Invoke-Test {
     $color  = if ($exitCode -eq 0) { 'Green' } else { 'Red' }
 
     $durationStr = "{0:0.00}s" -f $stopwatch.Elapsed.TotalSeconds
-    Write-Host ("{0} (exit {1}) [{2}]" -f $status, $exitCode, $durationStr) -ForegroundColor $color
+    $output = @($logLines.ToArray())
+    if ($timedOut) {
+        $output = @("TIMEOUT after ${TimeoutSec}s: hung process killed; partial log preserved below.") + $output
+        Write-Host ("FAIL (exit {0}) [{1}] - TIMEOUT after {2}s: killed hung process" -f $exitCode, $durationStr, $TimeoutSec) -ForegroundColor $color
+    }
+    else {
+        Write-Host ("{0} (exit {1}) [{2}]" -f $status, $exitCode, $durationStr) -ForegroundColor $color
+    }
 
-    # Print output on failure, or for all tests when -Verbose is set.
+    # Print output on failure (timeouts always print: fail-loud with
+    # attribution), or for all tests when -Verbose is set.
     if ($exitCode -ne 0 -or $VerboseOutput) {
-        if ($output) {
+        if ($timedOut) {
+            Write-Host "--- partial log ($Name) ---" -ForegroundColor DarkGray
+        }
+        else {
             Write-Host "--- output ($Name) ---" -ForegroundColor DarkGray
+        }
+        if ($output -and $output.Count -gt 0) {
             $output | ForEach-Object { Write-Host $_ }
+        }
+        else {
+            Write-Host "(no output captured)" -ForegroundColor DarkGray
+        }
+        if ($timedOut) {
+            Write-Host "--- end partial log ---" -ForegroundColor DarkGray
+        }
+        else {
             Write-Host "--- end output ---" -ForegroundColor DarkGray
         }
     }
@@ -269,6 +341,7 @@ Write-Host "Build dir    : $ResolvedBuildDir"
 $nonTsCount = @($TestDefinitions | Where-Object { -not $_.RequiresTs }).Count
 Write-Host "Mode         : $(if ($NoTs) { "no-ts ($nonTsCount non-TS tests only)" } else { "full (all $($TestDefinitions.Count) tests)" })"
 Write-Host "Verbose      : $Verbose"
+Write-Host "Timeout      : $TimeoutSec seconds per test"
 
 if (-not (Test-Path -Path $ResolvedBuildDir -PathType Container)) {
     Write-Host ""
@@ -334,7 +407,7 @@ foreach ($td in $TestDefinitions) {
     }
 
     $exePath = Join-Path $ResolvedBuildDir ("{0}.exe" -f $td.Name)
-    $result = Invoke-Test -Name $td.Name -ExePath $exePath -VerboseOutput $Verbose
+    $result = Invoke-Test -Name $td.Name -ExePath $exePath -VerboseOutput $Verbose -TimeoutSec $TimeoutSec
     $Results.Add($result)
 }
 
