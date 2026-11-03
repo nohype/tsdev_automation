@@ -6520,7 +6520,11 @@ class _FakeCliProc:
         self._done = threading.Event()
         self._exit_code: int | None = None
         self._term_rc: int | None = None
-        self._thread = threading.Thread(target=self._run, name="fake-tsdev-cli", daemon=True)
+        self._closed = False
+        # Non-daemon: teardown is synchronous via close() (called by
+        # _assert_proc_clean and __exit__), so the interpreter never tears
+        # down while this worker is mid-I/O on the fake pipes.
+        self._thread = threading.Thread(target=self._run, name="fake-tsdev-cli")
         self._thread.start()
 
     # -- Popen surface -----------------------------------------------------
@@ -6576,16 +6580,38 @@ class _FakeCliProc:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        for stream in (self.stdin, self.stdout, self.stderr):
+        self.close()
+        return False
+
+    def close(self) -> None:
+        """Synchronous teardown: close pipes, reap the child, join the worker.
+
+        Idempotent and safe to call twice or on a partially-constructed
+        proc (getattr guards cover a failed __init__). Never blocks
+        indefinitely: wait/join are stall-capped, and a hung child is
+        expected to have been terminated by the controller first (the
+        timeout path calls terminate/kill, which set _done via _kill).
+        """
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        for name in ("stdin", "stdout", "stderr"):
             try:
-                stream.close()
+                stream = getattr(self, name, None)
+                if stream is not None:
+                    stream.close()
             except Exception:
                 pass
         try:
             self.wait(_FAKE_STALL_S)
         except Exception:
             pass
-        return False
+        try:
+            thread = getattr(self, "_thread", None)
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(_FAKE_STALL_S)
+        except Exception:
+            pass
 
     def _kill(self, rc: int) -> None:
         if self._done.is_set():
@@ -6838,6 +6864,12 @@ def _assert_proc_clean(proc: _FakeCliProc) -> None:
     assert proc.stdin.closed, "stdin pipe must be closed after the call"
     assert proc.stdout.closed, "stdout pipe must be closed after the call"
     assert proc.stderr.closed, "stderr pipe must be closed after the call"
+    # Synchronous teardown: join the (now non-daemon) worker so no test
+    # leaves a thread racing interpreter/pipe close under I/O load.
+    # Asserts above run first so this never masks a controller that
+    # failed to reap; close() itself is idempotent.
+    proc.close()
+    assert not proc._thread.is_alive(), "fake child thread must be joined"
 
 
 class TestDirectBatchOnProgress:
@@ -9082,7 +9114,7 @@ class TestBatchCachePhaseErrors:
             pre_run_stderr="tsdev_cli: cache backup cancelled - batch-delete not run",
             stdout=err,
         )
-        _install_fake_popen(monkeypatch, scenario)
+        procs = _install_fake_popen(monkeypatch, scenario)
         with pytest.raises(exc.TsDevCacheCancelledError):
             client.batch_delete(
                 [BatchItem("strategy", "A")],
@@ -9090,7 +9122,8 @@ class TestBatchCachePhaseErrors:
                 backup_cache=True,
                 cache_backup_policy="abort",
             )
-
+        assert len(procs) == 1
+        _assert_proc_clean(procs[0])
     def test_batch_malformed_stdout_still_protocol_error(self, client: TsDevClient, monkeypatch) -> None:
         """Garbage stdout at a cache exit code keeps the protocol error."""
         monkeypatch.setattr(
