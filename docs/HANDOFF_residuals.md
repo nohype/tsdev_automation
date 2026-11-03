@@ -1,5 +1,10 @@
 # Hand-off -- residual issues (post `list` feature, 2026-11-02)
 
+> COMPLETED -- all 29 RCs are closed (commit map: `docs/WORKING_MEMORY.md`
+> "Current state" section), live gate PASS, CI green, HEAD `f799284`.
+> The body below is preserved archaeology (fix directions + evidence
+> reasoning), NOT actionable work. Do not work through it as an inventory.
+
 Cleanup hand-off for the NEXT team: fix ALL known residual issues --
 pre-existing ones and leftovers from the 2026-11-01/02 `list`-feature
 session. Every entry is evidence-anchored (file:line or artifact path) and
@@ -963,7 +968,7 @@ wherever broker verification is specified: exercise the broker by running
 the client UNELEVATED with `use_serve=True`, or force the non-elevated
 routing branch in tests (stub `_is_elevated` / `_serve_active`), and
 confirm which path ran via `broker_process_handle()`
-(`src/tsdev_automation/client.py:2324`) -- non-None means the broker ran.
+(`src/tsdev_automation/client.py:2325`) -- non-None means the broker ran.
 
 Definition of done: the verification instructions state the gotcha and
 the correct technique (run the client unelevated or force the non-elevated
