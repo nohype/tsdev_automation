@@ -1,11 +1,10 @@
 # Working memory
 
-## Current state (2026-11-02) -- residuals cleanup in progress (PM orchestration)
+## Current state (2026-11-03) -- ALL 29 RCs implemented+reviewed+committed; live gate running
 
-- HEAD c2c206c: RC-02 (EXCEPINFO BSTR SEH free + test_invoke_excepinfo, red 10 green 0) and RC-13 (HGLOBAL SEH free + unlock helper + test_master_recs_seh, red 12 green 0) IMPLEMENTED, independently REVIEWED/APPROVED, COMMITTED as 7863dba + c2c206c. Tree clean. Unpushed: 5 (9bb1842, 0abe7c0, 60429da handoff, 7863dba, c2c206c).
-- Owner decisions (2026-11-02): RC-21 archive evidence to tracked paths; RC-18 pre-stage results array (opt 1); RC-19 document exit-18 contract; RC-25/26 tag da74dc1 then delete both; RC-23 license research deferred to very end (copyleft + attribution + no-liability + dual commercial premium -- compare options).
-- Wave-3b: RC-09 APPROVED, RC-19 APPROVED, license research APPROVED (advisory: GPL-3.0-only + commercial dual recommended; decision deferred). P3 trio (RC-14+24+28) in rebuild proofs. RC-11 stress: run_01 45+min under load, 0 crashes so far; N may narrow. RC-15 sweep + final gate + push after trio commits.
-- Wave-2 committed 2026-11-02: f78abb0 RC-01, 22041d5 RC-03, 890818f RC-27, e5f6392 RC-04/05, a2734a0 RC-06/07/10 (all reviewed APPROVED). RC-22 pushed thru 069da6a, CI 41454791554 success. RC-25/26: tag archive/tsdevctl-approach-2026-10 pushed, both branches deleted.
+- HEAD 6aa4a5b. Map: 01 f78abb0, 02 7863dba, 03 22041d5, 04+05 e5f6392, 06+07+10 a2734a0, 08 254dad8, 09 0dc105c, 11 6aa4a5b (record; 10 runs 0 crashes, accepted flake), 12 8dab6f7, 13 c2c206c, 14 2239541 (0 warnings both configs), 15 24c3be1 (7,604->0 bytes, KEEP 2 runtime-identical escapes), 16 01e9621, 17+18 aebe517, 19 9e514e4, 20 cd3aa2a, 21 4f682fb, 22 pushed via 069da6a (CI 41454791554 green), 23 research 6a29397 (LICENSE decision OWNER-DEFERRED), 24 3781670, 25+26 tag archive/tsdevctl-approach-2026-10 pushed + branches deleted, 27 890818f, 28 0f5567e, 29 a328a76.
+- Owner decisions (2026-11-02): RC-21 archive to tracked paths (done); RC-18 pre-stage results array opt 1 (done); RC-19 document exit-18 contract (done); RC-25/26 tag+delete (done); RC-23 license: research done (GPL-3.0-only + commercial dual recommended), final choice OWNER-DEFERRED.
+- REMAINING: consolidated live gate G1-G3 + production insert/modify/delete E2E (background) -> push all + CI watch -> closeout. Unpushed: everything after 069da6a.
 
 - Feature DELIVERED and live-verified end to end: `tsdev_cli list <type>` + `TsDevClient.list_items(type)` + broker route. Contract: human = one stored name per line (zero items -> no output = success); `--json` names array always on success; sorted by name (case-insensitive ASCII, stable ties) applied ONCE in doList (renderers/Python passthrough); no dedup; names verbatim case-preserved; exit codes follow `exists` (0/1/2/4/10/11; 4 = fail-loud, never a false empty list).
 - Name source: WHServer IWHouse COM enumeration (`ProgramsCountByType` + `NextId` + `ProgramById` walk + `IProgram::Name`), pure GetIDsOfNames, whType 0/1/2/1282/5122, KB Sec 17 activation chain, one STA thread. Only non-typelib contract: factory IID {7CEEACBC} + vtbl slot 8. New module src/whserver_names.{h,cpp} (IWhNameSource seam + pure collectTypeNames + WhComNameSource). SSOT for the RE: docs\evidence\enum_mechanism_report.md; KB Sec 22-25 records all discovered facts.
@@ -26,13 +25,12 @@
 - Live `list strategy` walk ~4.2 s (function 0.2 s), synchronous RPC. `cmake` is not on PATH in subagent shells -- use the VS 18 BuildTools full path.
 - Popup-audit regex false positive: explorer windows titled with the TradeStation path -- exclude `explorer`.
 
-## Known non-blocking residuals
+## Known non-blocking residuals (post-cleanup standing notes)
 
-- Exit-18 defer boundary loses partial results array only on close-hang `terminateSelf(19)` path (HANDOFF_WHServer_VAS_recovery.md Section 5).
-- Pre-existing HEAD warnings: C4476 (tsdev_cli.cpp usage text), strncpy deprecation (dispatch_watchdog.cpp), C4244 (test_path_discovery/xutility).
-- Serve never-attached site exits 18 even after successful engine run (3-broker choreography) -- by design.
-- Source-code COMMENTS still contain non-ASCII (~421 em-dashes) -- outside docs/CLI-output rule scope.
-- tests\check_ts_state.ps1 "WHServer ABSENT (ANOMALY)" label false-alarms post-run.
-- Review MINORs (approved, unaddressed by choice): whserver_names.cpp CoInitializeEx non-balancing (pattern debt, 2 sites); EXCEPINFO BSTR leak on SEH Invoke path (edge-only); test_serve_dispatch 24f asserts only key-substring (gate-specific message unpinned) and 24d message text unpinned; test_enumerate 7b fixtures depend on live dictionary description strings; test_list_cmd tie-runs are N<=4 (std::stable_sort not discriminated from std::sort at >16).
-- Theoretical HGLOBAL leak on _LoadMasterRecsEX SEH path (pre-existing 3-site pattern).
+- RC-11: one-off harness AV closed as accepted flake (10-run campaign 0 crashes, record docs/RC11_stress_campaign.md); fix sketch + retry-guard proposed only, not implemented. Re-open if a fatal-exit signature recurs.
+- RC-12: one-off zipfile shutdown noise closed as stdlib-internal accepted (record docs/RC12_*.txt). Re-open on recurrence with preserved traceback.
+- RC-17+18 residual: serve attached-site defer still has no pre-stage (no stdout array at risk there); batch close-hang now pre-stages array+manifest (BUNDLE_README:69).
+- RC-19: serve never-attached exit-18 is the pinned contract (Group 27), not a defect.
+- RC-23: LICENSE choice OWNER-DEFERRED (advisory docs/LICENSE_RESEARCH.md); tree ships unlicensed = all-rights-reserved until owner picks.
+- RC-29: elevated-shell broker bypass is by design; verify unelevated or check broker_process_handle() (client.py:2325).
 - test_enumerate (RequiresTs) creates/deletes its own fixtures when run live; skipped under -NoTs by design.
