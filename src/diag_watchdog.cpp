@@ -44,11 +44,12 @@ const int WATCHDOG_EXIT_CODE = 13;
 
 // Default watchdog threshold (Sec. 7.1 2d): seconds without a site record before
 // the watchdog fires. TSDEV_DIAG_WATCHDOG_SECS overrides; a value <= 0
-// disables the watchdog entirely (review F3a -- long-idle roles like the
+// disables the watchdog entirely (long-idle disable -- long-idle roles like the
 // `serve` broker idle by design).
 const double kDefaultThresholdSecs = 60.0;
 
-// Heartbeat interval while an idle-by-design phase is active (review F3b).
+// Heartbeat interval while an idle-by-design phase is active
+// (idle-phase heartbeat).
 // Capped at threshold/3 in watchdogProc so a heartbeat lands well before a
 // small threshold override could fire (the smoke run's 8 s env override must
 // not fire before the first heartbeat).
@@ -56,9 +57,9 @@ const double kIdleHeartbeatSecs = 15.0;
 
 std::atomic<void*> g_warehouse{nullptr};
 double g_thresholdSecs = kDefaultThresholdSecs;
-bool g_watchdogDisabled = false;  // TSDEV_DIAG_WATCHDOG_SECS <= 0 (review F3a)
+bool g_watchdogDisabled = false;  // TSDEV_DIAG_WATCHDOG_SECS <= 0 (long-idle disable)
 
-// Idle-by-design phase flag (review F3b): set while the process is in a
+// Idle-by-design phase flag (idle-phase heartbeat): set while the process is in a
 // legitimately idle wait (e.g. the serve broker blocked in ConnectNamedPipe).
 // Plain flag + tag pointer; the tag is written before the release-store and
 // only ever points to string literals, so the acquire-load in the watchdog
@@ -699,7 +700,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
         static_cast<long long>(g_thresholdSecs *
                                static_cast<double>(freq.QuadPart));
 
-    // Review F3b: heartbeat interval while an idle-by-design phase is
+    // Idle-phase heartbeat: interval while an idle-by-design phase is
     // active. Capped at threshold/3 so a heartbeat (which resets the
     // progress timestamp) lands well before the fire threshold could be
     // reached with a small TSDEV_DIAG_WATCHDOG_SECS override (the smoke run
@@ -728,7 +729,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
             return 0;  // TerminateProcess inside fire(); unreachable
         }
 
-        // Review F3b: while the process is in an idle-by-design phase (e.g.
+        // Idle-phase heartbeat: while the process is in an idle-by-design phase (e.g.
         // the serve broker blocked in ConnectNamedPipe waiting for pipe
         // clients), emit a periodic PROGRESS heartbeat (logRecordf -- it
         // updates the watchdog progress timestamp, so a healthy idle broker
@@ -759,7 +760,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
 
 void startWatchdog() {
     // Threshold: env TSDEV_DIAG_WATCHDOG_SECS overrides the 60 s default.
-    // Review F3a: a parsed value <= 0 DISABLES the watchdog entirely (no
+    // Long-idle disable: a parsed value <= 0 DISABLES the watchdog entirely (no
     // fire path) -- long-idle roles like the `serve` broker idle by design
     // and must never be aborted for idling. A value that does not parse as
     // a number, or an unset/too-long variable, keeps the 60 s default.
@@ -821,7 +822,7 @@ void diagInit() {
     }
     startWatchdog();  // parses TSDEV_DIAG_WATCHDOG_SECS, then starts the thread
     if (g_watchdogDisabled) {
-        // Review F3a: say explicitly that the watchdog is off and why.
+        // Long-idle disable: say explicitly that the watchdog is off and why.
         logRecordf("diag.init",
                    "pid=%lu watchdog=disabled (TSDEV_DIAG_WATCHDOG_SECS<=0: "
                    "long-idle roles like the serve broker idle by design)",

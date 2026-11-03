@@ -30,7 +30,7 @@
 // for WHServer.exe / TSDev.exe / orchart.exe / TSCrashReport.exe and any
 // other tsdev_cli*.exe instance -- refreshed again in the fire path.
 //
-// Idle-by-design phases (review F3b): code that enters a legitimately idle
+// Idle-by-design phases (idle-phase heartbeat): code that enters a legitimately idle
 // wait (the serve broker blocked in ConnectNamedPipe) brackets it with
 // TSDEV_DIAG_IDLE_PHASE_BEGIN/END. While a phase is active the watchdog
 // emits a periodic progress heartbeat record (every 15 s, or threshold/3 if
@@ -55,7 +55,7 @@
 #define TSDEV_DIAG_SET_WAREHOUSE(ptr) \
     ::tsdev::diag::setWarehousePointer(ptr)
 
-// Mark an idle-by-design phase (review F3b): while active, the watchdog
+// Mark an idle-by-design phase (idle-phase heartbeat): while active, the watchdog
 // emits a periodic progress heartbeat instead of counting the wait toward
 // the fire threshold. `tag` must be a string literal valid for the phase
 // duration. Observation-only; no-ops in the production build.

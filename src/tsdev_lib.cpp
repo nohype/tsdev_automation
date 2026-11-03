@@ -344,6 +344,14 @@ std::string toNarrow(const std::wstring& s) {
 // The typedefs mirror the private nested typedefs in TsDevLib; function
 // pointer types are structurally identical so the members convert implicitly.
 
+// The inline-asm SEH shims below keep the pre-existing scoped C4731
+// suppression (historical/precautionary for SEH + inline-asm shims).
+// The suppression is scoped to those shims only via push/disable/pop,
+// and this pair carries the justification once so the nine call sites
+// stay identical and greppable.
+#define TSDEV_SEH_ASM_BEGIN __pragma(warning(push)) __pragma(warning(disable:4731))
+#define TSDEV_SEH_ASM_END __pragma(warning(pop))
+
 // CELCompilerAllocFn and CELCompilerDestroyFn come from orlib_resolver.h
 // (namespace tsdev). Workstream M slice M.1 replaced the old
 // signature-scanned CELCompilerCtorFn / CELCompilerDtorFn (raw ctor/dtor)
@@ -541,8 +549,7 @@ bool callGetWarehouse(GetWarehouseFn fn, int pathParam, void** out) {
 // SEH-protected __fastcall call to FUN_101a8360 (delete orchestrator).
 // __fastcall: ECX=whType, EDX=progId, no stack args, returns void.
 // POD-only (no C++ objects with destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callDeleteOrchestratorImpl(void* fnPtr, int whType, int progId) {
     __try {
         __asm {
@@ -555,7 +562,7 @@ bool callDeleteOrchestratorImpl(void* fnPtr, int whType, int progId) {
         return false;
     }
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
     dispatchEnter("DeleteOrchestrator", static_cast<uint32_t>(progId));
     bool ok = false;
@@ -567,8 +574,7 @@ bool callDeleteOrchestrator(void* fnPtr, int whType, int progId) {
 // SEH-protected __thiscall call to FUN_101cf5b0 (command dispatcher).
 // __thiscall: ECX=warehouse (this), stack=commandId (1 arg, callee cleanup
 // RET 4). POD-only (no C++ objects with destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callCmdDispatcherImpl(void* fnPtr, void* warehouse, int cmdId) {
     __try {
         __asm {
@@ -581,7 +587,7 @@ bool callCmdDispatcherImpl(void* fnPtr, void* warehouse, int cmdId) {
         return false;
     }
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 // Marker aux = cmdId (0x0D / 0x3B / 0x4E / ... dispatched through FUN_101cf5b0).
 bool callCmdDispatcher(void* fnPtr, void* warehouse, int cmdId) {
     dispatchEnter("CmdDispatcher", static_cast<uint32_t>(cmdId));
@@ -616,8 +622,7 @@ bool callCloseWarehouseHelper(CloseWarehouseFn fn, int param) {
 // (3 args, callee cleanup RET 0xC). The outParam must point to a buffer of
 // at least 0x280 bytes (FUN_101d0950 writes to outParam+0x26d on success).
 // POD-only (no C++ objects with destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callCmd0FDispatcherImpl(void* fnPtr, void* warehouse, void* typeArray,
                              int progId, void* outParam) {
     __try {
@@ -633,7 +638,7 @@ bool callCmd0FDispatcherImpl(void* fnPtr, void* warehouse, void* typeArray,
         return false;
     }
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
                          int progId, void* outParam) {
     dispatchEnter("cmd0x0F", static_cast<uint32_t>(progId));
@@ -646,8 +651,7 @@ bool callCmd0FDispatcher(void* fnPtr, void* warehouse, void* typeArray,
 // SEH-protected __stdcall call to FUN_101d43a0 (type-array builder).
 // __stdcall: stack=category, outArray (2 args, callee cleanup RET 0x8).
 // POD-only (no C++ objects with destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callBuildTypeArrayImpl(void* fnPtr, int category, int* outArray) {
     __try {
         __asm {
@@ -660,7 +664,7 @@ bool callBuildTypeArrayImpl(void* fnPtr, int category, int* outArray) {
         return false;
     }
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
     dispatchEnter("BuildTypeArray", static_cast<uint32_t>(category));
     bool ok = false;
@@ -672,8 +676,7 @@ bool callBuildTypeArray(void* fnPtr, int category, int* outArray) {
 // SEH-protected __fastcall call to FUN_1000dd30 (CELProgramWriter constructor).
 // __fastcall: ECX=buffer (this), no stack args. POD-only (no C++ objects with
 // destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callCelProgramWriterCtorImpl(void* fnPtr, void* buffer) {
     __try {
         __asm {
@@ -685,7 +688,7 @@ bool callCelProgramWriterCtorImpl(void* fnPtr, void* buffer) {
         return false;
     }
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
     dispatchEnter("CelProgramWriterCtor", 0);
     bool ok = false;
@@ -700,8 +703,7 @@ bool callCelProgramWriterCtor(void* fnPtr, void* buffer) {
 // must store the returned interface back into [warehouse+0x5E] because
 // FUN_101cfce0 clears [warehouse+0x5E] before returning. POD-only (no C++
 // objects with destructors) so __try is legal.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callCmd0DDispatcherImpl(void* fnPtr, void* warehouse, int typeVal,
                              int param, void** outInterface) {
     void* result = nullptr;
@@ -720,7 +722,7 @@ bool callCmd0DDispatcherImpl(void* fnPtr, void* warehouse, int typeVal,
     *outInterface = result;
     return true;
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callCmd0DDispatcher(void* fnPtr, void* warehouse, int typeVal,
                          int param, void** outInterface) {
     dispatchEnter("cmd0x0D", static_cast<uint32_t>(param));
@@ -1378,8 +1380,7 @@ struct FindItemGetNameSehResult {
     int result;         // return value of FUN_101a42d0
     char* verbatimName; // output name pointer (server mode only; null in non-server)
 };
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callFindItemGetNameImpl(void* fnPtr, const char* searchName,
                              int componentType, void* warehouse,
                              FindItemGetNameSehResult* out) {
@@ -1404,7 +1405,7 @@ bool callFindItemGetNameImpl(void* fnPtr, const char* searchName,
     out->verbatimName = outName;
     return true;
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
                          void* warehouse, FindItemGetNameSehResult* out) {
     dispatchEnter("FindProgram", static_cast<uint32_t>(componentType));
@@ -1418,8 +1419,7 @@ bool callFindItemGetName(void* fnPtr, const char* searchName, int componentType,
 // __thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode), RET 0xC.
 // Returns bool (1=found, 0=not found). Stores node pointer in *outNode.
 // POD-only (no C++ objects with destructors) so __try is legal under MSVC.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callBstSearchWrapperImpl(void* fnPtr, void* warehouse, int* typeFilter,
                               const char* name, void** outNode,
                               int* outResult) {
@@ -1442,7 +1442,7 @@ bool callBstSearchWrapperImpl(void* fnPtr, void* warehouse, int* typeFilter,
     *outResult = retVal;  // write through pointer outside asm
     return true;
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
                           const char* name, void** outNode, int* outResult) {
     dispatchEnter("BstSearch", typeFilter ? static_cast<uint32_t>(*typeFilter) : 0u);
@@ -1456,8 +1456,7 @@ bool callBstSearchWrapper(void* fnPtr, void* warehouse, int* typeFilter,
 // __fastcall: ECX=node pointer, no stack args, RET. Returns char* to the
 // verbatim stored name at node+0x1D.
 // POD-only (no C++ objects with destructors) so __try is legal under MSVC.
-#pragma warning(push)
-#pragma warning(disable: 4731)
+TSDEV_SEH_ASM_BEGIN
 bool callVerbatimNameGetterImpl(void* fnPtr, void* nodePtr,
                                 const char** outName) {
     *outName = nullptr;
@@ -1474,7 +1473,7 @@ bool callVerbatimNameGetterImpl(void* fnPtr, void* nodePtr,
     *outName = reinterpret_cast<const char*>(retVal);
     return true;
 }
-#pragma warning(pop)
+TSDEV_SEH_ASM_END
 bool callVerbatimNameGetter(void* fnPtr, void* nodePtr, const char** outName) {
     dispatchEnter("VerbatimNameGetter", 0);
     bool ok = false;
