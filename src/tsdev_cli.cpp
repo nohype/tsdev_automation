@@ -3147,7 +3147,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
                         " (detect-and-fail; no rollback/retry attempted)\n";
                     return false;
             }
-            return false;  // unreachable
+            return false;  // Unreachable: every Sha256FileStatus is cased above -- fail-closed (hash failure) if the enum ever grows.
         };
 
         if (!snapshotPreHash(preEllPath, lib.ellFileExists(type, preProgId),
@@ -3507,10 +3507,8 @@ int cmdInsert(const std::string& typeStr,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -3642,10 +3640,8 @@ int cmdModify(const std::string& typeStr,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -3778,10 +3774,8 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -3891,10 +3885,8 @@ int cmdExists(const std::string& typeStr, const std::string& name,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -4244,10 +4236,8 @@ int cmdDependents(const std::string& typeStr, const std::string& name,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -4360,10 +4350,8 @@ int cmdUpsert(const std::string& typeStr,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -4545,10 +4533,8 @@ int cmdGetSource(const std::string& typeStr, const std::string& name,
     ComponentType type;
     if (!parseType(typeStr, type)) {
         r.exitCode = 2;
-        r.errorMessage = std::string("unknown type \"") + typeStr
-                         + "\" (expected strategy/function/indicator/tradingapp/showme)";
-        r.humanStderr = std::string("tsdev_cli: unknown type \"") + typeStr
-                        + "\" (expected strategy/function/indicator/tradingapp/showme)\n";
+        r.errorMessage = unknownTypeMessage(typeStr);
+        r.humanStderr = std::string("tsdev_cli: ") + unknownTypeMessage(typeStr) + "\n";
         emitOutput(r, jsonMode);
         return 2;
     }
@@ -4739,8 +4725,11 @@ void parseManifestLines(const std::string& content, bool needsSource,
             item.result.typeStr = typeTok;
             item.result.name = nameTok;
             item.result.exitCode = 2;
-            item.result.errorMessage = std::string("unknown type \"") + typeTok
-                + "\" (expected strategy/function/indicator/tradingapp/showme)";
+            // errorMessage-only: the batch completion renderer
+            // (batchItemCompletedLine) renders errorMessage, never
+            // humanStderr, so no humanStderr is staged here -- emitOutput
+            // is not on this path.
+            item.result.errorMessage = unknownTypeMessage(typeTok);
             outItems.push_back(std::move(item));
             continue;
         }
@@ -5673,6 +5662,60 @@ std::string prestageRecycleBoundary(
                                         resumeManifestDir, emitLine);
 }
 
+// Recycle-exit boundary branch: the runBatch-local recycleExit lambda's
+// tail-skip + manifest-reuse + Sec. 4.1 emit order, extracted as a free
+// function so the unit test drives it directly. Prestaged (RC-18 defer)
+// vs full path:
+//   - full: append the marker tail, emit the array, write the manifest.
+//   - prestaged: tail + array + manifest are already durable -- skip all
+//     three (re-appending would double the tail; rewriting would leak a
+//     second pid_ticks manifest; re-emitting would double the array).
+// Either way the pinned order is array -> manifest -> (the event follows
+// in the caller). Returns the manifest path the event carries.
+// Caller-owned cleanup: the CLI never deletes the manifest; a write
+// failure is loud (stderr line, empty return) and the array's marker
+// tail still pins the boundary (Sec. 4.4).
+struct RecycleBoundaryEmitParams {
+    const std::string* op = nullptr;
+    const std::vector<BatchItem>* items = nullptr;
+    size_t attempted = 0;
+    bool needsSource = false;
+    const std::string* resumeManifestDir = nullptr;
+    std::vector<CliResult>* results = nullptr;
+    bool jsonProgress = false;
+    bool* resultsEmitted = nullptr;  // in/out
+    bool boundaryPrestaged = false;
+    const std::string* prestagedManifestPath = nullptr;
+    const char* markerMsg = nullptr;
+    std::function<void(const std::string&)> emitLine;
+};
+
+std::string recycleExitBoundaryEmit(RecycleBoundaryEmitParams& q) {
+    // Tail-skip: never append twice on the pre-staged path (the staged
+    // tail wears the deferred text; a refused close still reports
+    // truthfully via the event + exit code in the caller).
+    if (!q.boundaryPrestaged) {
+        for (size_t j = q.attempted; j < q.items->size(); ++j) {
+            q.results->push_back(cancelledBatchItemResult(
+                *q.op, (*q.items)[j], q.markerMsg));
+        }
+    }
+    // Sec. 4.1 pinned order: the results array is the sole durable
+    // record -- emit + flush it HERE before the manifest the event
+    // carries (skipped when already staged pre-close).
+    if (q.jsonProgress && !*q.resultsEmitted) {
+        emitBatchOutput(*q.results);
+        *q.resultsEmitted = true;
+    }
+    // Manifest-reuse: the staged file rides the event, never rewritten.
+    if (q.boundaryPrestaged) {
+        return *q.prestagedManifestPath;
+    }
+    return writeRecycleBoundaryManifest(
+        *q.items, q.attempted, q.needsSource, *q.resumeManifestDir,
+        q.emitLine);
+}
+
 // Run ONE recycle attempt through the engine (design Sec. 2 steps 1-6) with the
 // production seams: the real census/death sampler and the raw-COM attach.
 // `ownSessionExists` is the design-Sec. 2 step-2 close-guard conditional -- R1
@@ -6424,7 +6467,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                 decision = "recycle"; break;
             case tsdev::VasGuardAction::Abort:
                 decision = "abort"; break;
-            default: break;
+            default: break;  // Unreachable: every action cased -- preserves the "pass" diag label if the enum ever grows.
             }
             TSDEV_DIAG_LOG("whserver.vas.check",
                            "pid=%lu freeMB=%llu largestMB=%llu "
@@ -6514,48 +6557,24 @@ DWORD WINAPI runBatch(LPVOID param) {
     // p->exitCode is set directly to 18/19.
     auto recycleExit = [&](const tsdev::RecycleResult& rec) -> DWORD {
         // RC-17: the marker text follows the reason, not the outcome.
+        // The boundary tail + manifest + emit order below run through
+        // recycleExitBoundaryEmit (RC-18 tail-skip + manifest-reuse when
+        // prestageRecycleBoundary already staged them pre-close).
         const char* markerMsg = recycleMarkerMessage(rec);
-        // RC-18: on the pre-staged defer path the tail is already
-        // appended (and already emitted + flushed, see the Sec. 4.1 order
-        // below) -- never append twice. The staged tail wears the
-        // deferred text; a refused close still reports truthfully via
-        // the event + exit code (and the client re-words exit-12
-        // markers on every non-resumed boundary).
-        if (!p->boundaryPrestaged) {
-            for (size_t j = attempted; j < total; ++j) {
-                p->results.push_back(
-                    cancelledBatchItemResult(op, p->items[j], markerMsg));
-            }
-        }
-        // Sec. 4.1 pinned order: results array -> resume manifest -> event
-        // line -> batch_completed summary -> fflush -> exit. The results
-        // array is the sole durable record -- emit + flush it HERE on the
-        // worker BEFORE `delete lib` (whose OrlibExit would otherwise
-        // dispatch toward the just-killed/torn server -- UNPROVEN shape)
-        // and BEFORE any TerminateProcess-self (the main thread never
-        // runs again on that path). The flag stops runBatchAndEmit from
-        // re-emitting the array (and skips the re-emit when the array
-        // was already staged pre-close).
-        if (p->jsonProgress && !p->resultsEmitted) {
-            emitBatchOutput(p->results);
-            p->resultsEmitted = true;
-        }
-        // Step 2 -- resume manifest: items from the boundary index onward
-        // in the schema parseManifest re-reads, written before the event
-        // that carries its path. Caller-owned cleanup: the CLI never
-        // deletes it. A write failure is loud (stderr line; the event
-        // then carries no manifest member) -- the array's marker tail
-        // still pins the boundary (Sec. 4.4). RC-18: the pre-staged defer
-        // path reuses the already-written file -- writing again would
-        // leak a second pid_ticks manifest.
-        std::string manifestPath;
-        if (p->boundaryPrestaged) {
-            manifestPath = p->prestagedManifestPath;
-        } else {
-            manifestPath = writeRecycleBoundaryManifest(
-                p->items, attempted, needsSource, p->resumeManifestDir,
-                emitLine);
-        }
+        RecycleBoundaryEmitParams bq;
+        bq.op = &op;
+        bq.items = &p->items;
+        bq.attempted = attempted;
+        bq.needsSource = needsSource;
+        bq.resumeManifestDir = &p->resumeManifestDir;
+        bq.results = &p->results;
+        bq.jsonProgress = p->jsonProgress;
+        bq.resultsEmitted = &p->resultsEmitted;
+        bq.boundaryPrestaged = p->boundaryPrestaged;
+        bq.prestagedManifestPath = &p->prestagedManifestPath;
+        bq.markerMsg = markerMsg;
+        bq.emitLine = emitLine;
+        std::string manifestPath = recycleExitBoundaryEmit(bq);
         // Step 3 -- the event AFTER the manifest exists (it carries the
         // path) with the full Sec. 4.1 field set: breaching pid, free_mb,
         // the 1-based resume boundary index, total, manifest path.
@@ -7261,9 +7280,8 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
     // Validate type (unknown -> exit 2, matching existing pattern).
     ComponentType ctype;
     if (!parseType(typeStr, ctype)) {
-        std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
-                     "(expected strategy/function/indicator/tradingapp/showme)\n",
-                     typeStr.c_str());
+        std::fprintf(stderr, "%s\n",
+                     (std::string("tsdev_cli: ") + unknownTypeMessage(typeStr)).c_str());
         return 2;
     }
 
@@ -8001,6 +8019,9 @@ bool serveVasGuardRefuse(const ServeRequest& req,
             const bool deferred = recycleSiteDefers(sessionAttached);
             tsdev::RecycleResult rec;
             if (deferred) {
+                // No pre-staging here (unlike the batch path): a serve
+                // request has no marker tail to protect, so the boundary
+                // is staged post-close in the refusal frame below.
                 tsdev::WhRecycleSampler deferSampler;
                 rec = recycleDeferredResult(
                     [lib] { return lib->closeWarehouse(); },
@@ -8132,7 +8153,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
             decision = "recycle"; break;
         case tsdev::VasGuardAction::Abort:
             decision = "abort"; break;
-        default: break;
+        default: break;  // Unreachable: every action cased -- preserves the "pass" diag label if the enum ever grows.
         }
         TSDEV_DIAG_LOG("whserver.vas.check",
                        "pid=%lu freeMB=%llu largestMB=%llu "
@@ -10798,9 +10819,8 @@ int main(int argc, char** argv) {
         // Resolve the type int for parseDirectory.
         ComponentType ctype;
         if (!parseType(typeStr, ctype)) {
-            std::fprintf(stderr, "tsdev_cli: unknown type \"%s\" "
-                         "(expected strategy/function/indicator/tradingapp/showme)\n",
-                         typeStr.c_str());
+            std::fprintf(stderr, "%s\n",
+                         (std::string("tsdev_cli: ") + unknownTypeMessage(typeStr)).c_str());
             return 2;
         }
         int typeInt = static_cast<int>(ctype);

@@ -1606,6 +1606,184 @@ DWORD WINAPI runTest(LPVOID param) {
                              "close-hang record\n");
     }
 
+    // ------------------------------------------------------------------
+    // Check 18: recycleExitBoundaryEmit -- the extracted recycleExit
+    // boundary branch. Full path (prestaged=false) appends the marker
+    // tail, emits the array BEFORE writing the manifest (Sec. 4.1
+    // order), and returns the fresh path; prestaged path (RC-18)
+    // skips the tail, emits nothing, and reuses the staged file.
+    // ------------------------------------------------------------------
+    {
+        std::error_code fsEc;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(fsEc) /
+            "tsdev_r4_exitbranch";
+        if (fsEc) {
+            ec = fail("check18: temp_directory_path failed", 200);
+            return 0;
+        }
+        std::filesystem::remove_all(dir, fsEc);
+        std::filesystem::create_directories(dir, fsEc);
+        if (fsEc) {
+            ec = fail("check18: scratch dir create failed", 201);
+            return 0;
+        }
+        std::vector<BatchItem> items;
+        for (const char* nm : {"Q1", "Q2", "Q3"}) {
+            BatchItem b; b.typeStr = "function"; b.name = nm;
+            items.push_back(b);
+        }
+        CliResult head;
+        head.op = "insert"; head.typeStr = "function"; head.name = "Q1";
+        head.success = true; head.exitCode = 0;
+        const std::string op = "insert";
+        const std::string resumeDir = dir.string();
+
+        // Full path: head + recycled marker tail, stdout array first,
+        // then the fresh manifest covering the not-run tail (Q2, Q3).
+        std::vector<CliResult> results;
+        results.push_back(head);
+        bool emitted = false;
+        std::vector<std::string> diag;
+        RecycleBoundaryEmitParams q;
+        q.op = &op;
+        q.items = &items;
+        q.attempted = 1;
+        q.needsSource = false;
+        q.resumeManifestDir = &resumeDir;
+        q.results = &results;
+        q.jsonProgress = true;
+        q.resultsEmitted = &emitted;
+        q.boundaryPrestaged = false;
+        q.markerMsg = kRecycledMarkerMessage;
+        q.emitLine = [&](const std::string& s) { diag.push_back(s); };
+        FILE* tmp = std::tmpfile();
+        if (!tmp) {
+            ec = fail("check18: tmpfile() failed", 202);
+            return 0;
+        }
+        std::fflush(stdout);
+        int savedFd = _dup(_fileno(stdout));
+        if (savedFd < 0 || _dup2(_fileno(tmp), _fileno(stdout)) != 0) {
+            if (savedFd >= 0) _close(savedFd);
+            std::fclose(tmp);
+            ec = fail("check18: stdout redirect failed", 203);
+            return 0;
+        }
+        _setmode(_fileno(stdout), _O_BINARY);
+        std::string mpath = recycleExitBoundaryEmit(q);
+        std::fflush(stdout);
+        bool restored = (_dup2(savedFd, _fileno(stdout)) == 0);
+        _close(savedFd);
+        _setmode(_fileno(stdout), _O_TEXT);
+        if (!restored) {
+            std::fclose(tmp);
+            ec = fail("check18: stdout restore failed", 204);
+            return 0;
+        }
+        std::string got;
+        std::fseek(tmp, 0, SEEK_SET);
+        char buf[1024];
+        size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
+            got.append(buf, n);
+        std::fclose(tmp);
+        if (!emitted || results.size() != 3 ||
+            results[1].exitCode != 12 || results[2].exitCode != 12 ||
+            results[1].errorMessage != kRecycledMarkerMessage ||
+            !diag.empty() || mpath.empty()) {
+            ec = fail("check18: full-path boundary shape wrong", 205);
+            return 0;
+        }
+        ordered_json arr;
+        try {
+            arr = ordered_json::parse(got);
+        } catch (const std::exception&) {
+            ec = fail("check18: full-path stdout is not a JSON array",
+                      206);
+            return 0;
+        }
+        if (!arr.is_array() || arr.size() != 3 ||
+            !arr[0].value("success", false) ||
+            arr[1].value("exit_code", -1) != 12 ||
+            arr[2].value("exit_code", -1) != 12) {
+            ec = fail("check18: full-path array head/tail wrong", 207);
+            return 0;
+        }
+        std::vector<BatchItem> back;
+        if (!parseManifest(mpath, /*needsSource=*/false, back) ||
+            back.size() != 2 || !back[0].preValid ||
+            !back[1].preValid || back[0].name != "Q2" ||
+            back[1].name != "Q3") {
+            ec = fail("check18: full-path manifest tail wrong", 208);
+            return 0;
+        }
+
+        // Prestaged path: the staged tail is never re-appended, the
+        // array is never re-emitted, and the staged file is reused.
+        std::vector<CliResult> staged;
+        staged.push_back(head);
+        for (size_t j = 1; j < items.size(); ++j) {
+            staged.push_back(cancelledBatchItemResult(
+                op, items[j], kRecycleDeferredMarkerMessage));
+        }
+        bool stagedEmitted = true;  // prestage already emitted the array
+        std::vector<std::string> diag2;
+        RecycleBoundaryEmitParams q2;
+        q2.op = &op;
+        q2.items = &items;
+        q2.attempted = 1;
+        q2.needsSource = false;
+        q2.resumeManifestDir = &resumeDir;
+        q2.results = &staged;
+        q2.jsonProgress = true;
+        q2.resultsEmitted = &stagedEmitted;
+        q2.boundaryPrestaged = true;
+        q2.prestagedManifestPath = &mpath;
+        q2.markerMsg = kRecycledMarkerMessage;
+        q2.emitLine = [&](const std::string& s) { diag2.push_back(s); };
+        FILE* tmp2 = std::tmpfile();
+        if (!tmp2) {
+            ec = fail("check18: tmpfile() failed (prestaged)", 209);
+            return 0;
+        }
+        std::fflush(stdout);
+        int savedFd2 = _dup(_fileno(stdout));
+        if (savedFd2 < 0 || _dup2(_fileno(tmp2), _fileno(stdout)) != 0) {
+            if (savedFd2 >= 0) _close(savedFd2);
+            std::fclose(tmp2);
+            ec = fail("check18: stdout redirect failed (prestaged)",
+                      210);
+            return 0;
+        }
+        _setmode(_fileno(stdout), _O_BINARY);
+        std::string reused = recycleExitBoundaryEmit(q2);
+        std::fflush(stdout);
+        bool restored2 = (_dup2(savedFd2, _fileno(stdout)) == 0);
+        _close(savedFd2);
+        _setmode(_fileno(stdout), _O_TEXT);
+        if (!restored2) {
+            std::fclose(tmp2);
+            ec = fail("check18: stdout restore failed (prestaged)", 211);
+            return 0;
+        }
+        std::string got2;
+        std::fseek(tmp2, 0, SEEK_SET);
+        while ((n = std::fread(buf, 1, sizeof(buf), tmp2)) > 0)
+            got2.append(buf, n);
+        std::fclose(tmp2);
+        if (reused != mpath || staged.size() != 3 ||
+            staged[1].errorMessage != kRecycleDeferredMarkerMessage ||
+            !got2.empty() || !diag2.empty()) {
+            ec = fail("check18: prestaged path re-emitted/appended or "
+                      "did not reuse the manifest", 212);
+            return 0;
+        }
+        std::filesystem::remove_all(dir, fsEc);
+        std::fprintf(stdout, "    PASS: recycleExit boundary branch "
+                             "(full vs prestaged)\n");
+    }
+
     std::fprintf(stdout, "\n=== ALL CHECKS PASSED ===\n");
     return 0;
 }
