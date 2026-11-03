@@ -27,6 +27,8 @@
 #include "../src/tsdev_cli.cpp"
 
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -36,6 +38,53 @@ namespace {
 int fail(const char* msg, int code) {
     std::fprintf(stderr, "\n[FAIL] %s (code=%d)\n", msg, code);
     return code;
+}
+
+// Walk up from startDir looking for docs/UPDATE_DESIGN.md in the SOURCE
+// tree (the committed file, never the build dir). Returns "" if not found.
+std::string walkUpForUpdateDesign(const std::string& startDir) {
+    std::string cur = startDir;
+    for (int up = 0; up < 9; ++up) {
+        const std::string cand = cur + "\\docs\\UPDATE_DESIGN.md";
+        if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            return cand;
+        }
+        const size_t slash = cur.find_last_of("\\/");
+        if (slash == std::string::npos || slash <= 2) break;
+        cur = cur.substr(0, slash);
+    }
+    return std::string();
+}
+
+// Resolve docs/UPDATE_DESIGN.md from the source tree, anchoring at the
+// test executable's directory first, then the CWD. Deterministic pure
+// file read -- RequiresTs=false compatible (no TS, no network).
+std::string resolveUpdateDesignPath() {
+    char exe[MAX_PATH] = {0};
+    if (GetModuleFileNameA(nullptr, exe, MAX_PATH) > 0) {
+        std::string dir(exe);
+        const size_t slash = dir.find_last_of("\\/");
+        if (slash != std::string::npos) {
+            const std::string found =
+                walkUpForUpdateDesign(dir.substr(0, slash));
+            if (!found.empty()) return found;
+        }
+    }
+    char cwd[MAX_PATH] = {0};
+    if (GetCurrentDirectoryA(MAX_PATH, cwd) > 0) {
+        const std::string found = walkUpForUpdateDesign(cwd);
+        if (!found.empty()) return found;
+    }
+    return std::string();
+}
+
+bool readWholeFileA(const char* path, std::string& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    out = ss.str();
+    return true;
 }
 
 using tsdev::update::Semver;
@@ -406,8 +455,9 @@ DWORD WINAPI runTest(LPVOID param) {
     // ------------------------------------------------------------------
     // Check 9: shipped download-failure message pin (RC-24).
     //   kUpdateDownloadFailedMsg (used verbatim by cmdUpdate's fail(27,
-    //   ...) arm) must equal the docs/UPDATE_DESIGN.md section 5 message
-    //   table row byte-for-byte. Editing either side without the other
+    //   ...) arm) must equal BOTH the hardcoded `want` below AND the
+    //   docs/UPDATE_DESIGN.md section 5 message table row, read live from
+    //   the committed source tree. Editing either side without the other
     //   turns this check red.
     // ------------------------------------------------------------------
     {
@@ -416,8 +466,53 @@ DWORD WINAPI runTest(LPVOID param) {
             "deliver the file). Nothing was changed. Try again; if it "
             "repeats, reinstall manually.";
         if (std::string(kUpdateDownloadFailedMsg) != want) {
-            ec = fail("check9: download-fail message != spec table row",
+            ec = fail("check9: download-fail message != want literal",
                       100);
+            return 0;
+        }
+        // Spec-file pin: the Sec 5 "| Download fetch fails |" row carries
+        // `tsdev_cli: ERROR <msg>`; the <msg> part must equal the constant
+        // byte-for-byte.
+        const std::string specPath = resolveUpdateDesignPath();
+        if (specPath.empty()) {
+            ec = fail("check9: docs/UPDATE_DESIGN.md not found "
+                      "(exe dir / CWD walk-up)", 101);
+            return 0;
+        }
+        std::string spec;
+        if (!readWholeFileA(specPath.c_str(), spec)) {
+            ec = fail("check9: cannot read docs/UPDATE_DESIGN.md", 101);
+            return 0;
+        }
+        const std::string rowMark = "| Download fetch fails |";
+        const size_t row = spec.find(rowMark);
+        if (row == std::string::npos) {
+            ec = fail("check9: download-fail row missing from spec", 102);
+            return 0;
+        }
+        const size_t rowEnd = spec.find('\n', row);
+        const std::string rowText = spec.substr(
+            row, rowEnd == std::string::npos ? std::string::npos
+                                             : rowEnd - row);
+        const size_t q1 = rowText.find('`');
+        const size_t q2 = (q1 == std::string::npos)
+            ? std::string::npos : rowText.find('`', q1 + 1);
+        if (q1 == std::string::npos || q2 == std::string::npos) {
+            ec = fail("check9: download-fail row has no quoted message",
+                      102);
+            return 0;
+        }
+        const std::string cell = rowText.substr(q1 + 1, q2 - q1 - 1);
+        const std::string cliPrefix = "tsdev_cli: ERROR ";
+        if (cell.compare(0, cliPrefix.size(), cliPrefix) != 0) {
+            ec = fail("check9: download-fail row missing CLI prefix",
+                      102);
+            return 0;
+        }
+        const std::string specMsg = cell.substr(cliPrefix.size());
+        if (std::string(kUpdateDownloadFailedMsg) != specMsg) {
+            ec = fail("check9: download-fail message != spec file row",
+                      103);
             return 0;
         }
         std::fprintf(stdout,
