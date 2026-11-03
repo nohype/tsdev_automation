@@ -7916,11 +7916,15 @@ class TestE2E:
 
     Every test cleans up all components it creates via the autouse
     ``_cleanup_all`` fixture, which sweeps all known test names across all five
-    types so no orphans remain even if a test fails mid-way.
+    types so no orphans remain even if a test fails mid-way.  The swept set is
+    ``_TEST_NAMES`` (mostly PyAutoTest* plus "zzz_py_ci_probe" and
+    "TS_AUTO_PY_SHOWME_L14A") plus the 20 PyAutoTest_BatchNN names.
     """
 
     # Names used across the E2E suite.  The cleanup fixture sweeps ALL of these
     # across ALL five types so a failure mid-test cannot leak warehouse entries.
+    # Most entries share the PyAutoTest prefix; the two exceptions swept here
+    # are "zzz_py_ci_probe" and "TS_AUTO_PY_SHOWME_L14A".
     _TEST_NAMES: list[str] = [
         _UNIQUE + "_Strat",
         _UNIQUE + "_Func",
@@ -7947,10 +7951,33 @@ class TestE2E:
     ]
 
     @pytest.fixture(autouse=True)
-    def _real_client(self):
+    def _real_client(self, request):
         self.c = TsDevClient()
+        # Pre-clean: mirror of the teardown sweep below. A killed process
+        # (kill -9, AV death, phase-stop) never runs teardown, so stale
+        # fixtures would fail the next insert with AlreadyExistsError.
+        # Best-effort delete-all, swallow errors. Sweeps _TEST_NAMES (mostly
+        # PyAutoTest* plus "zzz_py_ci_probe" and "TS_AUTO_PY_SHOWME_L14A")
+        # plus the 20 PyAutoTest_BatchNN names. Skipped for
+        # test_no_orphans_after_suite so the oracle asserts suite/teardown
+        # health instead of its own setup sweep.
+        if request.node.name != "test_no_orphans_after_suite":
+            for name in self._TEST_NAMES:
+                for t in _ALL_TYPES:
+                    try:
+                        self.c.delete(t, name)
+                    except Exception:
+                        pass
+            for i in range(20):
+                for t in _ALL_TYPES:
+                    try:
+                        self.c.delete(t, f"{_UNIQUE}_Batch{i:02d}")
+                    except Exception:
+                        pass
         yield
-        # Sweep: best-effort delete of every test name across all 5 types.
+        # Sweep: best-effort delete of every test name across all 5 types
+        # (_TEST_NAMES: mostly PyAutoTest* plus "zzz_py_ci_probe" and
+        # "TS_AUTO_PY_SHOWME_L14A", plus the 20 PyAutoTest_BatchNN names).
         # A clean warehouse has no orphans, so every delete should raise
         # NotFoundError (exit 5).  We swallow errors here; the dedicated
         # test_no_orphans test asserts the sweep result explicitly.
@@ -8551,12 +8578,15 @@ class TestE2E:
     # -- Part 4: orphan sweep (no leftover warehouse entries) ---------------
 
     def test_no_orphans_after_suite(self) -> None:
-        """Final safety-net sweep: attempt to delete every test name across all
-        5 types; each must raise NotFoundError, proving no orphaned warehouse
-        entries remain. The autouse ``_real_client`` fixture already cleans up
-        after every test, so this is not reliant on alphabetical-last ordering
-        -- it simply re-verifies explicitly so a leftover entry is reported as a
-        test failure rather than silently swallowed."""
+        """Final safety-net oracle (check-then-clean): attempt to delete every
+        test name across all 5 types (_TEST_NAMES: mostly PyAutoTest* plus
+        "zzz_py_ci_probe" and "TS_AUTO_PY_SHOWME_L14A", plus the 20
+        PyAutoTest_BatchNN names); each must raise NotFoundError, proving no
+        orphaned warehouse entries remain. The autouse ``_real_client``
+        fixture skips its pre-yield sweep for this test so these asserts run
+        against suite/teardown state, not its own setup sweep; the fixture's
+        post-yield teardown then re-sweeps (cleans) afterwards, so a leftover
+        entry is reported as a test failure rather than silently swallowed."""
         for name in self._TEST_NAMES:
             for t in _ALL_TYPES:
                 with pytest.raises(NotFoundError):
