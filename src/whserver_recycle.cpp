@@ -694,6 +694,24 @@ std::string hrDetail(const char* stage, HRESULT hr) {
 
 } // namespace
 
+// Parse the three step-4 COM identity strings (CLSID_Control, factory
+// IID, control IID). Split out so unit tests can drive garbage strings:
+// every CLSIDFromString HRESULT is checked and ANY parse failure refuses
+// (false -> the caller reports AttachFailed/"clsid_parse_failed")
+// instead of proceeding to CoGetClassObject with an undefined CLSID.
+bool parseRecycleClsids(const wchar_t* ctlStr, const wchar_t* factoryStr,
+                        const wchar_t* iidStr, CLSID* outCtl,
+                        IID* outFactory, IID* outIid) {
+    if (ctlStr == nullptr || factoryStr == nullptr || iidStr == nullptr ||
+        outCtl == nullptr || outFactory == nullptr || outIid == nullptr) {
+        return false;
+    }
+    if (FAILED(CLSIDFromString(ctlStr, outCtl))) return false;
+    if (FAILED(CLSIDFromString(factoryStr, outFactory))) return false;
+    if (FAILED(CLSIDFromString(iidStr, outIid))) return false;
+    return true;
+}
+
 RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     const std::vector<DWORD>& censusPids, std::string& detail) {
     // Hard precondition (Sec. 2 step 4): NEVER invoke WHouseEx with Create=1
@@ -746,9 +764,13 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
         release();  // drop refs from any prior per-pid iteration
 
         CLSID clsidCtl; IID iidFactory, iidCtl;
-        CLSIDFromString(L"{7CEEA90C-D59E-11D3-8394-00C04F7BDF10}", &clsidCtl);
-        CLSIDFromString(L"{7CEEACBC-D59E-11D3-8394-00C04F7BDF10}", &iidFactory);
-        CLSIDFromString(L"{7CEEA90A-D59E-11D3-8394-00C04F7BDF10}", &iidCtl);
+        if (!parseRecycleClsids(L"{7CEEA90C-D59E-11D3-8394-00C04F7BDF10}",
+                               L"{7CEEACBC-D59E-11D3-8394-00C04F7BDF10}",
+                               L"{7CEEA90A-D59E-11D3-8394-00C04F7BDF10}",
+                               &clsidCtl, &iidFactory, &iidCtl)) {
+            detail = "clsid_parse_failed";
+            return RecycleAttachStatus::AttachFailed;
+        }
 
         HRESULT hr = CoGetClassObject(clsidCtl, CLSCTX_ALL, nullptr,
                                       iidFactory, (void**)&m_fact);

@@ -347,6 +347,15 @@ private:
     VARIANT      m_vres{};   // VariantInit'ed in the ctor, cleared in release()
 };
 
+// Parse the three step-4 COM identity strings (CLSID_Control, factory
+// IID, control IID). Every CLSIDFromString HRESULT is checked; ANY parse
+// failure returns false and the attach caller reports
+// AttachFailed/"clsid_parse_failed" instead of proceeding to
+// CoGetClassObject with an undefined CLSID.
+bool parseRecycleClsids(const wchar_t* ctlStr, const wchar_t* factoryStr,
+                        const wchar_t* iidStr, CLSID* outCtl,
+                        IID* outFactory, IID* outIid);
+
 // Derive the MyWork directory (wide) from TsDevLib's getMyWorkBinPath()
 // ("<root>\MyWork\Bin" -> "<root>\MyWork"). Returns empty when the input is
 // empty or has no parent component -- callers pass the empty result into

@@ -1285,6 +1285,34 @@ int main() {
         }
     }
 
+    // -- Group 28: step-4 CLSID parse gate (debt item 1) ----------------------
+    // Every CLSIDFromString HRESULT is checked: garbage strings refuse
+    // (false) instead of proceeding to CoGetClassObject with an undefined
+    // CLSID. Red before: no seam existed -- the literals were parsed
+    // inline with unchecked HRESULTs; the seam test below fails to
+    // compile without the fix. The attach caller maps false to
+    // AttachFailed/"clsid_parse_failed" (whserver_recycle.cpp attach
+    // entry); a full-attach drive with garbage is impossible -- the
+    // literals are fixed -- so this seam plus that mapping is the proof.
+    {
+        CLSID ctl; IID fact, iid;
+        if (!tsdev::parseRecycleClsids(
+                L"{7CEEA90C-D59E-11D3-8394-00C04F7BDF10}",
+                L"{7CEEACBC-D59E-11D3-8394-00C04F7BDF10}",
+                L"{7CEEA90A-D59E-11D3-8394-00C04F7BDF10}",
+                &ctl, &fact, &iid)) {
+            return fail("production CLSID strings must parse", 280);
+        }
+        if (tsdev::parseRecycleClsids(
+                L"garbage", L"garbage", L"garbage", &ctl, &fact, &iid)) {
+            return fail("garbage CLSID strings must refuse parse", 281);
+        }
+        if (tsdev::parseRecycleClsids(nullptr, nullptr, nullptr, nullptr,
+                                      nullptr, nullptr)) {
+            return fail("null CLSID parse args must refuse", 282);
+        }
+    }
+
     std::printf("  all checks passed\n");
     return 0;
 }
