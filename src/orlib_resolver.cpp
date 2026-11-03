@@ -1,6 +1,6 @@
 // orlib_resolver.cpp
 //
-// TVS-B.4 — Full implementation of OrlibResolver.
+// TVS-B.4 -- Full implementation of OrlibResolver.
 //
 // This file provides the complete implementation of EVERY method declared in
 // orlib_resolver.h: PE parsing, signature scanning, version detection (3-tier),
@@ -9,7 +9,7 @@
 // (Cycles 1-5).
 //
 // The version manifest (kOrlibVersionManifest[]) is constexpr data copied
-// verbatim from docs/VERSION_DETECTION.md §6.2 — it is safe to include now
+// verbatim from docs/VERSION_DETECTION.md Sec. 6.2 -- it is safe to include now
 // because it is pure data, not logic.
 
 // orlib_resolver.h is included via signatures.gen.h (below), which defines the
@@ -58,8 +58,8 @@ int hexCharVal(char c) {
 /// \brief Parse a space-separated hex pattern string into parallel byte + mask
 ///        vectors.
 ///
-/// "??" tokens → mask byte 0x00 (wildcard), bytes byte 0x00.
-/// "XX" tokens → mask byte 0xFF (fixed), bytes byte = parsed hex value.
+/// "??" tokens -> mask byte 0x00 (wildcard), bytes byte 0x00.
+/// "XX" tokens -> mask byte 0xFF (fixed), bytes byte = parsed hex value.
 void parseHexPatternWithMask(const char* hex,
                              std::vector<uint8_t>& bytes,
                              std::vector<uint8_t>& mask) {
@@ -84,7 +84,7 @@ void parseHexPatternWithMask(const char* hex,
         } else {
             int hi = hexCharVal(tok[0]);
             int lo = hexCharVal(tok[1]);
-            if (hi < 0 || lo < 0) return;  // parse error → partial result
+            if (hi < 0 || lo < 0) return;  // parse error -> partial result
             bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
             mask.push_back(0xFF);
         }
@@ -174,7 +174,7 @@ const std::vector<OrlibSignatureDef>& buildSignatureCatalog() {
 /// \brief Convert an RVA to a raw file offset within an in-memory PE image
 ///        buffer (test mode only).
 ///
-/// Iterates the section headers (DOS header → e_lfanew → NT headers →
+/// Iterates the section headers (DOS header -> e_lfanew -> NT headers ->
 /// IMAGE_FIRST_SECTION for NumberOfSections). For the section whose virtual
 /// range contains the RVA, returns
 ///   PointerToRawData + (rva - VirtualAddress).
@@ -208,7 +208,7 @@ uint32_t rvaToFileOffset(const uint8_t* image, size_t imageSize, uint32_t rva) {
 
 /// \brief Resolve an RVA to a readable byte pointer in either mode.
 ///
-/// TEST mode:       converts RVA → file offset via rvaToFileOffset, then
+/// TEST mode:       converts RVA -> file offset via rvaToFileOffset, then
 ///                  returns m_image + fileOffset (bounds-checked against
 ///                  m_imageSize; returns nullptr if out of bounds).
 /// PRODUCTION mode: returns (const uint8_t*)(m_base + rva) directly (the
@@ -232,7 +232,7 @@ const uint8_t* rvaToPtr(bool testMode,
 }
 
 /// \brief Read a little-endian uint32_t from a byte pointer (no alignment
-///        requirement — safe for x86 unaligned reads).
+///        requirement -- safe for x86 unaligned reads).
 uint32_t readLe32(const uint8_t* p) {
     return static_cast<uint32_t>(p[0]) |
            (static_cast<uint32_t>(p[1]) << 8) |
@@ -373,7 +373,7 @@ OrlibResolver::OrlibResolver(const wchar_t* dllPath) {
     m_signatures = buildSignatureCatalog();
 
     // detectVersion() is called at construction (caches in m_version).
-    // Wrap in try/catch — construction must never throw due to version
+    // Wrap in try/catch -- construction must never throw due to version
     // detection failure (detectVersion itself never throws, but this is
     // belt-and-suspenders). On exception, m_version stays default unknown.
     try {
@@ -395,7 +395,7 @@ OrlibResolver::OrlibResolver(const uint8_t* image, size_t size, uintptr_t base) 
     m_signatures = buildSignatureCatalog();
 
     // detectVersion() is called at construction (caches in m_version).
-    // Wrap in try/catch — construction must never throw due to version
+    // Wrap in try/catch -- construction must never throw due to version
     // detection failure (detectVersion itself never throws, but this is
     // belt-and-suspenders). On exception, m_version stays default unknown.
     try {
@@ -430,7 +430,7 @@ VersionDescriptor OrlibResolver::detectVersion() {
         }
 
         if (!entry) {
-            // FileVersion not in manifest → unknown version.
+            // FileVersion not in manifest -> unknown version.
             VersionDescriptor vd;
             vd.known          = false;
             vd.tier           = VersionTier::Unknown;
@@ -678,8 +678,8 @@ EndCompilingProcessFn OrlibResolver::resolveEndCompilingProcess() {
 // signature scan (raw ctor/dtor at RVA 0x165A00 / 0x165AC0) to ordinal-based
 // resolution (orlib20 ordinal exports 66 / 67). TSDev reaches the ctor/dtor
 // EXCLUSIVELY through the ordinal wrappers (FUN_10165f70 / FUN_10165fd0),
-// never via a direct call to the raw ctor/dtor — see docs/M1_HANDOFF.md
-// §R-M.1.1 (the underlying raw Ghidra note is transient/unavailable).
+// never via a direct call to the raw ctor/dtor -- see docs/M1_HANDOFF.md
+// Sec. R-M.1.1 (the underlying raw Ghidra note is transient/unavailable).
 CELCompilerAllocFn OrlibResolver::resolveCELCompilerAlloc() {
     // Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
     return reinterpret_cast<CELCompilerAllocFn>(resolveExportByOrdinal(66));
@@ -695,7 +695,7 @@ CELCompilerDestroyFn OrlibResolver::resolveCELCompilerDestroy() {
 // after a successful verify (FUN_00453f70) and after a successful
 // category-gated delete (FUN_10159ae0). The wrapper is an ordinal-only
 // [NONAME] export, so it is resolved by ordinal, not by name. See
-// docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 (R-M.3.1).
+// docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 1.2 (R-M.3.1).
 NotifyLibChangedFn OrlibResolver::resolveNotifyLibChanged() {
     // Ordinal 57: __stdcall, 2 dword args (unsigned short category,
     // unsigned short progId), returns void (always returns 1 per the
@@ -826,7 +826,7 @@ FARPROC OrlibResolver::resolveExport(const char* decoratedName) {
 
 // Workstream M slices M.1/M.3: ordinal-based export resolution. orlib20
 // exports the CELCompiler alloc/destroy wrappers as ordinal-only ([NONAME])
-// exports 66/67 and the 0x40A sender as ordinal-only export 57 — they have NO
+// exports 66/67 and the 0x40A sender as ordinal-only export 57 -- they have NO
 // entry in the export name table, so the name-based
 // resolveExport() cannot find them. This method resolves by ordinal:
 //   - Production: GetProcAddress accepts MAKEINTRESOURCEA(ordinal) for
@@ -914,14 +914,14 @@ bool OrlibResolver::validatePatchSite(const std::string& name,
                 return false;  // mismatch on a fixed byte
             }
         }
-        // maskByte == 0x00 → wildcard, skip
+        // maskByte == 0x00 -> wildcard, skip
     }
     return true;
 }
 
 bool OrlibResolver::validatePatchSite(const PatchSiteDescriptor& desc) {
     // Derive the validation mask from the patch-site name.
-    //   - thread-check INT3 patches: single byte 0xCC, no wildcards — a
+    //   - thread-check INT3 patches: single byte 0xCC, no wildcards -- a
     //     full-FF mask (check every byte) is correct.
     // The persistence patch (which required wildcarding bytes 6-7 of an
     // SEH handler address) has been removed (TVS-L.3); no remaining patch
@@ -936,7 +936,7 @@ bool OrlibResolver::validatePatchSite(const PatchSiteDescriptor& desc) {
 bool OrlibResolver::applyPatch(const std::string& name) {
     PatchSiteDescriptor desc = resolvePatchSite(name);
 
-    // Step 1: validate original bytes — throw on mismatch.
+    // Step 1: validate original bytes -- throw on mismatch.
     if (!validatePatchSite(desc)) {
         const uint8_t* actualPtr = rvaToPtr(
             m_testMode, m_image, m_imageSize, m_base,
@@ -954,7 +954,7 @@ bool OrlibResolver::applyPatch(const std::string& name) {
                                  " actual: " + actualHex);
     }
 
-    // Step 2: idempotency — if replacement bytes are already present, skip.
+    // Step 2: idempotency -- if replacement bytes are already present, skip.
     const uint8_t* curPtr = rvaToPtr(
         m_testMode, m_image, m_imageSize, m_base,
         static_cast<uint32_t>(desc.patchRva), desc.replacementBytes.size());
@@ -963,12 +963,12 @@ bool OrlibResolver::applyPatch(const std::string& name) {
         return true;  // already patched
     }
 
-    // Step 3: TEST mode — no write (buffer is read-only). Validation passed.
+    // Step 3: TEST mode -- no write (buffer is read-only). Validation passed.
     if (m_testMode) {
         return true;
     }
 
-    // Step 4: PRODUCTION mode — VirtualProtect + memcpy + restore.
+    // Step 4: PRODUCTION mode -- VirtualProtect + memcpy + restore.
     void* patchAddr = reinterpret_cast<void*>(m_base + desc.patchRva);
     DWORD oldProtect = 0;
     if (!VirtualProtect(patchAddr, desc.replacementBytes.size(),
@@ -1009,7 +1009,7 @@ PatchSiteDescriptor OrlibResolver::resolveThreadCheck3() {
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// Data-global extraction strategy (PM DECISION R5 — instruction-offset
+// Data-global extraction strategy (PM DECISION R5 -- instruction-offset
 // extraction):
 //
 //   The 3 .data-section globals are resolved by finding the referencing CODE
@@ -1018,20 +1018,20 @@ PatchSiteDescriptor OrlibResolver::resolveThreadCheck3() {
 //   that function. The absolute address is image-base-relative; subtracting
 //   m_base yields the RVA.
 //
-//   Evidence summary: docs/SIGNATURE_CATALOG.md §6 and the generated catalog;
+//   Evidence summary: docs/SIGNATURE_CATALOG.md Sec. 6 and the generated catalog;
 //   the original b1_ghidra_evidence.md record was transient/unavailable.
 //
 //   StartCompilingProcess references two of the globals:
-//     - offset 0x19: 8B 0D <imm32>  → MOV ECX,[<error array ptr>]
+//     - offset 0x19: 8B 0D <imm32>  -> MOV ECX,[<error array ptr>]
 //       imm32 at function-offset 0x1B (opcode is 2 bytes: 8B 0D).
-//     - offset 0x21: A3 <imm32>     → MOV [<error count>],EAX
+//     - offset 0x21: A3 <imm32>     -> MOV [<error count>],EAX
 //       imm32 at function-offset 0x22 (opcode is 1 byte: A3).
 //
 //   The third global (HINSTANCE for string table) is
 //   referenced by _CreateEntryEX@24 (resolved export) at
 //   instruction offset 0x6C: MOV ECX,[imm32] (opcode 8B 0D), imm32 at
 //   function-offset 0x6E. Resolved by export name (not
-//   signature) — see resolveErrorHinstRva below. The data-global RVAs
+//   signature) -- see resolveErrorHinstRva below. The data-global RVAs
 //   are recorded in signatures/v9.50.01.3344.json. The original
 //   b4_5_hinst_xref.md evidence was transient/unavailable.
 // ---------------------------------------------------------------------------
@@ -1041,7 +1041,7 @@ uintptr_t OrlibResolver::resolveErrorArrayPtrRva() {
     const OrlibSignatureDef& sig = findSignature("StartCompilingProcess");
     uintptr_t funcRva = resolveBySignature("StartCompilingProcess", sig);
 
-    // Instruction at funcRva + 0x19: MOV ECX,[imm32] → opcode 8B 0D (2 bytes),
+    // Instruction at funcRva + 0x19: MOV ECX,[imm32] -> opcode 8B 0D (2 bytes),
     // followed by the 4-byte absolute address operand at funcRva + 0x1B.
     const uint32_t kOpcodeOffset = 0x19;
     const size_t   kReadLen      = 6;  // 2 opcode + 4 imm32
@@ -1079,7 +1079,7 @@ uintptr_t OrlibResolver::resolveErrorCountRva() {
     const OrlibSignatureDef& sig = findSignature("StartCompilingProcess");
     uintptr_t funcRva = resolveBySignature("StartCompilingProcess", sig);
 
-    // Instruction at funcRva + 0x21: MOV [imm32],EAX → opcode A3 (1 byte),
+    // Instruction at funcRva + 0x21: MOV [imm32],EAX -> opcode A3 (1 byte),
     // followed by the 4-byte absolute address operand at funcRva + 0x22.
     const uint32_t kOpcodeOffset = 0x21;
     const size_t   kReadLen      = 5;  // 1 opcode + 4 imm32
@@ -1118,7 +1118,7 @@ uintptr_t OrlibResolver::resolveErrorHinstRva() {
     FARPROC proc = resolveExport("_CreateEntryEX@24");
     uintptr_t funcRva = reinterpret_cast<uintptr_t>(proc) - m_base;
 
-    // Instruction at funcRva + 0x6C: MOV ECX,[imm32] → opcode 8B 0D (2 bytes),
+    // Instruction at funcRva + 0x6C: MOV ECX,[imm32] -> opcode 8B 0D (2 bytes),
     // followed by the 4-byte absolute address operand at funcRva + 0x6E.
     const uint32_t kOpcodeOffset = 0x6C;
     const size_t   kReadLen      = 6;  // 2 opcode + 4 imm32
@@ -1298,7 +1298,7 @@ void OrlibResolver::parsePeHeaders() {
 
 std::string OrlibResolver::readFileVersion() {
     if (m_testMode) {
-        // Test mode (PM DECISION R3 — TEMP-FILE approach):
+        // Test mode (PM DECISION R3 -- TEMP-FILE approach):
         // Write m_image to a temp file, then use GetFileVersionInfoW on it.
         wchar_t tempPath[MAX_PATH];
         wchar_t tempFile[MAX_PATH];
@@ -1417,7 +1417,7 @@ std::string OrlibResolver::computeSha256() {
         }
     } else {
         // Production mode: hash the on-disk file (not the in-memory image).
-        // The manifest SHA-256 is of the on-disk file (§8.5).
+        // The manifest SHA-256 is of the on-disk file (Sec. 8.5).
         wchar_t path[MAX_PATH];
         DWORD pathLen = GetModuleFileNameW(m_module, path, MAX_PATH);
         if (pathLen == 0 || pathLen >= MAX_PATH) {
@@ -1544,7 +1544,7 @@ FARPROC OrlibResolver::resolveExportFromBuffer(const char* decoratedName) {
         DWORD nameRva = nameRvas[i];
         uint32_t nameOff = rvaToFileOffset(m_image, m_imageSize, nameRva);
         if (nameOff == 0) {
-            continue;  // unreadable name entry — skip
+            continue;  // unreadable name entry -- skip
         }
         // Need dlen + 1 bytes (name + null terminator) within the buffer.
         if (nameOff + dlen + 1 > m_imageSize) {
@@ -1557,7 +1557,7 @@ FARPROC OrlibResolver::resolveExportFromBuffer(const char* decoratedName) {
             continue;
         }
 
-        // Match found at index i → look up the ordinal → function RVA.
+        // Match found at index i -> look up the ordinal -> function RVA.
         WORD ordinal = ordinals[i];
         if (ordinal >= numFuncs) {
             throw OrlibResolverError("export ordinal out of range",
@@ -1638,7 +1638,7 @@ FARPROC OrlibResolver::resolveExportFromBufferByOrdinal(int ordinal) {
     DWORD index = static_cast<DWORD>(ordinal) - base;
     DWORD funcRva = funcRvas[index];
     if (funcRva == 0) {
-        // A zero RVA is an empty slot or a forwarder — not a callable
+        // A zero RVA is an empty slot or a forwarder -- not a callable
         // function. Reject it so the caller does not get a bogus pointer.
         char detail[128];
         std::snprintf(detail, sizeof(detail),

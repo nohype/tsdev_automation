@@ -44,7 +44,7 @@ class TSDevNotRunningError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# Component type → TSDev dialog label mapping
+# Component type -> TSDev dialog label mapping
 # ---------------------------------------------------------------------------
 
 class ComponentType:
@@ -190,7 +190,7 @@ class TSDevUI:
                 self._set_focus()
                 return
 
-        # Not found — close dialog
+        # Not found -- close dialog
         dlg.type_keys("{VK_ESCAPE}")
         raise ValueError(f"{component_type} '{name}' not found in TSDev")
 
@@ -271,7 +271,7 @@ class TSDevUI:
         ComponentType.PROBABILITYMAP: "TS_IDD_PROBMAPCREATE",
     }
 
-    # Menu accelerator keys for File → New → <type> submenu.
+    # Menu accelerator keys for File -> New -> <type> submenu.
     NEW_DLG_ACCEL = {
         ComponentType.STRATEGY: "s",
         ComponentType.INDICATOR: "i",
@@ -310,7 +310,7 @@ class TSDevUI:
     ) -> bool:
         """Insert a new item via the TSDev UI.
 
-        Uses Alt+F → N → <type> menu sequence, pastes source from file,
+        Uses Alt+F -> N -> <type> menu sequence, pastes source from file,
         and verifies (F3).
 
         Args:
@@ -325,7 +325,7 @@ class TSDevUI:
         self._wait_ready()
         self._set_focus()
 
-        # Alt+F → N → <type accelerator>
+        # Alt+F -> N -> <type accelerator>
         accel = self.NEW_DLG_ACCEL.get(component_type, "s")
         send_keys(
             f"%{{f down}}{{f up}}{{n down}}{{n up}}"

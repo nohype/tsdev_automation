@@ -386,7 +386,7 @@ function Write-StrategySource {
 
 try {
     # =====================================================================
-    # CI.1: Case-insensitive match — lowercase stored, uppercase query
+    # CI.1: Case-insensitive match -- lowercase stored, uppercase query
     # =====================================================================
     Write-Host "--- CI.1: exists --case-insensitive (lowercase stored, uppercase query) ---" -ForegroundColor Cyan
 
@@ -404,7 +404,7 @@ try {
         -ExpectRegex @("progId=[1-9]\d*") | Out-Null
 
     # =====================================================================
-    # CI.2: Case-insensitive match — mixed-case stored, jumbled query
+    # CI.2: Case-insensitive match -- mixed-case stored, jumbled query
     # =====================================================================
     Write-Host "--- CI.2: exists --case-insensitive (mixed-case stored, jumbled query) ---" -ForegroundColor Cyan
 
@@ -467,7 +467,7 @@ try {
         -Arguments @("insert","strategy",$probeExact2,$f5) `
         -ExpectedExit 0 -ExpectSubstr "SUCCESS" -TestName $probeExact2 | Out-Null
 
-    # Query with uppercase name (no --case-insensitive flag) — should NOT match.
+    # Query with uppercase name (no --case-insensitive flag) -- should NOT match.
     Invoke-Test -TestId "CI.5b" -Step "exists (wrong case, no flag)" `
         -Arguments @("exists","strategy","ZZZ_CI_EXACT_2") `
         -ExpectedExit 0 `

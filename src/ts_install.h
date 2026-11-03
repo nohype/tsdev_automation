@@ -7,7 +7,7 @@
 // (4) conventional default from %ProgramFiles(x86)%. Validation requires
 // <root>\Program\orlib20.dll to exist.
 //
-// Pure Win32 (kernel32 + advapi32 registry reads) — NO orlib20 / warehouse /
+// Pure Win32 (kernel32 + advapi32 registry reads) -- NO orlib20 / warehouse /
 // filesystem-mutation dependency. resolveTsInstallRoot() never throws and
 // always returns a candidate path; validateTsInstall() is the caller's gate.
 
@@ -35,7 +35,7 @@ std::wstring getConventionalDefaultRoot();
 // True when <root>\Program\orlib20.dll exists.
 bool validateTsInstall(const std::wstring& root);
 
-// Resolve the TS install root. Priority: override → registry → default.
+// Resolve the TS install root. Priority: override -> registry -> default.
 // Logs the mechanism used at Info level.
 std::wstring resolveTsInstallRoot(const wchar_t* overridePath);
 

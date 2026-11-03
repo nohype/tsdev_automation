@@ -1,6 +1,6 @@
 // test_directory_batch.cpp
 //
-// Unit test for parseDirectory() — the directory-enumeration logic that the
+// Unit test for parseDirectory() -- the directory-enumeration logic that the
 // `batch-<op>-dir` CLI subcommands (TVS-I.2) rely on. parseDirectory() walks a
 // directory with std::filesystem::directory_iterator, filters regular files by
 // accepted extensions (default: .el, .txt; overridable), extracts the file
@@ -93,7 +93,7 @@ const BatchItem* findItem(const std::vector<BatchItem>& items,
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Extension filtering — mixed .el and .txt, default extensions.
+// Test 1: Extension filtering -- mixed .el and .txt, default extensions.
 // A directory with alpha.el, beta.txt, and gamma.md (non-matching). With the
 // default extensions {".el", ".txt"}, only alpha and beta should be picked up;
 // gamma.md must be excluded.
@@ -107,7 +107,7 @@ int testExtensionFilteringDefault() {
         writeFile(dir / "gamma.md",  "# not an EL file\r\n");
 
         std::vector<BatchItem> items;
-        std::vector<std::string> noExts;  // empty → defaults
+        std::vector<std::string> noExts;  // empty -> defaults
         parseDirectory(static_cast<int>(ComponentType::Strategy),
                        "strategy", dir.string(), noExts,
                        /*needsSource=*/true, items);
@@ -147,7 +147,7 @@ int testExtensionFilteringDefault() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Extension override — only .el specified.
+// Test 2: Extension override -- only .el specified.
 // Same directory as test 1 (alpha.el, beta.txt, gamma.md). With extensions
 // {".el"} only, only alpha should be picked up; beta.txt must be excluded.
 // ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ int testExtensionOverride() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: Stem extraction — my.strategy.el → stem = "my.strategy".
+// Test 3: Stem extraction -- my.strategy.el -> stem = "my.strategy".
 // std::filesystem::path::stem() strips only the LAST extension, so a file with
 // multiple dots keeps the intermediate dots in the stem.
 // ---------------------------------------------------------------------------
@@ -233,9 +233,9 @@ int testStemExtraction() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Empty directory → 0 items.
+// Test 4: Empty directory -> 0 items.
 // A freshly-created directory with no files should yield an empty BatchItem
-// vector. (The caller — cmdBatchDir — is responsible for emitting the
+// vector. (The caller -- cmdBatchDir -- is responsible for emitting the
 // "no files matching" error; parseDirectory itself just returns 0 items.)
 // ---------------------------------------------------------------------------
 int testEmptyDir() {
@@ -266,7 +266,7 @@ int testEmptyDir() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Subdirectory skipping — only regular files, no recursion.
+// Test 5: Subdirectory skipping -- only regular files, no recursion.
 // Create a .el file at the top level AND a .el file inside a subdirectory.
 // Only the top-level file should be picked up; the subdirectory's file must
 // be skipped (parseDirectory uses directory_iterator, not recursive_directory_
@@ -313,11 +313,11 @@ int testSubdirSkipping() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: Source reading — needsSource=true reads file; needsSource=false
+// Test 6: Source reading -- needsSource=true reads file; needsSource=false
 // (delete) leaves source empty.
 // Create alpha.el with known content. Call parseDirectory twice: once with
-// needsSource=true (insert/modify/upsert) — source must equal the file content;
-// once with needsSource=false (delete) — source must be empty.
+// needsSource=true (insert/modify/upsert) -- source must equal the file content;
+// once with needsSource=false (delete) -- source must be empty.
 // ---------------------------------------------------------------------------
 int testSourceReading() {
     std::fprintf(stdout, "\n[6] Source reading (needsSource true vs false)...\n");

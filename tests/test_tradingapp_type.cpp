@@ -3,7 +3,7 @@
 // Unit test (RED-GREEN TDD) for TVS-C.3: TradingApp ComponentType enum entry
 // and the category/sub-type decomposition layer (getCategory / getSubType).
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack. It only exercises
 // the ComponentType enum and the inline getCategory/getSubType helpers defined
 // in tsdev_lib.h. It runs on a worker thread with a 64 MB stack only to match
@@ -176,7 +176,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

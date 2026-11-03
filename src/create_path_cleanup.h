@@ -19,7 +19,7 @@
 //   Before TVS-L.10, after createEntry succeeded (ProgId > 0, a partial entry
 //   existed in the in-memory warehouse BST), cleanup of that partial entry on
 //   subsequent failure was NOT owned by one local path:
-//     * saveSource failure (doInsert exit 7): NO cleanup at all — the partial
+//     * saveSource failure (doInsert exit 7): NO cleanup at all -- the partial
 //       entry was orphaned in the BST.
 //     * verifyModule early-return / SEH / OOM paths: cleanup only happened
 //       incidentally because every early-return yielded a non-empty error
@@ -97,15 +97,15 @@ enum class CreatePathFailureStage {
     // warehouse entry still exists and must be removed. The existing
     // requiresCreatePathCleanup() pure function already returns true for
     // progId > 0 regardless of stage, so these enumerators require NO logic
-    // change — they extend the single owner's coverage to the post-verify
+    // change -- they extend the single owner's coverage to the post-verify
     // existence + persistence-integrity failures, routed through the SAME
     // cleanupCreatePathFailure owner (deleteEntry(flush=false)).
     //
-    //   PostVerify_EllMissing           — .ell file not found on disk after
+    //   PostVerify_EllMissing           -- .ell file not found on disk after
     //                                    successful verify (doInsert step 5).
-    //   PostVerify_XmlMissing           — .xml file not found on disk after
+    //   PostVerify_XmlMissing           -- .xml file not found on disk after
     //                                    successful verify (doInsert step 6).
-    //   PostVerify_PersistenceIntegrity — the L.9 shared persistence-integrity
+    //   PostVerify_PersistenceIntegrity -- the L.9 shared persistence-integrity
     //                                    validator (applyPersistenceIntegrityCheck)
     //                                    returned FaultA_StaleEll or
     //                                    InvalidInput (doInsert step 7).

@@ -7,7 +7,7 @@
 // pure per-poll WHServer-sample accounting accountWhServerSample()
 // (an inconclusive Toolhelp32 snapshot never counts toward whserver_gone).
 //
-// The fire() side effect (stderr + TerminateProcess(15)) is NOT exercised —
+// The fire() side effect (stderr + TerminateProcess(15)) is NOT exercised --
 // it cannot be unit-tested by design; the decision is pure and the fire
 // path is covered by manual/E2E verification.
 //
@@ -47,7 +47,7 @@ tsdev::DispatchMarkerSnapshot makeMarker(bool inFlight, const char* site,
 }
 
 int runTests() {
-    const double kFreq = 10000000.0;  // 10 MHz — canonical QPC frequency
+    const double kFreq = 10000000.0;  // 10 MHz -- canonical QPC frequency
 
     // -------------------------------------------------------------------
     // Group 1: marker enter/snapshot/leave semantics.
@@ -118,7 +118,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 3: decideDispatchFire — not-in-flight / within-bound => None.
+    // Group 3: decideDispatchFire -- not-in-flight / within-bound => None.
     // -------------------------------------------------------------------
     {
         const std::vector<DWORD> noWh;
@@ -162,7 +162,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 4: decideDispatchFire — timeout, disabled, fast paths.
+    // Group 4: decideDispatchFire -- timeout, disabled, fast paths.
     // -------------------------------------------------------------------
     {
         const uint64_t t0 = 5ull * 10000000ull;
@@ -302,7 +302,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 7: marker snapshot cost sanity — thousands of enter/leave pairs
+    // Group 7: marker snapshot cost sanity -- thousands of enter/leave pairs
     // per second must be trivially cheap (production overhead bound).
     // -------------------------------------------------------------------
     {
@@ -325,7 +325,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 8: findCrashReportParentPids snapshotOk overload — a live
+    // Group 8: findCrashReportParentPids snapshotOk overload -- a live
     // Toolhelp32 snapshot must report ok=true. The fail-closed direction
     // (a failed walk returning not-ok) needs a Toolhelp32 failure
     // injection seam that does not exist; the inconclusive-poll contract
@@ -341,12 +341,12 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 9: accountWhServerSample — an inconclusive WHServer snapshot
+    // Group 9: accountWhServerSample -- an inconclusive WHServer snapshot
     // never advances emptyWhSamples and never fires whserver_gone (the
     // P4 gap-(f)(iii) fix). The Toolhelp32 call itself is NOT injectable
     // (watchdogProc is anonymous-namespace and calls the snapshot
     // directly), so the per-poll accounting is factored into the pure
-    // accountWhServerSample seam — same style as decideDispatchFire —
+    // accountWhServerSample seam -- same style as decideDispatchFire --
     // and driven here with scripted poll outcomes.
     // -------------------------------------------------------------------
     {
@@ -362,7 +362,7 @@ int runTests() {
         if (!whSeen || emptyWhSamples != 0)
             return fail("conclusive non-empty poll misaccounted", 90);
 
-        // (b) Inconclusive poll: streak RESETS to 0, whSeen untouched —
+        // (b) Inconclusive poll: streak RESETS to 0, whSeen untouched --
         //     and the pid set is not consulted (a failed enumeration
         //     carries no set; a non-empty set proves it is ignored).
         whSeen = true; emptyWhSamples = 2;
@@ -381,7 +381,7 @@ int runTests() {
         if (emptyWhSamples != 2 || !whSeen)
             return fail("confirmed-empty polls did not accumulate", 93);
 
-        // (d) Scripted flight replay — the exact P4 (f)(iii) scenario:
+        // (d) Scripted flight replay -- the exact P4 (f)(iii) scenario:
         //     seen -> empty -> empty -> SNAPSHOT FAILURE -> empty ->
         //     empty. Under the old collapsing overload the failure
         //     counted as a third consecutive empty and fired
@@ -412,7 +412,7 @@ int runTests() {
 
         // (e) The gate still works fail-safe: one more CONSECUTIVE
         //     confirmed-empty poll completes the streak and
-        //     whserver_gone DOES fire — the fast path is preserved, not
+        //     whserver_gone DOES fire -- the fast path is preserved, not
         //     disabled.
         tsdev::accountWhServerSample(true, none, whSeen, emptyWhSamples);
         if (emptyWhSamples != tsdev::kWhServerGoneConfirmSamples)
@@ -440,7 +440,7 @@ int runTests() {
 int main(int argc, char** argv) {
     // Manual E2E mode (NOT run by the unit-test runners, mirroring the
     // test_crash_handler --crash convention): starts the REAL watchdog with
-    // a 1 s bound and raises the REAL in-flight marker forever — the
+    // a 1 s bound and raises the REAL in-flight marker forever -- the
     // watchdog's 1 s poll then walks marker -> decideDispatchFire -> fire()
     // -> TerminateProcess(15). The parent observes exit code 15 plus the
     // "WATCHDOG ABORT" stderr line. This exercises the production wiring

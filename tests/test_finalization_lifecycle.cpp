@@ -11,7 +11,7 @@
 // end-to-end. The old byte-validation test is therefore obsolete: there is
 // no patch site to inspect and no validation helper to call.
 //
-// Per the workstream_unknown_link_fix_plan.md (§5 item 6 / TVS-L.3), this
+// Per the workstream_unknown_link_fix_plan.md (Sec. 5 item 6 / TVS-L.3), this
 // test is now a BEHAVIOR-based regression that proves the finalization path
 // prerequisites are in place WITHOUT:
 //   - calling validatePersistencePatchBytes (removed; would not compile),
@@ -20,7 +20,7 @@
 //
 // What it verifies (all behavioral, no RVA/signature/byte inspection):
 //
-//   Case 1 — Constructor succeeds without the persistence patch:
+//   Case 1 -- Constructor succeeds without the persistence patch:
 //     Construct TsDevLib (auto-discover). The constructor no longer calls
 //     applyPersistencePatch(); it loads orlib20.dll, applies the 11
 //     thread-check INT3 patches, resolves exports, calls OrlibInit(NULL, 1),
@@ -28,34 +28,34 @@
 //     no SEH fault) proves the constructor runs end-to-end with the
 //     persistence patch gone. Crucially, OrlibInit can only succeed from a
 //     non-TSDev worker thread because the 11 thread-check patches are in
-//     place — so constructor success is the behavioral proof that the
+//     place -- so constructor success is the behavioral proof that the
 //     thread-check patch machinery still applies all 11 patches. We do NOT
 //     inspect the patch bytes or count them directly (the patch state is
 //     private and the header is intentionally not modified for this test).
 //
-//   Case 2 — Post-construction invariants (real path prerequisites):
+//   Case 2 -- Post-construction invariants (real path prerequisites):
 //     getMyWorkBinPath() and getWrkPath() return non-empty paths containing
 //     "MyWork\Bin" and "MWRKArea.wrk" respectively. This proves the
-//     warehouse root was resolved — the same root the real finalization
+//     warehouse root was resolved -- the same root the real finalization
 //     path writes the .ell/.xml artifacts under. We also confirm
 //     <root>\Program\orlib20.dll exists (the constructor already validated
 //     this internally; the check is a defensive cross-check).
 //
-//   Case 3 — Destructor completes cleanly:
+//   Case 3 -- Destructor completes cleanly:
 //     Delete the TsDevLib instance. The destructor calls OrlibExit(),
 //     destroys the hidden EDIT control, restores the 11 thread-check patch
-//     bytes, and calls CoUninitialize() — all WITHOUT the removed
+//     bytes, and calls CoUninitialize() -- all WITHOUT the removed
 //     persistence-patch restoration branch. A clean return (no SEH fault)
 //     proves the destructor lifecycle is intact with the persistence patch
 //     surface gone.
 //
-//   Case 4 — Repeatable lifecycle (patch restoration round-trip):
+//   Case 4 -- Repeatable lifecycle (patch restoration round-trip):
 //     Construct a SECOND TsDevLib instance and destruct it. If the first
 //     destructor's thread-check patch restoration had corrupted the
 //     orlib20.dll image in memory, the second construction's patch
 //     application or OrlibInit would fault. A clean second construct +
 //     destruct cycle proves the patch apply/restore machinery is symmetric
-//     and repeatable — the core behavioral regression guard for the
+//     and repeatable -- the core behavioral regression guard for the
 //     finalization lifecycle.
 //
 // The full real finalization path (insert -> compile -> verify -> persist
@@ -202,7 +202,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Lightweight behavioral probe on the second instance: findExistPos for
     // a guaranteed-nonexistent name must return 0 (not crash). This
     // exercises the resolved FindExistPos export and the warehouse read
-    // path through the patched thread-check sites — proving the patches
+    // path through the patched thread-check sites -- proving the patches
     // applied by the second construction are functional, not just
     // non-faulting. We do NOT insert/modify/delete (that is the L.1
     // harness's job); this is a read-only probe.
@@ -226,7 +226,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is
 // legal. Catches any unhandled structured exception (e.g. an access
 // violation if the patch machinery were broken) and converts it to a
 // nonzero exit code, matching the test_path_discovery.cpp convention.

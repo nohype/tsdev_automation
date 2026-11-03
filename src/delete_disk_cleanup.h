@@ -37,8 +37,8 @@
 //     ...
 //     return true;   // <-- UNCONDITIONAL success
 //
-//   So a DeleteFileA failure with, e.g., ERROR_ACCESS_DENIED (5) — the file
-//   is present but cannot be removed (read-only / locked / ACL) — was logged
+//   So a DeleteFileA failure with, e.g., ERROR_ACCESS_DENIED (5) -- the file
+//   is present but cannot be removed (read-only / locked / ACL) -- was logged
 //   to stderr as a WARNING and then deleteEntry returned true. The caller
 //   (doDelete, cleanupCreatePathFailure) treated this as a successful delete,
 //   even though a stale .ell/.xml was left on disk. That was a disk-cleanup
@@ -55,7 +55,7 @@
 //                                                    the artifact is gone)
 //     lastError == ERROR_FILE_NOT_FOUND (2) -> false  (artifact already
 //                                                    absent; idempotent delete
-//                                                    is NOT a failure — this
+//                                                    is NOT a failure -- this
 //                                                    is the ONE case today's
 //                                                    code already handles
 //                                                    correctly)
@@ -99,7 +99,7 @@ enum class DeleteDiskArtifactKind {
 // true unconditionally; the residual path + Windows error are surfaced via
 // the optional diskCleanupErrorOut out-parameter and the existing stderr
 // WARNING. Note: this decision does NOT itself remove the read-only attribute
-// or otherwise recover the artifact — it only classifies the failure so the
+// or otherwise recover the artifact -- it only classifies the failure so the
 // caller can report it instead of silently treating it as success. Physical
 // sanitation of a residual read-only ELL remains the responsibility of the
 // harness finally block (or the operator), not this function.

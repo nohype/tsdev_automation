@@ -1,7 +1,7 @@
 // whserver_recycle.cpp
 //
 // Implementation of the WHServer gated auto-recycle engine declared in
-// whserver_recycle.h — tmp/RECYCLE_ENGINE_DESIGN.md §2 steps 1-6, R3
+// whserver_recycle.h -- tmp/RECYCLE_ENGINE_DESIGN.md Sec. 2 steps 1-6, R3
 // "engine skeleton". The fail-closed contract lives in the header; this
 // file is the sequencing + the two production seams (WhRecycleSampler and
 // the ComRecycleAttach raw-COM replica of tmp/wh_shutdown.cpp).
@@ -55,10 +55,10 @@ std::string censusDetail(const CensusDecision& d) {
 // --- P4 helpers ---------------------------------------------------------------
 
 // A census Refuse is honestly "census_lock" ONLY when a listed pid was
-// positively OBSERVED holding lock>0 (foreign client-held objects — the
-// gate's own §3.3 meaning). A Refuse reached on missing or inconclusive
-// evidence — re-enumeration failures, never-read pids, an unmet
-// sustained-zero window, an exhausted stream — is "census_unverifiable":
+// positively OBSERVED holding lock>0 (foreign client-held objects -- the
+// gate's own Sec. 3.3 meaning). A Refuse reached on missing or inconclusive
+// evidence -- re-enumeration failures, never-read pids, an unmet
+// sustained-zero window, an exhausted stream -- is "census_unverifiable":
 // the gate could not confirm quiescence but never measured a held lock
 // either (P4 f-iv). Any observed lock>0 anywhere in the stream wins the
 // lock label: it is affirmative evidence even when the final polls went
@@ -81,11 +81,11 @@ bool censusObservedLock(const std::vector<CensusPoll>& polls) {
 
 // The P4-(b) corpse pre-check the engine runs ahead of step 2 (a
 // crash-frozen server would wedge closeWarehouse into the close bound)
-// and ahead of step 4 (the same corpse passes the census — its frozen
-// memory still reads lock==0 — then wedges the COM attach into the
+// and ahead of step 4 (the same corpse passes the census -- its frozen
+// memory still reads lock==0 -- then wedges the COM attach into the
 // dispatch-watchdog kill). A TSCrashReport.exe parent pid intersecting
 // the fresh WHServer set marks a zombie. `stage` tags the refuse reason
-// ("close" | "attach"). Returns true when the gate REFUSES — either a
+// ("close" | "attach"). Returns true when the gate REFUSES -- either a
 // positively detected zombie ("zombie_present_<stage>") or an
 // inconclusive check ("zombie_unverifiable_<stage>": a failed
 // re-enumeration is never "no zombies", and unknown zombie state is
@@ -114,23 +114,23 @@ bool zombieGateFails(IRecycleSampler* s, const char* stage,
 }
 
 // --- Step-2 bounded close monitor -------------------------------------------
-// orlib20 binds CELWHouse per (thread, path) — the close export is
+// orlib20 binds CELWHouse per (thread, path) -- the close export is
 // literally _CloseWarehouseForCurrentThreadAndPath@4 and activation is once
-// per (thread,path) for process life (KB: Ghidra-proven) — so closeWarehouse
+// per (thread,path) for process life (KB: Ghidra-proven) -- so closeWarehouse
 // MUST run on the engine's own (warehouse-owning) thread: a helper-thread
 // call would look up ITS thread's binding, find none, and return a no-op
-// success — a false-pass that leaves the real session open and lets a
+// success -- a false-pass that leaves the real session open and lets a
 // post-"close" refuse `delete lib` into it (the exact modal-detach hang
 // this bound exists to prevent). The bound therefore inverts
 // runBoundedControlRead's arrangement (tsdev_cli.cpp): the blocked call
 // stays on the engine thread and the timed wait moves to a monitor
-// thread — a wedged call cannot be cancelled either way.
+// thread -- a wedged call cannot be cancelled either way.
 
-// Bound-exceeded action default: the §5 close_failed teardown applied
-// directly — a timed-out close leaves the engine thread inside a
+// Bound-exceeded action default: the Sec. 5 close_failed teardown applied
+// directly -- a timed-out close leaves the engine thread inside a
 // possibly-open-session call that can never produce a RecycleResult.
 // stderr only (the emitLine channel is a CLI-main-thread lambda and is not
-// safe to invoke from another thread — the dispatch_watchdog.cpp fire()
+// safe to invoke from another thread -- the dispatch_watchdog.cpp fire()
 // convention), then TerminateProcess(19), NOT ExitProcess/`delete lib`
 // into a possibly-open warehouse.
 [[noreturn]] void closeBoundAbortFire(DWORD boundMs) {
@@ -164,7 +164,7 @@ unsigned __stdcall closeBoundMonitorProc(void* arg) {
     // wait's expiry and here; honoring it keeps a completed close from
     // false-firing the abort.
     if (WaitForSingleObject(m->done, 0) == WAIT_OBJECT_0) return 0;
-    // TIMEOUT (or a failed wait — completion is unconfirmable either way).
+    // TIMEOUT (or a failed wait -- completion is unconfirmable either way).
     // Flag first so a non-fatal injected action still lets the engine
     // classify the bound, then run the action.
     m->fired = true;
@@ -174,7 +174,7 @@ unsigned __stdcall closeBoundMonitorProc(void* arg) {
 
 } // namespace
 
-// --- The shared §5 close stage (R2) --------------------------------------------
+// --- The shared Sec. 5 close stage (R2) --------------------------------------------
 //
 // The engine's step-2 machinery lifted to a shared entry point: the R2
 // attached-site defer runs the SAME stage (zombie pre-check + bounded
@@ -196,7 +196,7 @@ bool boundedCloseWarehouse(
         return false;
     };
 
-    // A non-positive bound is not a bound at all — 0 fires the monitor
+    // A non-positive bound is not a bound at all -- 0 fires the monitor
     // instantly (refusing every legit close) and a negative wraps the
     // DWORD millisecond conversion to ~49.7 days (a silently unbounded
     // close). Same fail-closed discipline as the engine's entry guard.
@@ -207,11 +207,11 @@ bool boundedCloseWarehouse(
 
     // P4-(b) corpse pre-check BEFORE the close: a crash-frozen WHServer
     // still enumerates (a frozen corpse is not absent), so the VAS
-    // guard can trip on it — and closeWarehouse would then wedge inside
+    // guard can trip on it -- and closeWarehouse would then wedge inside
     // the dispatch, discovered only when the close bound kills the
     // process 30 s later. Refuse early with the honest stage-tagged
     // reason; the close never ran, so an own session may still be open
-    // => the §5 close-stage teardown class. A missing sampler is
+    // => the Sec. 5 close-stage teardown class. A missing sampler is
     // inconclusive the same way (unknown zombie state is never
     // proceeded on).
     if (sampler == nullptr) {
@@ -234,9 +234,9 @@ bool boundedCloseWarehouse(
     // The bound is the monitor thread armed before the call: a legit
     // close is a short dispatch, so a boundSecs overrun means a modal
     // (non-dispatch) hang. The empty/default action is stderr +
-    // TerminateProcess(19) — a wedged call can never return, so the
-    // monitor applies the §5 teardown itself; a non-fatal injected
-    // action lets the caller classify "close_timeout" — the late
+    // TerminateProcess(19) -- a wedged call can never return, so the
+    // monitor applies the Sec. 5 teardown itself; a non-fatal injected
+    // action lets the caller classify "close_timeout" -- the late
     // return is never trusted.
     const DWORD boundMs = static_cast<DWORD>(boundSecs * 1000.0);
     std::function<void()> timeoutAction = onBoundExceeded;
@@ -254,7 +254,7 @@ bool boundedCloseWarehouse(
                              nullptr)
             : 0;
     if (mon.done == nullptr || th == 0) {
-        // Cannot arm the bound — running the close unmonitored would
+        // Cannot arm the bound -- running the close unmonitored would
         // reopen the unbounded window; refuse on the same teardown
         // contract (the close never ran, so the session may be open).
         if (mon.done != nullptr) CloseHandle(mon.done);
@@ -280,17 +280,17 @@ bool boundedCloseWarehouse(
     return true;
 }
 
-// --- The engine (§2 steps 1-6) ------------------------------------------------
+// --- The engine (Sec. 2 steps 1-6) ------------------------------------------------
 
 RecycleResult runWhserverRecycle(const RecycleParams& p) {
     // Params validation at engine entry (P4 f-ii): a non-positive close
-    // bound is not a bound at all — 0 fires the monitor instantly
+    // bound is not a bound at all -- 0 fires the monitor instantly
     // (refusing every legit close) and a negative wraps the DWORD
     // millisecond conversion to ~49.7 days (a silently unbounded close).
     // Same fail-closed discipline as decideCensus' windowSecs<=0 Refuse:
     // invalid gate params refuse BEFORE anything runs. With an own
     // session the close can never run on this path, so the
-    // session-may-be-open teardown class applies (§5 rows 1-2).
+    // session-may-be-open teardown class applies (Sec. 5 rows 1-2).
     if (p.closeBoundSecs <= 0.0) {
         return refuse(RecycleOutcome::RefuseCloseFailed,
                       "close_bound_invalid",
@@ -303,11 +303,11 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
     // wrap class): a negative pollIntervalSecs wraps the
     // static_cast<unsigned>(secs * 1000.0) conversion at every
     // census/verify-death sleepMs to ~49.7 days (a silently stalled
-    // engine), and 0 is not a usable interval — the polls would spin
+    // engine), and 0 is not a usable interval -- the polls would spin
     // back-to-back with no settle time. Refuse at engine entry on the
     // identical teardown contract: nothing ran, so with an own session
     // the close can never run on this path and the session-may-be-open
-    // teardown class applies (§5 rows 1-2).
+    // teardown class applies (Sec. 5 rows 1-2).
     if (p.pollIntervalSecs <= 0.0) {
         return refuse(RecycleOutcome::RefuseCloseFailed,
                       "poll_interval_invalid",
@@ -316,11 +316,11 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
                       /*terminateSelf=*/p.ownSessionExists);
     }
 
-    // Step 1 — quiesce (§2): at every trigger site there is provably no
+    // Step 1 -- quiesce (Sec. 2): at every trigger site there is provably no
     // in-flight op; the caller asserted it via dispatchSnapshot. If the
     // marker is somehow in-flight, refuse. With a live own session the
     // teardown state is the same "possibly-open warehouse" uncertainty as
-    // close_failed — §5: TerminateProcess-self, never `delete lib`.
+    // close_failed -- Sec. 5: TerminateProcess-self, never `delete lib`.
     if (p.dispatchInFlight) {
         return refuse(RecycleOutcome::RefuseQuiesce, "quiesce_in_flight",
                       "dispatch marker in-flight at recycle trigger",
@@ -328,20 +328,20 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
                       /*terminateSelf=*/p.ownSessionExists);
     }
 
-    // Step 2 — closeWarehouse() bounded-wait, CONDITIONAL on an own session
-    // existing (§2/F4): skipped entirely at never-attached sites — calling
+    // Step 2 -- closeWarehouse() bounded-wait, CONDITIONAL on an own session
+    // existing (Sec. 2/F4): skipped entirely at never-attached sites -- calling
     // closeWarehouse on a never-opened TsDevLib is UNTESTED, not a proven
     // no-op. The whole stage (P4-(b) zombie pre-check -> monitor-bounded
-    // close on THIS thread) lives in the shared boundedCloseWarehouse —
+    // close on THIS thread) lives in the shared boundedCloseWarehouse --
     // the SAME stage the R2 attached-site defer runs before its graceful
     // exit-18. Any refuse here means the close never ran (or its return
     // is untrusted), so the session may still be OPEN => emit+flush+
     // TerminateProcess-self(19), never `delete lib`/ExitProcess into a
-    // possibly-open warehouse (§5 rows 1-2, dispatch_watchdog.cpp:79-88
+    // possibly-open warehouse (Sec. 5 rows 1-2, dispatch_watchdog.cpp:79-88
     // convention). A bound-expired close is the same teardown applied by
     // the monitor itself (the engine thread is the wedged one); under a
     // non-fatal injected action (tests) the helper reports close_timeout
-    // on the same contract — the late return is untrusted.
+    // on the same contract -- the late return is untrusted.
     if (p.ownSessionExists) {
         std::string cReason, cDetail;
         if (!boundedCloseWarehouse(p.closeSession, p.sampler,
@@ -355,10 +355,10 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
         }
     }
 
-    // Step 3 — census (§3): sustained-zero gate over a per-poll
+    // Step 3 -- census (Sec. 3): sustained-zero gate over a per-poll
     // RE-ENUMERATED pid set. Pass => every enumerated pid lock==0 for
     // >=censusWindowSecs (or confirmed absent). Refuse/Indeterminate =>
-    // exit 19 via normal teardown — step-2 close succeeded (or no session
+    // exit 19 via normal teardown -- step-2 close succeeded (or no session
     // ever existed), so `delete lib` runs the same post-close path a
     // normal batch end runs.
     std::vector<CensusPoll> polls;
@@ -380,9 +380,9 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
                           "census_indeterminate", censusDetail(dec),
                           /*safeToDeleteLib=*/true, /*terminateSelf=*/false);
         }
-        // Refuse so far: inconclusive until the budget elapses — lock>0 (or
+        // Refuse so far: inconclusive until the budget elapses -- lock>0 (or
         // unverifiable state) at budget end means foreign client-held
-        // objects (§3.3). Terminate the loop ourselves on the same bound.
+        // objects (Sec. 3.3). Terminate the loop ourselves on the same bound.
         // The label distinguishes a positively-observed held lock from a
         // census that never produced one (P4 f-iv).
         if (polls.back().timeSecs - polls.front().timeSecs >=
@@ -398,7 +398,7 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
     }
     if (dec.verdict != CensusVerdict::Pass) {
         // Stream exhausted (or never produced a poll) without a verdict:
-        // inconclusive => fail closed (§3.4: inconclusive streams fail
+        // inconclusive => fail closed (Sec. 3.4: inconclusive streams fail
         // closed). A Refuse labels "census_lock" ONLY when a held lock
         // was positively observed (P4 f-iv).
         return refuse(RecycleOutcome::RefuseCensus,
@@ -411,8 +411,8 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
     }
 
     // Census passed with no pids ever enumerated (re-enumerated absence >=3
-    // consecutive polls): the server is already gone — recycle-achieved by
-    // definition; skip attach and verify-death entirely (§3.3 absent arm).
+    // consecutive polls): the server is already gone -- recycle-achieved by
+    // definition; skip attach and verify-death entirely (Sec. 3.3 absent arm).
     if (censusPids.empty()) {
         RecycleResult r;
         r.outcome         = RecycleOutcome::Recycled;
@@ -423,23 +423,23 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
         return r;
     }
 
-    // Died-mid-census sub-case (§3.3 absent arm): a non-empty pid union can
-    // still pass via absence alone — the Pass-completing poll (polls.back(),
+    // Died-mid-census sub-case (Sec. 3.3 absent arm): a non-empty pid union can
+    // still pass via absence alone -- the Pass-completing poll (polls.back(),
     // guaranteed snapshotOk: Pass is only granted on a successful
     // re-enumeration) lists NONE of the union pids, i.e. every one reached
     // >=3 consecutive re-enumerated absences. Attaching now would let
     // CoGetClassObject spawn a FRESH WHServer the gate never measured and
-    // ForceShutDown it — the exact hazard the census exists to prevent.
+    // ForceShutDown it -- the exact hazard the census exists to prevent.
     // Re-enumerated absence >=3 consecutive polls is the same evidence
     // step-5 verify-death requires, so this is recycle-achieved: skip
-    // attach AND verify (§2 step 4 server-died equivalence).
+    // attach AND verify (Sec. 2 step 4 server-died equivalence).
     //
     // attachPids (P4 f-i): only the pids still listed in that final
     // re-enumeration may be attached. A pid already re-enumeration-absent
-    // is dead — verify-death still confirms the FULL union — and its
+    // is dead -- verify-death still confirms the FULL union -- and its
     // image can no longer be verified anyway (OpenProcess on a dead pid
     // fails): gating/invoking on the union would refuse a legitimate
-    // recycle of the live pids — the mixed-Pass over-refusal.
+    // recycle of the live pids -- the mixed-Pass over-refusal.
     std::vector<DWORD> attachPids;
     for (DWORD pid : censusPids) {
         if (containsPid(polls.back().pids, pid)) attachPids.push_back(pid);
@@ -454,8 +454,8 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
         return r;
     }
 
-    // Step 4 — attach + ForceShutDown (INFERRED/UNTESTED for the
-    // same-STA-post-close posture — see whserver_recycle.h). A call failure
+    // Step 4 -- attach + ForceShutDown (INFERRED/UNTESTED for the
+    // same-STA-post-close posture -- see whserver_recycle.h). A call failure
     // classified as server death skips to step 5 (a natural self-reap is an
     // equivalent outcome); any other failure releases our refs and refuses.
     //
@@ -464,7 +464,7 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
     // gate stands between the engine and a COM attach that wedges into
     // the dispatch-watchdog kill. Earlier and better-labeled than the
     // hang; the step-2-close stage is already behind us => normal
-    // teardown. No release() yet — no COM refs were ever taken.
+    // teardown. No release() yet -- no COM refs were ever taken.
     std::string attachDetail;
     {
         std::string zReason, zDetail;
@@ -491,23 +491,23 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
     }
     // Ok or ServerDied -> verify death either way.
 
-    // Step 5 — verify FULL process death (bounded): EVERY census-enumerated
+    // Step 5 -- verify FULL process death (bounded): EVERY census-enumerated
     // pid absent from >=deathConfirmPolls consecutive successful
     // re-enumerations, no TSCrashReport child (a frozen zombie still
     // enumerates and gets reactivated), and no census pid confirmed
     // still-alive. A failed WHServer OR crash-report re-enumeration is
     // inconclusive, never absent (snapshot-failure ambiguity is PROVEN).
     // Timeout => refuse; we never
-    // escalate to taskkill (mandate §0) — we report and refuse.
+    // escalate to taskkill (mandate Sec. 0) -- we report and refuse.
     // The refuse label distinguishes a POSITIVELY-OBSERVED survivor
-    // ("forceshutdown_inert"/"zombie_present" — a conclusive poll saw the
+    // ("forceshutdown_inert"/"zombie_present" -- a conclusive poll saw the
     // pid alive/frozen) from a bound or stream that never produced
     // conclusive evidence either way ("death_unverifiable", P4 f-iv).
     unsigned deadStreak = 0;
     const double vStart = p.sampler->nowSecs();
     bool verified = false;
     bool aliveObserved = false;   // a conclusive poll PROVED a census pid
-                                  // alive/zombie — the only evidence that
+                                  // alive/zombie -- the only evidence that
                                   // may name the refuse inert/zombie
     const char* lastWhy = "death_unverifiable";
     std::string lastDetail;
@@ -515,7 +515,7 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
         RecycleDeathPoll dp;
         if (!p.sampler->deathPoll(censusPids, dp)) break;  // stream exhausted
         if (!dp.snapshotOk || !dp.crashSnapshotOk) {
-            deadStreak = 0;  // either enumeration inconclusive — never
+            deadStreak = 0;  // either enumeration inconclusive -- never
                              // counts toward absence
             if (!aliveObserved) {
                 lastDetail = !dp.snapshotOk
@@ -555,8 +555,8 @@ RecycleResult runWhserverRecycle(const RecycleParams& p) {
             static_cast<unsigned>(p.pollIntervalSecs * 1000.0));
     }
 
-    // Step 6 — release our recycle refs (RPC errors on a dead server
-    // tolerated inside release(); CoUninitialize is NOT called — the
+    // Step 6 -- release our recycle refs (RPC errors on a dead server
+    // tolerated inside release(); CoUninitialize is NOT called -- the
     // apartment belongs to TsDevLib's guard).
     p.attach->release();
 
@@ -589,7 +589,7 @@ bool WhRecycleSampler::censusPoll(CensusPoll& out) {
         r.attempted = true;
         // Image gate first: the fixed VAs are layout facts of ONE probed
         // WHServer build. On an unprobed image the same VA can still map
-        // and read a persistent 0 — the stale-VA false-pass — so the RPM
+        // and read a persistent 0 -- the stale-VA false-pass -- so the RPM
         // is skipped entirely and decideCensus goes Indeterminate.
         r.imageKnown = whServerPidImageIsKnown(pid);
         r.sample = WhLockSample{};
@@ -609,7 +609,7 @@ bool WhRecycleSampler::deathPoll(const std::vector<DWORD>& censusPids,
     out.snapshotOk = findWhServerPids(pids);
     if (!out.snapshotOk) return true;  // inconclusive, never absent
     out.whPids = pids;
-    // A failed crash-report enumeration is inconclusive — NEVER "no
+    // A failed crash-report enumeration is inconclusive -- NEVER "no
     // zombies": crashSnapshotOk=false keeps the poll out of the
     // fully-dead count (a truncated set is cleared by the overload, so
     // crashParentPids stays empty either way). The still-active arm below
@@ -618,10 +618,10 @@ bool WhRecycleSampler::deathPoll(const std::vector<DWORD>& censusPids,
     for (DWORD pid : censusPids) {
         HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if (h == nullptr) {
-            // OpenProcess failure: never evidence of absence — but a plain
+            // OpenProcess failure: never evidence of absence -- but a plain
             // "process gone" error corroborates death while ACCESS_DENIED
             // (we are elevated, same-session) is a fail-closed recheck, so
-            // it counts as still-active, not dead (§2 step 5c).
+            // it counts as still-active, not dead (Sec. 2 step 5c).
             if (GetLastError() == ERROR_ACCESS_DENIED) {
                 out.stillActive.push_back(pid);
             }
@@ -657,12 +657,12 @@ void WhRecycleSampler::sleepMs(unsigned ms) {
 
 // --- ComRecycleAttach (production step-4 seam) ---------------------------------
 //
-// Verbatim port of the proven tmp/wh_shutdown.cpp chain (KB §17), minus the
+// Verbatim port of the proven tmp/wh_shutdown.cpp chain (KB Sec. 17), minus the
 // printf instrumentation: CoGetClassObject(CLSID_Control) -> factory
 // vtbl+0x20 create -> QI IDispatch -> GetIDsOfNames("WHouseEx") ->
 // Invoke(DISPATCH_PROPERTYGET, args reversed [0]=I4 Create=1, [1]=BSTR
 // MyWork) -> GetIDsOfNames("ForceShutDown") -> Invoke(DISPATCH_METHOD).
-// Refs stay held until release() (§2 step 6). No CoInitializeEx of our own
+// Refs stay held until release() (Sec. 2 step 6). No CoInitializeEx of our own
 // here: the engine worker STA is the TsDevLib guard-owned apartment (each
 // successful CoInitializeEx, including S_FALSE, needs exactly one
 // same-thread CoUninitialize per com_apartment_guard.cpp:24-28, so a
@@ -677,7 +677,7 @@ ComRecycleAttach::ComRecycleAttach(const std::wstring& myWorkDir)
 namespace {
 
 // HRESULTs consistent with the server having died between census-pass and
-// attach (§2 step 4): treat as recycle-achieved -> skip to verify-death.
+// attach (Sec. 2 step 4): treat as recycle-achieved -> skip to verify-death.
 bool isServerDiedHr(HRESULT hr) {
     return hr == RPC_E_SERVER_DIED ||      // 0x8001011A
            hr == RPC_E_DISCONNECTED ||     // 0x80010108
@@ -696,8 +696,8 @@ std::string hrDetail(const char* stage, HRESULT hr) {
 
 RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     const std::vector<DWORD>& censusPids, std::string& detail) {
-    // Hard precondition (§2 step 4): NEVER invoke WHouseEx with Create=1
-    // against an unresolved or guessed MyWork path — Create=1 authorizes
+    // Hard precondition (Sec. 2 step 4): NEVER invoke WHouseEx with Create=1
+    // against an unresolved or guessed MyWork path -- Create=1 authorizes
     // the class to instantiate against it.
     if (m_myWorkDir.empty()) {
         detail = "mywork_unresolved";
@@ -705,7 +705,7 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     }
 
     // Image gate (whserver_census.h SSOT): the raw-COM chain below is a
-    // layout fact of the ONE probed WHServer.exe build — hardcoded vtable
+    // layout fact of the ONE probed WHServer.exe build -- hardcoded vtable
     // offsets and dispids. A TradeStation update that relayouts the binary
     // makes every offset wrong while still resolving, so EVERY census pid
     // must verify before any COM call. The production census sampler gates
@@ -720,8 +720,8 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
         }
     }
 
-    // Bound the synchronous RPCs with the production dispatch watchdog —
-    // a wedged server fires exit 15, fail-closed (§2 step 4).
+    // Bound the synchronous RPCs with the production dispatch watchdog --
+    // a wedged server fires exit 15, fail-closed (Sec. 2 step 4).
     DispatchInFlightGuard guard("WhServerRecycle", 0);
 
     // No COM init/uninit of our own here. This runs on the engine worker
@@ -734,8 +734,8 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
     // drops COM refs.
 
     // Multi-pid contract: run the sequence once per pid. Class-to-pid
-    // binding is ambiguous under >1 pid but MOOT — verify-death requires
-    // EVERY enumerated pid gone. Any non-death failure refuses (§2 step 4:
+    // binding is ambiguous under >1 pid but MOOT -- verify-death requires
+    // EVERY enumerated pid gone. Any non-death failure refuses (Sec. 2 step 4:
     // "any failed call -> release what we hold -> refuse"); a death-shaped
     // failure is recycle-achieved. Empty set is unreachable (the engine
     // short-circuits the census-absent case) but treated as ServerDied.
@@ -817,7 +817,7 @@ RecycleAttachStatus ComRecycleAttach::attachAndForceShutDown(
             return RecycleAttachStatus::AttachFailed;
         }
         // Transfer ownership OUT of the VARIANT: m_whouse holds the single
-        // owned ref and release() clears m_vres unconditionally — leaving
+        // owned ref and release() clears m_vres unconditionally -- leaving
         // pdispVal set would make m_whouse->Release() + VariantClear a
         // double-release UAF on the alive-server refuse paths (review F1).
         m_whouse = m_vres.pdispVal;
@@ -868,8 +868,8 @@ void ComRecycleAttach::release() {
     if (m_ctl)    { m_ctl->Release();    m_ctl = nullptr; }
     if (m_fact)   { m_fact->Release();   m_fact = nullptr; }
     if (m_outName) { SysFreeString(m_outName); m_outName = nullptr; }
-    // CoUninitialize is NOT called — the apartment belongs to TsDevLib's
-    // guard and is torn down by it (§2 step 6).
+    // CoUninitialize is NOT called -- the apartment belongs to TsDevLib's
+    // guard and is torn down by it (Sec. 2 step 6).
 }
 
 // --- Path helper ----------------------------------------------------------------

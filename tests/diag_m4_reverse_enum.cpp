@@ -63,7 +63,7 @@
 #include <windows.h>
 
 // -------------------------------------------------------------------------
-// DiagReverseDependent — PUBLIC POD mirror of the private
+// DiagReverseDependent -- PUBLIC POD mirror of the private
 // TsDevLib::ReverseDependent. We use this OUTSIDE the friend scope (in
 // ProbeResult, printing, verification) so non-friend code never has to name
 // the private nested struct. The friend accessor converts the private vector
@@ -76,7 +76,7 @@ struct DiagReverseDependent {
 };
 
 // -------------------------------------------------------------------------
-// DiagM4ReverseEnumAccess — test-only friend accessor.
+// DiagM4ReverseEnumAccess -- test-only friend accessor.
 //
 // Declared as a friend in src/tsdev_lib.h (behavior-preserving test seam).
 // Lives at namespace tsdev scope (NOT in an anonymous namespace) so the
@@ -130,7 +130,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // (Same pattern as diag_m4_deplist_dump / test_reverse_dependent_revalidation.)
 // -------------------------------------------------------------------------
@@ -377,7 +377,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 600-second hard timeout — report a hang without terminating the worker.
+    // 600-second hard timeout -- report a hang without terminating the worker.
     // Five probes iterate all 8 categories with linker calls per record and
     // may take several minutes total.
     DWORD wait = WaitForSingleObject(hThread, 600000);

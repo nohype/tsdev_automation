@@ -1,6 +1,6 @@
 // test_callers_enumeration.cpp
 //
-// MANUAL ADMIN DIAGNOSTIC for Workstream M slice M.4b.1 — Warehouse-level
+// MANUAL ADMIN DIAGNOSTIC for Workstream M slice M.4b.1 -- Warehouse-level
 // reverse-dependent (Callers) enumeration primitive.
 //
 // This test is NOT part of the regression suite and is intentionally NOT
@@ -100,7 +100,7 @@ struct DiagM4ReverseEnumAccess {
 namespace {
 
 // -------------------------------------------------------------------------
-// reportCrashReporter — inspect (do NOT terminate) TSCrashReport.exe.
+// reportCrashReporter -- inspect (do NOT terminate) TSCrashReport.exe.
 // Mirrors diag_m4_subtype.cpp / diag_m4_reverse_enum.cpp exactly.
 // -------------------------------------------------------------------------
 ProcessInspectionResult reportCrashReporter(const char* phase) {
@@ -123,7 +123,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // (Same pattern as test_reverse_dependent_revalidation.cpp /
 // test_m3b_object_code_version.cpp.)
@@ -133,7 +133,7 @@ ComApi realComApi() {
 }
 
 // -------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // (Same pattern as test_reverse_dependent_revalidation.cpp.)
 // -------------------------------------------------------------------------
 static int g_failCount = 0;
@@ -165,7 +165,7 @@ static int g_passCount = 0;
 // -------------------------------------------------------------------------
 std::string makeFunctionSource(const std::string& name) {
     // Function with an explicit Inputs: declaration so the compiler's
-    // ScanSourceCode → RecordInputs path fires, populating the INFOREC
+    // ScanSourceCode -> RecordInputs path fires, populating the INFOREC
     // element count (+0x29) and element array (+0x4f). Without declarations,
     // the INFOREC counts remain 0 and no dep-lists are stored in the .ell
     // file's object code (M.3b.2b finding).
@@ -205,7 +205,7 @@ void preCleanup(TsDevLib& lib, ComponentType type, const std::string& name) {
 }
 
 // -------------------------------------------------------------------------
-// insertAndVerify — helper: pre-clean, create, save, verify a disposable
+// insertAndVerify -- helper: pre-clean, create, save, verify a disposable
 // item. Returns the ProgId on success, 0 on a fatal setup error. The caller
 // is responsible for cleanup (deleteEntry) after the assertions.
 // (Same pattern as test_reverse_dependent_revalidation.cpp.)
@@ -326,7 +326,7 @@ DWORD WINAPI runTest(LPVOID param) {
                 *lib, 517, 4);
             std::printf("    Linker-based: %zu reverse dependent(s)\n",
                         linkerDeps.size());
-            // COM server Callers check — use ProgId-based overload since
+            // COM server Callers check -- use ProgId-based overload since
             // findExistPos can fail for existing items when the BST is not
             // initialized. The warehouse cmd 0x0D takes a ProgId directly.
             auto callers = lib->enumerateCallersByProgId(
@@ -399,7 +399,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // _VerifyModule_New succeeds to populate the dep-list cache with 0xFA3
     // function-call dependency entries. Without this step, the linker
     // creates a linked record with dep-lists that only contain 0xBB8/0xBB9
-    // (variable/input) entries — no 0xFA3 (function-call) entries. Our
+    // (variable/input) entries -- no 0xFA3 (function-call) entries. Our
     // verifyModule now calls linkModule internally (Ordinal_28 + Ordinal_69
     // + Ordinal_70), so the dep-list cache is populated and subsequent
     // Ordinal_85 (linker) calls return records with 0xFA3 entries.
@@ -443,7 +443,7 @@ DWORD WINAPI runTest(LPVOID param) {
         CHECK(foundCategory == 2, buf);
     }
 
-    // --- Step 6: Cleanup — delete the caller, then delete the Function ---
+    // --- Step 6: Cleanup -- delete the caller, then delete the Function ---
     std::printf("\n[6] Cleanup: deleting Indicator (caller) \"%s\"...\n",
                 indName);
     bool indDelOk = lib->deleteEntry(ComponentType::Indicator, indName,
@@ -491,7 +491,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 600-second hard timeout — report a hang without terminating the
+    // 600-second hard timeout -- report a hang without terminating the
     // worker. Insert+verify + enumerateCallers + cleanup may take a couple
     // of minutes on a cold warehouse.
     DWORD wait = WaitForSingleObject(hThread, 600000);

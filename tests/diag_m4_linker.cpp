@@ -7,7 +7,7 @@
 // RVA 0x1A3E00, FUN_101a3e00) with `param_3 != 0` (the linker / short-circuit
 // path) returns a record with populated element arrays.
 //
-// === ABI of Ordinal_69 (FUN_101a3e00) — Ghidra-confirmed ===
+// === ABI of Ordinal_69 (FUN_101a3e00) -- Ghidra-confirmed ===
 //
 //   __cdecl, 3 args (char category, int progId, int flag).
 //     param_3 == 0: full path. FUN_101cff60 builds a 0x10A partial copy,
@@ -18,18 +18,18 @@
 //                   cached live record or invokes the linker FUN_101a3340
 //                   (ordinal 85).
 //
-// === Linker FUN_101a3340 (ordinal 85) — Ghidra-confirmed ===
+// === Linker FUN_101a3340 (ordinal 85) -- Ghidra-confirmed ===
 //
 //   __fastcall, 4 args (ECX=type, EDX=progId, stack: errorFlag, partialBuf).
 //   Reads the SafeArray at record+0x26 (compiled object code), parses it,
 //   and populates element arrays at +0x4f, +0x53, +0x57, +0x4b, +0x5b,
 //   +0x67, +0x6f.
 //
-// === Ordinal_70 (FUN_1015df30) — refcount decrement ===
+// === Ordinal_70 (FUN_1015df30) -- refcount decrement ===
 //   __stdcall, 2 args (rec, flag). Decrements +0xCA; on reach 0 frees
 //   +0xD2 buffer and the record.
 //
-// === Ordinal_28 (FUN_101a03f0) — partial copy ===
+// === Ordinal_28 (FUN_101a03f0) -- partial copy ===
 //   __stdcall, 4 args (category, progId, flag, outBuf). Writes a 0x10A-byte
 //   partial copy into outBuf. Returns 1 if found, 0 otherwise.
 //
@@ -38,12 +38,12 @@
 //   Returns HGLOBAL of int dep ProgIds, or NULL.
 //
 // This diagnostic runs Tests A through G as described in the task brief:
-//   A: Ordinal_69(category, progId, 0)         — normal path (control)
-//   B: Ordinal_69(category, progId, progId)    — short-circuit / linker path
-//   C: Ordinal_69(category, progId, 1)         — short-circuit with minimal
+//   A: Ordinal_69(category, progId, 0)         -- normal path (control)
+//   B: Ordinal_69(category, progId, progId)    -- short-circuit / linker path
+//   C: Ordinal_69(category, progId, 1)         -- short-circuit with minimal
 //                                                 non-zero value
 //   D: Same A/B/C for the Strategy (category 0)
-//   E: Direct call to linker (ordinal 85) — __fastcall
+//   E: Direct call to linker (ordinal 85) -- __fastcall
 //   F: GetDependencies after the linker path
 //   G: SafeArray at +0x26 right after verify (via Ordinal_28 partial copy)
 //
@@ -96,7 +96,7 @@ typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
 typedef HGLOBAL (__stdcall *GetDependenciesFn)(int whType, int progId,
                                                int elementIndex,
                                                int* outDepCount);
-// Linker FUN_101a3340 (ordinal 85): __fastcall — ECX=type, EDX=progId,
+// Linker FUN_101a3340 (ordinal 85): __fastcall -- ECX=type, EDX=progId,
 // stack: errorFlag (int), partialBuf (void*).
 typedef void* (__fastcall *LinkerFn)(int type, int id, int errorFlag,
                                      void* partialBuf);
@@ -186,7 +186,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -488,7 +488,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     RecFields fA_func, fB_func, fC_func;
     bool haveA_func = false, haveB_func = false, haveC_func = false;
 
-    // --- Test A: Ordinal_69(4, funcProgId, 0) — normal path ---
+    // --- Test A: Ordinal_69(4, funcProgId, 0) -- normal path ---
     std::printf("\n=== TEST A (Function): Ordinal_69(4, %d, 0) -- normal "
                 "path ===\n", funcProgId);
     {
@@ -505,7 +505,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
     }
 
-    // --- Test B: Ordinal_69(4, funcProgId, funcProgId) — short-circuit ---
+    // --- Test B: Ordinal_69(4, funcProgId, funcProgId) -- short-circuit ---
     std::printf("\n=== TEST B (Function): Ordinal_69(4, %d, %d) -- "
                 "short-circuit / linker path ===\n",
                 funcProgId, funcProgId);
@@ -524,7 +524,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         }
     }
 
-    // --- Test C: Ordinal_69(4, funcProgId, 1) — minimal non-zero ---
+    // --- Test C: Ordinal_69(4, funcProgId, 1) -- minimal non-zero ---
     std::printf("\n=== TEST C (Function): Ordinal_69(4, %d, 1) -- minimal "
                 "non-zero ===\n", funcProgId);
     {
@@ -854,7 +854,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // Tests A-G plus insert/verify of two items may take longer.
     DWORD wait = WaitForSingleObject(hThread, 120000);
     if (wait == WAIT_TIMEOUT) {

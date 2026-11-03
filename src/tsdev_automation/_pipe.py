@@ -83,7 +83,7 @@ def connect(pipe_name: str, timeout_ms: int = 5000) -> int:
         if handle != INVALID_HANDLE_VALUE:
             return int(handle)
         # ERROR_PIPE_BUSY (232) or ERROR_FILE_NOT_FOUND (2): broker not ready
-        # yet — sleep and retry.  Any other error: bail out immediately.
+        # yet -- sleep and retry.  Any other error: bail out immediately.
         err = _kernel32.GetLastError()
         if err not in (2, 232):
             raise PipeError(f"CreateFileW failed for {pipe_name!r} (err={err})")

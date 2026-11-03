@@ -1,6 +1,6 @@
 // test_orlib_resolver.cpp
 //
-// TVS-B.4 resolver coverage — Cycle 1: construction (test-mode in-memory
+// TVS-B.4 resolver coverage -- Cycle 1: construction (test-mode in-memory
 // ctor), PE header parsing, and accessors. The RED/GREEN notes below are
 // historical TDD context; the current resolver implementation is not a stub.
 //
@@ -38,7 +38,7 @@
 #include <windows.h>
 
 // ---------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // ---------------------------------------------------------------------------
 static int g_failCount = 0;
 static int g_passCount = 0;
@@ -54,7 +54,7 @@ static int g_passCount = 0;
 } while(0)
 
 // ---------------------------------------------------------------------------
-// loadDllBuffer — read entire file contents into a byte vector (binary mode).
+// loadDllBuffer -- read entire file contents into a byte vector (binary mode).
 // Mirrors the file-reading pattern from sig_scan.cpp (std::ifstream +
 // std::istreambuf_iterator).
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ static bool loadDllBuffer(const char* path, std::vector<uint8_t>& out) {
 }
 
 // ---------------------------------------------------------------------------
-// findDllPath — try candidate paths and return the first that exists.
+// findDllPath -- try candidate paths and return the first that exists.
 // Candidates cover: run-from-project-root, run-from-build\Release\, and
 // run-from-build\. If none exist, the first candidate is returned (so the
 // caller can print a loud error listing every path that was tried).
@@ -102,7 +102,7 @@ static std::string findDllPath() {
 }
 
 // ---------------------------------------------------------------------------
-// findSignatureByName — look up a signature in the generated kSignatures[]
+// findSignatureByName -- look up a signature in the generated kSignatures[]
 // catalog by NAME rather than by positional index. Returns nullptr if no
 // signature with the given name exists. Prefer this over kSignatures[N] so
 // the test is robust against future catalog edits (insertions/deletions that
@@ -118,7 +118,7 @@ static const tsdev::SignatureDef* findSignatureByName(const char* name) {
 }
 
 // ===========================================================================
-// main — Cycle 1 assertions.
+// main -- Cycle 1 assertions.
 //
 // Structure: later cycles will append more CHECK assertions before the final
 // summary/return block.
@@ -148,7 +148,7 @@ int main() {
 
     // --- 2. Construct OrlibResolver in test mode (in-memory PE image) ---
     // The test ctor is pure computation (no DLL loading, no worker thread
-    // needed). Wrap in try/catch — construction must NOT throw.
+    // needed). Wrap in try/catch -- construction must NOT throw.
     tsdev::OrlibResolver* resolver = nullptr;
     try {
         resolver = new tsdev::OrlibResolver(buffer.data(),
@@ -193,7 +193,7 @@ int main() {
     //
     // Expected RVAs are taken from signatures.gen.h
     // (the `rva` field of each SignatureDef), cross-checked against
-    // docs/SIGNATURE_CATALOG.md §3.
+    // docs/SIGNATURE_CATALOG.md Sec. 3.
     // ===================================================================
     std::printf("\n=== Cycle 2: 8 internal-function resolvers ===\n");
 
@@ -406,7 +406,7 @@ int main() {
         }
     }
 
-    // --- Target 6: DeleteFromTree (__thiscall → void*) ---
+    // --- Target 6: DeleteFromTree (__thiscall -> void*) ---
     {
         const tsdev::SignatureDef* sig =
             findSignatureByName("DeleteFromTree");
@@ -462,7 +462,7 @@ int main() {
         }
     }
 
-    // --- Target 8: FUN_101a8360 delete orchestrator (__fastcall → void*) ---
+    // --- Target 8: FUN_101a8360 delete orchestrator (__fastcall -> void*) ---
     {
         const tsdev::SignatureDef* sig =
             findSignatureByName("FUN_101a8360_delete_orchestrator");
@@ -491,7 +491,7 @@ int main() {
     }
 
     // ===================================================================
-    // Cycle 2 — Failure-path test (AC6).
+    // Cycle 2 -- Failure-path test (AC6).
     //
     // Construct a CORRUPTED copy of the DLL buffer by zeroing the entire
     // .text section. This breaks every signature (0 matches). The resolver
@@ -499,7 +499,7 @@ int main() {
     // name and the match count (0).
     //
     // To find the .text raw file offset + raw size, we parse the PE
-    // headers directly from the buffer (DOS → NT → sections → ".text").
+    // headers directly from the buffer (DOS -> NT -> sections -> ".text").
     // This mirrors what parsePeHeaders() does internally but is done
     // inline here so the test is self-contained and does not rely on the
     // resolver's own parsing.
@@ -579,7 +579,7 @@ int main() {
             exMsg     = ex.what();
             exTarget  = ex.target();
         } catch (const std::exception& ex) {
-            // Wrong exception type — still a failure, but flag it.
+            // Wrong exception type -- still a failure, but flag it.
             exMsg = std::string("wrong exception type: ") + ex.what();
         }
 
@@ -604,7 +604,7 @@ int main() {
     }
 
     // -----------------------------------------------------------------
-    // Multi-match test (AC6 — BEST EFFORT, OPTIONAL).
+    // Multi-match test (AC6 -- BEST EFFORT, OPTIONAL).
     //
     // SKIPPED: constructing a buffer where a signature matches exactly
     // twice is fragile. It requires duplicating a known-unique signature
@@ -636,7 +636,7 @@ int main() {
     // the RVA and compares it with the catalog.
     //
     // Expected RVAs are derived from the generated catalog and cross-checked
-    // against docs/SIGNATURE_CATALOG.md §5. The original dumpbin record at
+    // against docs/SIGNATURE_CATALOG.md Sec. 5. The original dumpbin record at
     // tmp/re_artifacts/b1_export_confirmation.md is historical/transient and
     // unavailable in a fresh tracked checkout.
     // ===================================================================
@@ -825,17 +825,17 @@ int main() {
     }
 
     // ===================================================================
-    // Cycle 3 — Generic resolveExport() tests.
+    // Cycle 3 -- Generic resolveExport() tests.
     //
     // resolveExport(const char* decoratedName) returns a FARPROC for any
     // export name present in the PE export table. Tested with:
-    //   - "_OrlibInit@8"        → kExports_v9_50_01_3344[0] (decorated stdcall export)
-    //   - "FindExistPos"        → kExports_v9_50_01_3344[2] (undecorated export)
-    //   - "_NonexistentExport@99" → MUST throw OrlibResolverError
+    //   - "_OrlibInit@8"        -> kExports_v9_50_01_3344[0] (decorated stdcall export)
+    //   - "FindExistPos"        -> kExports_v9_50_01_3344[2] (undecorated export)
+    //   - "_NonexistentExport@99" -> MUST throw OrlibResolverError
     // ===================================================================
     std::printf("\n--- Cycle 3: generic resolveExport() ---\n");
 
-    // --- resolveExport("_OrlibInit@8") → kExports_v9_50_01_3344[0] ---
+    // --- resolveExport("_OrlibInit@8") -> kExports_v9_50_01_3344[0] ---
     {
         bool threw = false;
         std::string errMsg;
@@ -861,7 +861,7 @@ int main() {
         }
     }
 
-    // --- resolveExport("FindExistPos") → kExports_v9_50_01_3344[2] (undecorated) ---
+    // --- resolveExport("FindExistPos") -> kExports_v9_50_01_3344[2] (undecorated) ---
     {
         bool threw = false;
         std::string errMsg;
@@ -887,7 +887,7 @@ int main() {
         }
     }
 
-    // --- resolveExport("_NonexistentExport@99") → MUST throw OrlibResolverError ---
+    // --- resolveExport("_NonexistentExport@99") -> MUST throw OrlibResolverError ---
     {
         bool threw = false;
         std::string errMsg;
@@ -897,7 +897,7 @@ int main() {
             threw = true;
             errMsg = ex.what();
         } catch (const std::exception& ex) {
-            // Wrong exception type — still a failure, but flag it.
+            // Wrong exception type -- still a failure, but flag it.
             errMsg = std::string("wrong exception type: ") + ex.what();
         }
         CHECK(threw,
@@ -911,7 +911,7 @@ int main() {
     // Cycle 4: version detection (3-tier detectVersion).
     //
     // detectVersion() implements the 3-tier decision tree from
-    // docs/VERSION_DETECTION.md §4.2:
+    // docs/VERSION_DETECTION.md Sec. 4.2:
     //   Tier 1: FileVersion string lookup in the manifest.
     //   Tier 2: PE timestamp + file size cross-check.
     //   Tier 3: SHA-256 byte-identity confirmation.
@@ -930,12 +930,12 @@ int main() {
     int c4_failStart = g_failCount;
 
     // -------------------------------------------------------------------
-    // Case 1 — Known DLL (MANDATORY, AC5).
+    // Case 1 -- Known DLL (MANDATORY, AC5).
     //
     // The baseline DLL is the known, tested build. detectVersion() must
     // return known=true, tier=Tier3Match (all 3 tiers match), with the
-    // exact baseline indicators from docs/VERSION_DETECTION.md §2 and
-    // the manifest entry from §6.2.
+    // exact baseline indicators from docs/VERSION_DETECTION.md Sec. 2 and
+    // the manifest entry from Sec. 6.2.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 4 Case 1: known DLL (AC5) ---\n");
     {
@@ -979,10 +979,10 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Case 2 — Tier 2 mismatch (MANDATORY).
+    // Case 2 -- Tier 2 mismatch (MANDATORY).
     //
     // Modify the PE timestamp in the COFF header. FileVersion (Tier 1)
-    // still matches → known=true, but Tier 2 (timestamp) mismatches →
+    // still matches -> known=true, but Tier 2 (timestamp) mismatches ->
     // tier=Tier2Mismatch, warningMessage non-empty.
     //
     // PE timestamp offset computation:
@@ -996,7 +996,7 @@ int main() {
     //     (offset within IMAGE_FILE_HEADER) = e_lfanew + 8.
     //
     // NOTE: The task brief stated "e_lfanew + 4 + 8 = e_lfanew + 12",
-    // but that is incorrect — TimeDateStamp is at offset 4 (not 8)
+    // but that is incorrect -- TimeDateStamp is at offset 4 (not 8)
     // within IMAGE_FILE_HEADER. The correct offset is e_lfanew + 8.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 4 Case 2: Tier 2 mismatch (timestamp) ---\n");
@@ -1060,12 +1060,12 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Case 3 — Tier 3 mismatch (MANDATORY).
+    // Case 3 -- Tier 3 mismatch (MANDATORY).
     //
     // Flip a single byte in the .text section. This changes the SHA-256
     // (Tier 3) but leaves FileVersion (resource section) and PE timestamp
-    // (header) unchanged. Tier 1 + Tier 2 match → known=true, but
-    // Tier 3 mismatches → tier=Tier3Mismatch, warningMessage non-empty.
+    // (header) unchanged. Tier 1 + Tier 2 match -> known=true, but
+    // Tier 3 mismatches -> tier=Tier3Mismatch, warningMessage non-empty.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 4 Case 3: Tier 3 mismatch (SHA-256) ---\n");
     {
@@ -1122,7 +1122,7 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Case 4 — Unknown FileVersion (BEST-EFFORT, soft skip if infeasible).
+    // Case 4 -- Unknown FileVersion (BEST-EFFORT, soft skip if infeasible).
     //
     // Replace the UTF-16LE "9.50.01.3344" string in the PE version
     // resource with "9.99.99.9999" (same byte length: 12 wide chars =
@@ -1132,7 +1132,7 @@ int main() {
     // FEASIBILITY NOTE: This case mutates the UTF-16LE string in the version
     // resource. If the pattern is not present in the fixture buffer (for
     // example, if the version is stored only as VS_FIXEDFILEINFO), the case
-    // is SKIPPED (soft skip — no failure, no increment to g_failCount).
+    // is SKIPPED (soft skip -- no failure, no increment to g_failCount).
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 4 Case 4: unknown FileVersion (best-effort) ---\n");
     {
@@ -1172,7 +1172,7 @@ int main() {
             // the buffer. This may happen if the version string is stored
             // as VS_FIXEDFILEINFO (binary DWORDs) rather than in the
             // string table, or with different padding/alignment. Do NOT
-            // fail the test — this case is best-effort.
+            // fail the test -- this case is best-effort.
             std::printf("SKIP: Case 4 -- UTF-16LE '9.50.01.3344' pattern "
                         "not found in buffer. The version string may be "
                         "stored as VS_FIXEDFILEINFO (binary DWORDs) rather "
@@ -1234,10 +1234,10 @@ int main() {
     //
     // This is the final resolver-coverage cycle for TVS-B.4.
     // It covers:
-    //   Part A — 3 patch-site resolvers (resolvePatchSite by name).
-    //   Part B — 3 validatePatchSite(descriptor) tests.
-    //   Part C — 3 convenience methods (resolveThreadCheck1/2/3).
-    //   Part D — 3 data-global RVA resolvers.
+    //   Part A -- 3 patch-site resolvers (resolvePatchSite by name).
+    //   Part B -- 3 validatePatchSite(descriptor) tests.
+    //   Part C -- 3 convenience methods (resolveThreadCheck1/2/3).
+    //   Part D -- 3 data-global RVA resolvers.
     //
     // The historical RED phase used stubs that threw
     // OrlibResolverError("not implemented"). The current implementation
@@ -1246,8 +1246,8 @@ int main() {
     //
     // Expected values are looked up by NAME from signatures.gen.h
     // (kSignatures[] entries for the thread-check patch sites),
-    // cross-checked against docs/SIGNATURE_CATALOG.md §3 (patch-site
-    // metadata) and §6 (data-section RVA targets:
+    // cross-checked against docs/SIGNATURE_CATALOG.md Sec. 3 (patch-site
+    // metadata) and Sec. 6 (data-section RVA targets:
     // kDataGlobals_v9_50_01_3344[0..2]).
     //
     // patchRva = sigMatchRva + patchOffset for each patch site.
@@ -1279,7 +1279,7 @@ int main() {
             if (hi >= 0 && lo >= 0) {
                 out.push_back((uint8_t)((hi << 4) | lo));
             } else {
-                break; // malformed — stop
+                break; // malformed -- stop
             }
         }
         return out;
@@ -1293,7 +1293,7 @@ int main() {
     };
 
     // -------------------------------------------------------------------
-    // Part A — 3 patch-site resolution tests (resolvePatchSite by name).
+    // Part A -- 3 patch-site resolution tests (resolvePatchSite by name).
     //
     // For each of the 3 thread-check patch sites, call resolvePatchSite(name)
     // inside try/catch. Assert the returned PatchSiteDescriptor fields:
@@ -1435,14 +1435,14 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part B — 3 validatePatchSite(descriptor) tests.
+    // Part B -- 3 validatePatchSite(descriptor) tests.
     //
     // For each patch site, first resolve the descriptor (Part A). If the
     // resolution throws, there is no descriptor to validate, so the
     // validation check is skipped; the Part A check records the failure.
     //
     // If the resolution succeeds, call validatePatchSite(desc) and assert it
-    // returns true (the baseline DLL is unpatched — original bytes are
+    // returns true (the baseline DLL is unpatched -- original bytes are
     // present at the patch site).
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part B: 3 validatePatchSite tests ---\n");
@@ -1490,7 +1490,7 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part C — 3 convenience method tests.
+    // Part C -- 3 convenience method tests.
     //
     // resolveThreadCheck1/2/3() each return a PatchSiteDescriptor. Assert
     // the returned descriptor's patchRva matches the expected patch RVA,
@@ -1500,7 +1500,7 @@ int main() {
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part C: 3 convenience methods ---\n");
 
-    // --- resolveThreadCheck1() → patchRva FUN_101d0950_thread_check_INT3 ---
+    // --- resolveThreadCheck1() -> patchRva FUN_101d0950_thread_check_INT3 ---
     {
         const tsdev::SignatureDef* sig =
             findSignatureByName("FUN_101d0950_thread_check_INT3");
@@ -1531,7 +1531,7 @@ int main() {
         }
     }
 
-    // --- resolveThreadCheck2() → patchRva FUN_101cf5b0_thread_check_INT3 ---
+    // --- resolveThreadCheck2() -> patchRva FUN_101cf5b0_thread_check_INT3 ---
     {
         const tsdev::SignatureDef* sig =
             findSignatureByName("FUN_101cf5b0_thread_check_INT3");
@@ -1562,7 +1562,7 @@ int main() {
         }
     }
 
-    // --- resolveThreadCheck3() → patchRva FUN_101d1fa0_thread_check_INT3 ---
+    // --- resolveThreadCheck3() -> patchRva FUN_101d1fa0_thread_check_INT3 ---
     {
         const tsdev::SignatureDef* sig =
             findSignatureByName("FUN_101d1fa0_thread_check_INT3");
@@ -1594,20 +1594,20 @@ int main() {
     }
 
     // -------------------------------------------------------------------
-    // Part D — 3 data-global RVA tests.
+    // Part D -- 3 data-global RVA tests.
     //
-    // resolveErrorArrayPtrRva() → kDataGlobals_v9_50_01_3344[0] (DAT_1023cea0, error-record
+    // resolveErrorArrayPtrRva() -> kDataGlobals_v9_50_01_3344[0] (DAT_1023cea0, error-record
     //   array pointer).
-    // resolveErrorCountRva()   → kDataGlobals_v9_50_01_3344[1] (DAT_1023cea4, error-record
+    // resolveErrorCountRva()   -> kDataGlobals_v9_50_01_3344[1] (DAT_1023cea4, error-record
     //   count).
-    // resolveErrorHinstRva()   → kDataGlobals_v9_50_01_3344[2] (DAT_1023aab8, string-table
+    // resolveErrorHinstRva()   -> kDataGlobals_v9_50_01_3344[2] (DAT_1023aab8, string-table
     //   HINSTANCE).
     //
     // Resolution failures are reported by the checks below.
     // -------------------------------------------------------------------
     std::printf("\n--- Cycle 5 Part D: 3 data-global RVA resolvers ---\n");
 
-    // --- resolveErrorArrayPtrRva() → kDataGlobals_v9_50_01_3344[0] ---
+    // --- resolveErrorArrayPtrRva() -> kDataGlobals_v9_50_01_3344[0] ---
     {
         bool threw = false;
         std::string errMsg;
@@ -1633,7 +1633,7 @@ int main() {
         }
     }
 
-    // --- resolveErrorCountRva() → kDataGlobals_v9_50_01_3344[1] ---
+    // --- resolveErrorCountRva() -> kDataGlobals_v9_50_01_3344[1] ---
     {
         bool threw = false;
         std::string errMsg;
@@ -1659,7 +1659,7 @@ int main() {
         }
     }
 
-    // --- resolveErrorHinstRva() → kDataGlobals_v9_50_01_3344[2] ---
+    // --- resolveErrorHinstRva() -> kDataGlobals_v9_50_01_3344[2] ---
     {
         bool threw = false;
         std::string errMsg;
@@ -1794,7 +1794,7 @@ int main() {
             threw = true;
             errMsg = ex.what();
         } catch (const std::exception& ex) {
-            // Wrong exception type — still a failure, but flag it.
+            // Wrong exception type -- still a failure, but flag it.
             errMsg = std::string("wrong exception type: ") + ex.what();
         }
         CHECK(threw,

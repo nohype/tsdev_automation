@@ -8,7 +8,7 @@
 //
 // Purpose: test whether the historical GetDependencies (orlib20 ord 487) and
 // _GetStaticDependencyList@12 (ord 531) work correctly when a module
-// ACTUALLY HAS dependencies — i.e. a Strategy that calls a Function.
+// ACTUALLY HAS dependencies -- i.e. a Strategy that calls a Function.
 //
 // Prior diagnostics tested GetDependencies on a standalone Function with NO
 // dependencies (it returned empty, correctly). This was the historical test
@@ -27,12 +27,12 @@
 //      Function: `TS_AUTO_M4_FWD_STRAT = TS_AUTO_M4_FWD_FUNC;` (with
 //      fallbacks if verification fails).
 //   5. Records both ProgIds.
-//   6. Calls GetDependencies on the Strategy (whType=0) — SEH-protected.
-//   7. Calls GetDependencies on the Function (orlib20 whType=4) — expected
+//   6. Calls GetDependencies on the Strategy (whType=0) -- SEH-protected.
+//   7. Calls GetDependencies on the Function (orlib20 whType=4) -- expected
 //      empty. User-created warehouse category is now 1.
 //   8. Calls _GetStaticDependencyList@12 on the Strategy.
 //   9. Calls _GetStaticDependencyList@12 on the Function.
-//  10. Reads the 0x10A partial copy for the Strategy via Ordinal_28 — dumps
+//  10. Reads the 0x10A partial copy for the Strategy via Ordinal_28 -- dumps
 //      ALL fields at every 4-byte offset 0x00..0x10A, plus the named offsets
 //      0x15, 0x26, 0x29, 0x4f, 0x55, 0x7b, 0xd3, 0xd6.
 //  11. Reads the 0x10A partial copy for the Function via Ordinal_28.
@@ -91,9 +91,9 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 // GetDependencies (ord 487, FUN_10153f00): the export name is undecorated
 // ("GetDependencies"), which is ambiguous w.r.t. calling convention. We
 // declare multiple variants and probe each:
-//   - __stdcall 4 args (RET 0x10) — the assumed ABI from prior diags.
+//   - __stdcall 4 args (RET 0x10) -- the assumed ABI from prior diags.
 //   - __cdecl   4 args (caller cleans 16 bytes).
-//   - __stdcall 3 args (RET 0x0C) — alternative ABI hypothesis.
+//   - __stdcall 3 args (RET 0x0C) -- alternative ABI hypothesis.
 //   - __cdecl   3 args (caller cleans 12 bytes).
 //
 // _GetStaticDependencyList@12 (ord 531): __stdcall, 3 args, RET 0x0C.
@@ -108,7 +108,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 //
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (caller cleans 12 bytes).
 //   void* (char category, int progId, int flag)
-//   Returns live record pointer (refcounted — release via Ordinal_70).
+//   Returns live record pointer (refcounted -- release via Ordinal_70).
 //
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args, RET 0x08.
 //   int (void* rec, int flag)
@@ -261,7 +261,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -963,7 +963,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [SKIPPED -- Ordinal_69 not resolved]\n");
     }
 
-    // --- Step 14: CRITICAL — try GetDependencies with different ABIs.
+    // --- Step 14: CRITICAL -- try GetDependencies with different ABIs.
     // The export name "GetDependencies" is undecorated, which is ambiguous.
     // Try __cdecl 4, __stdcall 3, __cdecl 3 in addition to __stdcall 4.
     // For each variant, call on the Strategy (whType=0, progId=stratProgId)
@@ -976,13 +976,13 @@ DWORD WINAPI runDiag(LPVOID param) {
     // we rely on the SEH frame + the fact that the worker thread has a
     // 64MB stack (lots of headroom). If the wrong ABI corrupts ESP such
     // that the SEH frame unwinder can't find the handler, the process may
-    // crash — TSCrashReport.exe would then spawn, which we detect.
+    // crash -- TSCrashReport.exe would then spawn, which we detect.
     std::printf("\n[14] CRITICAL: trying GetDependencies with different "
                 "calling conventions on the Strategy...\n");
     std::printf("  (whType=0, progId=%d, elemIdx=0, target=%d)\n",
                 stratProgId, funcProgId);
 
-    // Variant A: __stdcall 4 args (already tested in step 6 — repeat for
+    // Variant A: __stdcall 4 args (already tested in step 6 -- repeat for
     // a single elemIdx=0 call here for direct comparison).
     {
         GetDepsSehResult r;
@@ -1010,7 +1010,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // Variant B: __cdecl 4 args. Caller cleans 16 bytes. If the real ABI
-    // is __stdcall 4, this leaves 16 bytes on the stack — but the next
+    // is __stdcall 4, this leaves 16 bytes on the stack -- but the next
     // function call will rebalance, and the SEH frame is intact.
     {
         GetDepsSehResult r;
@@ -1038,10 +1038,10 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // Variant C: __stdcall 3 args. If the real ABI is __stdcall 4, this
-    // passes only 3 args — the 4th (outDepCount pointer) is whatever was
+    // passes only 3 args -- the 4th (outDepCount pointer) is whatever was
     // on the stack. The callee will RET 0x0C (popping 12 bytes) but we
     // pushed only 12, so ESP is restored correctly. The depCount write
-    // may go to a garbage address — SEH should catch the resulting AV.
+    // may go to a garbage address -- SEH should catch the resulting AV.
     {
         GetDepsSehResult r;
         bool ok = callGetDepsStd3(getDepsStd3, 0, stratProgId, &r);
@@ -1135,7 +1135,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 90-second hard timeout — report a hang without terminating the worker.
+    // 90-second hard timeout -- report a hang without terminating the worker.
     // Multiple dependency probes may take longer than 60 seconds.
     DWORD wait = WaitForSingleObject(hThread, 90000);
     if (wait == WAIT_TIMEOUT) {

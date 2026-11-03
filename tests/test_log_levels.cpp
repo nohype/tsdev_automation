@@ -3,7 +3,7 @@
 // Unit test for the runtime log-level system (TVS: CLI log levels + repeatable
 // -v/--verbose).
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises:
 //   - tsdev_log_get_level() / tsdev_log_set_level() / tsdev_log_message()
@@ -654,7 +654,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

@@ -1,14 +1,14 @@
 // diag_watchdog.cpp
 //
-// Implementation of the §7.1 diagnostic watchdog. See diag_watchdog.h for
+// Implementation of the Sec. 7.1 diagnostic watchdog. See diag_watchdog.h for
 // the contract. This TU is compiled only into the diagnostic build
 // (TSDEV_DIAG); the production build neither compiles it nor links it.
 //
-// Known limitation of the stack records (§7.1 2d(1), review F4): on x86,
+// Known limitation of the stack records (Sec. 7.1 2d(1), review F4): on x86,
 // FPO (frame-pointer-omitted) frames without a findable PDB can truncate a
 // StackWalk64 walk early (field-observed: a walk that produced one
 // our-exe frame plus the thread-start anchor). The full-memory minidump
-// written by the same fire path is the fallback evidence — it contains all
+// written by the same fire path is the fallback evidence -- it contains all
 // thread contexts and stacks for complete offline reconstruction.
 
 #include "diag_watchdog.h"
@@ -42,9 +42,9 @@ namespace {
 // first exit code unused across the whole toolchain.
 const int WATCHDOG_EXIT_CODE = 13;
 
-// Default watchdog threshold (§7.1 2d): seconds without a site record before
+// Default watchdog threshold (Sec. 7.1 2d): seconds without a site record before
 // the watchdog fires. TSDEV_DIAG_WATCHDOG_SECS overrides; a value <= 0
-// disables the watchdog entirely (review F3a — long-idle roles like the
+// disables the watchdog entirely (review F3a -- long-idle roles like the
 // `serve` broker idle by design).
 const double kDefaultThresholdSecs = 60.0;
 
@@ -68,7 +68,7 @@ const char* g_idlePhaseTag = "(none)";
 
 // --- SEH-protected raw read of a 4-byte warehouse-struct field -------------
 // Raw form with an explanatory comment (AGENTS.md): the offsets are the
-// documented warehouse-struct layout (docs/KNOWLEDGE_BASE.md §2) and the
+// documented warehouse-struct layout (docs/KNOWLEDGE_BASE.md Sec. 2) and the
 // pointer was obtained via the resolved GetWarehouse export. Read-only
 // diagnostics; SEH guards against a stale pointer.
 bool sehReadWhDword(void* wh, int offset, unsigned int* out) {
@@ -81,7 +81,7 @@ bool sehReadWhDword(void* wh, int offset, unsigned int* out) {
     }
 }
 
-// 0-timeout probe of a protocol handle (KB §3): WAIT_OBJECT_0 = signaled /
+// 0-timeout probe of a protocol handle (KB Sec. 3): WAIT_OBJECT_0 = signaled /
 // acquirable, WAIT_TIMEOUT = not signaled / held, WAIT_FAILED = invalid
 // handle. For the mutex, a successful 0-timeout acquire is released again
 // immediately (the blocked dispatcher holds it while waiting on the
@@ -91,7 +91,7 @@ bool sehReadWhDword(void* wh, int offset, unsigned int* out) {
 // on the protocol handles, so if +0x6A/+0x6E are AUTO-RESET events and
 // currently signaled, the probe CONSUMES the signal. Consequence is bounded:
 // the evidence value is logged BEFORE consumption and the process is about
-// to terminate anyway — but the probe can destroy an "evDone signaled but
+// to terminate anyway -- but the probe can destroy an "evDone signaled but
 // waiter stuck" state mid-diagnosis (it is then no longer observable in a
 // later probe; the minidump retains the pre-probe handle values).
 const char* probeHandleState(unsigned int handleRaw, bool isMutex) {
@@ -108,7 +108,7 @@ const char* probeHandleState(unsigned int handleRaw, bool isMutex) {
     }
 }
 
-// --- §7.1 2d(1): all thread stacks as module+offset ------------------------
+// --- Sec. 7.1 2d(1): all thread stacks as module+offset ------------------------
 
 void dumpOneThreadStack(DWORD tid) {
     HANDLE hThread = OpenThread(
@@ -201,8 +201,8 @@ void dumpAllThreadStacks() {
     // orlib20 and its frames logged as "(no module)" (field-confirmed:
     // 0x101D4205 etc. = orlib20+0x1D4205). Refresh the module list here, at
     // fire time, so the one module that matters most is attributed as
-    // module+offset (§7.1 2d(1)). Failure is non-fatal: stacks then fall
-    // back to raw addresses — say so in the log.
+    // module+offset (Sec. 7.1 2d(1)). Failure is non-fatal: stacks then fall
+    // back to raw addresses -- say so in the log.
     if (!SymRefreshModuleList(GetCurrentProcess())) {
         logRecordNoProgressf("watchdog.stacks",
                              "module-list-refresh-failed err=%lu "
@@ -230,15 +230,15 @@ void dumpAllThreadStacks() {
     CloseHandle(snap);
 }
 
-// --- §7.1 2d(2): warehouse protocol state ----------------------------------
+// --- Sec. 7.1 2d(2): warehouse protocol state ----------------------------------
 
 void logWarehouseState() {
     void* wh = g_warehouse.load(std::memory_order_relaxed);
     if (!wh) {
-        // §7.1 2d(2) fallback: the wh pointer is NOT cleanly obtainable (the
+        // Sec. 7.1 2d(2) fallback: the wh pointer is NOT cleanly obtainable (the
         // hang is inside OrlibInit before GetWarehouse returned, or the
         // registration call failed). Log that explicitly and rely on stacks +
-        // minidump — do NOT hack orlib20 internals to recover it.
+        // minidump -- do NOT hack orlib20 internals to recover it.
         logRecordNoProgressf(
             "watchdog.warehouse",
             "wh=unavailable (not registered -- hang is pre-init or "
@@ -247,7 +247,7 @@ void logWarehouseState() {
     }
 
     // Raw reads of documented warehouse-struct fields (docs/KNOWLEDGE_BASE.md
-    // §2): +0x04 current cmd, +0x6A completion event, +0x6E wake event,
+    // Sec. 2): +0x04 current cmd, +0x6A completion event, +0x6E wake event,
     // +0x72 mutex, +0x76 worker tid. Read-only; the pointer came from the
     // resolved GetWarehouse export.
     unsigned int cmd = 0, evDone = 0, evWake = 0, mutex = 0, workerTid = 0;
@@ -268,7 +268,7 @@ void logWarehouseState() {
         workerTid, okTid ? 1 : 0);
 }
 
-// --- §7.1 2d(3): minidump ---------------------------------------------------
+// --- Sec. 7.1 2d(3): minidump ---------------------------------------------------
 
 std::string dumpPathFor(const char* logPath) {
     std::string p = logPath;
@@ -280,7 +280,7 @@ std::string dumpPathFor(const char* logPath) {
 }
 
 void writeMinidump(const std::string& dumpPath) {
-    // Flags chosen (§7.1 2d(3) "full memory sufficient for offline stack/wh
+    // Flags chosen (Sec. 7.1 2d(3) "full memory sufficient for offline stack/wh
     // analysis"): MiniDumpNormal (thread stacks + contexts) |
     // MiniDumpWithThreadInfo (per-thread times) | MiniDumpWithFullMemory
     // (all committed memory, including the shared SHARE_WO warehouse
@@ -305,7 +305,7 @@ void writeMinidump(const std::string& dumpPath) {
     CloseHandle(hFile);
 }
 
-// --- §7.1 2e: WHServer liveness samples -------------------------------------
+// --- Sec. 7.1 2e: WHServer liveness samples -------------------------------------
 
 struct WhSampleCtx {
     const std::vector<DWORD>* pids;
@@ -416,7 +416,7 @@ void whserverSample() {
     }
 
     // Responsiveness via top-level windows of those pids + IsHungAppWindow.
-    // A windowless WHServer can only be reported as present — say so.
+    // A windowless WHServer can only be reported as present -- say so.
     WhSampleCtx ctx{&pids, 0, 0};
     EnumWindows(whWindowEnum, reinterpret_cast<LPARAM>(&ctx));
     if (ctx.windows == 0) {
@@ -438,7 +438,7 @@ void whserverSample() {
 }
 
 // --- External-process dumps + TS process inventory -------------------------
-// (report 2026-09-29_dist_logs_crash_analysis.md §5.1: the self-dump cannot
+// (report 2026-09-29_dist_logs_crash_analysis.md Sec. 5.1: the self-dump cannot
 // show WHServer.exe's own state or co-running TSDev.exe/orchart.exe, which is
 // the still-open side of the wedged-COM-call root cause.)
 
@@ -462,7 +462,7 @@ bool nameInList(const wchar_t* name, const wchar_t* const* list, size_t n) {
 
 // tsdev_cli*.exe glob: the "tsdev_cli" prefix (9 chars) plus a ".exe"
 // suffix (4 chars). The shortest possible match is "tsdev_cli.exe" itself
-// (13 chars), so the size guard is >= 13 — it must cover BOTH the 9-char
+// (13 chars), so the size guard is >= 13 -- it must cover BOTH the 9-char
 // prefix read and the 4-char suffix read.
 bool isTsDevCliName(const std::wstring& name) {
     return name.size() >= 13 &&
@@ -473,7 +473,7 @@ bool isTsDevCliName(const std::wstring& name) {
 // UTF-8 narrow form of an enumerated exe name (ASCII in practice; CP_UTF8
 // keeps any non-ASCII byte readable in the log and usable in paths).
 // Caveat: the result is later handed to CreateFileA, which decodes ANSI,
-// not UTF-8 — a non-ASCII exe name would produce a mangled dump filename
+// not UTF-8 -- a non-ASCII exe name would produce a mangled dump filename
 // (the log record still shows the correct UTF-8 name). Accepted: every
 // kExtDumpNames/kInventoryExtraNames entry is ASCII.
 std::string narrowExe(const std::wstring& w) {
@@ -486,10 +486,10 @@ std::string narrowExe(const std::wstring& w) {
 }
 
 // tsproc.inventory: csv of procname:pid for every TS-relevant process
-// running (WHServer/TSDev/orchart/TSCrashReport + other tsdev_cli*.exe —
+// running (WHServer/TSDev/orchart/TSCrashReport + other tsdev_cli*.exe --
 // self excluded by pid). progress=true at init, consistent with the
 // diag.init/run.start records which also feed the watchdog timestamp; the
-// watchdog fire path passes false — its records must never feed the
+// watchdog fire path passes false -- its records must never feed the
 // watchdog.
 void logTsProcessInventory(bool progress) {
     std::vector<ProcEntry> procs;
@@ -532,11 +532,11 @@ void logTsProcessInventory(bool progress) {
     }
 }
 
-// §5.1: write a read-only minidump of each running WHServer.exe / TSDev.exe
+// Sec. 5.1: write a read-only minidump of each running WHServer.exe / TSDev.exe
 // / orchart.exe next to the log, so the server side of the wedge is captured
 // at hang time. The targets are never suspended, killed, or otherwise
 // touched beyond MiniDumpWriteDump's own snapshot. Every failure (access
-// denied, bitness mismatch, vanished process) is logged and non-fatal — the
+// denied, bitness mismatch, vanished process) is logged and non-fatal -- the
 // fire sequence must still reach watchdog.abort.
 void dumpExternalProcesses() {
     std::vector<ProcEntry> procs;
@@ -575,14 +575,14 @@ void dumpExternalProcesses() {
         DWORD err = 0;
         BOOL ok = FALSE;
         // Access for MiniDumpWriteDump on an external process:
-        // QUERY_INFORMATION|VM_READ|DUP_HANDLE — Microsoft documents
+        // QUERY_INFORMATION|VM_READ|DUP_HANDLE -- Microsoft documents
         // PROCESS_DUP_HANDLE as additionally required "if handle
         // information is to be collected", and field reports show
         // external dumps failing without it. The trio is still the
         // minimal read-only set for a same-bitness target from an
         // elevated process (AGENTS.md). Fallback only: if the minimal
         // request fails (OpenProcess denied or MiniDumpWriteDump
-        // error), retry once with PROCESS_ALL_ACCESS — some targets
+        // error), retry once with PROCESS_ALL_ACCESS -- some targets
         // deny the minimal mask even to an elevated caller. Every
         // failure is logged below and remains non-fatal.
         const DWORD accessModes[2] = {
@@ -648,23 +648,23 @@ void fire(double idleSecs) {
                          "idleSecs=%.3f thresholdSecs=%.1f", idleSecs,
                          g_thresholdSecs);
 
-    dumpAllThreadStacks();  // §7.1 2d(1)
-    logWarehouseState();    // §7.1 2d(2)
+    dumpAllThreadStacks();  // Sec. 7.1 2d(1)
+    logWarehouseState();    // Sec. 7.1 2d(2)
 
     unlockSink();
 
     std::string dumpPath = dumpPathFor(logPath());
-    writeMinidump(dumpPath);  // §7.1 2d(3)
+    writeMinidump(dumpPath);  // Sec. 7.1 2d(3)
 
-    // §5.1 (2026-09-29 report): refresh the TS process inventory at hang
+    // Sec. 5.1 (2026-09-29 report): refresh the TS process inventory at hang
     // time, then read-only external minidumps of WHServer.exe / TSDev.exe /
-    // orchart.exe — the server side the self-dump cannot show. Placed after
+    // orchart.exe -- the server side the self-dump cannot show. Placed after
     // the self-dump so it keeps priority if anything here fails; all
     // failures inside are logged and non-fatal.
     logTsProcessInventory(/*progress=*/false);
     dumpExternalProcesses();
 
-    // §7.1 2d(4): abort loudly with a distinct exit code.
+    // Sec. 7.1 2d(4): abort loudly with a distinct exit code.
     logRecordNoProgressf("watchdog.abort", "exit=%d", WATCHDOG_EXIT_CODE);
     std::fprintf(stderr,
                  "tsdev_diag: WATCHDOG FIRED -- no log progress for %.1f s "
@@ -682,7 +682,7 @@ void fire(double idleSecs) {
     // and orlib20's detach path on a process holding an open warehouse raises
     // the BLOCKING dialog "TradeStation internal error, WHouse is going to
     // stay in memory (1)" (observed in the 2026-09-02 incident,
-    // tmp/exp/whouse_incident/) — the loud abort then hangs on that dialog
+    // tmp/exp/whouse_incident/) -- the loud abort then hangs on that dialog
     // until it is dismissed. All evidence is already durable at this point
     // (every record is a single FILE_FLAG_WRITE_THROUGH WriteFile, the
     // minidump is closed, stderr is flushed), so the process must die
@@ -703,7 +703,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
     // active. Capped at threshold/3 so a heartbeat (which resets the
     // progress timestamp) lands well before the fire threshold could be
     // reached with a small TSDEV_DIAG_WATCHDOG_SECS override (the smoke run
-    // ran with 8 s → heartbeat every ~2.7 s). With the 1 s tick below this
+    // ran with 8 s -> heartbeat every ~2.7 s). With the 1 s tick below this
     // holds for thresholds >= 3 s; a sub-3-second threshold is aggressive
     // enough that firing during an idle phase is the requested behavior.
     double heartbeatSecs = kIdleHeartbeatSecs;
@@ -730,7 +730,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
 
         // Review F3b: while the process is in an idle-by-design phase (e.g.
         // the serve broker blocked in ConnectNamedPipe waiting for pipe
-        // clients), emit a periodic PROGRESS heartbeat (logRecordf — it
+        // clients), emit a periodic PROGRESS heartbeat (logRecordf -- it
         // updates the watchdog progress timestamp, so a healthy idle broker
         // never reaches the fire threshold and never looks "stalled" in the
         // log). The 2026-09-02 smoke run was a healthy idle `serve` aborted
@@ -746,7 +746,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
                            static_cast<double>(freq.QuadPart));
         }
 
-        // §7.1 2e: liveness sample every 5 s while idle. These records do
+        // Sec. 7.1 2e: liveness sample every 5 s while idle. These records do
         // NOT update the watchdog progress timestamp (logRecordNoProgressf),
         // otherwise the watchdog could never fire.
         if (tick % 5 == 0) {
@@ -760,12 +760,12 @@ DWORD WINAPI watchdogProc(LPVOID) {
 void startWatchdog() {
     // Threshold: env TSDEV_DIAG_WATCHDOG_SECS overrides the 60 s default.
     // Review F3a: a parsed value <= 0 DISABLES the watchdog entirely (no
-    // fire path) — long-idle roles like the `serve` broker idle by design
+    // fire path) -- long-idle roles like the `serve` broker idle by design
     // and must never be aborted for idling. A value that does not parse as
     // a number, or an unset/too-long variable, keeps the 60 s default.
-    // Review N1: strtod also accepts "1e999" (→ inf) and "nan"; a
+    // Review N1: strtod also accepts "1e999" (-> inf) and "nan"; a
     // non-finite value would make the static_cast to threshold ticks in
-    // watchdogProc UB (typically INT64_MIN on MSVC/x86 → fires on the
+    // watchdogProc UB (typically INT64_MIN on MSVC/x86 -> fires on the
     // first tick), so values must be finite and within the sane bound
     // (0 < v <= 86400.0, i.e. 24 h); anything else keeps the 60 s default.
     char buf[64] = {};
@@ -780,7 +780,7 @@ void startWatchdog() {
             } else if (std::isfinite(v) && v <= 86400.0) {
                 g_thresholdSecs = v;
             }
-            // else: non-finite (inf/NaN) or above the 86400.0 s bound —
+            // else: non-finite (inf/NaN) or above the 86400.0 s bound --
             // garbage input; keep the 60 s default (g_thresholdSecs is
             // still kDefaultThresholdSecs here).
         }
@@ -788,7 +788,7 @@ void startWatchdog() {
 
     // Module symbols for the module+offset stack records. Non-fatal on
     // failure (stacks fall back to raw addresses). The module list is
-    // refreshed again at fire time (review F4 — orlib20 loads later).
+    // refreshed again at fire time (review F4 -- orlib20 loads later).
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);
 
     HANDLE h = CreateThread(nullptr, 0, watchdogProc, nullptr, 0, nullptr);
@@ -830,7 +830,7 @@ void diagInit() {
         logRecordf("diag.init", "pid=%lu watchdogSecs=%.1f",
                    GetCurrentProcessId(), g_thresholdSecs);
     }
-    // §5.1 (2026-09-29 report): which TS processes share this machine at run
+    // Sec. 5.1 (2026-09-29 report): which TS processes share this machine at run
     // start (WHServer pid + co-running clients are cross-run evidence).
     logTsProcessInventory(/*progress=*/true);
 }

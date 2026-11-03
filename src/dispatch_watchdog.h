@@ -12,7 +12,7 @@
 //
 //   1. In-flight dispatch marker. Every orlib20 warehouse call helper in
 //      tsdev_lib.cpp enters the marker (site string + uint32 aux + enter
-//      QPC) and leaves on return — via __try/__finally wrappers so leave()
+//      QPC) and leaves on return -- via __try/__finally wrappers so leave()
 //      also runs on SEH/C++ unwinding (RAII objects are illegal inside the
 //      __try helpers, MSVC C2712). DispatchInFlightGuard is the RAII form
 //      for scopes that may NOT use __try. The marker is a mutex-protected
@@ -32,7 +32,7 @@
 //        whServerSeenDuringFlight gate prevents false fires before the
 //        server has ever spawned. The watchdog uses the snapshotOk
 //        findWhServerPids() overload: a failed Toolhelp32 snapshot is
-//        INCONCLUSIVE — never evidence of absence — so whserver_gone only
+//        INCONCLUSIVE -- never evidence of absence -- so whserver_gone only
 //        fires after kWhServerGoneConfirmSamples CONSECUTIVE
 //        CONFIRMED-empty samples. accountWhServerSample resets the streak
 //        on an inconclusive poll (the "inconclusive never counts"
@@ -44,7 +44,7 @@
 //
 // Fire path: truthful abort on stderr, then TerminateProcess(15). NOT
 // ExitProcess: DLL detach on a process holding an open warehouse raises the
-// blocking "WHouse stays in memory" dialog (proven incident — see the
+// blocking "WHouse stays in memory" dialog (proven incident -- see the
 // identical comment at the diag watchdog's fire() in diag_watchdog.cpp).
 // Exit code 15 is the next free code (0-11 CLI, 12 client markers, 13 diag
 // watchdog, 14 whserver_vas_abort).
@@ -53,7 +53,7 @@
 // so unit tests can cover every branch without touching TerminateProcess;
 // the fire() side effect itself is exercised only by manual/E2E paths.
 //
-// 32-bit Win32. kernel32 + toolhelp only — NO new .lib dependencies.
+// 32-bit Win32. kernel32 + toolhelp only -- NO new .lib dependencies.
 
 #ifndef TSDEV_DISPATCH_WATCHDOG_H
 #define TSDEV_DISPATCH_WATCHDOG_H
@@ -78,7 +78,7 @@ struct DispatchMarkerSnapshot {
 // enter/leave are nested-safe (depth counter): the site/aux/enterQpc of the
 // most recent enter win, and the marker stays in-flight until the depth
 // returns to zero. After a nested dispatch leaves, the still-in-flight outer
-// dispatch's age is measured from the inner's enter QPC — its timeout is
+// dispatch's age is measured from the inner's enter QPC -- its timeout is
 // delayed by the time the outer ran before the inner entered (outer-enter to
 // inner-enter gap), and an abort during the outer's remainder names the inner
 // site.
@@ -87,7 +87,7 @@ void dispatchLeave();
 void dispatchSnapshot(DispatchMarkerSnapshot& out);
 
 // RAII marker guard for scopes that may NOT use __try (MSVC C2712 forbids
-// objects with destructors in functions containing __try — the orlib20 call
+// objects with destructors in functions containing __try -- the orlib20 call
 // helpers use __try/__finally + dispatchEnter/Leave instead).
 class DispatchInFlightGuard {
 public:
@@ -102,9 +102,9 @@ public:
 // --- Fire decision (pure, unit-testable) ------------------------------------
 enum class DispatchFireReason {
     None = 0,
-    DispatchTimeout,    // "dispatch_timeout"  — in-flight age > bound
-    WhServerCrashed,    // "whserver_crashed"  — TSCrashReport parent is a WHServer pid
-    WhServerGone,       // "whserver_gone"     — WHServer pid vanished mid-flight
+    DispatchTimeout,    // "dispatch_timeout"  -- in-flight age > bound
+    WhServerCrashed,    // "whserver_crashed"  -- TSCrashReport parent is a WHServer pid
+    WhServerGone,       // "whserver_gone"     -- WHServer pid vanished mid-flight
 };
 
 const char* dispatchFireReasonString(DispatchFireReason reason);
@@ -112,8 +112,8 @@ const char* dispatchFireReasonString(DispatchFireReason reason);
 // Consecutive CONFIRMED-empty findWhServerPids() samples required before
 // whserver_gone may fire. The watchdog feeds this counter through
 // accountWhServerSample using the snapshotOk overload: a failed
-// Toolhelp32 snapshot is inconclusive — it is NOT an empty sample and
-// RESETS the streak — so the absence must be re-enumeration-confirmed on
+// Toolhelp32 snapshot is inconclusive -- it is NOT an empty sample and
+// RESETS the streak -- so the absence must be re-enumeration-confirmed on
 // this many consecutive polls before `empty` reaches the decision as a
 // fire condition.
 constexpr unsigned kWhServerGoneConfirmSamples = 3;
@@ -123,7 +123,7 @@ constexpr unsigned kWhServerGoneConfirmSamples = 3;
 // enterQpc to an age; `whServerPids` is findWhServerPids();
 // `whServerSeenDuringFlight` is the caller's memory of WHServer having been
 // observed at least once since THIS flight began (prevents the lazy-
-// singleton window — WHServer not yet spawned — from firing whserver_gone);
+// singleton window -- WHServer not yet spawned -- from firing whserver_gone);
 // `whServerEmptySamples` is the caller's count of CONSECUTIVE
 // CONFIRMED-empty whServerPids samples during this flight
 // (accountWhServerSample increments it only on snapshotOk-empty polls and
@@ -143,7 +143,7 @@ DispatchFireReason decideDispatchFire(
 // out so unit tests can pin the inconclusive-poll contract without
 // injecting Toolhelp32 failures (same seam style as decideDispatchFire
 // above and the census's decideCensus sample stream):
-//   snapshotOk=false: the poll is INCONCLUSIVE — evidence in neither
+//   snapshotOk=false: the poll is INCONCLUSIVE -- evidence in neither
 //     direction. emptyWhSamples RESETS to 0 (whserver_gone requires
 //     consecutive CONFIRMED-empty polls; a confirmation gap breaks the
 //     streak) and whSeen is left unchanged.
@@ -158,13 +158,13 @@ void accountWhServerSample(bool snapshotOk,
 // Parent pid of every running TSCrashReport.exe instance, via one Toolhelp32
 // process snapshot (the same mechanism whserver_health.cpp uses; the
 // PROCESSENTRY32 parent-pid field needs no extra APIs). Empty when none are
-// running or the enumeration failed — callers that must distinguish "no
+// running or the enumeration failed -- callers that must distinguish "no
 // reporters running" from "enumeration inconclusive" use the snapshotOk
 // overload; a failed enumeration is NEVER evidence of no reporters.
 std::vector<DWORD> findCrashReportParentPids();
 
 // snapshotOk variant of the same enumeration: returns false ONLY when the
-// enumeration is inconclusive — the Toolhelp32 snapshot itself failed, or
+// enumeration is inconclusive -- the Toolhelp32 snapshot itself failed, or
 // the process walk did not run to clean completion (a Process32FirstW or
 // Process32NextW failure whose GetLastError is not ERROR_NO_MORE_FILES; a
 // truncated set is never evidence). On true, `parents` is the authoritative
@@ -173,7 +173,7 @@ bool findCrashReportParentPids(std::vector<DWORD>& parents);
 
 // --- Watchdog thread ---------------------------------------------------------
 // Start the 1-second polling watchdog. `thresholdSecs` is the in-flight
-// bound (production default 300 s — far above the ~3.4 s legit maximum
+// bound (production default 300 s -- far above the ~3.4 s legit maximum
 // single-dispatch duration, far below forever). 0 disables the watchdog
 // entirely (documented escape hatch). Spawn-once: subsequent calls are
 // no-ops returning false; the thread is never joined (process exit or the

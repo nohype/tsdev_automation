@@ -138,8 +138,8 @@ function Invoke-CliRaw {
         $ErrorActionPreference = 'Continue'
         try {
             # OS-level redirection writes the child's raw stdout/stderr bytes
-            # to files. `2>` on a native command wraps stderr in ErrorRecords —
-            # prefixing the first line and injecting error-record text — which
+            # to files. `2>` on a native command wraps stderr in ErrorRecords --
+            # prefixing the first line and injecting error-record text -- which
             # corrupts line-exact assertions on batch progress output.
             $proc = Start-Process -FilePath $script:CliPath `
                 -ArgumentList $argString `
@@ -404,7 +404,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # Test 6: backward compatibility — insert WITHOUT --json
+    # Test 6: backward compatibility -- insert WITHOUT --json
     # -------------------------------------------------------------------
     $nBw = "JsonTest_${runId}_Bw"; $allTestNames += $nBw
     $CreatedNames.Add($nBw) | Out-Null
@@ -432,14 +432,14 @@ try {
     $fAe = Write-SourceFile "ae" $aeSrc
 
     Run-TestCase -TestId "J7-insert-already-exists" -Body {
-        # Step 1: insert the component — must succeed.
+        # Step 1: insert the component -- must succeed.
         $cli1 = Invoke-CliRaw -Arguments @("--json", "insert", "strategy", $nAe, $fAe)
         Assert-True ($cli1.ExitCode -eq 0) "step1 exit_code: expected 0, got $($cli1.ExitCode)"
         $obj1 = $cli1.Stdout | ConvertFrom-Json
         Assert-True ($obj1.success -eq $true) "step1 success: expected true, got '$($obj1.success)'"
         Assert-True ($null -ne $obj1.prog_id -and $obj1.prog_id -gt 0) "step1 prog_id: expected >0, got '$($obj1.prog_id)'"
 
-        # Step 2: insert the SAME component again — must fail with already_exists.
+        # Step 2: insert the SAME component again -- must fail with already_exists.
         $cli2 = Invoke-CliRaw -Arguments @("--json", "insert", "strategy", $nAe, $fAe)
         Assert-True ($cli2.ExitCode -eq 5) "step2 exit_code: expected 5, got $($cli2.ExitCode)"
         $obj2 = $cli2.Stdout | ConvertFrom-Json
@@ -457,19 +457,19 @@ try {
         $lineCount = ($cli2.Stdout -split "`n").Count
         Assert-True ($lineCount -eq 1) "step2 stdout must be a single line, got $lineCount lines"
 
-        # Step 3: clean up — delete the component.
+        # Step 3: clean up -- delete the component.
         $cli3 = Invoke-CliRaw -Arguments @("--json", "delete", "strategy", $nAe)
         Assert-True ($cli3.ExitCode -eq 0) "step3 cleanup delete exit_code: expected 0, got $($cli3.ExitCode)"
     }
 
     # -------------------------------------------------------------------
-    # Test 8: batch mode — stderr progress rendering
+    # Test 8: batch mode -- stderr progress rendering
     #         Default: EMPTY stdout (the results array is emitted only
     #         under --json); human per-item BATCH completion lines on
     #         stderr (no BATCH START lines) ending at BATCH COMPLETE.
     #         --json: one JSON progress event object per stderr line while
     #         stdout carries exactly one JSON array. The --json run re-inserts
-    #         the same manifest so both items fail with already_exists —
+    #         the same manifest so both items fail with already_exists --
     #         failed items still produce ordered progress events.
     # -------------------------------------------------------------------
     $nJ8a = "JsonTest_${runId}_Batch1"; $allTestNames += $nJ8a

@@ -5,7 +5,7 @@
 // (Sha256FileStatus::Absent) from an existing-but-unreadable one
 // (Sha256FileStatus::Error). The original bug returned an empty string for
 // ANY open/read/hash error, and doModify() treated empty as "no prior
-// artifact" — silently converting an unreadable existing file into a new-file
+// artifact" -- silently converting an unreadable existing file into a new-file
 // sentinel.
 //
 // This is a PURE UNIT TEST. It does NOT load orlib20.dll, does NOT touch the
@@ -214,7 +214,7 @@ bool denyReadToCurrentUser(const std::string& path) {
     if (!tu->User.Sid) return false;
 
     // Build a security descriptor with a deny-ACE for GENERIC_READ.
-    // SDDL form: D:(D;;GR;;;S-1-5-21-...) — but we need the SID string.
+    // SDDL form: D:(D;;GR;;;S-1-5-21-...) -- but we need the SID string.
     // Use ConvertSidToStringSidA + BuildExplicitAccessWithName approach.
     LPSTR sidStr = nullptr;
     if (!ConvertSidToStringSidA(tu->User.Sid, &sidStr)) return false;
@@ -449,7 +449,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 DWORD WINAPI threadProc(LPVOID param) {
     int* ec = static_cast<int*>(param);

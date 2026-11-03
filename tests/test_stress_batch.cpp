@@ -11,7 +11,7 @@
 // warehouse. This exercises the shared one-instance behavior used by the batch
 // CLI mode (TVS-D.3).
 //
-// TVS-L.15 additions (single-process long-lived leak detection — the
+// TVS-L.15 additions (single-process long-lived leak detection -- the
 // complement to tests/test_unknown_link_stress.ps1, which is repeated-instance
 // stress with a fresh CLI process per cycle and therefore CANNOT prove
 // long-lived leak absence):
@@ -23,14 +23,14 @@
 //       - working-set size          (GetProcessMemoryInfo, psapi)
 //     Each metric is asserted to stay within a GENEROUS BUT FINITE delta of
 //     the START snapshot (bounds documented inline below). The intent is to
-//     catch UNBOUNDED growth (a leak), not to pin exact numbers — the bounds
+//     catch UNBOUNDED growth (a leak), not to pin exact numbers -- the bounds
 //     are deliberately loose so transient compiler/COM/cache fluctuations do
 //     not cause flaky failures, while a true leak that grows with N still
 //     trips the assertion at END.
 //   * One mid-run compile-failure then recovery on the SAME TsDevLib without
 //     restart: at the INSERT-phase midpoint, createEntry + saveSource +
 //     verifyModule with INVALID source (compile error), then create-path
-//     cleanup via deleteEntry(flush=false) — exactly the doInsert create-path
+//     cleanup via deleteEntry(flush=false) -- exactly the doInsert create-path
 //     cleanup contract. Then a full valid insert+verify+delete recovery cycle
 //     on the same TsDevLib proves the instance survived the compile failure.
 //     The fault/recovery items use unique names NOT in the main N vector and
@@ -38,15 +38,15 @@
 //     the main N names) stays 0.
 //
 // Phases (all on the same worker thread / same TsDevLib instance):
-//   1. INSERT  — for each of N: findExistPos (idempotent skip), createEntry,
+//   1. INSERT  -- for each of N: findExistPos (idempotent skip), createEntry,
 //                saveSource, verifyModule (assert no compile errors),
 //                ellFileExists. Record per-op timing. Continue on failure.
 //                At the midpoint: resource snapshot (MID) + compile-failure
 //                + recovery on the same TsDevLib.
-//   2. VERIFY  — all N .ell files exist + all N findable via findExistPos.
-//   3. DELETE  — deleteEntry for all N. Record per-op timing. Continue on fail.
-//   4. CLEAN   — all N gone (findExistPos <= 0) + .ell/.xml files removed.
-//   5. REPORT  — structured summary: counts, total/per-phase time,
+//   2. VERIFY  -- all N .ell files exist + all N findable via findExistPos.
+//   3. DELETE  -- deleteEntry for all N. Record per-op timing. Continue on fail.
+//   4. CLEAN   -- all N gone (findExistPos <= 0) + .ell/.xml files removed.
+//   5. REPORT  -- structured summary: counts, total/per-phase time,
 //                min/max/median per-op time, resource deltas vs bounds, any
 //                errors. Exit 0 iff fully clean AND all resource bounds hold.
 //
@@ -59,7 +59,7 @@
 //   $env:STRESS_BATCH_N=5; .\build\Release\test_stress_batch.exe
 //   $env:STRESS_BATCH_N=600; .\build\Release\test_stress_batch.exe
 //
-// HOW TO RUN (manual / opt-in — NOT part of the default regression suite,
+// HOW TO RUN (manual / opt-in -- NOT part of the default regression suite,
 // because it is heavy, slow, and hits the real TradeStation warehouse):
 //   cmake --build build --config Release --target test_stress_batch
 //   $env:STRESS_BATCH_N=5;    .\build\Release\test_stress_batch.exe   # smoke
@@ -72,11 +72,11 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). All N ops run on ONE worker thread that constructs
-// ONE TsDevLib instance and loops — exactly the batch CLI pattern (TVS-D.3).
+// ONE TsDevLib instance and loops -- exactly the batch CLI pattern (TVS-D.3).
 //
 // NOTE (TVS-L.15): The resource sampling uses ONLY read-only Win32 query APIs
 // called from this test. No production COM debug counters are added to
-// TsDevLib — the measurement hook is entirely test-local.
+// TsDevLib -- the measurement hook is entirely test-local.
 
 #include "tsdev_lib.h"
 
@@ -250,7 +250,7 @@ void printResourceSnapshot(const ResourceSnapshot& s) {
 //
 //   handles      <= +256   // file/registry/COM handles; TsDevLib opens and
 //                           //   closes warehouse + compiler handles per op.
-//                           //   256 is ~0.4/op at N=600 — far above any
+//                           //   256 is ~0.4/op at N=600 -- far above any
 //                           //   expected steady-state fluctuation.
 //   gdiObjects   <= +128   // GDI objects (pens/brushes/fonts/DCs); the hidden
 //                           //   EDIT control allocates a few; 128 leaves
@@ -387,7 +387,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // TVS-L.15: START resource snapshot (taken AFTER TsDevLib construction so
     // the baseline includes the hidden EDIT control + COM init + warehouse
-    // open — the steady-state footprint all subsequent ops build on).
+    // open -- the steady-state footprint all subsequent ops build on).
     ResourceSnapshot resStart = snapshotResources("START");
     std::fprintf(stdout, "\n[resources] START snapshot:\n");
     printResourceSnapshot(resStart);
@@ -452,7 +452,7 @@ DWORD WINAPI runTest(LPVOID param) {
                     faultCleanupOk = (lib->findExistPos(faultName, kType) <= 0);
                 } else {
                     faultCompileFailed = true;
-                    // Create-path cleanup (compile-error path) — flush=false so
+                    // Create-path cleanup (compile-error path) -- flush=false so
                     // the warehouse stays open for the rest of the session,
                     // matching the batch/serve doInsert contract.
                     lib->deleteEntry(kType, faultName, /*flush=*/false);
@@ -665,7 +665,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // cleaned up inside the fault block, but if that block aborted early we
     // sweep them here so no StressBatch_FaultInj_Mid / StressBatch_Recovery_Mid
     // pollutes the warehouse). These are NOT counted in leftoverCleaned (which
-    // tracks only the main N names) — they are tracked separately so the
+    // tracks only the main N names) -- they are tracked separately so the
     // leftoverCleaned==0 invariant reflects only the main batch.
     int faultLeftoverCleaned = 0;
     const char* kFaultExtraNames[2] = { "StressBatch_FaultInj_Mid",
@@ -784,7 +784,7 @@ int main() {
     // Run the entire test on ONE worker thread with a 64 MB stack. The
     // EasyLanguage compiler needs far more than the default 1 MB, and the
     // hidden EDIT control is thread-affine so TsDevLib must live on this
-    // thread. All N ops reuse the single TsDevLib instance — the batch pattern.
+    // thread. All N ops reuse the single TsDevLib instance -- the batch pattern.
     HANDLE hThread = CreateThread(nullptr, 64 * 1024 * 1024,
                                   runTest, &st, 0, nullptr);
     if (!hThread) {

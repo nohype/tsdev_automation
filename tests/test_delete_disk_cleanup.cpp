@@ -14,7 +14,7 @@
 // TDD history:
 //   The RED step declared deleteDiskCleanupErrorFailsResult() in
 //   src/delete_disk_cleanup.h with no src/delete_disk_cleanup.cpp, so this
-//   test executable FAILED TO LINK (unresolved external) — that link failure
+//   test executable FAILED TO LINK (unresolved external) -- that link failure
 //   was the RED signal. The GREEN step added src/delete_disk_cleanup.cpp
 //   implementing the pure function; this test now links and the assertions
 //   below pin the contract documented in the header.

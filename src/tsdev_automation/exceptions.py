@@ -22,7 +22,7 @@ Mapping (see ``src/tsdev_cli.cpp`` ``errorCodeString``):
     thread_failure      -> ThreadFailure
     whserver_dispatch_watchdog_abort -> TsDevWatchdogAbortError
                                   (exit 15; no JSON frame is emitted on a
-                                  watchdog abort — mapping is for symmetry
+                                  watchdog abort -- mapping is for symmetry
                                   only)
     cache_io_error      -> TsDevCacheError (exit 16)
     cache_cancelled     -> TsDevCacheCancelledError (exit 17)
@@ -142,7 +142,7 @@ class TsDevWatchdogAbortError(TsDevError):
     exceeds ``--dispatch-timeout-secs`` or WHServer.exe crashed/vanished
     mid-flight (see ``src/dispatch_watchdog.cpp``).  The abort writes a
     ``tsdev_cli: WATCHDOG ABORT: ... [reason: ...]; exiting with code 15``
-    line to the *CLI's own stderr* and produces NO JSON frame — the
+    line to the *CLI's own stderr* and produces NO JSON frame -- the
     in-flight item's outcome is uncertain and no ``TsDevResult`` exists for
     it.  On the serve-broker path the broker's stderr is not captured by
     the client, so the exit code is the only machine-readable signal; in

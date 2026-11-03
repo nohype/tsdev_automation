@@ -260,7 +260,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    >>> .xml file deleted (or never existed)\n");
 
-    // --- Step 10: Negative test — delete a nonexistent entry ---
+    // --- Step 10: Negative test -- delete a nonexistent entry ---
     std::fprintf(stdout,
                  "\n[10] deleteEntry on nonexistent entry \"%s\"...\n",
                  kNonexistent);

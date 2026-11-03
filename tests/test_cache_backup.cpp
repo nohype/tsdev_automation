@@ -4,7 +4,7 @@
 // backup.info round-trip, transactional restore, lock probe, and the
 // runningTsProcessNames snapshot.
 //
-// This is a PURE UNIT TEST. Everything runs under %TEMP% — it never touches
+// This is a PURE UNIT TEST. Everything runs under %TEMP% -- it never touches
 // the real TradeStation installation, %LOCALAPPDATA%, or orlib20.
 //
 // The implementation in src/cache_backup.cpp is compiled directly into this
@@ -207,7 +207,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 4: locked source file — either a VSS-captured success (elevated
+    // Group 4: locked source file -- either a VSS-captured success (elevated
     // run, VSS available) or a clean failure that leaves the prior backup
     // intact and staging cleaned.
     // -------------------------------------------------------------------
@@ -226,7 +226,7 @@ int runTests() {
             w(src), w(backupRoot), countProgress);
         CloseHandle(h);
         if (r.status == tsdev::CacheOpStatus::Ok) {
-            // VSS path engaged — the locked file was captured via snapshot.
+            // VSS path engaged -- the locked file was captured via snapshot.
             if (!r.usedVss)
                 return fail("locked-file backup succeeded without VSS", 45);
             if (readFile(backupRoot / "cache" / "sub" / "b.bin") != "BBBBBB")
@@ -255,7 +255,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 5: restore happy path — byte-identical content, old moved aside.
+    // Group 5: restore happy path -- byte-identical content, old moved aside.
     // -------------------------------------------------------------------
     const fs::path dest = g_tmp / L"dest_cache";
     {
@@ -313,7 +313,7 @@ int runTests() {
     // -------------------------------------------------------------------
     {
         uint64_t avail = 0;
-        // Path deliberately non-existent yet — ancestor walk must handle it.
+        // Path deliberately non-existent yet -- ancestor walk must handle it.
         if (!tsdev::checkFreeSpace(w(g_tmp / L"future" / L"root"), 1, avail))
             return fail("checkFreeSpace(1 byte) failed", 80);
         if (avail == 0) return fail("checkFreeSpace reported 0 free", 81);
@@ -498,7 +498,7 @@ int runTests() {
     // Group 14: restore copy failure -> honest "previous cache restored".
     //   Seam: the progress callback fires during the copy; the test plants a
     //   DIRECTORY at the next file's destination path so CopyFileExW fails.
-    //   File order is taken from enumerateTree() — no guessing.
+    //   File order is taken from enumerateTree() -- no guessing.
     // -------------------------------------------------------------------
     {
         tsdev::CacheEnumerateResult ben =
@@ -583,7 +583,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 16: restore-side parked sweep — destination absent, a complete
+    // Group 16: restore-side parked sweep -- destination absent, a complete
     //           parked Cache.tsdev-restore-* is recovered first.
     // -------------------------------------------------------------------
     {
@@ -608,7 +608,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 17: integrity mismatch — a file deleted from the staged backup
+    // Group 17: integrity mismatch -- a file deleted from the staged backup
     //           must fail restore with Error and leave destination intact.
     // -------------------------------------------------------------------
     {
@@ -656,7 +656,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 19: locked-file integration — deny-all source file copied via
+    // Group 19: locked-file integration -- deny-all source file copied via
     //           a VSS snapshot (in-proc vssapi, or the WMI Win32_ShadowCopy
     //           fallback on 32-bit builds). If VSS is unavailable (not
     //           elevated / VSS service off) the graceful Error is asserted
@@ -765,7 +765,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 21: a foreign/future backup format must not restore silently —
+    // Group 21: a foreign/future backup format must not restore silently --
     //           NotFound with a message naming the format.
     // -------------------------------------------------------------------
     {
@@ -791,12 +791,12 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 22: lock probe semantics — a readonly destination file probes
+    // Group 22: lock probe semantics -- a readonly destination file probes
     //           fine (DELETE access open succeeds), while a share-0-held
     //           file still reports InUse.
     // -------------------------------------------------------------------
     {
-        // backupRoot was deliberately torn by group 17 — make a fresh one.
+        // backupRoot was deliberately torn by group 17 -- make a fresh one.
         const fs::path roBkup = g_tmp / L"ro_backup";
         if (tsdev::backupCache(w(src), w(roBkup), countProgress).status !=
             tsdev::CacheOpStatus::Ok)
@@ -841,7 +841,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 23: queryVolumeFreeSpace — success on an existing path and
+    // Group 23: queryVolumeFreeSpace -- success on an existing path and
     //           ancestor-walk from a nonexistent path.
     // -------------------------------------------------------------------
     {
@@ -860,7 +860,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 24: compressTreeInPlace — NTFS in-place compression.
+    // Group 24: compressTreeInPlace -- NTFS in-place compression.
     //   Compressible >64KB file gets FILE_ATTRIBUTE_COMPRESSED, reads back
     //   byte-identical, and its on-disk compressed size shrinks; readonly
     //   and <64KB files are skipped; shouldStop() ends the walk.
@@ -927,7 +927,7 @@ int runTests() {
             return fail("shouldStop did not abort the walk", 249);
 
         // startBackupCompression: detached worker actually compresses when
-        // the process stays alive long enough (production runs race exit —
+        // the process stays alive long enough (production runs race exit --
         // the unit test holds the process so the path is exercised for
         // real). Poll briefly to tolerate scheduling jitter.
         const fs::path bgRoot = g_tmp / L"bg_root";

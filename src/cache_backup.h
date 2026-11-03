@@ -1,7 +1,7 @@
 // cache_backup.h
 //
 // Backup/restore engine for the TradeStation cache tree (<root>\Program\Cache).
-// Pure filesystem module: wide Win32 + std::filesystem only — NO orlib20,
+// Pure filesystem module: wide Win32 + std::filesystem only -- NO orlib20,
 // no warehouse, no stderr output (progress is reported through an injected
 // callback; rendering lives in the CLI layer).
 //
@@ -16,7 +16,7 @@
 //                               bytes=<n>
 //                               complete=true
 //   Optionally `live_source=true` (before complete=true) when at least one
-//   file was captured from a live/locked source — via a VSS snapshot
+//   file was captured from a live/locked source -- via a VSS snapshot
 //   (VssSnapshot, see vss_snapshot.h) after CopyFileExW and the
 //   FILE_FLAG_BACKUP_SEMANTICS fallback both failed with a lock-class error
 //   (ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION), or via the
@@ -37,11 +37,11 @@
 //       partial visible backup (recovered by the sweep: moved back to
 //       cache\ + backup.info when the root lacks a complete visible pair)
 //     - a new cache\ with a missing/stale backup.info (an incomplete visible
-//       backup — never reported complete because complete=true lives in
+//       backup -- never reported complete because complete=true lives in
 //       backup.info)
 //   INVARIANT: a backup that READS complete (cache\ + backup.info with
 //   complete=true) is always whole; the sweep keeps at most the visible
-//   pair. Absolute "no window exists" cannot be guaranteed — recovery via
+//   pair. Absolute "no window exists" cannot be guaranteed -- recovery via
 //   the sweep is the mechanism that restores it.
 // Restore likewise replaces Cache transactionally: the existing Cache is
 // renamed to Cache.tsdev-restore-<pid>-<tick> before the copy and renamed
@@ -75,7 +75,7 @@ struct CacheEnumerateResult {
     std::wstring errorPath;
 };
 
-// Distinguishable outcomes; the CLI maps NotFound → exit 5, InUse → exit 16.
+// Distinguishable outcomes; the CLI maps NotFound -> exit 5, InUse -> exit 16.
 enum class CacheOpStatus {
     Ok,
     NotFound,   // backup.info absent / incomplete, or source tree missing
@@ -141,7 +141,7 @@ bool queryVolumeFreeSpace(const std::wstring& pathOnVolume,
                           uint64_t& outAvailable);
 
 // Free-space pre-flight for a planned copy of `neededBytes` onto the volume
-// holding `pathOnVolume`: queryVolumeFreeSpace && avail >= neededBytes —
+// holding `pathOnVolume`: queryVolumeFreeSpace && avail >= neededBytes --
 // a failed query therefore reads as false, same as before.
 bool checkFreeSpace(const std::wstring& pathOnVolume, uint64_t neededBytes,
                     uint64_t& outAvailable);
@@ -185,9 +185,9 @@ struct CompressStats {
 // gain meaningfully). Skipped silently: files already COMPRESSED, files with
 // READONLY/SYSTEM/HIDDEN/ENCRYPTED/SPARSE/REPARSE attributes, and any open
 // or per-file IOCTL failure. Exception: the FIRST filesystem-level rejection
-// (ERROR_INVALID_FUNCTION / ERROR_NOT_SUPPORTED — the volume is not NTFS)
+// (ERROR_INVALID_FUNCTION / ERROR_NOT_SUPPORTED -- the volume is not NTFS)
 // stops the whole walk immediately. shouldStop() is checked between files;
-// true ends the walk early. Compression is transparent to readers — a
+// true ends the walk early. Compression is transparent to readers -- a
 // partially compressed tree is always valid and readable. `stats` (optional
 // out-param) receives the per-call accounting.
 void compressTreeInPlace(const std::wstring& root,
@@ -197,7 +197,7 @@ void compressTreeInPlace(const std::wstring& root,
 // Fire-and-forget NTFS compression of `root` (typically <backupRoot>\cache)
 // on a detached worker thread at THREAD_PRIORITY_LOWEST +
 // THREAD_MODE_BACKGROUND_BEGIN (low I/O priority so foreground ops are not
-// slowed). The predicate never stops early — process exit is the stop; an
+// slowed). The predicate never stops early -- process exit is the stop; an
 // abrupt exit mid-FSCTL is safe because a partially compressed tree is
 // always valid/readable (NTFS guarantees). Never throws; any error ends the
 // thread quietly.

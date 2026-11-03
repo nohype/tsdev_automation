@@ -15,7 +15,7 @@
 
 // The modern Windows SDK no longer ships vscoordintfp.h, so the VSS
 // requestor coordinator class id is spelled out explicitly (the value is
-// the stable, documented one — 0xE579AB5F65CC4234 form).
+// the stable, documented one -- 0xE579AB5F65CC4234 form).
 // {E579AB5F-65CC-4234-81F8-1EB93482-1D5F}
 static const CLSID CLSID_VSSCoordinator = {
     0xE579AB5F, 0x65CC, 0x4234,
@@ -65,7 +65,7 @@ void setErr(std::string* err, const char* step, HRESULT hr) {
 
 // Best-effort: enable a privilege already present on the process token so a
 // WMI provider impersonating this client sees it ENABLED (elevated tokens
-// hold SeBackupPrivilege but disabled — observed Win32_ShadowCopy::Create
+// hold SeBackupPrivilege but disabled -- observed Win32_ShadowCopy::Create
 // ReturnValue=5 until -EnableAllPrivileges was used).
 void enableTokenPrivilege(const wchar_t* name) {
     HANDLE tok = nullptr;
@@ -83,7 +83,7 @@ void enableTokenPrivilege(const wchar_t* name) {
     CloseHandle(tok);
 }
 
-// Base64 over the UTF-16LE bytes of `s` — the -EncodedCommand format.
+// Base64 over the UTF-16LE bytes of `s` -- the -EncodedCommand format.
 std::string base64EncodeUtf16(const std::wstring& s) {
     static const char* T =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -137,7 +137,7 @@ bool runPs64(const std::wstring& script, DWORD timeoutMs, std::string* out,
         return false;
     }
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    // Child stderr goes to NUL, NOT the parsed stdout pipe — diagnostics and
+    // Child stderr goes to NUL, NOT the parsed stdout pipe -- diagnostics and
     // progress records must never corrupt the RV=/SID=/DEV= output.
     HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE,
                              FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
@@ -167,7 +167,7 @@ bool runPs64(const std::wstring& script, DWORD timeoutMs, std::string* out,
         CloseHandle(rd);
         return false;
     }
-    // Drain the stdout pipe WHILE waiting — a child that fills the pipe
+    // Drain the stdout pipe WHILE waiting -- a child that fills the pipe
     // buffer would deadlock against a single post-exit Wait+Read.
     const ULONGLONG deadline =
         GetTickCount64() + static_cast<ULONGLONG>(timeoutMs);
@@ -196,7 +196,7 @@ bool runPs64(const std::wstring& script, DWORD timeoutMs, std::string* out,
             break;
         }
     }
-    // Final drain after exit/terminate — the process handle is closed, so
+    // Final drain after exit/terminate -- the process handle is closed, so
     // ReadFile reaches EOF once the child-side writer is gone.
     DWORD got = 0;
     while (ReadFile(rd, buf, sizeof(buf), &got, nullptr) && got > 0)
@@ -214,7 +214,7 @@ bool VssSnapshot::create(const std::wstring& pathOnVolume, std::string* err) {
     err->clear();
 
     // MTA apartment for the VSS coordinator. S_FALSE means COM was already
-    // initialized by the caller — leave that apartment alone (do NOT
+    // initialized by the caller -- leave that apartment alone (do NOT
     // CoUninitialize what we did not init).
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     m_comInitialized = (hr == S_OK);
@@ -230,7 +230,7 @@ bool VssSnapshot::create(const std::wstring& pathOnVolume, std::string* err) {
         // vssapi's requestor coordinator is registered 64-bit-only on x64
         // Windows, so a Win32 build cannot create it in-proc. Fall back to
         // WMI Win32_ShadowCopy, which is serviced by a 64-bit WmiPrvSE
-        // provider host — client process bitness is irrelevant.
+        // provider host -- client process bitness is irrelevant.
         return createViaWmi(pathOnVolume, err);
     }
     if (FAILED(hr)) {
@@ -245,7 +245,7 @@ bool VssSnapshot::create(const std::wstring& pathOnVolume, std::string* err) {
         return false;
     }
     // VSS_CTX_APP_ROLLBACK: the lightest context that exposes a read-only
-    // snapshot device for direct file access — MSDN documents it for
+    // snapshot device for direct file access -- MSDN documents it for
     // file-level copies; writer participation is not required.
     hr = m_comp->SetContext(VSS_CTX_APP_ROLLBACK);
     if (FAILED(hr)) {
@@ -333,10 +333,10 @@ bool VssSnapshot::create(const std::wstring& pathOnVolume, std::string* err) {
 }
 
 // WMI fallback: Win32_ShadowCopy.Create on ROOT\CIMV2, synchronous. Two
-// stages: a direct COM WMI call from this process, then — because the
+// stages: a direct COM WMI call from this process, then -- because the
 // shadow-copy method provider refuses WOW64 clients on x64 (observed
 // 0x80041014 WBEM_E_PROVIDER_NOT_FOUND / "Initialization failure" from
-// 32-bit COM and 32-bit PowerShell alike) — the identical call through a
+// 32-bit COM and 32-bit PowerShell alike) -- the identical call through a
 // 64-bit powershell.exe child via Sysnative. On success m_shadowId /
 // m_device are set (plus m_wbem for the direct stage) and release()
 // deletes the instance through the matching mechanism.
@@ -366,12 +366,12 @@ bool VssSnapshot::createViaWmi(const std::wstring& pathOnVolume,
     return false;
 }
 
-// Stage 1 — direct COM WMI call from this process.
+// Stage 1 -- direct COM WMI call from this process.
 bool VssSnapshot::createViaWmiDirect(const std::wstring& vol,
                                      std::string* err) {
     // Process-wide COM security: impersonate-level callers may pass an
     // authentication service. RPC_E_TOO_LATE means another component
-    // already configured it — that configuration is acceptable.
+    // already configured it -- that configuration is acceptable.
     HRESULT hr = CoInitializeSecurity(nullptr, -1, nullptr, nullptr,
                                       RPC_C_AUTHN_LEVEL_DEFAULT,
                                       RPC_C_IMP_LEVEL_IMPERSONATE, nullptr,
@@ -503,7 +503,7 @@ bool VssSnapshot::createViaWmiDirect(const std::wstring& vol,
         release();
         return false;
     }
-    // Set now — even if the DeviceObject query below fails, release() must
+    // Set now -- even if the DeviceObject query below fails, release() must
     // delete this shadow so it is not orphaned.
     m_shadowId = sid.bstrVal; // "{XXXXXXXX-...}" including braces
     VariantClear(&sid);
@@ -556,7 +556,7 @@ bool VssSnapshot::createViaWmiDirect(const std::wstring& vol,
     return true;
 }
 
-// Stage 2 — the identical Win32_ShadowCopy.Create run in a 64-bit
+// Stage 2 -- the identical Win32_ShadowCopy.Create run in a 64-bit
 // powershell.exe child. Sysnative resolves only from a WOW64 process on
 // x64 Windows, which is the only configuration that reaches this code.
 // The script prints RV=/SID=/DEV= lines parsed below.
@@ -602,7 +602,7 @@ bool VssSnapshot::createViaWmiPs64(const std::wstring& vol,
     };
     const std::string sid = tag("SID=");
     const std::string dev = tag("DEV=");
-    // Assign BEFORE the output check — a garbled DEV line must not orphan a
+    // Assign BEFORE the output check -- a garbled DEV line must not orphan a
     // shadow that was actually created; release() deletes by m_shadowId.
     if (!sid.empty()) m_shadowId = widen(sid); // "{...}" including braces
     if (sid.empty() || dev.empty()) {

@@ -18,7 +18,7 @@
     cancel -> exit 3 + exit-12 marker), a framed TSDEV_BATCH_CONTROL/1
     --batch-stdin delete under --json (exit 2 with a real not_found), and
     the repeat/non-batch argument gates (exit 1). This script is
-    standalone — run it directly from an elevated shell; it is not part
+    standalone -- run it directly from an elevated shell; it is not part
     of run_regression.ps1.
 #>
 
@@ -131,7 +131,7 @@ public static class TsWindowEnum {
 
 # Non-live seam check for the dialog body-text helper: it must return a
 # string (possibly empty) for a real window handle without throwing. No fake
-# dialogs are spawned — the console window is just a harmless probe target.
+# dialogs are spawned -- the console window is just a harmless probe target.
 try {
     $smokeHwnd = [TsWindowEnum]::GetConsoleWindow()
     if ($smokeHwnd -eq [IntPtr]::Zero) {
@@ -336,12 +336,12 @@ function Invoke-TsBatch {
 
 function Invoke-TsControlBatch {
     # TVS C helper (Step-BatchControl): like Invoke-TsBatch, but the child
-    # always reads its stdin from -StdinFile — raw OS redirect of the exact
+    # always reads its stdin from -StdinFile -- raw OS redirect of the exact
     # control bytes (decision lines only, or a framed
     # TSDEV_BATCH_CONTROL/1 manifest + decisions). This allows a manifest
     # path AND a stdin decision stream at once, which Invoke-TsBatch cannot
     # express. The wait has a finite timeout: a wedged control read must
-    # never hang the suite — on timeout the dialog surface is inspected and
+    # never hang the suite -- on timeout the dialog surface is inspected and
     # dismissed (AGENTS rule) before the child is killed and reaped.
     param(
         [Parameter(Mandatory)] [string[]]$Arguments,
@@ -1057,7 +1057,7 @@ function Step-MixedOutcome {
 }
 
 # ---------------------------------------------------------------------------
-# Tagged-serve progress step (TVS A) — standalone named-pipe integration.
+# Tagged-serve progress step (TVS A) -- standalone named-pipe integration.
 #
 # Launches the elevated `tsdev_cli serve` broker itself (once per rendering
 # mode: default human stderr, then --json NDJSON stderr) with a unique
@@ -1069,8 +1069,8 @@ function Step-MixedOutcome {
 #     with "progress":{"batch_id","index","total","phase":"completed"};
 #   * the broker's stderr already holds the exact started/completed progress
 #     lines BEFORE quit/process exit (live terminal progress, fflush'd per
-#     event) — human BATCH lines or parseable NDJSON event objects;
-#   * every response is matched to its request (one frame each — no desync).
+#     event) -- human BATCH lines or parseable NDJSON event objects;
+#   * every response is matched to its request (one frame each -- no desync).
 # ---------------------------------------------------------------------------
 function Send-ServeRequest {
     param(
@@ -1148,7 +1148,7 @@ function Read-SharedFile {
 }
 
 # Assert the tagged response's "progress" member is exactly
-# {"batch_id":<id>,"index":<i>,"total":<t>,"phase":"completed"} — no more,
+# {"batch_id":<id>,"index":<i>,"total":<t>,"phase":"completed"} -- no more,
 # no fewer members.
 function Assert-ServeProgressMember {
     param(
@@ -1228,7 +1228,7 @@ function Invoke-TaggedServeRun {
         $pipe.Connect(15000)
         Write-Log "  [$Label] connected to $pipeName" 'Green'
 
-        # Request 1: untagged exists — proves the unique name is absent and
+        # Request 1: untagged exists -- proves the unique name is absent and
         # that untagged responses carry no "progress" member.
         $r = Send-ServeRoundTrip -Pipe $pipe -Request @{
             op = 'exists'; type = 'function'; name = $FnName }
@@ -1240,7 +1240,7 @@ function Invoke-TaggedServeRun {
         Write-Log "  [$Label] untagged exists: absent, no progress member" 'Green'
         if (Check-TsDialogs "tagged-serve-$Label exists") { throw "[$Label] TS dialog/crash after exists" }
 
-        # Request 2: tagged insert — dispatch success.
+        # Request 2: tagged insert -- dispatch success.
         $r = Send-ServeRoundTrip -Pipe $pipe -Request @{
             op = 'insert'; type = 'function'; name = $FnName
             source = "$FnName = 1;"
@@ -1253,7 +1253,7 @@ function Invoke-TaggedServeRun {
         Write-Log "  [$Label] tagged insert [1/3]: success, progress member exact" 'Green'
         if (Check-TsDialogs "tagged-serve-$Label insert") { throw "[$Label] TS dialog/crash after insert" }
 
-        # Request 3: tagged duplicate insert — dispatch failure (the item now
+        # Request 3: tagged duplicate insert -- dispatch failure (the item now
         # exists), NOT a parser failure; the failure response is still
         # enriched with progress.
         $r = Send-ServeRoundTrip -Pipe $pipe -Request @{
@@ -1267,7 +1267,7 @@ function Invoke-TaggedServeRun {
         Write-Log "  [$Label] tagged duplicate insert [2/3]: exit 5, progress member exact" 'Green'
         if (Check-TsDialogs "tagged-serve-$Label dup-insert") { throw "[$Label] TS dialog/crash after duplicate insert" }
 
-        # Request 4: tagged delete — cleanup.
+        # Request 4: tagged delete -- cleanup.
         $r = Send-ServeRoundTrip -Pipe $pipe -Request @{
             op = 'delete'; type = 'function'; name = $FnName
             batch = @{ id = $BatchId; index = 3; total = 3 } }
@@ -1280,7 +1280,7 @@ function Invoke-TaggedServeRun {
 
         # The broker is STILL ALIVE here: its stderr must already hold the
         # complete started/completed pair per tagged request (each event is
-        # fflush'd) — proving live terminal progress before quit/exit.
+        # fflush'd) -- proving live terminal progress before quit/exit.
         Assert-True (-not $proc.HasExited) "[$Label] broker exited before quit was sent"
         $stderrText = Read-SharedFile $errFile
         Write-Log "  [$Label] broker stderr while alive:"
@@ -1288,7 +1288,7 @@ function Invoke-TaggedServeRun {
             if ($line) { Write-Log "    $line" }
         }
         # --serve-pipe-file means the broker publishes the pipe name to the
-        # file, not stdout — captured stdout must be empty (stdout purity).
+        # file, not stdout -- captured stdout must be empty (stdout purity).
         $stdoutText = if (Test-Path $outFile) { Read-SharedFile $outFile } else { '' }
         Assert-True ([string]::IsNullOrWhiteSpace($stdoutText)) "[$Label] broker stdout must be empty with --serve-pipe-file, got: $stdoutText"
         if (-not $JsonMode) {
@@ -1346,7 +1346,7 @@ function Invoke-TaggedServeRun {
         }
         Write-Log "  [$Label] live stderr progress verified before quit" 'Green'
 
-        # Quit: exactly one response frame (untagged — no progress member),
+        # Quit: exactly one response frame (untagged -- no progress member),
         # then the broker exits cleanly.
         $qr = Send-ServeRoundTrip -Pipe $pipe -Request @{ op = 'quit' }
         Assert-True ($null -ne $qr) "[$Label] quit: no response frame"
@@ -1364,7 +1364,7 @@ function Invoke-TaggedServeRun {
         if ($null -ne $proc) {
             if (-not $proc.HasExited) {
                 # A broker still running here means the run did NOT finish
-                # cleanly (assertion throw, request timeout, or hung quit) —
+                # cleanly (assertion throw, request timeout, or hung quit) --
                 # a TS modal popup may be blocking the request. Read, record
                 # and dismiss any failure surface BEFORE killing the broker.
                 # On the normal quit path the broker has already exited, so
@@ -1418,9 +1418,9 @@ function Step-TaggedServe {
         try {
             # The tagged delete should have removed each run's item; verify
             # both names and best-effort clean any leftover (a leftover
-            # means a run died before its delete request — recorded as a
+            # means a run died before its delete request -- recorded as a
             # failure either way; a nonzero cleanup delete is a hard
-            # failure). Only reached when no run failed — on Halt this
+            # failure). Only reached when no run failed -- on Halt this
             # direct verification is skipped entirely (no row recorded,
             # matching the script's Halt-gating convention) and no TS
             # process is launched here.
@@ -1460,16 +1460,16 @@ function Step-TaggedServe {
 
 function Step-BatchControl {
     # TVS C: live --batch-progress-control coverage (steps 17-19).
-    #   17: manifest-path control — continue then cancel -> exit 3.
+    #   17: manifest-path control -- continue then cancel -> exit 3.
     #       A --json run produces the full-length stdout array with an
     #       exact exit-12 marker plus NDJSON events; a second human run
     #       (items now already present -> already_exists failures) pins
     #       EMPTY stdout, BATCH FAILED markers + detail blocks, no BATCH
     #       START lines, and the CANCELLED summary.
-    #   18: framed-stdin control, --json — TSDEV_BATCH_CONTROL/1 frame +
+    #   18: framed-stdin control, --json -- TSDEV_BATCH_CONTROL/1 frame +
     #       delete manifest + decisions on one stream -> exit 2 with a real
     #       not_found item failure (no marker, no control error).
-    #   19: argument gates — repeated flag and non-batch use are usage
+    #   19: argument gates -- repeated flag and non-batch use are usage
     #       errors (exit 1) with no progress and no stdout array.
     # The non-elevated ordering contract (exit 11 must precede these usage
     # errors) is exercised by the gate harness that can launch a
@@ -1529,7 +1529,7 @@ function Step-BatchControl {
         Write-Log "  --json batch-insert --batch-progress-control exit code: $($res.ExitCode)"
         Assert-True ($res.ExitCode -eq 3) "expected exit 3 (cooperative cancel), got $($res.ExitCode); stderr: $($res.Stderr)"
         # PS5.1 ConvertFrom-Json emits a top-level JSON array as ONE
-        # unenumerated Object[] — wrapping the pipeline in @() nests it
+        # unenumerated Object[] -- wrapping the pipeline in @() nests it
         # (count 1). Assign first, then guard the single-result edge case.
         $arr = $res.Stdout | ConvertFrom-Json
         if (-not ($arr -is [array])) { $arr = @($arr) }
@@ -1543,7 +1543,7 @@ function Step-BatchControl {
                      $m.error.message -eq 'Batch cancelled before this item was attempted') `
             "item3 must be the exact exit-12 cancelled marker, got: $($m | ConvertTo-Json -Compress)"
         # stderr: NDJSON started/completed events for items 1-2, then the
-        # cancelled batch_completed — no item-3 events, no control error.
+        # cancelled batch_completed -- no item-3 events, no control error.
         Assert-True ($res.Stderr -cnotmatch '(?m)^BATCH ') "--json stderr must not contain human BATCH lines [stderr: $($res.Stderr)]"
         $events = @()
         foreach ($line in ($res.Stderr -split "`r?`n")) {
@@ -1567,7 +1567,7 @@ function Step-BatchControl {
 
         # Run 2 (human, no --json): items A/B now exist so both inserts fail
         # already_exists; stdout is EMPTY (the results array is emitted only
-        # under --json) and stderr carries the new human contract — a BATCH
+        # under --json) and stderr carries the new human contract -- a BATCH
         # FAILED marker plus the item's full detail block per attempted
         # item, NO BATCH START lines, then the CANCELLED summary.
         $res2 = Invoke-TsControlBatch -Arguments @('batch-insert', $manifest, '--batch-progress-control') -StdinFile $decisionsFile
@@ -1582,7 +1582,7 @@ function Step-BatchControl {
         $expComplete = 'BATCH COMPLETE CANCELLED op=insert completed=2 total=3 successes=0 failures=2 not_run=1 cancelled=true close_failed=false exit_code=3'
         Assert-True ($lines[2] -ceq $expComplete) "summary line: expected '$expComplete', got: $($lines[2])"
         # Each failed item also printed its full human detail block
-        # ("tsdev_cli: ERROR — function \"X\" already exists ...").
+        # ("tsdev_cli: ERROR -- function \"X\" already exists ...").
         Assert-True ($res2.Stderr.Contains('tsdev_cli: ERROR')) "stderr must contain the failed items' detail blocks [stderr: $($res2.Stderr)]"
         Assert-True ($res2.Stderr.Contains('already exists')) "detail blocks must report already_exists [stderr: $($res2.Stderr)]"
         Assert-True ($res2.Stderr -cnotmatch 'BATCH START') "human stderr must contain no BATCH START lines [stderr: $($res2.Stderr)]"
@@ -1594,7 +1594,7 @@ function Step-BatchControl {
         Record-Step '17.batch-control-human' 'FAIL' $_
         $script:AllPassed = $false
         # Step 18's fixture expectations (A/B present, C absent) depend on
-        # this step's controlled insert having run exactly as scripted —
+        # this step's controlled insert having run exactly as scripted --
         # halt all further steps; final cleanup still runs unconditionally.
         $script:Halt = $true
     }
@@ -1605,7 +1605,7 @@ function Step-BatchControl {
         # One stdin stream: ASCII frame header + exact UTF-8 manifest bytes
         # + decision lines. Items 1-2 (inserted in step 17) delete cleanly;
         # item 3 was never attempted there so it is a real not_found
-        # failure — exit 2, no markers.
+        # failure -- exit 2, no markers.
         $delManifest = "function $bcA`nfunction $bcB`nfunction $bcC`n"
         $delBytes = [System.Text.Encoding]::UTF8.GetBytes($delManifest)
         $hdrBytes = [System.Text.Encoding]::ASCII.GetBytes("TSDEV_BATCH_CONTROL/1 $($delBytes.Length)`n")
@@ -1647,7 +1647,7 @@ function Step-BatchControl {
     Write-Log '--- Step 19: batch-control argument gates ---' 'Cyan'
     try {
         # Repeated flag: usage error AFTER the elevation guard, before any
-        # batch work — no progress events, no stdout array, no mutation.
+        # batch work -- no progress events, no stdout array, no mutation.
         $res = Invoke-TsControlBatch -Arguments @('batch-insert', $manifest, '--batch-progress-control', '--batch-progress-control') -StdinFile $emptyStdin
         Assert-True ($res.ExitCode -eq 1) "repeated --batch-progress-control must exit 1, got $($res.ExitCode); stdout: $($res.Stdout) stderr: $($res.Stderr)"
         Assert-True ([string]::IsNullOrWhiteSpace($res.Stdout)) "repeated flag must emit no stdout array, got: $($res.Stdout)"
@@ -1666,7 +1666,7 @@ function Step-BatchControl {
     }
 
     # Remove only the control-channel input/source files this step created
-    # (local files only — still runs when a step above set Halt).
+    # (local files only -- still runs when a step above set Halt).
     foreach ($f in @($srcA, $srcB, $srcC, $manifest, $decisionsFile, $payloadFile, $emptyStdin)) {
         if ($f -and (Test-Path $f)) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
     }

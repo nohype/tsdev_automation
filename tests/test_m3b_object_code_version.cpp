@@ -19,7 +19,7 @@
 //
 // What this test now does:
 //   - Loops over all 5 supported component types (Strategy, Indicator,
-//     Function, TradingApp, ShowMe), closing the §13.6 sample-size gap.
+//     Function, TradingApp, ShowMe), closing the Sec. 13.6 sample-size gap.
 //   - Uses declaration-rich sources for 4 types (Strategy, Indicator,
 //     Function, ShowMe) and asserts elemCount > 0 AND elemArrayPtr != NULL.
 //   - For TradingApp (which uses `using elsystem;` with no
@@ -98,7 +98,7 @@ using diag_m4_process::ProcessInspectionResult;
 namespace {
 
 // -------------------------------------------------------------------------
-// reportCrashReporter — inspect (do NOT terminate) TSCrashReport.exe.
+// reportCrashReporter -- inspect (do NOT terminate) TSCrashReport.exe.
 // Mirrors diag_m4_subtype.cpp / diag_m4_reverse_enum.cpp exactly.
 // -------------------------------------------------------------------------
 ProcessInspectionResult reportCrashReporter(const char* phase) {
@@ -121,7 +121,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // (Same pattern as diag_m4_subtype / diag_m4_objcode.)
 // -------------------------------------------------------------------------
@@ -138,7 +138,7 @@ ComApi realComApi() {
 //   Returns 1 if record found and copied, 0 otherwise.
 //
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args, RET 0x08.
-//   int (void* rec, int flag)  — refcount-dec / free.
+//   int (void* rec, int flag)  -- refcount-dec / free.
 //
 // Linker FUN_101a3340 (ordinal 85). The brief specifies __stdcall with 4
 //   stack args (type, id, errorFlag, partialBuf). We use the manual-ESP
@@ -185,7 +185,7 @@ bool callOrd70(Ordinal70Fn fn, void* rec, int flag, IntSehResult* out) {
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -254,7 +254,7 @@ void fail(const char* msg) {
 // Per-type test case table. Source is built per-type below.
 // expectElemCountPositive=true for declaration-rich sources; false for
 // TradingApp (`using elsystem;` with no Inputs:/Variables:/Array:
-// declarations → elemCount=0 expected).
+// declarations -> elemCount=0 expected).
 // -------------------------------------------------------------------------
 struct TypeTestCase {
     ComponentType type;
@@ -272,7 +272,7 @@ const TypeTestCase kTypeCases[] = {
 };
 
 // -------------------------------------------------------------------------
-// EasyLanguage source builder — type-appropriate sources with \r\n line
+// EasyLanguage source builder -- type-appropriate sources with \r\n line
 // endings (EasyLanguage conventions). Declaration-rich for 4 types;
 // `using elsystem;` (no declarations) for TradingApp.
 // -------------------------------------------------------------------------
@@ -295,7 +295,7 @@ std::string makeSource(const TypeTestCase& tc) {
 }
 
 // -------------------------------------------------------------------------
-// insertAndVerify — pre-cleanup, createEntry, saveSource, verifyModule.
+// insertAndVerify -- pre-cleanup, createEntry, saveSource, verifyModule.
 // Mirrors diag_m4_subtype.cpp / diag_m4_objcode.cpp exactly.
 // Returns ProgId > 0 on success, 0 on failure (with cleanup already done).
 // -------------------------------------------------------------------------
@@ -631,7 +631,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 tr.elemCountOk = (!ecSeh) && (ec > 0);
                 tr.elemArrayPtrOk = (!eapSeh) && (eap != nullptr);
             } else {
-                // TradingApp: no declarations → elemCount == 0 expected.
+                // TradingApp: no declarations -> elemCount == 0 expected.
                 tr.elemCountOk = (!ecSeh) && (ec == 0);
                 // elemArrayPtr == NULL is also expected; treat as OK.
                 tr.elemArrayPtrOk = (!eapSeh) && (eap == nullptr);
@@ -650,7 +650,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                     "0)...\n");
         releaseRec(ord70, tc.label, linkerRec);
 
-        // --- Step 8: clean up — delete the disposable item and verify its
+        // --- Step 8: clean up -- delete the disposable item and verify its
         //     .ell file is gone. The .ell naming convention is
         //     `elmodule_<expandedWhType>_<progId>.ell` in `MyWork\Bin`,
         //     where expandedWhType = static_cast<int>(type).
@@ -737,7 +737,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 600-second hard timeout — report a hang without terminating the
+    // 600-second hard timeout -- report a hang without terminating the
     // worker. Insert+verify + Ordinal_28 + linker call + cleanup may take
     // a couple of minutes on a cold warehouse.
     DWORD wait = WaitForSingleObject(hThread, 600000);

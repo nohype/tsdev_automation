@@ -8,7 +8,7 @@
 // GetDependencies (orlib20 ordinal 487) returns an empty dep list for a
 // Strategy that calls a no-arg Function via `Value1 = FUNC_NAME;`:
 //
-//   (A) Missing link/flush step — TSDev may perform a separate step that
+//   (A) Missing link/flush step -- TSDev may perform a separate step that
 //       materializes dep records. Tested here by resolving and calling the
 //       alternative orlib20 export `_GetStaticDependencyList@12` (ordinal
 //       531) on both the Function's ProgId (callee key) and the Strategy's
@@ -17,14 +17,14 @@
 //       `record->elements[i] + 0x7b` list that GetDependencies reads.
 //
 //   (B) Historical hypothesis: no-arg function refs were not encoded as 0xFA4
-//       — a bare Function name without parentheses may be encoded differently.
+//       -- a bare Function name without parentheses may be encoded differently.
 //       Tested here by
 //       inserting a Function WITH a numeric input and a Strategy that calls
 //       it WITH parentheses: `Value1 = FUNC2(Close);`. If GetDependencies
 //       returns the Function's ProgId in this case but not in the no-arg
 //       case (diag_m4_deps.cpp), hypothesis B is supported.
 //
-//   (C) Dep list built lazily after save-to-disk + reload — the dep records
+//   (C) Dep list built lazily after save-to-disk + reload -- the dep records
 //       may only be materialized after a warehouse reload. Tested here by
 //       inserting + verifying both items, then destroying the TsDevLib
 //       instance and constructing a NEW TsDevLib instance (which re-runs
@@ -113,7 +113,7 @@ bool callGetStaticDepList(GetStaticDepListFn fn, int p1, int p2, int p3,
     return true;
 }
 
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 ComApi realComApi() {
     return ComApi{&CoInitializeEx, &CoUninitialize};
@@ -260,7 +260,7 @@ bool probeGetDependencies(GetDependenciesFn fn, const char* callerLabel,
 }
 
 // -------------------------------------------------------------------------
-// _GetStaticDependencyList@12 probe (hypothesis A — alternative API).
+// _GetStaticDependencyList@12 probe (hypothesis A -- alternative API).
 //
 // ABI (docs/RE/RE_M4_DEPLIST_ABI.md):
 //   int* __stdcall _GetStaticDependencyList@12(int param_1, int param_2,
@@ -359,7 +359,7 @@ struct DiagState {
 };
 
 // -------------------------------------------------------------------------
-// Worker thread body (64 MB stack — required by the EL compiler / hidden
+// Worker thread body (64 MB stack -- required by the EL compiler / hidden
 // EDIT control, and TsDevLib is thread-affine).
 // -------------------------------------------------------------------------
 DWORD WINAPI runDiag(LPVOID param) {
@@ -464,7 +464,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 funcProgId, stratProgId);
 
     // =====================================================================
-    // HYPOTHESIS B TEST — GetDependencies on the Strategy (caller) with
+    // HYPOTHESIS B TEST -- GetDependencies on the Strategy (caller) with
     // the Function's ProgId as the search target. The Strategy was built
     // with a PARENTHESIZED call `Value1 = FUNC2(Close);`. If GetDependencies
     // returns the Function's ProgId here (but not in diag_m4_deps.cpp's
@@ -497,7 +497,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                       "this evidence)");
 
     // =====================================================================
-    // HYPOTHESIS A TEST — _GetStaticDependencyList@12 alternative API.
+    // HYPOTHESIS A TEST -- _GetStaticDependencyList@12 alternative API.
     //
     // Two probes:
     //   (a) key = functionProgId (the callee). If the returned entries
@@ -536,7 +536,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 st->hypA_stratKey_match ? "YES" : "NO");
 
     // =====================================================================
-    // HYPOTHESIS C TEST — dep list materialized after warehouse reload.
+    // HYPOTHESIS C TEST -- dep list materialized after warehouse reload.
     //
     // Destroy the current TsDevLib (which calls OrlibExit and tears down
     // the in-memory warehouse state), then construct a NEW TsDevLib
@@ -549,7 +549,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                 "instance...\n");
 
     // Re-resolve GetDependencies on the new resolver (the old resolver's
-    // module handle is freed when lib #1 destructs? No — OrlibResolver
+    // module handle is freed when lib #1 destructs? No -- OrlibResolver
     // loads orlib20.dll with its own LoadLibraryW and frees it in its own
     // dtor. The TsDevLib destructor does NOT free the resolver's module.
     // But to be safe and to mirror the production pattern, we re-resolve
@@ -603,7 +603,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // Confirm both items still exist after reload (ProgIds should be
-    // stable — they are warehouse record ids persisted on disk).
+    // stable -- they are warehouse record ids persisted on disk).
     int funcProgId2 = lib2->findExistPos(funcName, ComponentType::Function);
     int stratProgId2 = lib2->findExistPos(stratName, ComponentType::Strategy);
     std::printf("  After reload: Function ProgId=%d (was %d), "
@@ -614,7 +614,7 @@ DWORD WINAPI runDiag(LPVOID param) {
                      "  [WARN] one or both items not found after reload; "
                      "skipping GetDependencies probe on reloaded ids.\n");
     } else {
-        // Use the reloaded ProgIds (in case they differ — they should not,
+        // Use the reloaded ProgIds (in case they differ -- they should not,
         // but be defensive).
         int funcIdUse = funcProgId2;
         int stratIdUse = stratProgId2;
@@ -765,7 +765,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — report a hang without terminating the worker.
+    // 60-second hard timeout -- report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
         std::fprintf(stderr,

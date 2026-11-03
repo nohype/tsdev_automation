@@ -1,6 +1,6 @@
 // cache_backup.cpp
 //
-// Backup/restore engine for <root>\Program\Cache — see cache_backup.h for the
+// Backup/restore engine for <root>\Program\Cache -- see cache_backup.h for the
 // layout contract and the "a visible backup is always complete" invariant.
 // Pure Win32 + std::filesystem (kernel32 / shell32 / ole32 toolhelp only).
 
@@ -109,7 +109,7 @@ DWORD CALLBACK copyProgressCb(LARGE_INTEGER /*totalFileSize*/,
 // failed with ERROR_ACCESS_DENIED. Elevated callers hold SE_BACKUP_NAME, so
 // opening the source with FILE_FLAG_BACKUP_SEMANTICS bypasses the ACL; the
 // destination is written normally. Share-locked sources (ERROR_SHARING_
-// VIOLATION, 32) are NOT handled here — a later slice adds VSS.
+// VIOLATION, 32) are NOT handled here -- a later slice adds VSS.
 bool copyFileBackupSemantics(const std::wstring& src,
                              const std::wstring& dst, uint64_t baseDone,
                              uint64_t totalBytes, const std::wstring& rel,
@@ -170,7 +170,7 @@ bool copyFileBackupSemantics(const std::wstring& src,
 // Copy `files` from `srcRoot` into `dstRoot` (creating dirs first), reporting
 // progress. On failure fills *errPath / *err (and optionally *errMsg with a
 // verbatim message) and returns false. Sets *usedBackupSemantics when the ACL
-// fallback path copied >= 1 file. When `vss` is non-null (backup path only —
+// fallback path copied >= 1 file. When `vss` is non-null (backup path only --
 // restore passes null), lock-class failures (ERROR_SHARING_VIOLATION /
 // ERROR_LOCK_VIOLATION, including a failed backup-semantics retry) fall back
 // to copying the file through `vss`, which is created LAZILY on first need
@@ -198,7 +198,7 @@ bool copyTree(const std::wstring& srcRoot, const std::wstring& dstRoot,
             DWORD copyErr = GetLastError();
             bool copied = false;
             DWORD fbErr = copyErr;
-            // ACL fallback first — cheaper than a volume snapshot.
+            // ACL fallback first -- cheaper than a volume snapshot.
             if (copyErr == ERROR_ACCESS_DENIED &&
                 copyFileBackupSemantics(src, dst, done, totalBytes,
                                         f.relativePath, progress, &fbErr)) {
@@ -271,7 +271,7 @@ bool copyTree(const std::wstring& srcRoot, const std::wstring& dstRoot,
 
 // Write a backup.info (UTF-8 key=value) at `infoPath`. Returns false on
 // failure (GetLastError-style code in *err). When `liveSource` is true a
-// `live_source=true` line is appended — an honest disclosure that >= 1 file
+// `live_source=true` line is appended -- an honest disclosure that >= 1 file
 // was captured from a live/locked source (VSS snapshot or backup-semantics
 // bypass) and may be torn relative to the writer's in-memory state.
 bool writeBackupInfo(const std::wstring& infoPath, const std::wstring& source,
@@ -301,9 +301,9 @@ bool writeBackupInfo(const std::wstring& infoPath, const std::wstring& source,
     return ok;
 }
 
-// Move `from` to `to` (both must be same volume — they always are here).
+// Move `from` to `to` (both must be same volume -- they always are here).
 // Deliberately non-clobbering (no MOVEFILE_REPLACE_EXISTING): failing when
-// `to` exists is load-bearing — the swap/rollback logic must never overwrite
+// `to` exists is load-bearing -- the swap/rollback logic must never overwrite
 // a surviving backup or destination. Returns GetLastError(), 0 on success.
 DWORD movePath(const std::wstring& from, const std::wstring& to) {
     if (!MoveFileW(from.c_str(), to.c_str())) {
@@ -406,7 +406,7 @@ CacheEnumerateResult enumerateTree(const std::wstring& root) {
 bool queryVolumeFreeSpace(const std::wstring& pathOnVolume,
                           uint64_t& outAvailable) {
     outAvailable = 0;
-    // Walk up to the deepest existing ancestor — the backup root (and maybe
+    // Walk up to the deepest existing ancestor -- the backup root (and maybe
     // its parents) may not exist yet when this pre-flight runs.
     fs::path probe(pathOnVolume);
     std::error_code ec;
@@ -461,7 +461,7 @@ CacheOpResult backupCache(const std::wstring& sourceCacheDir,
     // backup under old-* while the root lacks a complete visible pair.
     // Recover such a parked backup first (re-parking any partial visible
     // residue aside so the non-clobbering recovery moves cannot collide),
-    // then delete every entry that is not the visible cache\/backup.info —
+    // then delete every entry that is not the visible cache\/backup.info --
     // EXCEPT a complete parked old-* that could not be recovered: it is the
     // last surviving copy and must be kept, with a residue note surfaced.
     bool recovered = false;
@@ -481,7 +481,7 @@ CacheOpResult backupCache(const std::wstring& sourceCacheDir,
                     !parkedBackupComplete(it->path().wstring()))
                     continue;
                 recoveryAttempted = true;
-                // Every rescue move is checked — a failed rescue means the
+                // Every rescue move is checked -- a failed rescue means the
                 // non-clobbering recovery moves below cannot proceed either.
                 bool rescueOk = true;
                 if (fs::exists(fs::path(curCache), ec2) ||
@@ -560,7 +560,7 @@ CacheOpResult backupCache(const std::wstring& sourceCacheDir,
     }
 
     // Swap: park any previous backup under old-<pid>, then promote the staged
-    // cache\ FIRST and backup.info LAST — backup.info is the commit marker,
+    // cache\ FIRST and backup.info LAST -- backup.info is the commit marker,
     // so a crash mid-promote never yields a visible backup that reads
     // complete-but-wrong. Every move result is checked; old-<pid> is deleted
     // only after the new pair is fully in place or the rollback fully
@@ -617,7 +617,7 @@ CacheOpResult backupCache(const std::wstring& sourceCacheDir,
         // Promote failed. Remove a promoted-but-uncommitted cache\ (it would
         // otherwise sit next to a missing/stale backup.info), then roll the
         // parked backup back. old-<pid> is deleted ONLY when the prior state
-        // is fully restored; if rollback itself fails, old-<pid> stays — it
+        // is fully restored; if rollback itself fails, old-<pid> stays -- it
         // IS the surviving backup, and the next backup's sweep recovers it.
         if (cachePromoted) removeTreeBestEffort(curCache);
         std::error_code ec2;
@@ -680,7 +680,7 @@ CacheOpResult restoreCache(const std::wstring& backupRoot,
                           "no complete backup found", start, 0, 0);
     }
     // A backup written by a future/foreign format must never restore
-    // silently — still NotFound, but the message names the format.
+    // silently -- still NotFound, but the message names the format.
     if (info.format != 1) {
         char msg[96];
         std::snprintf(msg, sizeof(msg), "unsupported backup format %d",
@@ -715,7 +715,7 @@ CacheOpResult restoreCache(const std::wstring& backupRoot,
 
     // Sweep Cache.tsdev-restore-* parked dirs left at the destination's
     // parent by a crashed restore. If the destination is absent, the newest
-    // parked dir IS the surviving cache — move it back (best-effort, never
+    // parked dir IS the surviving cache -- move it back (best-effort, never
     // fail the op over sweep problems). Otherwise the residue is deleted.
     bool recovered = false;
     {
@@ -763,7 +763,7 @@ CacheOpResult restoreCache(const std::wstring& backupRoot,
         }
     }
 
-    // Lock probe: an open file does NOT block a directory rename on NTFS —
+    // Lock probe: an open file does NOT block a directory rename on NTFS --
     // this is a policy gate ("cache in use -> do not swap underneath the
     // process"), not a correctness precondition for the rename below.
     if (fs::is_directory(fs::path(cacheDir), ec)) {
@@ -774,7 +774,7 @@ CacheOpResult restoreCache(const std::wstring& backupRoot,
                 // Desired-access DELETE + share-mode 0: an existing handle
                 // that does not grant FILE_SHARE_DELETE (the "desktop holds
                 // it open" case) fails with SHARING_VIOLATION, while
-                // readonly files still probe fine — the readonly attribute
+                // readonly files still probe fine -- the readonly attribute
                 // does not block a DELETE open, and the rename-aside path
                 // handles them. (Desired-access 0 does NOT work here: it is
                 // empirically not subject to share-mode conflicts.)
@@ -825,7 +825,7 @@ CacheOpResult restoreCache(const std::wstring& backupRoot,
     std::wstring errPath;
     DWORD err = 0;
     bool usedBackupSemantics = false;
-    bool usedVss = false; // restore writes into a fresh dir — NO VSS
+    bool usedVss = false; // restore writes into a fresh dir -- NO VSS
     if (!copyTree(srcTree, cacheDir, en.files, en.totalBytes, progress,
                   &errPath, &err, &usedBackupSemantics, nullptr, &usedVss,
                   nullptr)) {
@@ -978,7 +978,7 @@ void compressTreeInPlace(const std::wstring& root,
             CloseHandle(h);
             ++acc.skipped;
             if (err == ERROR_INVALID_FUNCTION || err == ERROR_NOT_SUPPORTED)
-                break; // not an NTFS volume — no point continuing the walk
+                break; // not an NTFS volume -- no point continuing the walk
             continue;
         }
         DWORD hi = 0;

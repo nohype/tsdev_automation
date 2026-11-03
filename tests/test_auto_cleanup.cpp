@@ -7,7 +7,7 @@
 // process-global g_lastCreated). TVS-L.10 moved that cleanup OUT of
 // verifyModule and into doInsert (the SINGLE create-path cleanup owner in the
 // CLI). verifyModule now REPORTS the failure stage via an out-parameter but
-// does NOT clean up — the caller owns cleanup.
+// does NOT clean up -- the caller owns cleanup.
 //
 // This test verifies the NEW TVS-L.10 contract at the library layer:
 //   1. createEntry + saveSource + verifyModule(&outStage) with invalid source.
@@ -16,7 +16,7 @@
 //      reported so the caller / doInsert can route through
 //      requiresCreatePathCleanup() and record WHICH path failed).
 //   4. The partial entry STILL EXISTS after verifyModule returns (verifyModule
-//      no longer auto-cleans up — that is doInsert's job). findExistPos > 0.
+//      no longer auto-cleans up -- that is doInsert's job). findExistPos > 0.
 //   5. An explicit deleteEntry (simulating what doInsert does on a
 //      post-createEntry failure) removes the partial entry + both artifacts.
 //      findExistPos then returns <= 0.
@@ -29,7 +29,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread.
 
@@ -48,8 +48,8 @@ namespace {
 // sorts it to the end of the warehouse and signals a test entry.
 const char* kTestName = "zzz_test_autocleanup";
 
-// Invalid EasyLanguage source — this will FAIL compilation. The body contains
-// a syntax error (`var x = ;` — missing RHS expression) that the EasyLanguage
+// Invalid EasyLanguage source -- this will FAIL compilation. The body contains
+// a syntax error (`var x = ;` -- missing RHS expression) that the EasyLanguage
 // compiler will reject. The brace text is arbitrary fixture source content only;
 // it is not a metadata convention or lookup mechanism. The item name is passed
 // through the API, and stored names/types/ProgIds come from orlib20 warehouse
@@ -87,7 +87,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: Pre-clean — ensure the entry does not already exist ---
+    // --- Step 2: Pre-clean -- ensure the entry does not already exist ---
     std::fprintf(stdout, "\n[2] Pre-clean: findExistPos(\"%s\", Strategy)...\n",
                  kTestName);
     int existing = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -128,11 +128,11 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 5: verifyModule — expect compilation FAILURE + stage report ---
+    // --- Step 5: verifyModule -- expect compilation FAILURE + stage report ---
     // TVS-L.10: verifyModule now takes an optional CreatePathFailureStage*
     // out-param. On a non-empty (failure) return it MUST set *outStage to the
     // matching enumerator. For a compile error that is VerifyModule_CompileErrors.
-    // verifyModule NO LONGER auto-cleans up the partial entry — that is the
+    // verifyModule NO LONGER auto-cleans up the partial entry -- that is the
     // caller's (doInsert's) job.
     std::fprintf(stdout, "\n[5] verifyModule(Strategy, %d, &outStage)...\n",
                  progId);
@@ -166,8 +166,8 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 6: findExistPos — ASSERT entry STILL EXISTS (verifyModule
-    //      no longer auto-cleans up — TVS-L.10 moved cleanup to doInsert) ---
+    // --- Step 6: findExistPos -- ASSERT entry STILL EXISTS (verifyModule
+    //      no longer auto-cleans up -- TVS-L.10 moved cleanup to doInsert) ---
     std::fprintf(stdout,
                  "\n[6] findExistPos(\"%s\", Strategy) -- "
                  "asserting entry STILL EXISTS (verifyModule no longer cleans)...\n",
@@ -175,7 +175,7 @@ DWORD WINAPI runTest(LPVOID param) {
     int afterVerifyProgId = lib->findExistPos(kTestName, ComponentType::Strategy);
     std::fprintf(stdout, "    findExistPos = %d\n", afterVerifyProgId);
     if (afterVerifyProgId <= 0) {
-        // verifyModule cleaned up — that is the OLD TD-001 behavior, which
+        // verifyModule cleaned up -- that is the OLD TD-001 behavior, which
         // TVS-L.10 removed. Failing here catches a regression that re-adds
         // cleanup inside verifyModule.
         st->exitCode = fail(
@@ -189,7 +189,7 @@ DWORD WINAPI runTest(LPVOID param) {
                  "    PASS: partial entry still exists after verifyModule "
                  "(cleanup is the caller's job)\n");
 
-    // --- Step 7: Explicit deleteEntry — simulates what doInsert does on a
+    // --- Step 7: Explicit deleteEntry -- simulates what doInsert does on a
     //      post-createEntry failure. Removes the warehouse entry + both
     //      artifacts (.ell/.xml). Assert the entry is gone afterwards. ---
     std::fprintf(stdout,

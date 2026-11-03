@@ -8,7 +8,7 @@
 // encoded below is the EXACT matrix documented in the header; no behavior is
 // invented beyond it.
 //
-// Implementation notes (kept deliberately minimal — no extra abstractions):
+// Implementation notes (kept deliberately minimal -- no extra abstractions):
 //   * SHA-256 is computed with the native Win32 bcrypt provider (the same
 //     provider orlib_resolver.cpp and the RED test already use). No third-party
 //     crypto. bcrypt is linked transitively via the tsdev_lib -> orlib_resolver
@@ -29,7 +29,7 @@
 //     metadata read here, and it comes from the .xml descriptor artifact, not
 //     from EL source.
 //   * The mixed-endian GUID binary form is the standard Windows GUID layout
-//     (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) — the form
+//     (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) -- the form
 //     orlib20/ELMDCore embeds in the .ell. The validator counts occurrences of
 //     this 16-byte sequence in the post-op .ell and requires EXACTLY ONE for
 //     guidInEll to be true (zero or >1 -> false).
@@ -269,7 +269,7 @@ bool parseGuidText(const std::string& s, GuidParts& out) {
 
 // ---------------------------------------------------------------------------
 // guidToMixedEndian: render a GUID as its 16-byte Windows binary layout
-// (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) — the form embedded in
+// (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) -- the form embedded in
 // the .ell by orlib20/ELMDCore.
 // ---------------------------------------------------------------------------
 std::vector<uint8_t> guidToMixedEndian(const GuidParts& p) {
@@ -370,8 +370,8 @@ IntegrityVerdict validatePersistenceIntegrity(const IntegrityInput& in) {
     //      false   |   true     |   any     |       true        | FaultA_StaleEll (**)
     //      false   |   true     |   any     |      false        | FaultA_StaleEll
     //
-    // (The single uncovered combination — ellChanged=F, xmlChanged=T,
-    //  guidInEll=T, sourceEqualProven=F — falls through to the last branch
+    // (The single uncovered combination -- ellChanged=F, xmlChanged=T,
+    //  guidInEll=T, sourceEqualProven=F -- falls through to the last branch
     //  and is classified as FaultA_StaleEll: a stale .ell that the caller
     //  could not prove was a no-op. This is the conservative, fail-safe
     //  choice mandated by "require hash refresh unless caller proves no-op".)

@@ -376,7 +376,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // one physical line.
     //   pbarLine("insert", 1, 1, "function", "A\"B\nC", 0)
     //   jsonQuote -> "A\"B\nC"  (as text: "A\"B\nC")
-    // Expected: insert [█x30] 1/1 100% function "A\"B\nC"
+    // Expected: insert [#x30] 1/1 100% function "A\"B\nC"
     // ------------------------------------------------------------------
     {
         const std::string name = "A\"B\nC";

@@ -14,7 +14,7 @@
 //   1. Calls FUN_101a9650(0) to get the warehouse.
 //   2. Calls FUN_101cff60(powerTypeArray, progId, local_14c) to look up the
 //      master record (the IN-MEMORY warehouse record pointer "ctx").
-//   3. Checks (local_d3 & 4) != 0 — a "has dependencies" flag.
+//   3. Checks (local_d3 & 4) != 0 -- a "has dependencies" flag.
 //   4. If flag set, calls FUN_10153ad0 which reads:
 //        ctx + 0x29  -> element count (int)
 //        ctx + 0x4f  -> element array base pointer (int*)
@@ -58,7 +58,7 @@
 //   docs/RE/RE_M4_GETDEPENDENCIES_ABI.md (GetDependencies, FUN_10153ad0)
 //   src/tsdev_lib.h (GetMasterRecByTypeFn typedef, _GetMasterRecByType@16)
 //
-// _GetMasterRecByType@16 — __stdcall, 4 params (category, subtype,
+// _GetMasterRecByType@16 -- __stdcall, 4 params (category, subtype,
 // index=ProgId, outBuf). Returns 1 on success (record found and copied to
 // outBuf), 0 on failure. The record is 0x10A (266) bytes.
 
@@ -178,7 +178,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -341,7 +341,7 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
     // +0x17: name (first 30 bytes as ASCII)
     printAsciiField(rec, 0x17, 30, "name (30 bytes)");
 
-    // +0x29: element count (int) — KEY FIELD
+    // +0x29: element count (int) -- KEY FIELD
     int elemCount = 0;
     bool okEc = sehReadInt(rec + 0x29, &elemCount);
     std::printf("    +0x29 element count (int): %s = %d (0x%X)  "
@@ -349,7 +349,7 @@ void dumpAndAnalyzeMasterRec(const unsigned char* rec, const char* label,
                 okEc ? "OK" : "<SEH>", elemCount, (unsigned)elemCount,
                 (elemCount == 0) ? "ZERO" : "NONZERO");
 
-    // +0x4f: element array pointer (int*) — KEY FIELD
+    // +0x4f: element array pointer (int*) -- KEY FIELD
     void* elemArrayPtr = nullptr;
     bool okEap = sehReadPtr(rec + 0x4f, &elemArrayPtr);
     std::printf("    +0x4f element array ptr (int*): %s = %p  "
@@ -673,7 +673,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — report a hang without terminating the worker.
+    // 60-second hard timeout -- report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
         std::fprintf(stderr,

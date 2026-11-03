@@ -12,7 +12,7 @@
 //
 // Flow:
 //   1. Print PID and "READY FOR FRIDA".
-//   2. Wait for a Frida attach (sleep 8 seconds — Frida CLI attaches in
+//   2. Wait for a Frida attach (sleep 8 seconds -- Frida CLI attaches in
 //      spawn mode, but we also support attach mode by sleeping here so the
 //      operator can attach to the running PID).
 //   3. Construct a TsDevLib (test-only ctor, real COM, no hooks) on a 64 MB
@@ -22,7 +22,7 @@
 //   5. Insert + verify a Function "TS_AUTO_M4_FL_FUNC" with source
 //      `TS_AUTO_M4_FL_FUNC = 1;`.
 //   6. Get the partial record via Ordinal_28(1, funcProgId, 0, buf).
-//   7. Call the linker: linker(1, funcProgId, 0, buf) — manual inline-asm
+//   7. Call the linker: linker(1, funcProgId, 0, buf) -- manual inline-asm
 //      wrapper so the call is robust to either __stdcall (RET 0x10) or
 //      __fastcall (RET 0x8) cleanup, AND loads ECX=type, EDX=id.
 //   8. If non-NULL, read record fields (+0x00, +0x26, +0x29, +0x4f, +0x55)
@@ -74,7 +74,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args (rec, flag). RET 0x8.
 // Ordinal_28 (FUN_101a03f0): __stdcall, 4 args (category, progId, flag,
 //   outBuf). RET 0x10. Writes a 0x10A-byte partial copy into outBuf.
-// Linker FUN_101a3340 (ordinal 85): __fastcall — ECX=type, EDX=progId,
+// Linker FUN_101a3340 (ordinal 85): __fastcall -- ECX=type, EDX=progId,
 //   stack: errorFlag (int), partialBuf (void*). We use the manual inline-asm
 //   wrapper from diag_m4_linker_internals.cpp so the call is robust to
 //   either RET 0x10 (stdcall) or RET 0x8 (fastcall) cleanup, AND we load
@@ -108,7 +108,7 @@ bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -177,7 +177,7 @@ bool sehReadPtr(const void* p, void** out) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -418,7 +418,7 @@ int main() {
     }
 
     // Give Frida time to attach (attach mode). In spawn mode this sleep is
-    // harmless — Frida injects before main runs anyway.
+    // harmless -- Frida injects before main runs anyway.
     std::printf("Sleeping 8 seconds to allow Frida attach...\n");
     Sleep(8000);
     std::printf("Proceeding with orlib20 calls.\n");
@@ -431,7 +431,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 120000);
     if (wait == WAIT_TIMEOUT) {
         std::fprintf(stderr,

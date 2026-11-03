@@ -25,7 +25,7 @@
 //                 evaluated before the elevation guard and wins over any
 //                 subcommand)
 //   tsdev_cli [--json] [--ts-path <directory>] --backup-cache|--restore-cache [--cache-backup-policy=<mode>]
-//                 (standalone cache maintenance — the flags also run before
+//                 (standalone cache maintenance -- the flags also run before
 //                 any subcommand, fixed order backup -> restore -> op)
 //
 //   <type>        "strategy", "function", "indicator", "tradingapp", or "showme" (case-insensitive)
@@ -47,18 +47,18 @@
 //                 to the pre-JSON behavior (backward compatible).
 //                 Batch subcommands emit the JSON results array on stdout
 //                 ONLY under --json; for batch-* (and tagged serve requests)
-//                 --json also selects the stderr progress rendering — one
+//                 --json also selects the stderr progress rendering -- one
 //                 compact JSON event object per line instead of the
 //                 human-readable BATCH lines.
 //   --pbar        Global, position-free boolean (bare "--pbar" or
-//                 "--pbar=<value>"; the value is ignored — presence ==
-//                 true — and repeats are harmless). Renders a pinned
+//                 "--pbar=<value>"; the value is ignored -- presence ==
+//                 true -- and repeats are harmless). Renders a pinned
 //                 stderr-only progress bar that fills as items complete:
 //                 0->N for batch-*, 0->1 for the single-item subcommands.
 //                 Quiet on success: successful items and a fully clean
 //                 batch emit nothing but the bar itself; failures,
 //                 warnings, and a non-clean BATCH COMPLETE scroll above it.
-//                 stderr only — stdout (results / JSON) is never touched.
+//                 stderr only -- stdout (results / JSON) is never touched.
 //                 Cannot be combined with --json; not valid with serve.
 //   --backup-cache / --restore-cache
 //                 Global, position-free presence booleans. When either is
@@ -73,11 +73,11 @@
 //                 Requires --backup-cache (a usage error without it).
 //                 Default prompt: interactive consoles get an
 //                 O(verwrite)/S(kip)/C(ancel) prompt read from CONIN$
-//                 (never stdin — --batch-stdin owns it); non-interactive
+//                 (never stdin -- --batch-stdin owns it); non-interactive
 //                 prompt behaves as skip (keep existing backup, continue).
 //                 abort cancels the run with exit 17 before any operation.
 //                 The cache dir is <root>\Program\Cache resolved via
-//                 resolveTsInstallRoot — a --ts-path sandbox only needs
+//                 resolveTsInstallRoot -- a --ts-path sandbox only needs
 //                 <root>\Program\Cache to exist for the cache phase; a stub
 //                 orlib20.dll is required only when an OP also runs
 //                 against the sandbox.
@@ -88,7 +88,7 @@
 //                 background thread NTFS-compresses the backup's cache\ tree
 //                 in place (FSCTL_SET_COMPRESSION, files >= 64 KB only).
 //                 Transparent to restore; a partially compressed tree is
-//                 always valid. Backup tree only — restore output and the
+//                 always valid. Backup tree only -- restore output and the
 //                 live cache are never compressed.
 //   -v/--verbose  Global, position-free, repeatable flag. Each occurrence
 //                 raises the runtime log level (tsdev_lib) one step:
@@ -113,7 +113,7 @@
 // The CLI wraps the shared tsdev_lib module (which wraps orlib20.dll). It:
 //   1. Reads the source file
 //   2. Constructs TsDevLib (loads orlib20, patches, inits)
-//   3. Checks if the component already exists (fail loudly — no overwrite)
+//   3. Checks if the component already exists (fail loudly -- no overwrite)
 //   4. Creates the entry, saves source, compiles/verifies
 //   5. Fails loudly on compilation errors (prints to stderr, exit non-zero)
 //   6. Closes the warehouse and verifies the .ell file exists
@@ -121,7 +121,7 @@
 //
 // Exit codes: 0=success, 1=usage/arg error, 2=unknown type, 3=source file
 // error, 4=init failure, 5=not-found (modify/delete) OR already-exists
-// (insert) — also: no cache backup found on restore-cache — 6=entry op
+// (insert) -- also: no cache backup found on restore-cache -- 6=entry op
 // failure (insert/modify/delete), 7=saveSource failure,
 // 8=compile error, 9=.ell missing,
 // 10=CreateThread failure, 11=not elevated.
@@ -139,7 +139,7 @@
 // death block above vehCrashHandler): 20 = std::terminate (unhandled C++
 // exception / noexcept violation), 21 = abort()/SIGABRT, 22 = CRT
 // invalid-parameter fatal, 23 = pure virtual call, 24 = UEF invoked with
-// no exception record (defensive — unreachable per the API contract).
+// no exception record (defensive -- unreachable per the API contract).
 // 25-28 = self-update (`update` subcommand; design docs/UPDATE_DESIGN.md):
 // 25 = update_check_failed (feed unreachable / HTTP error / rate limit /
 // malformed feed), 26 = update_not_found (version or bundle asset absent),
@@ -208,12 +208,12 @@
 // 19 (whserver_recycle_refused); a successful recycle exits 18
 // (whserver_recycled) so the batch resumes in a fresh process (serve: the
 // elevated broker respawns). R1/R2 site rule (PROVEN live findings): the
-// engine only runs in-process at NEVER-ATTACHED sites — an attached
+// engine only runs in-process at NEVER-ATTACHED sites -- an attached
 // process holds +7 m_nLock for its whole lifetime (closeWarehouse cannot
-// release it, and ONLY graceful teardown can — a TerminateProcess corpse
+// release it, and ONLY graceful teardown can -- a TerminateProcess corpse
 // orphans it for >=minutes, deadlocking the resumed census; live-proven
 // 2026-10-21), so an attached-site breach exits 18 WITHOUT running the
-// engine (reason=recycle_deferred_own_session) — but FIRST runs the §5
+// engine (reason=recycle_deferred_own_session) -- but FIRST runs the Sec. 5
 // bounded close stage so the process exits GRACEFULLY and releases the
 // +7; a failed/uncertain close refuses on the close-stage family (exit
 // 19, TerminateProcess-self). The resumed process/broker runs the engine
@@ -223,9 +223,9 @@
 // Conflicts (usage error exit 1) apply to EXPLICIT Full authorization only:
 // --no-whserver-vas-guard (a recycle can never trigger with the guard
 // disabled) and --batch-progress-control (the stdin control channel belongs
-// to the dying process — a mid-batch recycle exit would strand it;
+// to the dying process -- a mid-batch recycle exit would strand it;
 // RescueOnly + control is silently downgraded to Off with a NOTE). The
-// §6.3 residual-race warning is printed once per process lifetime under
+// Sec. 6.3 residual-race warning is printed once per process lifetime under
 // explicit Full; the RescueOnly default prints a one-line NOTE instead.
 // The recycle boundary is
 // wired at all three guard sites and exits 18/19 are emitted with the
@@ -249,7 +249,7 @@
 //
 // --batch-progress-control (batch-* subcommands only) turns stdin into a
 // cooperative control channel: after each completed non-final item the
-// batch reads exactly one decision line — "continue\n" or "cancel\n" —
+// batch reads exactly one decision line -- "continue\n" or "cancel\n" --
 // before attempting the next item. With --batch-stdin the manifest itself
 // is first read as a framed block
 //   TSDEV_BATCH_CONTROL/1 <decimal byte length>\n<exactly length bytes>
@@ -270,8 +270,8 @@
 #include "tsdev_lib.h"
 #include "persistence_integrity.h"  // TVS-L.9: shared post-verify validator
 #include "create_path_cleanup.h"    // TVS-L.10: create-path cleanup ownership
-#include "diag_log.h"        // §7.1 diagnostic build (no-op without TSDEV_DIAG)
-#include "diag_watchdog.h"   // §7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "diag_log.h"        // Sec. 7.1 diagnostic build (no-op without TSDEV_DIAG)
+#include "diag_watchdog.h"   // Sec. 7.1 diagnostic build (no-op without TSDEV_DIAG)
 #include "dispatch_watchdog.h"  // TVS-3: production bounded-wait dispatch containment
 #include "whserver_health.h" // TVS-1b: WHServer VAS-headroom guard (batch)
 #include "whserver_recycle.h" // R3: gated WHServer recycle engine
@@ -301,8 +301,8 @@
 #include <fcntl.h>
 #include <atomic>      // TVS-K.4: std::atomic<bool> for serve quit flag
 #include <chrono>      // cache-phase progress renderer timing/throttle
-#include <csignal>     // signal/SIGABRT — P4 gap-e fatal containment
-#include <exception>   // std::set_terminate — P4 gap-e fatal containment
+#include <csignal>     // signal/SIGABRT -- P4 gap-e fatal containment
+#include <exception>   // std::set_terminate -- P4 gap-e fatal containment
 #include <cwctype>     // towlower for the cache-backup prompt key read
 #include <new>         // std::nothrow (bounded control-read job alloc, R6)
 #include <process.h>   // _beginthreadex (bounded control-read helper, R6)
@@ -323,8 +323,8 @@ using ordered_json = nlohmann::ordered_json;  // preserves insertion order
 
 namespace {
 
-// P4 gap-e own-process fatal-termination containment. The definitions —
-// with the full rationale and the orlib20 UEF-ordering analysis — live next
+// P4 gap-e own-process fatal-termination containment. The definitions --
+// with the full rationale and the orlib20 UEF-ordering analysis -- live next
 // to vehCrashHandler below; the worker procs precede them in this file, so
 // the two install entry points are forward-declared here.
 void installThreadFatalContainment();
@@ -718,8 +718,8 @@ struct CliResult {
     bool        exists = false;  // "exists" op: whether the item was found
     std::string storedName;  // "exists" op: verbatim stored name (empty if not found)
     std::string sourceText;  // "get-source" op: retrieved EL source (JSON mode)
-    // M.4b.1: "dependents" op — reverse dependents (callers) from the
-    // warehouse-level cmd 0x0D → cmd 0x3B path. Empty when the op is not
+    // M.4b.1: "dependents" op -- reverse dependents (callers) from the
+    // warehouse-level cmd 0x0D -> cmd 0x3B path. Empty when the op is not
     // "dependents" or when no callers were found.
     std::vector<TsDevLib::CallerInfo> callers;
     // "list" op: stored names of all items of the given type, in the
@@ -729,27 +729,27 @@ struct CliResult {
     // the category has zero items).
     std::vector<std::string> names;
     // Serve cache ops (backup-cache/restore-cache): extra top-level members
-    // merged into the success JSON response — carries the exact standalone
+    // merged into the success JSON response -- carries the exact standalone
     // --json cache payload (the "cache" member object). Null/empty for all
     // other ops (no serialization change).
     ordered_json extraPayload;
     // Extra members merged into the failure error object (update's
     // retry_after_secs etc.). Null/empty for all ops that do not set it.
     ordered_json extraErrorFields;
-    // §5 teardown flag (whserver_recycle.h close_failed class): true when
+    // Sec. 5 teardown flag (whserver_recycle.h close_failed class): true when
     // the op ended while the warehouse session may still be open with
-    // UNCERTAIN teardown state — i.e. a closeWarehouse that this op owned
+    // UNCERTAIN teardown state -- i.e. a closeWarehouse that this op owned
     // did not provably complete (doInsert step 8, or a deleteEntry failure
     // classified by deleteResultLeavesSessionOpen). The session-owning
     // worker must then emit pending output + TerminateProcess instead of
     // `delete lib`/normal exit (singleOpTerminateIfSessionOpen). Never set
     // for an intact session: a healthy open session + OrlibExit is the
     // proven normal path (modify/exists/get-source never close at all).
-    // INTERNAL ONLY — never serialized by cliResultToJson.
+    // INTERNAL ONLY -- never serialized by cliResultToJson.
     bool        sessionMayBeOpen = false;
 };
 
-// Map an exit code to the machine-readable error.code string (TVS-D.2 §3).
+// Map an exit code to the machine-readable error.code string (TVS-D.2 Sec. 3).
 // The `op` disambiguates exit 5 (insert -> already_exists, modify/delete ->
 // not_found) and exit 3 (get-source -> output_write_error, else
 // source_file_error).
@@ -773,8 +773,8 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         case 14: return "whserver_vas_abort";
         // 15 is the dispatch-watchdog abort code (TerminateProcess(15) from
         // the watchdog thread in src/dispatch_watchdog.cpp). A watchdog
-        // abort emits no JSON frame — the "WATCHDOG ABORT: ...; exiting
-        // with code 15" line goes to stderr — so this case is unreachable
+        // abort emits no JSON frame -- the "WATCHDOG ABORT: ...; exiting
+        // with code 15" line goes to stderr -- so this case is unreachable
         // through normal result emission; kept for completeness so any
         // future path that does surface exit 15 gets a stable code string.
         case 15: return "whserver_dispatch_watchdog_abort";
@@ -783,9 +783,9 @@ std::string errorCodeString(int exitCode, const std::string& op) {
         // 17 a cancelled backup (policy abort or 'C' at the prompt).
         case 16: return "cache_io_error";
         case 17: return "cache_cancelled";
-        // 18/19 are the recycle boundary codes (design §6.2): 18 = the
+        // 18/19 are the recycle boundary codes (design Sec. 6.2): 18 = the
         // engine recycled WHServer (the refused item was never
-        // dispatched — resume in a fresh process / respawned broker);
+        // dispatched -- resume in a fresh process / respawned broker);
         // 19 = the gate or a fail-closed stage refused the recycle and
         // the batch aborted.
         case 18: return "whserver_recycled";
@@ -899,7 +899,7 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
             err["compile_errors"] = r.compileErrors;
         }
         // TVS-L.10: secondary create-path cleanup error. Emitted only when
-        // non-empty — i.e. when partial-entry cleanup was attempted after a
+        // non-empty -- i.e. when partial-entry cleanup was attempted after a
         // post-createEntry failure AND the cleanup itself failed. This is
         // attached SECONDARY to the primary error.code/message; it never
         // replaces them and never flips success. A successful cleanup is
@@ -915,7 +915,7 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
 
 // --- TVS A: batch progress events -------------------------------------------
 //
-// Batch progress is always on (independent of -v) and goes to stderr only —
+// Batch progress is always on (independent of -v) and goes to stderr only --
 // stdout carries the JSON array only under --json. One event per physical
 // line: a batch_item_completed for every attempted item (in input order,
 // including pre-validation and init failures), then one batch_completed
@@ -926,7 +926,7 @@ nlohmann::ordered_json cliResultToJson(const CliResult& r) {
 
 // jsonQuote renders a string as a JSON string literal ("..." with escaping),
 // so type/name/message values embedded in a human line can never leak a raw
-// quote, backslash, CR, or LF — one event stays one physical line.
+// quote, backslash, CR, or LF -- one event stays one physical line.
 std::string jsonQuote(const std::string& s) {
     return ordered_json(s).dump(-1, ' ', false,
                                 nlohmann::json::error_handler_t::replace);
@@ -1046,7 +1046,7 @@ int batchAggregateExitCode(bool batchStarted, bool anyFailed,
     return 0;
 }
 
-// emitBatchProgress writes one rendered event line to stderr and flushes —
+// emitBatchProgress writes one rendered event line to stderr and flushes --
 // direct writes, no reliance on buffering mode, so each event is visible
 // immediately while stdout carries only the final JSON array (--json only).
 void emitBatchProgress(const std::string& line) {
@@ -1060,9 +1060,9 @@ void emitBatchProgress(const std::string& line) {
 // Alternative stderr progress rendering for batch runs: a single fixed-width
 // Unicode bar line is pinned at the bottom of the output and redrawn in
 // place while event lines keep scrolling above it (via eventLine()). stderr
-// only — stdout (results / JSON array) is never touched.
+// only -- stdout (results / JSON array) is never touched.
 //
-// Mechanics — deliberately ANSI-free, so it works on any Windows console and
+// Mechanics -- deliberately ANSI-free, so it works on any Windows console and
 // degrades harmlessly on redirected streams:
 //   - Draw: '\r' returns to column 0, the line text is written, then spaces
 //     pad out to the widest line drawn so far (maxCells), so a shorter
@@ -1081,7 +1081,7 @@ void emitBatchProgress(const std::string& line) {
 //     direct console writes. Otherwise (pipe/file redirect) the UTF-8 bytes
 //     go through fwrite. stderr is fflushed after every write.
 //
-// pbarLine / pbarEraseSeq / pbarDrawSeq are PURE — no I/O — so
+// pbarLine / pbarEraseSeq / pbarDrawSeq are PURE -- no I/O -- so
 // tests/test_pbar.cpp can pin their exact bytes; PbarRenderer is the thin
 // emitter glued on top.
 
@@ -1115,7 +1115,7 @@ std::string pbarTruncCells(const std::string& s, size_t maxCells) {
     size_t i = 0;
     while (i < s.size() && cells < maxCells) {
         if ((static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) {
-            ++i;  // continuation byte — 0 cells, same as pbarCellWidth
+            ++i;  // continuation byte -- 0 cells, same as pbarCellWidth
             continue;
         }
         ++cells;
@@ -1133,11 +1133,11 @@ std::string pbarTruncCells(const std::string& s, size_t maxCells) {
 // Pinned format:
 //   <op> [<bar>] <done>/<total> <pct>%[ <type> "<name>"][ - <n> failed]
 // <bar> is exactly kPbarBarCells cells: '#' repeated
-// floor(30*done/total) — clamped to a full bar when done > total — then
+// floor(30*done/total) -- clamped to a full bar when done > total -- then
 // '-' fill; total == 0 -> all '-' and pct 0. <pct> is
 // done*100/total integer, right-aligned to width 3 + '%' (the field widens
 // naturally past 999). The label is `<type> "<name>"` with the name through
-// the existing jsonQuote() helper — empty when type and name are both
+// the existing jsonQuote() helper -- empty when type and name are both
 // empty, and truncated with a trailing "..." so the whole line stays within
 // kPbarMaxCells. The ` - <n> failed` suffix appears only
 // when failures > 0 and is part of the width budget.
@@ -1169,7 +1169,7 @@ std::string pbarLine(const std::string& op, size_t done, size_t total,
     line += pctBuf;
     line += '%';
 
-    // Optional failures suffix — part of the width budget, appended after
+    // Optional failures suffix -- part of the width budget, appended after
     // the label.
     std::string suffix;
     if (failures > 0) {
@@ -1180,7 +1180,7 @@ std::string pbarLine(const std::string& op, size_t done, size_t total,
         suffix += " failed";
     }
 
-    // Optional `<type> "<name>"` label — the non-empty pieces are joined so
+    // Optional `<type> "<name>"` label -- the non-empty pieces are joined so
     // a type-only or name-only item still renders something sensible.
     std::string label = type;
     if (!name.empty()) {
@@ -1203,7 +1203,7 @@ std::string pbarLine(const std::string& op, size_t done, size_t total,
                 line += pbarTruncCells(label, budget - 4);
                 line += "...";
             }
-            // else: not even ' ...' fits — the label is dropped entirely.
+            // else: not even ' ...' fits -- the label is dropped entirely.
         }
     }
     line += suffix;
@@ -1212,7 +1212,7 @@ std::string pbarLine(const std::string& op, size_t done, size_t total,
     // alone exceed the width budget still cannot emit an over-wide line.
     // The cut can land on a separator/pad space, so strip trailing spaces
     // to keep the pinned no-trailing-space invariant (the line is
-    // non-empty here — the clamp only runs on over-wide input).
+    // non-empty here -- the clamp only runs on over-wide input).
     if (pbarCellWidth(line) > kPbarMaxCells) {
         line = pbarTruncCells(line, kPbarMaxCells);
         while (!line.empty() && line.back() == ' ') line.pop_back();
@@ -1241,17 +1241,17 @@ std::string pbarDrawSeq(const std::string& line, int cells) {
     return out;
 }
 
-// PbarRenderer — the --pbar emitter. Thin glue over the pure helpers: it
+// PbarRenderer -- the --pbar emitter. Thin glue over the pure helpers: it
 // tracks the widest line drawn (maxCells) so every erase/overwrite is
 // complete, and routes bytes through WriteConsoleW on a real console or
-// fwrite on a redirected stream. The bar itself never emits event lines —
+// fwrite on a redirected stream. The bar itself never emits event lines --
 // callers route BATCH/other event text through eventLine() so it scrolls
 // above the pinned bar.
 struct PbarRenderer {
     PbarRenderer(const std::string& op, size_t total)
         : op_(op), total_(total) {
         // Console iff stderr is a character device AND still resolves to a
-        // console handle — the pair rejects pipes/files even when a console
+        // console handle -- the pair rejects pipes/files even when a console
         // is attached elsewhere.
         const int fd = _fileno(stderr);
         DWORD mode = 0;
@@ -1259,7 +1259,7 @@ struct PbarRenderer {
                      GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode);
     }
 
-    // Draw the initial all-empty bar (no newline — the bar stays pinned).
+    // Draw the initial all-empty bar (no newline -- the bar stays pinned).
     void start() {
         done_ = 0;
         failures_ = 0;
@@ -1269,7 +1269,7 @@ struct PbarRenderer {
     }
 
     // Point the label at the item now being attempted and redraw. Emits no
-    // event line — callers emit those separately (or via eventLine()).
+    // event line -- callers emit those separately (or via eventLine()).
     void itemStarted(const std::string& type, const std::string& name) {
         type_ = type;
         name_ = name;
@@ -1296,7 +1296,7 @@ struct PbarRenderer {
         draw();
     }
 
-    // Final draw + '\n' — the bar becomes a permanent last-but-summary
+    // Final draw + '\n' -- the bar becomes a permanent last-but-summary
     // line in the scrollback.
     void finish() {
         draw();
@@ -1322,7 +1322,7 @@ private:
     // Raw stderr write. On a real console the text is widened and written
     // through WriteConsoleW (fflush first so C-stdio and console writes
     // stay ordered); on a redirected stream the UTF-8 bytes go through
-    // fwrite. stderr is always fflushed afterwards — even for an empty
+    // fwrite. stderr is always fflushed afterwards -- even for an empty
     // write. Both API calls are best-effort: conversion/write failures
     // simply drop the piece (progress cosmetics must never take down the
     // run).
@@ -1378,13 +1378,13 @@ void pbarLogSink(const char* s) {
     }
 }
 
-// §5 teardown (dispatch_watchdog.cpp:79-88 convention — the proven field
+// Sec. 5 teardown (dispatch_watchdog.cpp:79-88 convention -- the proven field
 // incident): a process that may still hold an OPEN warehouse session must
-// NEVER `delete lib` or ExitProcess — orlib20's DLL detach then raises the
+// NEVER `delete lib` or ExitProcess -- orlib20's DLL detach then raises the
 // BLOCKING "WHouse stays in memory" dialog (an INVISIBLE deadlock under
 // the SW_HIDE serve broker, a hard block for a direct CLI). Pending output
 // is emitted by the caller first; this helper flushes both streams and
-// dies via TerminateProcess — the only exit that skips ALL DLL detach.
+// dies via TerminateProcess -- the only exit that skips ALL DLL detach.
 [[noreturn]] void terminateSelfNoDetach(unsigned exitCode) {
     std::fflush(stdout);
     std::fflush(stderr);
@@ -1394,7 +1394,7 @@ void pbarLogSink(const char* s) {
 }
 
 // --- --update-result-file ---------------------------------------------------
-// Hidden GLOBAL flag (self-update design §8): recognized and consumed by the
+// Hidden GLOBAL flag (self-update design Sec. 8): recognized and consumed by the
 // global flag pre-scan, allowed only with the `update` subcommand (validated
 // post-elevation-guard). At every point where a JSON result frame would be
 // emitted under --json, the same object is ALSO written to <path>
@@ -1486,8 +1486,8 @@ void emitOutput(const CliResult& r, bool jsonMode) {
         std::fwrite(errMsg, 1, std::strlen(errMsg), stdout);
         std::fflush(stdout);
         // TerminateProcess(1), NOT std::exit(1)/ExitProcess: emitOutput also
-        // runs on the session-owning worker of a §5 terminate path, where
-        // the warehouse session may still be open — ExitProcess would
+        // runs on the session-owning worker of a Sec. 5 terminate path, where
+        // the warehouse session may still be open -- ExitProcess would
         // DLL-detach into it (the "WHouse stays in memory" modal). On every
         // other call site the lib is already destructed, so the teardown is
         // observably identical either way: same error JSON, same exit 1.
@@ -1495,11 +1495,11 @@ void emitOutput(const CliResult& r, bool jsonMode) {
     }
 }
 
-// §5 teardown for the single-op workers (insert/delete/upsert — the only
+// Sec. 5 teardown for the single-op workers (insert/delete/upsert -- the only
 // ops whose per-item flow includes a closeWarehouse). When the result
 // flags a possibly-open session (the close that this op owned did not
-// provably complete — see CliResult::sessionMayBeOpen), emit the pending
-// output ON THIS WORKER — the main thread never runs again — then flush +
+// provably complete -- see CliResult::sessionMayBeOpen), emit the pending
+// output ON THIS WORKER -- the main thread never runs again -- then flush +
 // TerminateProcess with the result's own exit code. NEVER `delete lib` or
 // return into ExitProcess. The emitted bytes are identical to the cmd*
 // tail's: the post-hoc --pbar draw, then emitOutput. On this path the
@@ -1529,7 +1529,7 @@ void singleOpTerminateIfSessionOpen(const CliResult& r,
 // argument validation and the elevation guard but BEFORE any subcommand
 // dispatch, in the fixed order backup -> restore -> subcommand regardless of
 // argv order (the serve subcommand rejects the flags earlier). Any
-// cache-phase failure aborts the run before the subcommand — the flags are
+// cache-phase failure aborts the run before the subcommand -- the flags are
 // an insurance contract and never silently proceed.
 //
 // Rendering mirrors the --pbar mechanics: pure line builders
@@ -1538,7 +1538,7 @@ void singleOpTerminateIfSessionOpen(const CliResult& r,
 // thin CacheProgressRenderer driven inline by the engine's CacheProgress
 // callback (no display thread). Console stderr gets a redrawn <=79-cell
 // frame throttled to >=100 ms; redirected stderr gets one whole line every
-// >=5 s (NDJSON under --json). All of it is stderr-only — with a subcommand
+// >=5 s (NDJSON under --json). All of it is stderr-only -- with a subcommand
 // the cache phase writes nothing to stdout; standalone
 // (--backup-cache/--restore-cache with no subcommand) prints a stdout
 // result (human COMPLETE/KEPT lines, or one JSON object under --json).
@@ -1706,7 +1706,7 @@ bool stderrIsConsole() {
            GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode);
 }
 
-// CONIN$ can be opened — the second half of the prompt-interactivity check.
+// CONIN$ can be opened -- the second half of the prompt-interactivity check.
 // Opening CONIN$ (not stdin) keeps the prompt independent of a piped stdin
 // (--batch-stdin / --batch-progress-control own stdin).
 bool coninAvailable() {
@@ -1718,7 +1718,7 @@ bool coninAvailable() {
     return true;
 }
 
-// CacheProgressRenderer — the cache-phase emitter. Thin glue over the pure
+// CacheProgressRenderer -- the cache-phase emitter. Thin glue over the pure
 // builders: the engine's CacheProgress callback calls progress() inline (no
 // display thread); console stderr gets a '\r'-redrawn frame throttled to
 // >=100 ms, redirected stderr gets a whole line every >=5 s. finish()
@@ -1784,7 +1784,7 @@ private:
         }
     }
 
-    // Same write path as PbarRenderer::writeRaw — WriteConsoleW on a real
+    // Same write path as PbarRenderer::writeRaw -- WriteConsoleW on a real
     // console (fflush first so C-stdio and console writes stay ordered),
     // UTF-8 fwrite on a redirected stream. Best-effort: conversion/write
     // failures drop the piece; stderr is fflushed afterwards regardless.
@@ -1860,7 +1860,7 @@ BackupAction decideBackupAction(const BackupInfo& info,
 // Pure builder for the existing-backup detail line printed above the
 // interactive prompt: path=<root>\cache created=<ts> files=<n> size=<human>
 // [ source=<info.source>]. `source=` is omitted when the backup carries no
-// recorded source dir — it identifies which install the backup was taken
+// recorded source dir -- it identifies which install the backup was taken
 // from so a changed install/--ts-path never blind-overwrites.
 std::string existingBackupDetailLine(const std::wstring& backupRoot,
                                      const BackupInfo& info) {
@@ -1889,12 +1889,12 @@ wchar_t cachePromptChoice(const std::wstring& line) {
     return L's';
 }
 
-// Interactive existing-backup prompt. Returns 'o' (overwrite), 's' (skip —
+// Interactive existing-backup prompt. Returns 'o' (overwrite), 's' (skip --
 // keep the existing backup and continue), or 'c' (cancel). Keys are
 // case-insensitive; bare Enter is 's'; an invalid key re-prompts; EOF/read
 // failure returns 's' (the non-interactive default). Input is read from
-// CONIN$ via ReadConsoleW — never stdin, which --batch-stdin /
-// --batch-progress-control own — and the console echoes the key itself.
+// CONIN$ via ReadConsoleW -- never stdin, which --batch-stdin /
+// --batch-progress-control own -- and the console echoes the key itself.
 // Callers must only invoke this when stderr is a console AND CONIN$ opens
 // (checked again here defensively).
 char promptExistingCacheBackup(const std::wstring& backupRoot,
@@ -1951,7 +1951,7 @@ char promptExistingCacheBackup(const std::wstring& backupRoot,
 }
 
 // Torn-capture disclosure: true when the backup copied at least one file
-// from a live/locked source — via a VSS snapshot or the
+// from a live/locked source -- via a VSS snapshot or the
 // FILE_FLAG_BACKUP_SEMANTICS fallback (CacheOpResult::usedVss /
 // usedBackupSemantics in cache_backup.h; mirrors backup.info's
 // live_source=true marker).
@@ -1988,13 +1988,13 @@ ordered_json cacheErrorJson(const std::string& op, int exitCode,
     return cliResultToJson(r);
 }
 
-// Write one cacheErrorJson object to stdout. Human mode is a no-op — the
-// stderr "tsdev_cli: ERROR — ..." lines already carry the reason. Called at
+// Write one cacheErrorJson object to stdout. Human mode is a no-op -- the
+// stderr "tsdev_cli: ERROR -- ..." lines already carry the reason. Called at
 // most once per run (every call site is a failure return), so under --json
 // stdout still carries exactly one object even in combined mode (the
 // subcommand never runs, so nothing else can emit).
 //
-// Serve-request mode (serveResult != nullptr): no stdout write — the broker
+// Serve-request mode (serveResult != nullptr): no stdout write -- the broker
 // response frame is a CliResult serialized by writeServeResponse, so the
 // failure is recorded into `serveResult` instead (same CliResult shape the
 // standalone cacheErrorJson serializes through cliResultToJson).
@@ -2019,7 +2019,7 @@ void emitCacheErrorJson(const std::string& op, int exitCode,
 
 // The single stdout success object for a standalone cache-phase run under
 // --json: {"op":<phase label>,"success":true,"exit_code":0,"cache"|"backup"/
-// "restore":{...}}. Pure builder — also used by the serve-request path, which
+// "restore":{...}}. Pure builder -- also used by the serve-request path, which
 // hands the same object back via CliResult::extraPayload so the broker
 // response mirrors this exact shape.
 ordered_json cacheSuccessJson(const std::string& cacheOp,
@@ -2067,23 +2067,23 @@ ordered_json cacheSuccessJson(const std::string& cacheOp,
 // immediately (standalone runs and all abort paths).
 //
 // `subcommand` is empty for a standalone invocation (no subcommand given);
-// the "— <subcommand> not run" tails then read "— exiting".
+// the "-- <subcommand> not run" tails then read "-- exiting".
 //
 // Serve-request mode (serveResult != nullptr): invoked by
 // dispatchServeRequest for the "backup-cache"/"restore-cache" broker ops.
 // The phase logic is identical (pure filesystem), but nothing is written to
-// stdout — the result is recorded into `serveResult` instead: failures go
+// stdout -- the result is recorded into `serveResult` instead: failures go
 // through emitCacheErrorJson's serve branch, and on success the standalone
 // --json payload object is stored in serveResult->extraPayload so
 // cliResultToJson merges it into the response frame. The cancel tail names
-// the serve session (the run is not aborted — only the request's backup
+// the serve session (the run is not aborted -- only the request's backup
 // intent is).
 int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
                   const wchar_t* tsPathOverride,
                   const std::string& subcommand, bool jsonMode,
                   bool noCacheCompress = false,
                   CliResult* serveResult = nullptr) {
-    // Tail for the "cancelled/failed — X" stderr lines: names the skipped
+    // Tail for the "cancelled/failed -- X" stderr lines: names the skipped
     // subcommand in combined mode, or "exiting" standalone (avoids the
     // double-negative "no further operations not run"). Serve mode notes
     // that the broker session continues.
@@ -2243,7 +2243,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
 
         // A complete backup now exists in the root (freshly staged OR kept
         // existing). Kick detached low-priority NTFS in-place compression of
-        // backupRoot\cache — opportunistic; the insurance is already secured,
+        // backupRoot\cache -- opportunistic; the insurance is already secured,
         // and a partially compressed tree is always valid/readable. Restore
         // output is never compressed (it is the live user cache).
         if (!noCacheCompress) {
@@ -2269,7 +2269,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
         }
         if (restoreRes.status == CacheOpStatus::NotFound) {
             // Append the engine's reason when set (e.g. "unsupported backup
-            // format 2" or "no complete backup found") — the root path stays.
+            // format 2" or "no complete backup found") -- the root path stays.
             std::string msg =
                 "no cache backup found at " + wideToUtf8Cli(backupRoot);
             if (!restoreRes.message.empty()) {
@@ -2322,7 +2322,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
 
     // Serve-request path: hand the exact standalone --json payload back in
     // the CliResult (cliResultToJson merges extraPayload into the response
-    // frame — op/success/exit_code are identical to the CliResult's own).
+    // frame -- op/success/exit_code are identical to the CliResult's own).
     // Nothing is written to stdout: the broker wire is the pipe frame.
     if (serveResult) {
         serveResult->op           = cacheOp;
@@ -2381,7 +2381,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
 //
 // doInsert/doModify/doDelete contain the core operation logic operating on an
 // ALREADY-CONSTRUCTED TsDevLib instance. They do NOT construct or destruct the
-// library (that is the caller's responsibility — single-item constructs per
+// library (that is the caller's responsibility -- single-item constructs per
 // call, batch constructs once and reuses). This avoids duplicating the
 // createEntry/saveSource/verifyModule/deleteEntry sequence.
 //
@@ -2413,7 +2413,7 @@ int runCachePhase(bool doBackup, bool doRestore, CacheBackupPolicy policy,
 // that is a directory, cannot be opened/read, or cannot be hashed is an Error
 // and must fail closed. Mirrors the validator's internal hasher; kept local to
 // this TU because persistence_integrity.h exposes only
-// validatePersistenceIntegrity() (matched exactly — no extra declarations
+// validatePersistenceIntegrity() (matched exactly -- no extra declarations
 // added).
 enum class Sha256FileStatus {
     Hashed,
@@ -2524,12 +2524,12 @@ Sha256FileResult sha256FileCli(const std::string& path) {
 // SHA-256, so the validator does NOT treat it as "unknown" (the header maps
 // only an EMPTY pre-hash to InvalidInput). Because a valid post-op .ell/.xml
 // is never zero bytes, this sentinel correctly forces ellChanged/xmlChanged =
-// true for any real post-op artifact — i.e. "there was no prior file, so the
+// true for any real post-op artifact -- i.e. "there was no prior file, so the
 // post-op file is by definition a change". A zero-byte (corrupt) post-op file
 // would hash-equal the sentinel -> ellChanged=false -> FaultA_StaleEll, which
 // is the correct detect-and-fail outcome for a corrupt artifact.
 //
-// Computed directly via bcrypt (hash of zero bytes — no BCryptHashData call).
+// Computed directly via bcrypt (hash of zero bytes -- no BCryptHashData call).
 // This is the well-known constant E3B0C442...B855; computing it avoids
 // hardcoding a magic constant and stays consistent with the project's
 // bcrypt-everywhere style.
@@ -2613,7 +2613,7 @@ const char* verdictLabel(IntegrityVerdict v) {
 //                     reason. On success it is left untouched (the caller
 //                     fills in the success fields).
 //   ellPath, xmlPath  the POST-op artifact paths (regular files at this point
-//                     — the existence checks already passed).
+//                     -- the existence checks already passed).
 //   preEllSha256,
 //   preXmlSha256      SHA-256 of the PRE-op artifacts, or noPriorArtifactHash()
 //                     when the pre-op artifact did not exist. NEVER empty
@@ -2627,7 +2627,7 @@ const char* verdictLabel(IntegrityVerdict v) {
 //                     rejected as a stale write (FaultA_StaleEll).
 //   noOpRefresh       [out] set to true when the verdict is NoOpAllowed, so
 //                     the caller can report success honestly (NOT as a
-//                     verified refresh — the .ell hash is expected unchanged
+//                     verified refresh -- the .ell hash is expected unchanged
 //                     because the source was byte-identical).
 //
 // Returns true if the check passes (VerifiedRefresh or NoOpAllowed); returns
@@ -2652,10 +2652,10 @@ bool applyPersistenceIntegrityCheck(CliResult& r,
     IntegrityVerdict v = validatePersistenceIntegrity(in);
 
     if (v == IntegrityVerdict::VerifiedRefresh) {
-        return true;  // real, runtime-linkable refresh — caller reports success
+        return true;  // real, runtime-linkable refresh -- caller reports success
     }
     if (v == IntegrityVerdict::NoOpAllowed) {
-        noOpRefresh = true;  // genuine no-op — caller reports success (NOT a refresh)
+        noOpRefresh = true;  // genuine no-op -- caller reports success (NOT a refresh)
         return true;
     }
 
@@ -2705,7 +2705,7 @@ bool applyPersistenceIntegrityCheck(CliResult& r,
 // Contract:
 //   * `progId` is the ProgId returned by the successful createEntry (> 0).
 //   * `type` / `name` are the EXACT warehouse/API name + ComponentType passed
-//     to createEntry (no EL source parsing — HARD RULE 0). deleteEntry uses
+//     to createEntry (no EL source parsing -- HARD RULE 0). deleteEntry uses
 //     them to locate the partial entry via FindExistPos and the .ell/.xml
 //     paths via the expanded whType (the enum value).
 //   * `stage` identifies WHICH post-create step failed (SaveSourceFailed or
@@ -2733,7 +2733,7 @@ bool applyPersistenceIntegrityCheck(CliResult& r,
 //     recorded in r.cleanupError (emitted as error.cleanup_error in JSON).
 //     The primary exitCode / errorMessage / compileErrors are untouched, so
 //     a cleanup failure can never look like full success (the result stays
-//     exit 7/8, success=false). The caller's return is unaffected — it
+//     exit 7/8, success=false). The caller's return is unaffected -- it
 //     still returns the original failure result.
 //
 // Returns true if cleanup succeeded (or was not required), false if the
@@ -2744,7 +2744,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
                               const std::string& name, int progId,
                               CreatePathFailureStage stage, CliResult& r) {
     if (!tsdev::requiresCreatePathCleanup(progId, stage)) {
-        // createEntry did not succeed (progId <= 0) — no partial entry exists.
+        // createEntry did not succeed (progId <= 0) -- no partial entry exists.
         // Nothing to clean up. (Reached only defensively; doInsert never
         // calls this when progId <= 0.)
         return true;
@@ -2763,7 +2763,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
         case CreatePathFailureStage::PostVerify_EllMissing:           stageLabel = "postVerify-ellMissing"; break;
         case CreatePathFailureStage::PostVerify_XmlMissing:           stageLabel = "postVerify-xmlMissing"; break;
         case CreatePathFailureStage::PostVerify_PersistenceIntegrity: stageLabel = "postVerify-persistenceIntegrity"; break;
-        // TVS-L.11: defensive default — every CreatePathFailureStage enumerator
+        // TVS-L.11: defensive default -- every CreatePathFailureStage enumerator
         // is handled above, but a future addition must not silently fall
         // through to the "unknown" initial value without surfacing here.
         default:
@@ -2783,7 +2783,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
     // occurs (e.g. ERROR_ACCESS_DENIED on a read-only .ell), returns false
     // AND populates diskCleanupErrorOut with the residual path + Windows
     // error. Capture that detail so it can be folded into cleanupErr below
-    // and surfaced in r.cleanupError (JSON error.cleanup_error) — a stale
+    // and surfaced in r.cleanupError (JSON error.cleanup_error) -- a stale
     // .ell/.xml left behind by the cleanup delete must never look like a
     // clean cleanup. This does NOT invent attrib -R or any recovery; it only
     // reports the residual the orchestrator already surfaced.
@@ -2796,7 +2796,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
                                     &diskCleanupError);
         if (!cleanupOk) {
             // deleteEntry returns false for two distinct reasons: an earlier
-            // failure (not found / orchestrator SEH — diskCleanupError stays
+            // failure (not found / orchestrator SEH -- diskCleanupError stays
             // empty) OR a disk-cleanup failure classified by the L.12
             // decision (diskCleanupError carries the residual path + Windows
             // error). Distinguish them so the secondary diagnostic names the
@@ -2838,7 +2838,7 @@ bool cleanupCreatePathFailure(TsDevLib& lib, ComponentType type,
 
 // doInsert: when `flushPerItem` is true (single-item path), closeWarehouse() is
 // called AFTER all post-verify validation (.ell/.xml existence + L.9
-// persistence-integrity check) succeeds — so that any cleanupCreatePathFailure
+// persistence-integrity check) succeeds -- so that any cleanupCreatePathFailure
 // branch can still call deleteEntry() against an open warehouse (TVS-L.11).
 // When false (batch path), closeWarehouse is skipped here; the batch worker
 // calls it ONCE at the end of the batch.
@@ -2850,9 +2850,9 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     r.typeStr = typeStr;
     r.name = name;
 
-    // 1. Check if the component already exists — fail loudly, no overwrite.
+    // 1. Check if the component already exists -- fail loudly, no overwrite.
     int existing = lib.findExistPos(name, type);
-    // §7.1 diag: "findExistPos" batch-phase marker.
+    // Sec. 7.1 diag: "findExistPos" batch-phase marker.
     TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s exists=%d",
                    name.c_str(), existing);
     if (existing > 0) {
@@ -2869,7 +2869,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     // 2. Create the entry.
     int errCode = 0;
     int progId = lib.createEntry(type, name, errCode);
-    // §7.1 diag: "createEntry" batch-phase marker.
+    // Sec. 7.1 diag: "createEntry" batch-phase marker.
     TSDEV_DIAG_LOG("batch.phase.createEntry", "item=%s progId=%d errCode=%d",
                    name.c_str(), progId, errCode);
     if (progId <= 0) {
@@ -2886,7 +2886,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
 
     // 3. Save the source.
     const bool savedSource = lib.saveSource(type, progId, source);
-    // §7.1 diag: "saveSource" batch-phase marker.
+    // Sec. 7.1 diag: "saveSource" batch-phase marker.
     TSDEV_DIAG_LOG("batch.phase.saveSource", "item=%s progId=%d ok=%d",
                    name.c_str(), progId, savedSource ? 1 : 0);
     if (!savedSource) {
@@ -2897,7 +2897,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         r.humanStderr = std::string("tsdev_cli: saveSource failed for ProgId=")
                         + std::to_string(progId) + "\n";
         // TVS-L.10: createEntry succeeded (progId > 0) but saveSource failed.
-        // The partial warehouse entry is orphaned without this — the previous
+        // The partial warehouse entry is orphaned without this -- the previous
         // code had NO cleanup on this path. Route through the SINGLE owner.
         // Cleanup errors attach secondarily; the primary exit-7 diagnostic
         // is preserved and success stays false.
@@ -2906,7 +2906,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    // 4. Compile / verify — fail loudly on errors.
+    // 4. Compile / verify -- fail loudly on errors.
     //    TVS-L.10: pass &verifyStage so that if verifyModule fails, the
     //    SINGLE cleanup owner can report WHICH internal path failed (OOM,
     //    SEH-ctor, SEH-StartCompiling, SEH-Verify, or compile errors) and
@@ -2915,7 +2915,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    overwrites it on every non-empty return path.
     CreatePathFailureStage verifyStage = CreatePathFailureStage::VerifyModule_CompileErrors;
     std::string errors = lib.verifyModule(type, progId, &verifyStage);
-    // §7.1 diag: "verify" batch-phase marker (link/traverse sub-phases are
+    // Sec. 7.1 diag: "verify" batch-phase marker (link/traverse sub-phases are
     // logged inside verifyModule as phase.link / phase.traverse).
     TSDEV_DIAG_LOG("batch.phase.verify", "item=%s progId=%d errors=%zu",
                    name.c_str(), progId, errors.size());
@@ -2948,7 +2948,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    (FindExistPos / FUN_101a8360 / BST update all need an open warehouse).
     //    closeWarehouse is therefore deferred to step 8, AFTER successful
     //    validation. In the batch/serve path (flushPerItem == false) the
-    //    warehouse is never closed here — the batch worker closes it once at
+    //    warehouse is never closed here -- the batch worker closes it once at
     //    the end of the session, preserving the session lifetime.
     std::string ellPath = lib.getEllPath(type, progId);
     if (!lib.ellFileExists(type, progId)) {
@@ -2959,7 +2959,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         r.humanStderr = std::string("tsdev_cli: compilation succeeded but .ell file not found: ")
                         + ellPath + "\n";
         // TVS-L.11: createEntry + verify succeeded (progId > 0) but the .ell
-        // artifact is missing on disk — the partial warehouse entry is
+        // artifact is missing on disk -- the partial warehouse entry is
         // orphaned without this. Route through the SAME L.10 single owner.
         // Cleanup errors attach secondarily; the primary exit-9 diagnostic
         // is preserved and success stays false.
@@ -2979,7 +2979,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                         + lib.getXmlPath(type, progId)
                         + " -- finalization may be incomplete\n";
         // TVS-L.11: createEntry + verify succeeded (progId > 0) but the .xml
-        // artifact is missing on disk — route through the SAME L.10 single
+        // artifact is missing on disk -- route through the SAME L.10 single
         // owner. Cleanup errors attach secondarily; the primary exit-9
         // diagnostic is preserved and success stays false.
         cleanupCreatePathFailure(lib, type, typeStr, name, progId,
@@ -2994,7 +2994,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
     //    source is new by construction, so sourceEqualProven = false. The
     //    validator then requires: regular files (already checked above), a
     //    parseable XML GUID, and EXACTLY ONE mixed-endian occurrence of that
-    //    GUID in the new .ell — the Fault A signature (new XML GUID with zero
+    //    GUID in the new .ell -- the Fault A signature (new XML GUID with zero
     //    occurrences in a stale/missing .ell) is detected here even on insert.
     {
         std::string xmlPath = lib.getXmlPath(type, progId);
@@ -3007,7 +3007,7 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                                             noOpRefresh)) {
             // TVS-L.11: createEntry + verify succeeded (progId > 0) but the
             // L.9 persistence-integrity validator detected Fault A (stale .ell)
-            // or InvalidInput — the artifacts are inconsistent and the item is
+            // or InvalidInput -- the artifacts are inconsistent and the item is
             // runtime-unlinkable. Route through the SAME L.10 single owner so
             // the partial warehouse entry + .ell/.xml are removed. Cleanup
             // errors attach secondarily; the primary exit-9 persistence-specific
@@ -3020,9 +3020,9 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
         // Insert can never be a no-op (brand-new item); noOpRefresh is ignored.
     }
 
-    // 8. Close the warehouse (flush) — single-item only; batch flushes once
+    // 8. Close the warehouse (flush) -- single-item only; batch flushes once
     //    at the end. TVS-L.11: this is deferred until AFTER all post-verify
-    //    validation (steps 5–7) succeeds, so that any cleanupCreatePathFailure
+    //    validation (steps 5-7) succeeds, so that any cleanupCreatePathFailure
     //    branch above could still call deleteEntry() against an open warehouse.
     //    In the batch/serve path (flushPerItem == false) the warehouse is left
     //    open for the session lifetime. A failed explicit close is an operation
@@ -3034,8 +3034,8 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
                          + std::to_string(progId);
         r.humanStderr = std::string("tsdev_cli: closeWarehouse failed for ProgId=")
                         + std::to_string(progId) + "\n";
-        // §5 close_failed class: the SEH-failed close leaves the session
-        // possibly open with uncertain teardown state — the worker must
+        // Sec. 5 close_failed class: the SEH-failed close leaves the session
+        // possibly open with uncertain teardown state -- the worker must
         // emit + TerminateProcess, never `delete lib`/ExitProcess into it.
         r.sessionMayBeOpen = true;
         return r;
@@ -3055,12 +3055,12 @@ CliResult doInsert(TsDevLib& lib, ComponentType type,
 // doModify: reuses the library's modifyEntry (findExistPos -> saveSource ->
 // verifyModule on the existing ProgId). The ProgId is preserved (no
 // createEntry). Does not call closeWarehouse (the original single-item path
-// did not either — persistence happens via OrlibExit in the destructor, or
+// did not either -- persistence happens via OrlibExit in the destructor, or
 // via the batch worker's single closeWarehouse at the end).
 //
 // TVS-L.9: BEFORE modifyEntry runs, this function snapshots the pre-op
 // .ell/.xml SHA-256 hashes (when the files already exist) and proves or
-// disproves source-equality via getSource() — the explicit get-source
+// disproves source-equality via getSource() -- the explicit get-source
 // equality check that, when true, lets the shared post-verify validator
 // accept an unchanged .ell hash as a genuine no-op (NoOpAllowed) instead of
 // rejecting it as a stale write (FaultA_StaleEll). AFTER orlib reports
@@ -3082,7 +3082,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     // internally; this extra lookup is a cheap BST search and keeps the
     // snapshot point unambiguous (before any mutation).
     int preProgId = lib.findExistPos(name, type);
-    // §7.1 diag: "findExistPos" batch-phase marker (modify path).
+    // Sec. 7.1 diag: "findExistPos" batch-phase marker (modify path).
     TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s progId=%d",
                    name.c_str(), preProgId);
 
@@ -3104,7 +3104,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
         //   - Error:   the artifact EXISTS but cannot be opened/read/hashed.
         //              Fail closed with exit 9 (artifact_missing, the existing
         //              persistence-integrity error code) BEFORE modifyEntry
-        //              mutates anything — do NOT treat the unreadable file as a
+        //              mutates anything -- do NOT treat the unreadable file as a
         //              new/absent artifact (the original bug: empty string was
         //              silently converted to the no-prior-artifact sentinel).
         auto snapshotPreHash = [&](const std::string& artifactPath,
@@ -3152,16 +3152,16 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
 
         if (!snapshotPreHash(preEllPath, lib.ellFileExists(type, preProgId),
                              ".ell", preEllHash)) {
-            return r;  // exit 9 — pre-op .ell unreadable
+            return r;  // exit 9 -- pre-op .ell unreadable
         }
         if (!snapshotPreHash(preXmlPath, lib.xmlFileExists(type, preProgId),
                              ".xml", preXmlHash)) {
-            return r;  // exit 9 — pre-op .xml unreadable
+            return r;  // exit 9 -- pre-op .xml unreadable
         }
 
         // Explicit get-source equality: prove the new source is byte-identical
         // to the STORED source (retrieved via getSource from the warehouse
-        // record — NOT parsed from EL source comments). Only when this is
+        // record -- NOT parsed from EL source comments). Only when this is
         // true may an unchanged .ell hash be accepted as a no-op. getSource
         // returns empty on failure; in that case sourceEqualProven stays
         // false (fail safe: cannot prove no-op -> require hash refresh).
@@ -3170,15 +3170,15 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
             sourceEqualProven = true;
         }
     } else {
-        // Item does not exist — let modifyEntry surface the not-found result
+        // Item does not exist -- let modifyEntry surface the not-found result
         // (exit 5) below. No pre-snapshot is possible.
         preEllHash = noPriorArtifactHash();
         preXmlHash = noPriorArtifactHash();
     }
 
     Result res = lib.modifyEntry(type, name, source);
-    // §7.1 diag: modifyEntry = saveSource + verifyModule (which log their own
-    // dispatch/phase records) — mark the enclosing completion.
+    // Sec. 7.1 diag: modifyEntry = saveSource + verifyModule (which log their own
+    // dispatch/phase records) -- mark the enclosing completion.
     TSDEV_DIAG_LOG("batch.phase.modifyEntry", "item=%s success=%d progId=%d",
                    name.c_str(), res.success ? 1 : 0, res.progId);
 
@@ -3232,7 +3232,7 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     // getSource returned byte-identical source before the operation. On
     // Fault A / GUID-missing / stale hash / invalid input: success=false,
     // exit 9, persistence-specific structured reason (verdict + type/ProgId/
-    // paths) — detect-and-fail, no rollback/retry (L.8 BLOCKED recovery).
+    // paths) -- detect-and-fail, no rollback/retry (L.8 BLOCKED recovery).
     {
         std::string xmlPath = lib.getXmlPath(type, res.progId);
         r.progId = res.progId;
@@ -3259,18 +3259,18 @@ CliResult doModify(TsDevLib& lib, ComponentType type,
     return r;
 }
 
-// §5 teardown classification for the delete result (close_failed class).
+// Sec. 5 teardown classification for the delete result (close_failed class).
 // deleteEntry(flush=true) bundles its closeWarehouse() inside its flow, so
 // a false return with an EMPTY diskCleanupError cannot be split further at
-// this level — it is one of: the entry vanished before the delete
+// this level -- it is one of: the entry vanished before the delete
 // (FindExistPos <= 0 inside deleteEntry), the delete orchestrator raised
 // SEH, or the close itself failed. In all three the op's close did not
 // provably complete, so the session may still be open (the first two leave
-// it open and intact — individually `delete lib`-safe — but they cannot be
+// it open and intact -- individually `delete lib`-safe -- but they cannot be
 // separated from the third at the CliResult level without lib changes, so
 // all take the fail-closed branch; the observable contract is unchanged).
 // A NON-empty diskCleanupError proves the close SUCCEEDED (disk cleanup
-// runs only after it) — the session is properly closed. flush=false
+// runs only after it) -- the session is properly closed. flush=false
 // (batch/serve) never attempts the close: the session stays open BY
 // DESIGN for the session lifetime and the end-of-session close owns the
 // teardown, so the flag stays clear there. Pure decision (same-TU unit
@@ -3284,7 +3284,7 @@ bool deleteResultLeavesSessionOpen(bool deleted,
 // doDelete: findExistPos (distinct not-found message) -> deleteEntry. When
 // flushPerItem is true (single-item path), deleteEntry calls closeWarehouse()
 // internally as part of its flow. When false (serve/batch path), the
-// closeWarehouse is skipped — the warehouse stays open for the session
+// closeWarehouse is skipped -- the warehouse stays open for the session
 // lifetime, and runServe/runBatch calls closeWarehouse() once at the end.
 // This is critical: closing the warehouse after delete frees the IWHouse
 // interface, causing subsequent enumerateRecords/refreshCache calls to crash.
@@ -3309,7 +3309,7 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
     // TVS-L.12: deleteEntry reports a disk-cleanup failure (a stale .ell/.xml
     // left on disk) by returning false AND populating `diskCleanupError` with
     // the residual path(s) + Windows error(s). The delete orchestrator has
-    // ALREADY run in that case, so the warehouse entry was removed — only the
+    // ALREADY run in that case, so the warehouse entry was removed -- only the
     // on-disk artifact(s) remain. An explicit closeWarehouse failure also
     // returns false, but occurs before disk cleanup and leaves this diagnostic
     // string empty. Both cases use the existing exit-6 / entry_op_failure
@@ -3317,8 +3317,8 @@ CliResult doDelete(TsDevLib& lib, ComponentType type,
     // case.
     std::string diskCleanupError;
     bool deleted = lib.deleteEntry(type, name, flushPerItem, &diskCleanupError);
-    // §5: did the op's own close provably complete? See the helper comment
-    // — true only for a single-op deleteEntry failure with empty
+    // Sec. 5: did the op's own close provably complete? See the helper comment
+    // -- true only for a single-op deleteEntry failure with empty
     // diskCleanupError (close failed or never ran => session possibly open).
     r.sessionMayBeOpen = deleteResultLeavesSessionOpen(
         deleted, diskCleanupError.empty(), flushPerItem);
@@ -3419,19 +3419,19 @@ CliResult doExists(TsDevLib& lib, ComponentType type,
 }
 
 // doUpsert: insert-or-modify by name + type + source. Calls findExistPos
-// FIRST, then branches — avoids the overhead of a failed insert attempt.
+// FIRST, then branches -- avoids the overhead of a failed insert attempt.
 // When the item exists (ProgId > 0), delegates to doModify (preserves the
 // ProgId); otherwise delegates to doInsert with the caller-supplied
 // flushPerItem (true for single-item, false for batch) (assigns a
 // new ProgId). The op field is overridden to "upsert" after delegation
 // (doInsert/doModify set their own op internally). Upsert never emits exit 5
-// (not_found / already_exists) — it branches on existence, so neither
+// (not_found / already_exists) -- it branches on existence, so neither
 // condition is possible by construction.
 CliResult doUpsert(TsDevLib& lib, ComponentType type,
                    const std::string& typeStr, const std::string& name,
                    const std::string& source, bool flushPerItem = true) {
     int progId = lib.findExistPos(name, type);
-    // §7.1 diag: "findExistPos" batch-phase marker (upsert branch point).
+    // Sec. 7.1 diag: "findExistPos" batch-phase marker (upsert branch point).
     TSDEV_DIAG_LOG("batch.phase.findExistPos", "item=%s progId=%d",
                    name.c_str(), progId);
     CliResult r;
@@ -3451,8 +3451,8 @@ struct InsertParams {
     std::string    name;
     std::string    source;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
-    bool           jsonMode = false;  // cmd* output mode — needed only on
-    bool           pbar = false;      // the §5 terminate path (worker-side emit)
+    bool           jsonMode = false;  // cmd* output mode -- needed only on
+    bool           pbar = false;      // the Sec. 5 terminate path (worker-side emit)
     CliResult      result;          // populated by runInsert
 };
 
@@ -3477,15 +3477,15 @@ DWORD WINAPI runInsert(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
     p->result = doInsert(*lib, p->type, p->typeStr, p->name, p->source,
                          /*flushPerItem=*/true);
 
-    // §5 teardown: on a flagged possibly-open session this emits the result
-    // + TerminateProcess on THIS worker — never reached otherwise.
+    // Sec. 5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker -- never reached otherwise.
     singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
                                    p->jsonMode, p->pbar);
 
@@ -3523,7 +3523,7 @@ int cmdInsert(const std::string& typeStr,
         return 2;
     }
 
-    // 1. Read the source file (on the main thread — no orlib dependency).
+    // 1. Read the source file (on the main thread -- no orlib dependency).
     std::string source;
     if (!readFile(sourceFile, source)) {
         r.exitCode = 3;
@@ -3566,9 +3566,9 @@ int cmdInsert(const std::string& typeStr,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("insert", 1);
@@ -3578,7 +3578,7 @@ int cmdInsert(const std::string& typeStr,
         bar.finish();
     }
 
-    // --pbar: a clean success needs no further output — the committed bar
+    // --pbar: a clean success needs no further output -- the committed bar
     // line is the whole report. Failures still emit their detail below.
     if (!(pbar && params.result.success)) {
         emitOutput(params.result, jsonMode);
@@ -3619,7 +3619,7 @@ DWORD WINAPI runModify(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
@@ -3658,7 +3658,7 @@ int cmdModify(const std::string& typeStr,
         return 2;
     }
 
-    // 1. Read the source file (on the main thread — no orlib dependency).
+    // 1. Read the source file (on the main thread -- no orlib dependency).
     std::string source;
     if (!readFile(sourceFile, source)) {
         r.exitCode = 3;
@@ -3699,9 +3699,9 @@ int cmdModify(const std::string& typeStr,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("modify", 1);
@@ -3711,7 +3711,7 @@ int cmdModify(const std::string& typeStr,
         bar.finish();
     }
 
-    // --pbar: a clean success needs no further output — the committed bar
+    // --pbar: a clean success needs no further output -- the committed bar
     // line is the whole report. Failures still emit their detail below.
     if (!(pbar && params.result.success)) {
         emitOutput(params.result, jsonMode);
@@ -3727,8 +3727,8 @@ struct DeleteParams {
     std::string    typeStr;
     std::string    name;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
-    bool           jsonMode = false;  // cmd* output mode — needed only on
-    bool           pbar = false;      // the §5 terminate path (worker-side emit)
+    bool           jsonMode = false;  // cmd* output mode -- needed only on
+    bool           pbar = false;      // the Sec. 5 terminate path (worker-side emit)
     CliResult      result;          // populated by runDelete
 };
 
@@ -3753,14 +3753,14 @@ DWORD WINAPI runDelete(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
     p->result = doDelete(*lib, p->type, p->typeStr, p->name);
 
-    // §5 teardown: on a flagged possibly-open session this emits the result
-    // + TerminateProcess on THIS worker — never reached otherwise.
+    // Sec. 5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker -- never reached otherwise.
     singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
                                    p->jsonMode, p->pbar);
 
@@ -3817,9 +3817,9 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("delete", 1);
@@ -3829,7 +3829,7 @@ int cmdDelete(const std::string& typeStr, const std::string& name,
         bar.finish();
     }
 
-    // --pbar: a clean success needs no further output — the committed bar
+    // --pbar: a clean success needs no further output -- the committed bar
     // line is the whole report. Failures still emit their detail below.
     if (!(pbar && params.result.success)) {
         emitOutput(params.result, jsonMode);
@@ -3870,7 +3870,7 @@ DWORD WINAPI runExists(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
@@ -3929,9 +3929,9 @@ int cmdExists(const std::string& typeStr, const std::string& name,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("exists", 1);
@@ -4132,7 +4132,7 @@ int cmdList(const std::string& typeStr,
 
 // doDependents: enumerate reverse dependents (callers) of a library item by
 // name + type. This is a READ-ONLY query (no compilation, no modification).
-// Returns exit 0 on success (even if zero callers are found — empty is a
+// Returns exit 0 on success (even if zero callers are found -- empty is a
 // valid result, not an error). Returns exit 5 if the root item is not found.
 CliResult doDependents(TsDevLib& lib, ComponentType type,
                        const std::string& typeStr, const std::string& name) {
@@ -4162,10 +4162,10 @@ CliResult doDependents(TsDevLib& lib, ComponentType type,
         return r;
     }
 
-    // Enumerate callers via the warehouse-level cmd 0x0F → cmd 0x3B path.
+    // Enumerate callers via the warehouse-level cmd 0x0F -> cmd 0x3B path.
     // Use enumerateCallersByProgId directly with the ProgId from
     // enumerateRecords, bypassing findExistPos (which fails for some
-    // existing items due to a BST search issue — see M4B1_HANDOFF §9 gap #2).
+    // existing items due to a BST search issue -- see M4B1_HANDOFF Sec. 9 gap #2).
     std::vector<TsDevLib::CallerInfo> callers =
         lib.enumerateCallersByProgId(type, er.progId);
 
@@ -4224,7 +4224,7 @@ DWORD WINAPI runDependents(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
@@ -4281,9 +4281,9 @@ int cmdDependents(const std::string& typeStr, const std::string& name,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("dependents", 1);
@@ -4306,8 +4306,8 @@ struct UpsertParams {
     std::string    name;
     std::string    source;
     const wchar_t* tsPathOverride;  // nullptr = auto-discover
-    bool           jsonMode = false;  // cmd* output mode — needed only on
-    bool           pbar = false;      // the §5 terminate path (worker-side emit)
+    bool           jsonMode = false;  // cmd* output mode -- needed only on
+    bool           pbar = false;      // the Sec. 5 terminate path (worker-side emit)
     CliResult      result;          // populated by runUpsert
 };
 
@@ -4332,14 +4332,14 @@ DWORD WINAPI runUpsert(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
     p->result = doUpsert(*lib, p->type, p->typeStr, p->name, p->source);
 
-    // §5 teardown: on a flagged possibly-open session this emits the result
-    // + TerminateProcess on THIS worker — never reached otherwise.
+    // Sec. 5 teardown: on a flagged possibly-open session this emits the result
+    // + TerminateProcess on THIS worker -- never reached otherwise.
     singleOpTerminateIfSessionOpen(p->result, p->typeStr, p->name,
                                    p->jsonMode, p->pbar);
 
@@ -4376,7 +4376,7 @@ int cmdUpsert(const std::string& typeStr,
         return 2;
     }
 
-    // 1. Read the source file (on the main thread — no orlib dependency).
+    // 1. Read the source file (on the main thread -- no orlib dependency).
     std::string source;
     if (!readFile(sourceFile, source)) {
         r.exitCode = 3;
@@ -4419,9 +4419,9 @@ int cmdUpsert(const std::string& typeStr,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("upsert", 1);
@@ -4431,7 +4431,7 @@ int cmdUpsert(const std::string& typeStr,
         bar.finish();
     }
 
-    // --pbar: a clean success needs no further output — the committed bar
+    // --pbar: a clean success needs no further output -- the committed bar
     // line is the whole report. Failures still emit their detail below.
     if (!(pbar && params.result.success)) {
         emitOutput(params.result, jsonMode);
@@ -4483,7 +4483,7 @@ CliResult doGetSource(TsDevLib& lib, ComponentType type,
                             "output file \"") + outputPath + "\"\n";
             return r;
         }
-        // File written — human-readable stdout reports the destination, NOT
+        // File written -- human-readable stdout reports the destination, NOT
         // the source text. JSON mode still carries the source in `source`.
         r.humanStdout = std::string("Source written to ") + outputPath + "\n";
     } else {
@@ -4524,7 +4524,7 @@ DWORD WINAPI runGetSource(LPVOID param) {
         r.humanStderr = std::string("tsdev_cli: init failed: ") + e.what() + "\n";
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
@@ -4583,9 +4583,9 @@ int cmdGetSource(const std::string& typeStr, const std::string& name,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // --pbar: the op ran to completion — emit the single-item bar in one
+    // --pbar: the op ran to completion -- emit the single-item bar in one
     // draw sequence: 0/1 labelled <type> "<name>", then filled to 1/1
-    // (with " — 1 failed" on failure), pinned by a newline. stderr only;
+    // (with " -- 1 failed" on failure), pinned by a newline. stderr only;
     // stdout and the result contract are untouched.
     if (pbar) {
         PbarRenderer bar("get-source", 1);
@@ -4629,11 +4629,11 @@ struct BatchItem {
 // C-locale std::isspace set (" \t\n\v\f\r"). trim(), token splitting, and
 // the resume-manifest writer's quoting/refusal predicates ALL use this
 // same set, so a name the writer emits can never re-parse to a different
-// component — a '\v'/'\f' adjacent to a token boundary must quote or
+// component -- a '\v'/'\f' adjacent to a token boundary must quote or
 // refuse, never silently retarget (a resumed delete would hit the wrong
 // item).
 const char* const kManifestWs = " \t\n\v\f\r";
-// The kManifestWs subset that can never live on one manifest line — a
+// The kManifestWs subset that can never live on one manifest line -- a
 // name containing '\r' or '\n' can never round-trip (a line break ends
 // the record), so the resume-manifest writer refuses it outright.
 const char* const kManifestLineBreaks = "\r\n";
@@ -4641,7 +4641,7 @@ bool isManifestWs(char c) {
     return std::isspace(static_cast<unsigned char>(c)) != 0;
 }
 
-// trim from both ends (manifest whitespace only — the kManifestWs class
+// trim from both ends (manifest whitespace only -- the kManifestWs class
 // above; std::isspace in the C locale is that same 6-char set).
 std::string trim(const std::string& s) {
     size_t b = 0, e = s.size();
@@ -4679,13 +4679,13 @@ void parseManifestLines(const std::string& content, bool needsSource,
             rest1 = trim(trimmed.substr(sp1 + 1));
         }
 
-        // Token 2: <name> — first whitespace-delimited token of the
+        // Token 2: <name> -- first whitespace-delimited token of the
         // remainder, OR a double-quoted string ("my name") so a resume
         // manifest can carry names containing whitespace (directory
         // batches derive the name verbatim from the file stem, which may
         // contain spaces). An unterminated quote, or a closing quote not
         // followed by whitespace/end-of-line (junk fused to the quoted
-        // token, e.g. "a"b), is a pre-validation failure — fail-closed:
+        // token, e.g. "a"b), is a pre-validation failure -- fail-closed:
         // silently re-tokenizing would address a DIFFERENT component (a
         // delete would hit the wrong item).
         std::string nameTok;
@@ -4828,7 +4828,7 @@ bool parseManifest(const std::string& path, bool needsSource,
 // malformed token stops the batch cooperatively before the next item and
 // fills the rest of the results array with exit-12 not-run markers.
 //
-// R6 (design §5): the decision read is BOUNDED — it runs on a helper
+// R6 (design Sec. 5): the decision read is BOUNDED -- it runs on a helper
 // thread under a WaitForSingleObject bound (default 900 s,
 // --batch-control-timeout-secs; 0 disables). A dead parent that left the
 // channel open can no longer park the batch in an unbounded orphan wait
@@ -4940,19 +4940,19 @@ BatchControlDecision readBatchControlDecision(FILE* input,
     return BatchControlDecision::Error;
 }
 
-// --- Bounded control wait (R6, design §5 row 3) ------------------------------
+// --- Bounded control wait (R6, design Sec. 5 row 3) ------------------------------
 //
 // readBatchControlDecision blocks in fgetc() with no bound. A dead parent
 // that left the control channel OPEN (the pipe writer handle never
-// closed — e.g. inherited by a still-alive grandchild) keeps EOF from
+// closed -- e.g. inherited by a still-alive grandchild) keeps EOF from
 // ever arriving: the batch waits forever as an orphan (field incident:
 // a ~40 min orphan control-wait that then crashed on exit). The read is
 // therefore run on a helper thread and the caller waits on the thread
 // handle with a bounded WaitForSingleObject (default 900 s;
 // --batch-control-timeout-secs; 0 disables the bound and restores the
-// plain blocking read — documented escape hatch, same convention as
+// plain blocking read -- documented escape hatch, same convention as
 // --dispatch-timeout-secs). A timeout yields Error, which the existing
-// flow treats as a cooperative cancel — fail-closed, the batch ends.
+// flow treats as a cooperative cancel -- fail-closed, the batch ends.
 //
 // The wait holds no in-flight dispatch marker, so the dispatch watchdog
 // is already exempt during it (dispatch_watchdog.cpp: "idle waits ...
@@ -4960,7 +4960,7 @@ BatchControlDecision readBatchControlDecision(FILE* input,
 
 // Heap-allocated job shared with the helper thread: a timing-out wait
 // ABANDONS the blocked reader (fgetc on an open channel cannot be
-// cancelled without closing stdin), so the job must outlive the caller —
+// cancelled without closing stdin), so the job must outlive the caller --
 // the abandoned thread still writes decision/error into it. At most one
 // abandoned job per run exists because a timeout cancels the batch.
 struct BatchControlReadJob {
@@ -4983,7 +4983,7 @@ unsigned __stdcall batchControlReadProc(void* arg) {
 // to `timeoutMs` for it. On completion the reader's decision and error
 // pass through unchanged. On timeout or wait failure the result is Error
 // with a nonempty diagnostic (the caller treats Error as cancel); the
-// still-blocked helper is deliberately abandoned — its handle is closed
+// still-blocked helper is deliberately abandoned -- its handle is closed
 // (closing a thread handle does not kill the thread) and its heap job is
 // leaked, bounded at one per run since a timeout cancels the batch; the
 // thread dies with the process. The reader is injected so unit tests can
@@ -5012,7 +5012,7 @@ BatchControlDecision runBoundedControlRead(
     const HANDLE hThread = reinterpret_cast<HANDLE>(th);
     const DWORD w = WaitForSingleObject(hThread, timeoutMs);
     if (w == WAIT_OBJECT_0) {
-        // The reader exited — the handle wait synchronizes-with its exit,
+        // The reader exited -- the handle wait synchronizes-with its exit,
         // so decision/error are fully written. Join-complete: safe to
         // free the job.
         error = std::move(job->error);
@@ -5022,11 +5022,11 @@ BatchControlDecision runBoundedControlRead(
         return d;
     }
     // WAIT_TIMEOUT / WAIT_FAILED: do NOT join (the reader is still blocked
-    // on the control channel) and do NOT free the job — the abandoned
+    // on the control channel) and do NOT free the job -- the abandoned
     // thread still writes to it.
     if (w == WAIT_TIMEOUT) {
-        // Report the bound in its true unit (whole seconds when exact —
-        // production bounds are second-valued — else milliseconds so a
+        // Report the bound in its true unit (whole seconds when exact --
+        // production bounds are second-valued -- else milliseconds so a
         // sub-second bound never renders as "0 s").
         const std::string bound = (timeoutMs % 1000 == 0)
             ? std::to_string(static_cast<unsigned long>(timeoutMs / 1000)) +
@@ -5049,7 +5049,7 @@ BatchControlDecision batchControlFileReader(void* ctx, std::string& error) {
     return readBatchControlDecision(static_cast<FILE*>(ctx), error);
 }
 
-// readBatchControlDecisionBounded: the production control-read entry —
+// readBatchControlDecisionBounded: the production control-read entry --
 // readBatchControlDecision on a helper thread under a bounded wait.
 // timeoutSecs==0 disables the bound (plain blocking read; documented
 // escape hatch). Callers cap the value at 86400, so *1000 cannot
@@ -5109,14 +5109,14 @@ static const char* const kVasAbortMarkerMessage =
     "Batch aborted (WHServer VAS headroom) before this item was attempted";
 
 // Same role for the corpse-abort arm of the guard (P4 gap-a): the batch
-// was aborted because a WHServer pid is a crash-frozen zombie — distinct
+// was aborted because a WHServer pid is a crash-frozen zombie -- distinct
 // text so the array does not misreport a zombie as a VAS breach.
 static const char* const kZombieAbortMarkerMessage =
     "Batch aborted (WHServer crash-frozen zombie) before this item was "
     "attempted";
 
 // Render the one-shot warning for a transient measureVasFree() failure
-// (emitted once per run — a handle/OpenProcess race must not kill a batch).
+// (emitted once per run -- a handle/OpenProcess race must not kill a batch).
 // JSON: {event:"whserver_vas_measure_failed", pid}. Human:
 //   tsdev_cli: whserver.vas.measure_failed pid=N (continuing)
 std::string whserverVasMeasureFailedLine(DWORD pid, bool jsonOutput) {
@@ -5167,7 +5167,7 @@ std::string whserverVasAbortLine(DWORD pid, const tsdev::WhVasStats& st,
 
 // Render the loud abort event emitted when the guard's corpse pre-check
 // fires (P4 gap-a): a WHServer pid that parents a TSCrashReport.exe child
-// is a crash-frozen zombie — it still enumerates and its frozen VAS reads
+// is a crash-frozen zombie -- it still enumerates and its frozen VAS reads
 // healthy under VirtualQueryEx, but every warehouse dispatch into it
 // wedges (the dispatch_watchdog whserver_crashed convention). Same
 // "batch_aborted" event family as whserverVasAbortLine, with the honest
@@ -5191,17 +5191,17 @@ std::string whserverZombieAbortLine(DWORD pid, bool jsonOutput) {
 }
 
 // Render the one-shot warning for an inconclusive process enumeration at
-// the guard (P4 g-1 — a failed Toolhelp32 snapshot is INCONCLUSIVE, never
+// the guard (P4 g-1 -- a failed Toolhelp32 snapshot is INCONCLUSIVE, never
 // "no server"/"no reporters"; see the snapshotOk contracts in
 // whserver_health.h and dispatch_watchdog.h). Emitted once per run per
-// enumeration arm — the same fail-open-with-warning convention as
+// enumeration arm -- the same fail-open-with-warning convention as
 // whserverVasMeasureFailedLine: the guard proceeds with the same
 // protection the collapsing overloads gave silently, now honestly
 // reported. `which` selects the enumeration:
-//   "whserver"    the WHServer pid set itself — the whole guard is blind
+//   "whserver"    the WHServer pid set itself -- the whole guard is blind
 //                 this check;
 //   "crashreport" the TSCrashReport parent set behind the zombie
-//                 pre-check — the corpse check is blind this check; the
+//                 pre-check -- the corpse check is blind this check; the
 //                 VAS measurement still runs.
 // JSON: {event:"whserver_enum_failed"} / {event:"crashreport_enum_failed"}.
 // Human:
@@ -5317,8 +5317,8 @@ bool detectForeignWhServerClients() {
 }
 
 // The corpse pre-check's pure decision (P4 gap-a): the first WHServer pid
-// that also appears as a TSCrashReport.exe PARENT pid — a crash-frozen
-// zombie — or 0 when the intersection is empty. TSCrash.dll launches the
+// that also appears as a TSCrashReport.exe PARENT pid -- a crash-frozen
+// zombie -- or 0 when the intersection is empty. TSCrash.dll launches the
 // reporter as a child of the crashing process, so parent-in-WHServer-set
 // is exactly the dispatch_watchdog whserver_crashed test. Both sets come
 // from the caller's snapshotOk enumerations; inconclusive enumerations
@@ -5332,7 +5332,7 @@ DWORD whserverZombiePid(const std::vector<DWORD>& whPids,
     return 0;
 }
 
-// The honest refusal message for a detected corpse — mirrors the breach
+// The honest refusal message for a detected corpse -- mirrors the breach
 // message's reason-in-parens convention ("... (whserver_vas_free=NMB);
 // refusing <op> before dispatch"): names the frozen pid + its crash
 // reporter and carries the machine-readable "whserver_zombie" token the
@@ -5345,9 +5345,9 @@ std::string whserverZombieRefusalMessage(const std::string& op,
            "refusing " + op + " before dispatch";
 }
 
-// Not-run marker messages for the recycle paths (design §4.1 — the markers
+// Not-run marker messages for the recycle paths (design Sec. 4.1 -- the markers
 // are distinct from kVasAbortMarkerMessage so the array says WHY the item
-// never ran). These are the shipped marker texts — pinned verbatim by the
+// never ran). These are the shipped marker texts -- pinned verbatim by the
 // unit test (check 6); the refusal text is additionally mirrored by the
 // Python client constant. The exit-18 texts share the "resubmit remaining
 // items" resumable-tail suffix; the client keys on exit 12 / exit 18-19
@@ -5355,14 +5355,14 @@ std::string whserverZombieRefusalMessage(const std::string& op,
 static const char* const kRecycledMarkerMessage =
     "WHServer recycled; resubmit remaining items";
 // The granted DEFER's text (RC-17): outcome-Recycled but NO recycle
-// happened — only the bounded close ran; the engine resumes in the fresh
-// process — so "recycled" would misreport what ran.
+// happened -- only the bounded close ran; the engine resumes in the fresh
+// process -- so "recycled" would misreport what ran.
 static const char* const kRecycleDeferredMarkerMessage =
     "WHServer recycle deferred; resubmit remaining items";
 static const char* const kRecycleRefusedMarkerMessage =
     "WHServer recycle refused before this item was attempted";
 
-// RC-17: reason is the truthful marker discriminator — the granted defer
+// RC-17: reason is the truthful marker discriminator -- the granted defer
 // (recycle_deferred_own_session) is outcome-Recycled but must not wear
 // the "recycled" text.
 const char* recycleMarkerMessage(const tsdev::RecycleResult& rec) {
@@ -5392,10 +5392,10 @@ std::string recycleDetailText(const tsdev::RecycleResult& rec) {
 }
 
 // The recycle event line emitted on the progress channel when the engine
-// runs (design §4.1 step 3 — full field set: reason/detail/exit_code plus
+// runs (design Sec. 4.1 step 3 -- full field set: reason/detail/exit_code plus
 // the breaching WHServer pid, measured free_mb, the 1-based resume
 // boundary index/total, and the resume-manifest path; each optional
-// member is emitted only when its caller supplies it — the serve path and
+// member is emitted only when its caller supplies it -- the serve path and
 // the pre-flight continue-in-process event have no boundary/manifest).
 // JSON:
 //   {event:"whserver_recycled"|"whserver_recycle_refused", reason, detail,
@@ -5445,12 +5445,12 @@ std::string whserverRecycleEventLine(const tsdev::RecycleResult& rec,
     return s;
 }
 
-// Resume-manifest writer (design §4.1 step 2): write items[firstIndex, ...)
+// Resume-manifest writer (design Sec. 4.1 step 2): write items[firstIndex, ...)
 // to `tsdev_resume_<pid>_<ticks>.manifest` inside `dir` (empty dir falls
-// back to the cwd) in the exact schema parseManifestLines re-reads —
+// back to the cwd) in the exact schema parseManifestLines re-reads --
 // "<type> <name> [<source_file>]" per line, with <name> double-quoted when
 // it contains whitespace (directory batches derive names verbatim from
-// file stems, which may contain spaces — an unquoted spaced name would
+// file stems, which may contain spaces -- an unquoted spaced name would
 // re-parse to a DIFFERENT component: dropped items, or a delete hitting
 // the wrong target). Only truly unrepresentable names make the writer
 // REFUSE (fail-closed) before creating any file: a name containing a line
@@ -5458,28 +5458,28 @@ std::string whserverRecycleEventLine(const tsdev::RecycleResult& rec,
 // re-parse as a quoted token, and a name containing BOTH '"' and
 // whitespace cannot be expressed (unquoted it splits; quoted it
 // terminates early). A bare '"' inside a whitespace-free name IS
-// representable unquoted — it re-parses as a plain token — so it is
+// representable unquoted -- it re-parses as a plain token -- so it is
 // written, not refused. On refusal no partial manifest may be
 // resubmitted, and the caller's diagnostics state that no manifest
 // exists. The rule in one line: a stored preValid=FALSE item refuses
-// the whole write BEFORE any file exists (fail-closed — no manifest is
+// the whole write BEFORE any file exists (fail-closed -- no manifest is
 // emitted), while a stored preValid=TRUE item is always written and
 // round-trips. The refusal exists because a preValid=false item's
-// stored fields were produced by a failure path, not by the parser —
+// stored fields were produced by a failure path, not by the parser --
 // a fabricated placeholder name (e.g. the non-ANSI-filename item)
 // would otherwise be written as a dispatchable line and a resumed
 // delete could hit a component that never existed in the batch input.
 // Refusing keeps the tail manually resubmittable instead of emitting
 // a manifest that retargets. Note the round-trip case is NOT the same
 // set: only a preValid=true item reaches the line-emission loop, and
-// even degenerate representable fields round-trip — an empty name
+// even degenerate representable fields round-trip -- an empty name
 // writes "<type>" alone and re-parses to the same "name must not be
 // empty" pre-validation failure, a missing source_file to "manifest
-// line missing <source_file>", an unknown typeStr to "unknown type" —
+// line missing <source_file>", an unknown typeStr to "unknown type" --
 // so the resumed batch reproduces the original per-item failure
 // instead of dropping it.
-// Caller-owned cleanup (§4.1): the file is written once and never deleted
-// by the CLI — it must survive for manual resubmission and crash
+// Caller-owned cleanup (Sec. 4.1): the file is written once and never deleted
+// by the CLI -- it must survive for manual resubmission and crash
 // forensics. Returns false with `err` set on refusal or I/O failure (an
 // I/O failure also removes the partial file, best-effort); on success
 // `outPath` carries the absolute path the event line reports.
@@ -5498,8 +5498,8 @@ bool writeResumeManifest(const std::string& dir,
     }
     // Representability pre-check BEFORE any file is created (see the
     // comment above): a preValid=false tail item can never become a
-    // dispatchable line — refuse rather than write a fabricated name —
-    // then line break, leading '"', or '"' combined with whitespace —
+    // dispatchable line -- refuse rather than write a fabricated name --
+    // then line break, leading '"', or '"' combined with whitespace --
     // refuse with the offending item reported (fail-closed, so no
     // corrupt/partial manifest can ever be resubmitted). The caller
     // appends the manual-resume guidance once.
@@ -5536,7 +5536,7 @@ bool writeResumeManifest(const std::string& dir,
         return false;
     }
     // path::string() throws (std::system_error) when the resolved path is
-    // not representable in the ANSI code page — e.g. a --batch-stdin run
+    // not representable in the ANSI code page -- e.g. a --batch-stdin run
     // from a non-ASCII cwd. Convert ONCE, guarded: an uncaught throw here
     // would escape into the VEH and kill the process mid-batch; a guarded
     // conversion fails closed with an honest "no manifest" diagnostic.
@@ -5580,7 +5580,7 @@ bool writeResumeManifest(const std::string& dir,
     f.close();
     if (!f) {
         // Never leave a truncated manifest behind while reporting that
-        // resume is manual — delete the partial file (best-effort).
+        // resume is manual -- delete the partial file (best-effort).
         std::error_code rmEc;
         std::filesystem::remove(path, rmEc);
         err = "failed to write resume manifest \"" + pathStr +
@@ -5593,16 +5593,16 @@ bool writeResumeManifest(const std::string& dir,
 
 // Forward declaration: emitBatchOutput is defined below runBatch (same
 // anonymous namespace) but the recycle close_failed path must emit the
-// results array from the WORKER before TerminateProcess-self — the main
-// thread never gets a turn on that path (design §4.1 emission ordering).
+// results array from the WORKER before TerminateProcess-self -- the main
+// thread never gets a turn on that path (design Sec. 4.1 emission ordering).
 void emitBatchOutput(const std::vector<CliResult>& results);
 
-// §4.1 step-2 writer shared by the pre-stage and the post-close tail.
+// Sec. 4.1 step-2 writer shared by the pre-stage and the post-close tail.
 // Writes the resume manifest for [attempted, total), emitting the loud
 // diagnostics through emitLine (a writer refusal names the refusing item
 // and writes nothing; a written manifest whose path cannot ride the JSON
 // event channel is reported and dropped from the event). Returns the
-// event-carriable path — empty when no manifest exists.
+// event-carriable path -- empty when no manifest exists.
 std::string writeRecycleBoundaryManifest(
     const std::vector<BatchItem>& items,
     size_t attempted,
@@ -5640,11 +5640,11 @@ std::string writeRecycleBoundaryManifest(
     return manifestPath;
 }
 
-// RC-18 (opt 1): pre-stage the recycle boundary BEFORE the §5 close stage
-// runs. A close that hangs never returns — its monitor kills the process
-// from its own thread, bypassing every post-close emission — so the
-// durable record is staged up front in pinned §4.1 order: marker tail +
-// stdout array (JSON mode only — human modes stream per-item completions
+// RC-18 (opt 1): pre-stage the recycle boundary BEFORE the Sec. 5 close stage
+// runs. A close that hangs never returns -- its monitor kills the process
+// from its own thread, bypassing every post-close emission -- so the
+// durable record is staged up front in pinned Sec. 4.1 order: marker tail +
+// stdout array (JSON mode only -- human modes stream per-item completions
 // and carry no stdout array) + resume manifest. The close outcome then
 // affects only the event line and the exit code. Sets resultsEmitted so
 // the post-close tail and runBatchAndEmit never double-emit the array;
@@ -5673,14 +5673,14 @@ std::string prestageRecycleBoundary(
                                         resumeManifestDir, emitLine);
 }
 
-// Run ONE recycle attempt through the engine (design §2 steps 1-6) with the
+// Run ONE recycle attempt through the engine (design Sec. 2 steps 1-6) with the
 // production seams: the real census/death sampler and the raw-COM attach.
-// `ownSessionExists` is the design-§2 step-2 close-guard conditional — R1
+// `ownSessionExists` is the design-Sec. 2 step-2 close-guard conditional -- R1
 // rule: every production call site passes FALSE, because an attached site
 // NEVER invokes the engine (see recycleSiteDefers below). The MyWork dir
 // resolves from the lib's discovered MyWork\Bin path; resolution failure
 // refuses attach_failed inside the engine (NEVER WHouseEx Create=1 on an
-// unresolved path, §2 step 4).
+// unresolved path, Sec. 2 step 4).
 tsdev::RecycleResult runWhserverRecycleCli(TsDevLib* lib,
                                          bool ownSessionExists) {
     tsdev::DispatchMarkerSnapshot marker;
@@ -5706,38 +5706,38 @@ tsdev::RecycleResult runWhserverRecycleCli(TsDevLib* lib,
 //
 // PROVEN live findings: a process holding an attached warehouse session
 // contributes +7 to WHServer's m_nLock for the process's ENTIRE lifetime
-// — closeWarehouse does NOT release it (2026-10-20); and ONLY GRACEFUL
+// -- closeWarehouse does NOT release it (2026-10-20); and ONLY GRACEFUL
 // process teardown releases it (2026-10-21): the R1 defer exited via
 // TerminateProcess(18) and the dead client's seven references stayed
 // orphaned >=5.6 min with no clients alive, so the resumed process's
-// census refused census_lock -> exit 19 — the resume chain deadlocked.
+// census refused census_lock -> exit 19 -- the resume chain deadlocked.
 // Graceful teardown (closeWarehouse + `delete lib` + ExitProcess) DID
 // release the +7 in the same experiment: graceful clients reached
 // lock==0 at exit and the server self-reaped ~6 s later.
 //
 // R1 rule: the engine may run ONLY at a NEVER-ATTACHED site (own
-// contribution == 0). R2 rule: at an ATTACHED site — a batch
+// contribution == 0). R2 rule: at an ATTACHED site -- a batch
 // between-items breach after any op dispatched, or a serve breach after
-// any warehouse-using request — the recycle boundary STILL exits 18
-// WITHOUT running the engine, but FIRST runs the §5 close stage itself
-// (tsdev::boundedCloseWarehouse — zombie pre-check + monitor-bounded
+// any warehouse-using request -- the recycle boundary STILL exits 18
+// WITHOUT running the engine, but FIRST runs the Sec. 5 close stage itself
+// (tsdev::boundedCloseWarehouse -- zombie pre-check + monitor-bounded
 // closeWarehouse on THIS session-owning thread) so the process can die
-// GRACEFULLY: `delete lib` + worker return + normal process teardown —
+// GRACEFULLY: `delete lib` + worker return + normal process teardown --
 // the only exit that releases the +7. The caller resumes in a fresh
 // process (direct path: the resume-manifest batch; serve: the respawned
 // broker) whose own contribution is 0, and the re-encountered breach
 // runs the engine there at its never-attached guard site.
 //
-// The exit-18 shape is the pinned resume contract — the results array +
+// The exit-18 shape is the pinned resume contract -- the results array +
 // marker tail, the resume manifest, and the whserver_recycled event
 // carrying the manifest path (the Python client's _resume_manifest_path
 // matches only that event name and whserver_recycle_refused; exit_code
-// 18 alone drives the serve respawn) — so a GRANTED defer keeps outcome
+// 18 alone drives the serve respawn) -- so a GRANTED defer keeps outcome
 // Recycled while reason/detail say WHY the recycle was deferred rather
 // than performed here. A close that FAILS or outlives the bound is a
-// REFUSED defer instead: the §5 close-stage family (close_failed /
+// REFUSED defer instead: the Sec. 5 close-stage family (close_failed /
 // close_timeout / close_bound_invalid / zombie_*_close), exit 19, the
-// whserver_recycle_refused event, and the terminateSelf teardown — emit
+// whserver_recycle_refused event, and the terminateSelf teardown -- emit
 // + flush + TerminateProcess-self(19), never `delete lib`/ExitProcess
 // into a possibly-open warehouse.
 
@@ -5749,18 +5749,18 @@ bool recycleSiteDefers(bool ownSessionExists) {
 }
 
 // The attached-site defer result an attached breach exits on
-// (recycleSiteDefers). R2: runs the §5 close stage FIRST — the shared
+// (recycleSiteDefers). R2: runs the Sec. 5 close stage FIRST -- the shared
 // boundedCloseWarehouse (zombie pre-check + monitor-bounded close on the
-// CALLING/session-owning thread — orlib20 binds CELWHouse per
+// CALLING/session-owning thread -- orlib20 binds CELWHouse per
 // (thread,path), so the close must run where the session lives).
 //   * close ok  -> GRANTED: Recycled-shaped exit-18 (the resume
-//     boundary), safeToDeleteLib — the caller takes the GRACEFUL
+//     boundary), safeToDeleteLib -- the caller takes the GRACEFUL
 //     post-close teardown (`delete lib` + normal teardown), the only
 //     exit that releases the +7.
 //   * close false / bound fired / zombie gate / bad bound -> REFUSED on
-//     the §5 close-stage family: exit 19 + terminateSelf — the own
+//     the Sec. 5 close-stage family: exit 19 + terminateSelf -- the own
 //     session may still be open.
-// onCloseBoundExceeded: EMPTY in production — the helper installs its
+// onCloseBoundExceeded: EMPTY in production -- the helper installs its
 // fatal default (stderr + TerminateProcess(19)) since a wedged close
 // can never return; tests inject a non-fatal stub that records the fire
 // and unblocks the scripted close (the late return is never trusted).
@@ -5785,7 +5785,7 @@ tsdev::RecycleResult recycleDeferredResult(
     tsdev::RecycleResult r;
     r.outcome         = tsdev::RecycleOutcome::Recycled;
     r.exitCode        = 18;
-    r.terminateSelf   = false;  // close succeeded — GRACEFUL teardown
+    r.terminateSelf   = false;  // close succeeded -- GRACEFUL teardown
     r.safeToDeleteLib = true;   // releases the +7 (never TerminateProcess)
     r.reason          = "recycle_deferred_own_session";
     r.detail          = "own warehouse session closed; the resumed "
@@ -5815,7 +5815,7 @@ struct VasGuardConfig {
 };
 
 // One-shot warning latches for the guard's inconclusive outcomes (one
-// emission each per run — a transient failure warns, it never aborts).
+// emission each per run -- a transient failure warns, it never aborts).
 // `measure`   = a per-pid measureVasFree failure;
 // `whEnum`    = the WHServer pid enumeration itself was inconclusive
 //               (a failed Toolhelp32 snapshot is never "no server");
@@ -5856,11 +5856,11 @@ struct RecycleConfig {
     bool authorizedViaEnv = false;
 };
 
-// The batch-* subcommand set — single source shared by both flag
+// The batch-* subcommand set -- single source shared by both flag
 // validations that restrict to batch subcommands:
 // --batch-progress-control (batch-* only) and --recycle-whserver
 // (batch-* + serve). The subcommand dispatch in main() encodes the same
-// names once more, but that is the command table, not a rule — it stays
+// names once more, but that is the command table, not a rule -- it stays
 // as-is. Pure helper so the -NoTs unit test can pin the set.
 bool isBatchSubcommand(const std::string& sub) {
     return iequals(sub, "batch-insert")     ||
@@ -5873,7 +5873,7 @@ bool isBatchSubcommand(const std::string& sub) {
            iequals(sub, "batch-upsert-dir");
 }
 
-// §6.1 subcommand restriction: --recycle-whserver is valid only with the
+// Sec. 6.1 subcommand restriction: --recycle-whserver is valid only with the
 // batch-* subcommands and serve.
 bool isRecycleWhserverSubcommand(const std::string& sub) {
     return isBatchSubcommand(sub) || iequals(sub, "serve");
@@ -5972,7 +5972,7 @@ const char kRecycleControlSuppressedNote[] =
     "suppressed for this run by --batch-progress-control (the control "
     "channel belongs to the dying process)\n";
 
-// Emit the §6.3 warning once per process lifetime (the static guard makes
+// Emit the Sec. 6.3 warning once per process lifetime (the static guard makes
 // the once-per-process/broker-lifetime contract explicit and testable).
 void emitRecycleWhserverWarning() {
     static bool warned = false;
@@ -6119,23 +6119,23 @@ struct BatchParams {
     const wchar_t*          tsPathOverride;  // nullptr = auto-discover
     bool                    jsonProgress = false;  // --json: NDJSON progress
     bool                    batchControl = false;  // --batch-progress-control
-    // Bounded control wait in seconds (R6, design §5): 0 disables the
-    // bound (plain blocking read — documented escape hatch); applies only
+    // Bounded control wait in seconds (R6, design Sec. 5): 0 disables the
+    // bound (plain blocking read -- documented escape hatch); applies only
     // when batchControl is on. Default 900, --batch-control-timeout-secs.
     unsigned                controlTimeoutSecs = 900;
     bool                    pbar = false;   // --pbar: pinned stderr bar
     VasGuardConfig          vasGuard;       // WHServer VAS-headroom guard
     RecycleConfig           recycle;        // --recycle-whserver (R3 engine)
-    // Directory the §4.1 resume manifest is written into on a recycle
+    // Directory the Sec. 4.1 resume manifest is written into on a recycle
     // exit (beside the source manifest / the cwd for --batch-stdin / the
     // scanned directory for batch-*-dir; empty -> cwd inside the writer).
     std::string             resumeManifestDir;
     std::vector<CliResult>  results;  // populated by runBatch
     int                     exitCode = 0;   // 0/2/3/14/18/19 (set by worker)
     // Set by the recycle tail-bypass path when it already emitted the JSON
-    // results array on the worker (§4.1 order — emission must precede
+    // results array on the worker (Sec. 4.1 order -- emission must precede
     // `delete lib` on exit-18 and TerminateProcess-self on close_failed);
-    // runBatchAndEmit then skips its own emit — no double-emit.
+    // runBatchAndEmit then skips its own emit -- no double-emit.
     bool                    resultsEmitted = false;
     // RC-18: the worker pre-stages the recycle boundary (marker tail +
     // stdout array + resume manifest) BEFORE the defer close stage, which
@@ -6150,7 +6150,7 @@ struct BatchParams {
 // The batch worker: constructs ONE TsDevLib, loops over items IN ORDER using
 // the shared doInsert/doModify/doDelete logic, collects results, calls
 // closeWarehouse() once at the end, then destructs TsDevLib. Continue on
-// failure (never abort) — collect all results. Progress is always emitted on
+// failure (never abort) -- collect all results. Progress is always emitted on
 // stderr: one completion line per attempted item (including pre-validation
 // and init failures; --json additionally precedes it with a started event)
 // plus one batch_completed after the close + result rewrite.
@@ -6186,7 +6186,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     // Per-item failure detail: under a FAILED marker emit the result's full
     // humanStderr block (compiler errors etc.), minus its trailing CR/LF so
     // the emitter doesn't add a blank line. Empty humanStderr emits nothing
-    // — the marker's message= already carries the concise error. Human
+    // -- the marker's message= already carries the concise error. Human
     // modes only; --json keeps the strict NDJSON event stream.
     auto emitFailureDetail = [&](const CliResult& r) {
         if (p->jsonProgress || r.success || r.humanStderr.empty()) return;
@@ -6198,7 +6198,7 @@ DWORD WINAPI runBatch(LPVOID param) {
         if (!detail.empty()) emitLine(detail);
     };
 
-    // §7.1 diag: batch start record (doubles as the run header).
+    // Sec. 7.1 diag: batch start record (doubles as the run header).
     TSDEV_DIAG_LOG("batch.start", "op=%s items=%zu", op.c_str(),
                    p->items.size());
 
@@ -6224,7 +6224,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     try {
         lib = new TsDevLib(p->tsPathOverride);
     } catch (const std::exception& e) {
-        // Init failure: every attempted item gets an init_failure result —
+        // Init failure: every attempted item gets an init_failure result --
         // still an attempted item, so emit the completion line for each
         // (with its started event under --json). With batch control the
         // same per-item handshake applies: a
@@ -6292,20 +6292,20 @@ DWORD WINAPI runBatch(LPVOID param) {
         g_pbarLogTarget = nullptr;
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
     // Source-file column in the manifest schema (3-token ops); drives the
-    // §4.1 resume-manifest lines on a recycle exit.
+    // Sec. 4.1 resume-manifest lines on a recycle exit.
     const bool needsSource =
         (op == "insert" || op == "modify" || op == "upsert");
     bool anyFailed = false;
     bool cancelled = false;
     bool aborted = false;            // WHServer VAS-headroom guard fired
     std::string abortReason;         // e.g. "whserver_vas_free=123MB"
-    // Breaching-server context for the §4.1 recycle event fields (pid,
-    // free_mb) — captured when the guard detects the breach.
+    // Breaching-server context for the Sec. 4.1 recycle event fields (pid,
+    // free_mb) -- captured when the guard detects the breach.
     DWORD abortPid = 0;
     uint64_t abortFreeMB = 0;
     uint64_t abortLargestMB = 0;
@@ -6313,11 +6313,11 @@ DWORD WINAPI runBatch(LPVOID param) {
     // the restart trigger alone is not a danger level. A census_lock
     // refuse continues the run above the floor, never below it.
     bool abortBelowFloor = false;
-    // Not-run marker text for the abort arm the guard fired — the VAS
+    // Not-run marker text for the abort arm the guard fired -- the VAS
     // default; the zombie arm substitutes its own message.
     const char* abortMarkerMsg = kVasAbortMarkerMessage;
     VasGuardWarns vasWarns;          // one-shot inconclusive warnings
-    // Set once any item reaches a real op dispatch (preValid items only —
+    // Set once any item reaches a real op dispatch (preValid items only --
     // pre-validated failures never touch the warehouse, so they never
     // lazily attach a session). Feeds the R1 recycleSiteDefers gate at
     // the between-items check: a breach after all-pre-validated items is
@@ -6339,7 +6339,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     // aborted&&authorized / aborted arms below split them.
     auto vasGuardCheck = [&]() {
         // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
-        // INCONCLUSIVE — never "no server". Warn once and pass: the same
+        // INCONCLUSIVE -- never "no server". Warn once and pass: the same
         // fail-open protection the collapsing overload gave silently, now
         // honestly reported (never an abort on a failed enumeration).
         std::vector<DWORD> whPids;
@@ -6354,7 +6354,7 @@ DWORD WINAPI runBatch(LPVOID param) {
             return;
         }
         // Corpse pre-check (P4 gap-a): a WHServer pid parenting a
-        // TSCrashReport.exe child is a crash-frozen zombie — it still
+        // TSCrashReport.exe child is a crash-frozen zombie -- it still
         // enumerates and its frozen VAS measures healthy under
         // VirtualQueryEx, so the measurement loop below would PASS it and
         // the next dispatch would wedge into the dead session. Abort
@@ -6380,7 +6380,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                     return;
                 }
             } else {
-                // Inconclusive — never "no zombies", never an abort on a
+                // Inconclusive -- never "no zombies", never an abort on a
                 // failed enumeration alone: warn once and proceed (the
                 // same fail-open-with-warning convention as measure).
                 if (!vasWarns.crashEnum) {
@@ -6488,27 +6488,27 @@ DWORD WINAPI runBatch(LPVOID param) {
         }
     };
 
-    // Recycle exit path (design §2 step-6 tail-bypass): every recycle
+    // Recycle exit path (design Sec. 2 step-6 tail-bypass): every recycle
     // outcome that ends the batch runs through here instead of the normal
-    // tail — including the R2 attached-site DEFER result (recycleDeferredResult,
-    // which never ran the engine but DID run the §5 close stage). It
+    // tail -- including the R2 attached-site DEFER result (recycleDeferredResult,
+    // which never ran the engine but DID run the Sec. 5 close stage). It
     // appends the recycle not-run markers
     // itself (the tail's marker loop would re-append with the wrong
-    // message) — except on the pre-staged defer path, where
+    // message) -- except on the pre-staged defer path, where
     // prestageRecycleBoundary already appended + emitted them BEFORE the
     // close stage (RC-18: a hanging close never returns, so the array +
     // manifest are staged up front and only event + summary follow here).
     // It SKIPS the tail
     // closeWarehouse + exit-6 rewrite + batchAggregateExitCode (a failed
-    // SECOND close could never downgrade 18/19), then runs the §5 teardown:
-    // `delete lib` — the identical post-close path a normal batch end runs,
+    // SECOND close could never downgrade 18/19), then runs the Sec. 5 teardown:
+    // `delete lib` -- the identical post-close path a normal batch end runs,
     // safe because step-2 close already succeeded (or no session ever
-    // existed; R2: the granted defer's bounded close already ran here) —
+    // existed; R2: the granted defer's bounded close already ran here) --
     // UNLESS terminateSelf (close_failed, or the REFUSED defer whose own
     // session may still be open): emit + flush, then
     // die via TerminateProcess-self(rec.exitCode), never `delete lib`/ExitProcess
-    // into a possibly-open warehouse (§5, dispatch_watchdog convention).
-    // A GRANTED defer takes the `delete lib` + return path — the worker
+    // into a possibly-open warehouse (Sec. 5, dispatch_watchdog convention).
+    // A GRANTED defer takes the `delete lib` + return path -- the worker
     // joins and main exits 18 GRACEFULLY, the only teardown that releases
     // the +7 (R2, live-proven 2026-10-21).
     // p->exitCode is set directly to 18/19.
@@ -6516,8 +6516,8 @@ DWORD WINAPI runBatch(LPVOID param) {
         // RC-17: the marker text follows the reason, not the outcome.
         const char* markerMsg = recycleMarkerMessage(rec);
         // RC-18: on the pre-staged defer path the tail is already
-        // appended (and already emitted + flushed, see the §4.1 order
-        // below) — never append twice. The staged tail wears the
+        // appended (and already emitted + flushed, see the Sec. 4.1 order
+        // below) -- never append twice. The staged tail wears the
         // deferred text; a refused close still reports truthfully via
         // the event + exit code (and the client re-words exit-12
         // markers on every non-resumed boundary).
@@ -6527,11 +6527,11 @@ DWORD WINAPI runBatch(LPVOID param) {
                     cancelledBatchItemResult(op, p->items[j], markerMsg));
             }
         }
-        // §4.1 pinned order: results array -> resume manifest -> event
+        // Sec. 4.1 pinned order: results array -> resume manifest -> event
         // line -> batch_completed summary -> fflush -> exit. The results
-        // array is the sole durable record — emit + flush it HERE on the
+        // array is the sole durable record -- emit + flush it HERE on the
         // worker BEFORE `delete lib` (whose OrlibExit would otherwise
-        // dispatch toward the just-killed/torn server — UNPROVEN shape)
+        // dispatch toward the just-killed/torn server -- UNPROVEN shape)
         // and BEFORE any TerminateProcess-self (the main thread never
         // runs again on that path). The flag stops runBatchAndEmit from
         // re-emitting the array (and skips the re-emit when the array
@@ -6540,13 +6540,13 @@ DWORD WINAPI runBatch(LPVOID param) {
             emitBatchOutput(p->results);
             p->resultsEmitted = true;
         }
-        // Step 2 — resume manifest: items from the boundary index onward
+        // Step 2 -- resume manifest: items from the boundary index onward
         // in the schema parseManifest re-reads, written before the event
         // that carries its path. Caller-owned cleanup: the CLI never
         // deletes it. A write failure is loud (stderr line; the event
-        // then carries no manifest member) — the array's marker tail
-        // still pins the boundary (§4.4). RC-18: the pre-staged defer
-        // path reuses the already-written file — writing again would
+        // then carries no manifest member) -- the array's marker tail
+        // still pins the boundary (Sec. 4.4). RC-18: the pre-staged defer
+        // path reuses the already-written file -- writing again would
         // leak a second pid_ticks manifest.
         std::string manifestPath;
         if (p->boundaryPrestaged) {
@@ -6556,8 +6556,8 @@ DWORD WINAPI runBatch(LPVOID param) {
                 p->items, attempted, needsSource, p->resumeManifestDir,
                 emitLine);
         }
-        // Step 3 — the event AFTER the manifest exists (it carries the
-        // path) with the full §4.1 field set: breaching pid, free_mb,
+        // Step 3 -- the event AFTER the manifest exists (it carries the
+        // path) with the full Sec. 4.1 field set: breaching pid, free_mb,
         // the 1-based resume boundary index, total, manifest path.
         emitLine(whserverRecycleEventLine(rec, p->jsonProgress,
                                           abortPid, abortFreeMB,
@@ -6574,7 +6574,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                      "\"");
         }
         if (p->pbar) bar.finish();
-        // Final summary — the same batch_completed line the normal tail
+        // Final summary -- the same batch_completed line the normal tail
         // emits, carrying the truthful abort context (the recycle follows
         // a VAS-guard breach). Always printed: a recycle exit is never a
         // clean run.
@@ -6593,7 +6593,7 @@ DWORD WINAPI runBatch(LPVOID param) {
         std::fflush(stderr);
         if (rec.terminateSelf) {
             // close_failed: die WITHOUT DLL detach into a possibly-open
-            // warehouse (§5, dispatch_watchdog convention).
+            // warehouse (Sec. 5, dispatch_watchdog convention).
             TerminateProcess(GetCurrentProcess(),
                              static_cast<UINT>(rec.exitCode));
             std::abort();  // TerminateProcess does not return
@@ -6605,23 +6605,23 @@ DWORD WINAPI runBatch(LPVOID param) {
 
     // Pre-flight VAS check (before item 0): the between-items gate only
     // runs after item N completes, so a WHServer already below threshold
-    // when the batch starts (the field case — WHServer persisted from a
+    // when the batch starts (the field case -- WHServer persisted from a
     // previous session) would leave item 0 unguarded. runBatch has NO
     // explicit warehouse-open step: WHServer.exe is a lazy singleton
     // spawned inside item 0's first orlib20 dispatch, so empty pids here
-    // means WHServer is not attached yet — the attach itself spawns a
+    // means WHServer is not attached yet -- the attach itself spawns a
     // fresh 2 GB process, which is genuinely safe to pass. Only an
     // already-running (depleted) WHServer breaches here.
     if (p->vasGuard.enabled) {
         vasGuardCheck();
     }
 
-    // Recycle trigger — pre-flight site (design §1 row 1): never attached
+    // Recycle trigger -- pre-flight site (design Sec. 1 row 1): never attached
     // (WHServer lazy-spawns inside item 0), so step-2 close is SKIPPED and
-    // a successful recycle lets the batch CONTINUE in-process — item 0's
+    // a successful recycle lets the batch CONTINUE in-process -- item 0's
     // lazy attach is a FIRST activation on a fresh server (the ordinary
     // item-0 path), not the proven-hazardous re-activation-after-close.
-    // R1: this is a NEVER-ATTACHED site — the engine may run in-process
+    // R1: this is a NEVER-ATTACHED site -- the engine may run in-process
     // here (see recycleSiteDefers); a between-items attached-site breach
     // defers via exit 18 and lands back HERE on resume to do the actual
     // recycle. Tri-state: every mode except Off takes the boundary here
@@ -6630,7 +6630,7 @@ DWORD WINAPI runBatch(LPVOID param) {
         const tsdev::RecycleResult rec =
             runWhserverRecycleCli(lib, /*ownSessionExists=*/false);
         if (rec.outcome == tsdev::RecycleOutcome::Recycled) {
-            // Continue-in-process: no boundary/manifest — the event
+            // Continue-in-process: no boundary/manifest -- the event
             // carries only the breach context (pid, free_mb).
             emitLine(whserverRecycleEventLine(rec, p->jsonProgress,
                                               abortPid, abortFreeMB));
@@ -6675,7 +6675,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                 op, index, total, item.typeStr, item.name,
                 p->jsonProgress));
         }
-        // §7.1 diag: per-item start marker (item name + op). Pre-validated
+        // Sec. 7.1 diag: per-item start marker (item name + op). Pre-validated
         // failures never reach an op, so they are not marked as started.
         if (item.preValid) {
             TSDEV_DIAG_LOG("batch.item.enter", "op=%s item=%s type=%s",
@@ -6684,13 +6684,13 @@ DWORD WINAPI runBatch(LPVOID param) {
 
         CliResult r;
         if (!item.preValid) {
-            // Pre-validated failure (malformed line / unreadable file) —
+            // Pre-validated failure (malformed line / unreadable file) --
             // carry over the result populated during manifest parsing, just
             // stamp the op.
             r = item.result;
             r.op = op;
         } else {
-            // Real dispatch — the first op lazily attaches the warehouse
+            // Real dispatch -- the first op lazily attaches the warehouse
             // session (WHServer lazy-spawn inside item N's first orlib20
             // call). Mark before dispatch: on a throw the thread dies
             // anyway, and the conservative direction is "session may
@@ -6711,8 +6711,8 @@ DWORD WINAPI runBatch(LPVOID param) {
             }
         }
 
-        // §7.1 diag: per-item completion marker — doubles as the
-        // partial-batch record (§7.3d) when the process dies mid-run.
+        // Sec. 7.1 diag: per-item completion marker -- doubles as the
+        // partial-batch record (Sec. 7.3d) when the process dies mid-run.
         // Guarded like the start marker: only items that reached an op.
         if (item.preValid) {
             TSDEV_DIAG_LOG("batch.item.done",
@@ -6756,32 +6756,32 @@ DWORD WINAPI runBatch(LPVOID param) {
             }
         }
 
-        // WHServer VAS-headroom guard (TVS-1b): between-items gate — sample
+        // WHServer VAS-headroom guard (TVS-1b): between-items gate -- sample
         // AFTER item N completes, BEFORE item N+1 is dispatched (in-flight
         // ops cannot be cancelled). Same shared check as the pre-flight; a
         // breach aborts loudly and breaks the loop.
         if (p->vasGuard.enabled && index < total) {
             vasGuardCheck();
-            // Recycle trigger — between-items site (design §1 row 2,
+            // Recycle trigger -- between-items site (design Sec. 1 row 2,
             // R1+R2): a breach here exits 18 + resume through the
             // tail-bypass path either way, but the ENGINE runs
-            // in-process only at the never-attached edge — a run of
+            // in-process only at the never-attached edge -- a run of
             // all-pre-validated failures dispatched nothing, so this
             // process holds no WHServer locks and the census can pass.
             // Once any op dispatched the site is ATTACHED: this
             // process's +7 m_nLock contribution lasts its whole
-            // lifetime (closeWarehouse cannot release it — only
+            // lifetime (closeWarehouse cannot release it -- only
             // GRACEFUL process teardown does, live-proven 2026-10-21),
             // so an in-process census can never pass and the breach
-            // takes the defer boundary instead: R2 runs the §5 close
+            // takes the defer boundary instead: R2 runs the Sec. 5 close
             // stage here on this session-owning worker thread
-            // (recycleDeferredResult -> boundedCloseWarehouse — zombie
+            // (recycleDeferredResult -> boundedCloseWarehouse -- zombie
             // pre-check + the 30 s monitor bound), then GRACEFULLY
             // exits 18 through `delete lib` + worker return (the only
-            // teardown that releases the +7 — the RESUMED process runs
+            // teardown that releases the +7 -- the RESUMED process runs
             // the engine at the never-attached pre-flight site). A
-            // failed/bounded-out close REFUSES the defer on the §5
-            // close-stage family — emit + flush +
+            // failed/bounded-out close REFUSES the defer on the Sec. 5
+            // close-stage family -- emit + flush +
             // TerminateProcess-self(19), the open-session teardown
             // class. Tri-state: every mode except Off takes the boundary
             // here (the default RescueOnly includes the below-floor
@@ -6791,7 +6791,7 @@ DWORD WINAPI runBatch(LPVOID param) {
                 tsdev::RecycleResult rec;
                 if (recycleSiteDefers(anyOpDispatched)) {
                     // RC-18 (opt 1): stage the boundary BEFORE the close
-                    // stage below — a close that hangs never returns (its
+                    // stage below -- a close that hangs never returns (its
                     // monitor kills the process without returning,
                     // bypassing recycleExit), so the array + manifest are
                     // already durable when the close runs; the close
@@ -6875,16 +6875,16 @@ DWORD WINAPI runBatch(LPVOID param) {
             result.humanStderr =
                 "tsdev_cli: closeWarehouse failed at end of batch\n";
             // --pbar: the rewrite turned an already-counted success into a
-            // failure — keep the bar's "— <n> failed" suffix in sync.
+            // failure -- keep the bar's "-- <n> failed" suffix in sync.
             if (p->pbar) bar.noteFailure();
         }
     }
 
     // Destruct TsDevLib (OrlibExit persists; EDIT control destroyed on this
-    // thread) — SKIPPED on close_failed: the failed close leaves the
+    // thread) -- SKIPPED on close_failed: the failed close leaves the
     // session possibly open with uncertain teardown state, so `delete lib`
-    // (OrlibExit) followed by ExitProcess would DLL-detach into it — the
-    // §5 close_failed class ("WHouse stays in memory" modal; an invisible
+    // (OrlibExit) followed by ExitProcess would DLL-detach into it -- the
+    // Sec. 5 close_failed class ("WHouse stays in memory" modal; an invisible
     // deadlock under the SW_HIDE broker). The terminate block below runs
     // the identical tail emission first, so output + exit code are
     // unchanged; only the teardown differs.
@@ -6895,13 +6895,13 @@ DWORD WINAPI runBatch(LPVOID param) {
     p->exitCode = batchAggregateExitCode(/*batchStarted=*/true, anyFailed,
                                          cancelled, aborted);
 
-    // §7.1 diag: batch end record (final aggregate exit code).
+    // Sec. 7.1 diag: batch end record (final aggregate exit code).
     TSDEV_DIAG_LOG("batch.end", "op=%s exit=%d", op.c_str(), p->exitCode);
 
     // Emit the final summary AFTER the close + retroactive rewrite so its
     // counters and exit code reflect the authoritative final results.
     // completed counts attempted items only (markers are reported via
-    // not_run); successes/failures count only attempted final outcomes —
+    // not_run); successes/failures count only attempted final outcomes --
     // the close rewrite touches attempted successes only, since markers are
     // already failures.
     size_t successes = 0, failures = 0;
@@ -6910,7 +6910,7 @@ DWORD WINAPI runBatch(LPVOID param) {
     }
     // --pbar: commit the bar as a permanent line first; the summary is the
     // last stderr line underneath it. Under --pbar the summary prints only
-    // when the batch was NOT fully clean — a clean run's committed bar is
+    // when the batch was NOT fully clean -- a clean run's committed bar is
     // the whole report. In the non-pbar modes it always prints.
     if (p->pbar) bar.finish();
     const bool notClean = failures > 0 || cancelled || aborted ||
@@ -6925,12 +6925,12 @@ DWORD WINAPI runBatch(LPVOID param) {
     g_pbarLogTarget = nullptr;
 
     if (closeFailed) {
-        // §5 teardown (dispatch_watchdog convention, same as recycleExit):
-        // the session may still be open — emit the pending results array
+        // Sec. 5 teardown (dispatch_watchdog convention, same as recycleExit):
+        // the session may still be open -- emit the pending results array
         // ON THIS WORKER (the main thread never runs again; resultsEmitted
         // suppresses runBatchAndEmit's re-emit, the same flag the recycle
         // tail-bypass uses), then flush + TerminateProcess with the
-        // aggregate exit code — never `delete lib`/ExitProcess into a
+        // aggregate exit code -- never `delete lib`/ExitProcess into a
         // possibly-open warehouse. The code is the same value the normal
         // return would have produced (2/3/14 per batchAggregateExitCode).
         if (p->jsonProgress) {
@@ -6993,9 +6993,9 @@ int runBatchAndEmit(const std::string& op, std::vector<BatchItem>& items,
     WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
 
-    // Emit the JSON results array on stdout — only under --json; human and
+    // Emit the JSON results array on stdout -- only under --json; human and
     // --pbar modes emit no stdout array. Recycle paths already emitted it
-    // on the worker (§4.1 order: before `delete lib` / TerminateProcess),
+    // on the worker (Sec. 4.1 order: before `delete lib` / TerminateProcess),
     // so skip here to avoid a double-emit (params.resultsEmitted).
     if (jsonProgress && !params.resultsEmitted) {
         emitBatchOutput(params.results);
@@ -7066,7 +7066,7 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
         }
     }
 
-    // Resume-manifest directory (§4.1): beside the source manifest; the
+    // Resume-manifest directory (Sec. 4.1): beside the source manifest; the
     // cwd for --batch-stdin (no source manifest exists). An unresolvable
     // path leaves it empty -> the writer falls back to the cwd.
     std::string resumeDir;
@@ -7078,10 +7078,10 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
                   std::filesystem::path(manifestFile), ec).parent_path();
         // base.string() throws (std::system_error) on a path the ANSI
         // code page cannot represent (e.g. a non-ASCII cwd under
-        // --batch-stdin — the client's only direct batch mode). Catch it:
+        // --batch-stdin -- the client's only direct batch mode). Catch it:
         // leaving resumeDir empty makes writeResumeManifest fall back to
         // its own guarded cwd conversion, which fails closed with an
-        // honest "no manifest" diagnostic — an uncaught throw here would
+        // honest "no manifest" diagnostic -- an uncaught throw here would
         // escape into the VEH and TerminateProcess the whole batch.
         if (!ec) {
             try {
@@ -7098,7 +7098,7 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
 // --- TVS-I.2: directory batch mode -------------------------------------------
 //
 // parseDirectory: enumerate regular files in dirPath using
-// std::filesystem::directory_iterator (NOT recursive — subdirectories are
+// std::filesystem::directory_iterator (NOT recursive -- subdirectories are
 // skipped via is_regular_file()). Filter by accepted extensions: if
 // `extensions` is empty, use defaults {".el", ".txt"}; if non-empty, use only
 // the specified extensions. Extension matching is case-insensitive (normalize
@@ -7110,10 +7110,10 @@ int cmdBatch(const std::string& op, const std::string& manifestFile,
 // so my.strategy.el -> my.strategy), sourceFile = the file path string,
 // source = readFile(path) if needsSource is true, else empty string; a
 // successfully read but EMPTY source file fails the item like a read
-// failure (preValid=false, exit 3, "source file is empty" — the same
+// failure (preValid=false, exit 3, "source file is empty" -- the same
 // text parseManifestLines and cmdInsert use). The
 // directory_iterator construction is wrapped in try/catch for
-// filesystem_error — on error, emit stderr and return false (caller emits
+// filesystem_error -- on error, emit stderr and return false (caller emits
 // exit 1 without a second message). The per-entry path::string() narrow
 // conversions are likewise guarded: an ACP-unrepresentable filename fails
 // THAT item (preValid=false, exit 3) instead of throwing out of the scan.
@@ -7152,7 +7152,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
     }
 
     for (const auto& entry : it) {
-        // Skip subdirectories — only regular files.
+        // Skip subdirectories -- only regular files.
         if (!std::filesystem::is_regular_file(entry.status())) continue;
 
         const std::filesystem::path& p = entry.path();
@@ -7160,7 +7160,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
         // Narrow-convert extension/stem/full path under ONE guard:
         // path::string() throws std::system_error when a filename is not
         // representable in the ANSI code page. Only the
-        // directory_iterator ctor is guarded today — an uncaught throw
+        // directory_iterator ctor is guarded today -- an uncaught throw
         // here would kill the whole batch process (misattributed as an
         // orlib20 crash). Instead fail THAT item loudly: a preValid=false
         // entry is reported as a failure and is never dispatched (no
@@ -7188,7 +7188,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
             // Render the filename identifiably even though it cannot be
             // narrowed: the wide form + UTF-8 survives every character
             // (the JSON emitter replaces anything unrepresentable with
-            // U+FFFD — the error_handler_t::replace convention), so the
+            // U+FFFD -- the error_handler_t::replace convention), so the
             // diagnostic names WHICH entry failed instead of surfacing
             // only a placeholder. preValid=false means the name is never
             // dispatched and the resume writer refuses it outright, so
@@ -7224,7 +7224,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
             }
             // Mirror parseManifestLines and cmdInsert: an EMPTY source
             // file is a pre-validation failure too (same exit-3 item,
-            // same message text) — never dispatch empty source.
+            // same message text) -- never dispatch empty source.
             if (item.source.empty()) {
                 item.preValid = false;
                 item.result.typeStr = typeStr;
@@ -7249,7 +7249,7 @@ bool parseDirectory(int type, const std::string& typeStr, const std::string& dir
 // the directory into BatchItems via parseDirectory(), then calls the shared
 // runBatchAndEmit() helper. If parseDirectory returns false (directory could
 // not be opened), the "failed to open directory" message was already emitted
-// by parseDirectory — return exit 1 without a second message. If it returns
+// by parseDirectory -- return exit 1 without a second message. If it returns
 // true but yielded zero items (empty dir, no matching files), emit the
 // "no files matching" message and return exit 1 (no JSON array emitted).
 int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
@@ -7271,7 +7271,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 
     std::vector<BatchItem> items;
     if (!parseDirectory(type, typeStr, dirPath, extensions, needsSource, items)) {
-        // Directory open failed — parseDirectory already emitted the
+        // Directory open failed -- parseDirectory already emitted the
         // "failed to open directory" stderr message. Exit 1, no JSON array.
         return 1;
     }
@@ -7301,7 +7301,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
         // only (read as binary, like --batch-stdin).
         _setmode(_fileno(stdin), _O_BINARY);
     }
-    // Resume-manifest directory (§4.1): the scanned directory — the
+    // Resume-manifest directory (Sec. 4.1): the scanned directory -- the
     // manifest file's ".manifest" extension is outside the default
     // {".el", ".txt"} scan set, so it cannot re-enter a later dir batch.
     return runBatchAndEmit(op, items, tsPath, jsonProgress, batchControl,
@@ -7313,7 +7313,7 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 //
 // The serve layer takes a parsed JSON request (from the named-pipe broker in
 // TVS-K.4), validates it, and dispatches to the corresponding do* function on
-// a shared TsDevLib. This is the pure logic layer with NO pipe I/O — fully
+// a shared TsDevLib. This is the pure logic layer with NO pipe I/O -- fully
 // unit-testable (parseServeRequest is pure; dispatchServeRequest needs a real
 // TsDevLib and is validated via E2E in K.6a).
 
@@ -7323,15 +7323,15 @@ int cmdBatchDir(const std::string& op, int type, const std::string& typeStr,
 //   type          ComponentType (resolved from typeStr)
 //   typeStr       the original type string verbatim (for CliResult)
 //   name          component name
-//   source        raw EasyLanguage source TEXT (not a file path — the Python
+//   source        raw EasyLanguage source TEXT (not a file path -- the Python
 //                 wrapper reads files client-side and sends the text)
 //   caseInsensitive  exists only (optional, default false)
 //   outputPath    get-source only (optional; broker-local file path)
-//   hasBatch/batchId/batchIndex/batchTotal  optional batch progress tag —
+//   hasBatch/batchId/batchIndex/batchTotal  optional batch progress tag --
 //                 mutating ops only (insert/modify/delete/upsert); hasBatch
 //                 gates stderr progress emission and the response "progress"
 //                 member (see parseServeRequest/addServeProgress)
-//   policy      backup-cache only (optional; verbatim request string —
+//   policy      backup-cache only (optional; verbatim request string --
 //                 "skip"|"overwrite"|"abort", absent = default "abort";
 //                 "prompt" is rejected at parse: the broker has no console)
 struct ServeRequest {
@@ -7387,10 +7387,10 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         return r;
     }
 
-    // Optional 'batch' progress metadata — checked before the 'quit'
+    // Optional 'batch' progress metadata -- checked before the 'quit'
     // early-out so quit+batch still rejects. Accepted only on the mutating
     // ops (insert/modify/delete/upsert). When present the object is
-    // all-or-none and closed: exactly the members id/index/total — any extra
+    // all-or-none and closed: exactly the members id/index/total -- any extra
     // or missing member rejects the whole request. id is a nonempty string;
     // index/total are positive integral JSON numbers that must fit a 32-bit
     // size_t (this binary is built Win32) and satisfy index <= total.
@@ -7435,7 +7435,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         out.batchTotal = static_cast<size_t>(tot);
     }
 
-    // Optional 'policy' — backup-cache only. Checked before the cache-op
+    // Optional 'policy' -- backup-cache only. Checked before the cache-op
     // early-out so policy on a non-cache op (incl. quit) still rejects. The
     // value must be a string naming skip/overwrite/abort (case-insensitive,
     // like --cache-backup-policy). "prompt" is deliberately rejected: the
@@ -7479,7 +7479,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
         out.policy = "abort";
 
     // 3. 'quit' and the cache ops need no type/name/source. The cache ops
-    // are pure filesystem — they are not WHServer-mutating, so they bypass
+    // are pure filesystem -- they are not WHServer-mutating, so they bypass
     // the VAS guard and reject 'batch' tags (the batch gate above only
     // accepts insert/modify/delete/upsert).
     if (op == "quit" || op == "backup-cache" || op == "restore-cache") {
@@ -7608,7 +7608,7 @@ CliResult parseServeRequest(const ordered_json& req, ServeRequest& out) {
 // (req.hasBatch): it appends exactly one top-level member
 //   "progress":{"batch_id":<id>,"index":<i>,"total":<t>,"phase":"completed"}
 // after the existing cliResultToJson members (no envelope, no other top-level
-// change). Untagged requests are a no-op — the response stays byte-identical.
+// change). Untagged requests are a no-op -- the response stays byte-identical.
 void addServeProgress(ordered_json& response, const ServeRequest& req) {
     if (!req.hasBatch) return;
     ordered_json prog;
@@ -7623,9 +7623,9 @@ void addServeProgress(ordered_json& response, const ServeRequest& req) {
 // tagged request that failed validation AFTER its 'batch' metadata was
 // accepted (e.g. unknown type, missing source): the item still counts as
 // attempted, so it emits the same two events as a dispatched item. The
-// op/type/name come from the failure CliResult — ServeRequest fields are
+// op/type/name come from the failure CliResult -- ServeRequest fields are
 // only populated on full parse success. Both strings are empty for untagged
-// requests (hasBatch==false — including requests rejected for invalid
+// requests (hasBatch==false -- including requests rejected for invalid
 // 'batch' metadata itself, which get no progress).
 std::pair<std::string, std::string> taggedParseFailureLines(
     const CliResult& r, const ServeRequest& req, bool jsonOutput) {
@@ -7647,7 +7647,7 @@ std::pair<std::string, std::string> taggedParseFailureLines(
 // the TsDevLib destructor) and the explicit closeWarehouse() in runServe.
 // Read-only ops (exists/get-source/list) need no flush. "quit" returns a success
 // CliResult with op="quit" (the broker layer in K.4 handles the actual
-// shutdown). "backup-cache"/"restore-cache" are pure filesystem — they take
+// shutdown). "backup-cache"/"restore-cache" are pure filesystem -- they take
 // no lib state, so they run through runCachePhase's serve path even though
 // the session's TsDevLib already exists; the "before any other operation"
 // contract is satisfied by sequential request handling (a cache request is
@@ -7660,10 +7660,10 @@ CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
     if (req.op == "backup-cache" || req.op == "restore-cache") {
         // Pure-filesystem cache ops: run the same core as the standalone
         // --backup-cache/--restore-cache phase (runCachePhase's serve path).
-        // Not WHServer-mutating — they bypass the VAS guard and reject
+        // Not WHServer-mutating -- they bypass the VAS guard and reject
         // 'batch' tags in parseServeRequest. The policy was validated at
         // parse; empty = default "abort" (the broker never prompts).
-        // parseServeRequest already rejected "prompt" and unknown values —
+        // parseServeRequest already rejected "prompt" and unknown values --
         // that parse-layer rejection is authoritative, so this reparse
         // cannot fail and its return value is intentionally ignored.
         CacheBackupPolicy policy = CacheBackupPolicy::Abort;
@@ -7711,7 +7711,7 @@ CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
         return r;
     }
 
-    // Unknown op — should not reach here (parseServeRequest rejects unknown
+    // Unknown op -- should not reach here (parseServeRequest rejects unknown
     // ops), but defend in depth with a usage error.
     CliResult r;
     r.success = false;
@@ -7728,7 +7728,7 @@ CliResult dispatchServeRequest(TsDevLib& lib, const ServeRequest& req,
 // visible to the test). The serve loop + cmdServe are validated via E2E in
 // K.6a (they need a real TsDevLib and an elevated broker).
 
-// 64 MiB cap for framed messages (per protocol spec §2). Messages whose
+// 64 MiB cap for framed messages (per protocol spec Sec. 2). Messages whose
 // declared length exceeds this are rejected by readFramed without allocating.
 static constexpr size_t kServeFrameCap = 67108864;
 
@@ -7775,7 +7775,7 @@ bool writeFramed(HANDLE pipe, const std::string& payload) {
 
 // writeServeResponse writes the ordinary response frame for one request:
 // the cliResultToJson body plus the tagged "progress" member (a no-op for
-// untagged requests). Exactly one frame per call — used by both the normal
+// untagged requests). Exactly one frame per call -- used by both the normal
 // dispatch path and the parse-failure path.
 bool writeServeResponse(HANDLE pipe, const CliResult& r,
                         const ServeRequest& req) {
@@ -7798,7 +7798,7 @@ bool readFramed(HANDLE pipe, std::string& out) {
 }
 
 // createServePipe creates the named pipe with the security descriptor from
-// protocol spec §3 (Medium-IL + owner/admins/system DACL). Returns the pipe
+// protocol spec Sec. 3 (Medium-IL + owner/admins/system DACL). Returns the pipe
 // handle, or INVALID_HANDLE_VALUE on failure. The pipe is a single-instance,
 // duplex, byte-mode, blocking pipe.
 HANDLE createServePipe(const std::string& pipeName) {
@@ -7841,7 +7841,7 @@ HANDLE createServePipe(const std::string& pipeName) {
 
     std::wstring sddl;
     if (userSidStr.empty()) {
-        // Fallback: SID retrieval failed — use the old OW-based SDDL.
+        // Fallback: SID retrieval failed -- use the old OW-based SDDL.
         // The unelevated client may fail to connect (OW resolves to
         // Administrators when elevated, and unelevated tokens have
         // Administrators as deny-only). Emit a Warning-level diagnostic
@@ -7902,49 +7902,49 @@ int serveConnectExitCode(BOOL connected, DWORD connectError) {
     return 1;
 }
 
-// TVS-1c: WHServer VAS-headroom guard — serve-path gate. runServe calls this
-// once per parsed request BEFORE dispatchServeRequest — the serve-side analog
+// TVS-1c: WHServer VAS-headroom guard -- serve-path gate. runServe calls this
+// once per parsed request BEFORE dispatchServeRequest -- the serve-side analog
 // of runBatch's between-items gate (serve requests are already per-item: the
 // Python client loops items and sends one tagged request each). Only the
-// item-mutating ops (insert/modify/delete/upsert) are gated — read-only ops
+// item-mutating ops (insert/modify/delete/upsert) are gated -- read-only ops
 // (exists/get-source/quit) and parse failures never reach this check.
 // WHServer is a lazy singleton: no pids -> pass. A transient measureVasFree
 // failure warns once per process lifetime (VasGuardWarns latches, runServe
 // scope) and does NOT refuse. A breach (either threshold) emits the same
 // batch_aborted event as runBatch and fills `refusal` with an exit-14
-// CliResult — error.code "whserver_vas_abort" via errorCodeString, message
-// carrying the measured headroom + breaching reason — and returns true; the
+// CliResult -- error.code "whserver_vas_abort" via errorCodeString, message
+// carrying the measured headroom + breaching reason -- and returns true; the
 // caller writes the refusal response WITHOUT dispatching the op (one request
 // still yields exactly one response frame).
-// P4 additions: the WHServer pid enumeration uses the snapshotOk overload —
+// P4 additions: the WHServer pid enumeration uses the snapshotOk overload --
 // a failed Toolhelp32 walk is INCONCLUSIVE (never "no server") and warns
 // once instead of silently passing (g-1). And a corpse pre-check runs
 // BEFORE the VAS measurement (gap-a): a WHServer pid parenting a
-// TSCrashReport.exe child is a crash-frozen zombie — still enumerated with
+// TSCrashReport.exe child is a crash-frozen zombie -- still enumerated with
 // a healthy-looking frozen VAS, so the measurement would PASS it and the
 // next dispatch would wedge into the dead session. A detected zombie
 // refuses on the same exit-14 shape (batch_aborted event with
 // reason="whserver_zombie", message naming the frozen pid); a failed
-// crash-report enumeration warns once and proceeds — never a refusal on
+// crash-report enumeration warns once and proceeds -- never a refusal on
 // an inconclusive enumeration.
 // R3 recycle wiring + R1/R2 defer rule: when `recycle` is authorized and
 // `lib` is provided, a breach (or a detected zombie) produces the
 // exit-18/19 recycle-boundary refusal BEFORE the refusal is filled. The
 // ENGINE runs in-process only at the never-attached site
-// (sessionAttached==false — a first request): an attached broker holds
+// (sessionAttached==false -- a first request): an attached broker holds
 // +7 m_nLock for the process's whole lifetime (closeWarehouse cannot
-// release it — only GRACEFUL process teardown does, live-proven
+// release it -- only GRACEFUL process teardown does, live-proven
 // 2026-10-21), so an in-process census can never pass; the attached
-// breach takes the exit-18 defer boundary instead — R2 runs the §5
+// breach takes the exit-18 defer boundary instead -- R2 runs the Sec. 5
 // close stage HERE on this session-owning serve-loop thread
 // (recycleDeferredResult -> boundedCloseWarehouse), so the defer is
-// GRANTED only after a successful bounded close (graceful exit-18 —
-// the only teardown that releases the +7) and REFUSED on the §5
+// GRANTED only after a successful bounded close (graceful exit-18 --
+// the only teardown that releases the +7) and REFUSED on the Sec. 5
 // close-stage family (exit 19, terminateSelf) when it is not. The
 // client respawns the broker and the resubmitted request reaches this
 // same gate at a never-attached site where the engine then runs. The
 // refusal carries exit 18/19 and `recycleOut`/`recycleRan` report the
-// boundary so runServe can do the §4.3 tail-bypass teardown (respond
+// boundary so runServe can do the Sec. 4.3 tail-bypass teardown (respond
 // frame -> flush -> delete lib (granted defer: graceful ExitProcess 18)
 // or TerminateProcess-self -> broker exits;
 // the client respawns and resubmits bounded by max_recycles).
@@ -7977,16 +7977,16 @@ bool serveVasGuardRefuse(const ServeRequest& req,
 
     // Shared refusal tail for a tripped guard (breach or corpse): with
     // recycle authorized the recycle boundary is produced FIRST and its
-    // outcome becomes the response's exit code (18/19 — design §4.3: the
+    // outcome becomes the response's exit code (18/19 -- design Sec. 4.3: the
     // frame carries error.code whserver_recycled / whserver_recycle_refused
     // via errorCodeString, and the caller does the tail-bypass teardown);
-    // without it the request is refused on the plain exit-14 guard class —
+    // without it the request is refused on the plain exit-14 guard class --
     // the request is never consumed (no dispatch, no item events).
     // R1/R2: the boundary is produced by the engine only at the
-    // never-attached site; an attached broker defers — R2 runs the §5
+    // never-attached site; an attached broker defers -- R2 runs the Sec. 5
     // close stage inside recycleDeferredResult BEFORE this refusal is
     // filled, so the frame + event below ALWAYS carry the truthful
-    // outcome (granted defer 18 / close-refused 19 — the client never
+    // outcome (granted defer 18 / close-refused 19 -- the client never
     // reads a stale "recycled" from a broker whose close failed).
     // Returns TRUE when the request is refused (recycle boundary or
     // exit-14); FALSE when a census_lock refuse above the abort floor
@@ -8057,7 +8057,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
     };
 
     // snapshotOk overload (P4 g-1): a failed Toolhelp32 walk is
-    // INCONCLUSIVE — never "no server". Warn once and pass: the same
+    // INCONCLUSIVE -- never "no server". Warn once and pass: the same
     // fail-open protection the collapsing overload gave silently, now
     // honestly reported (never a refusal on a failed enumeration).
     std::vector<DWORD> whPids;
@@ -8072,7 +8072,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
         return false;
     }
     // Corpse pre-check (P4 gap-a): a WHServer pid parenting a
-    // TSCrashReport.exe child is a crash-frozen zombie — it still
+    // TSCrashReport.exe child is a crash-frozen zombie -- it still
     // enumerates and its frozen VAS measures healthy under VirtualQueryEx,
     // so the loop below would PASS it and the next dispatch would wedge
     // into the dead session. Refuse BEFORE the dispatch.
@@ -8092,7 +8092,7 @@ bool serveVasGuardRefuse(const ServeRequest& req,
                 return true;
             }
         } else {
-            // Inconclusive — never "no zombies", never a refusal on a
+            // Inconclusive -- never "no zombies", never a refusal on a
             // failed enumeration alone: warn once and proceed (the same
             // fail-open-with-warning convention as measure).
             if (!warns.crashEnum) {
@@ -8230,7 +8230,7 @@ DWORD WINAPI runServe(LPVOID param) {
                                     // latches (once per process lifetime)
     bool sessionAttached = false;   // set once a WAREHOUSE-USING request
                                     // dispatched (or threw mid-dispatch,
-                                    // conservatively) — feeds the R1
+                                    // conservatively) -- feeds the R1
                                     // recycleSiteDefers gate (attached
                                     // => defer exit 18; never-attached
                                     // => engine may run in-process)
@@ -8255,16 +8255,16 @@ DWORD WINAPI runServe(LPVOID param) {
         p->exitCode = 4;
         return 0;
     }
-    // P4-e: orlib init inside the ctor may have installed its own UEF —
+    // P4-e: orlib init inside the ctor may have installed its own UEF --
     // re-assert ours outermost before any warehouse call (idempotent).
     installProcessUef();
 
     // Outer loop: accept connections until the 'quit' op (or a fatal
     // ConnectNamedPipe failure).
     while (!p->quit.load()) {
-        // §7.1 diag (idle-phase marker): mark the pipe wait as an idle-by-design
+        // Sec. 7.1 diag (idle-phase marker): mark the pipe wait as an idle-by-design
         // phase. ConnectNamedPipe blocks here for as long as no client
-        // connects — healthy for the long-lived serve broker — so the
+        // connects -- healthy for the long-lived serve broker -- so the
         // watchdog emits a periodic idle-heartbeat progress record instead
         // of counting this wait toward the fire threshold (the 2026-09-02
         // smoke run was a healthy idle `serve` aborted by the watchdog).
@@ -8275,7 +8275,7 @@ DWORD WINAPI runServe(LPVOID param) {
         DWORD connectError = connected ? ERROR_SUCCESS : GetLastError();
         int connectExitCode = serveConnectExitCode(connected, connectError);
         if (connectExitCode != 0) {
-            // ConnectNamedPipe failed unexpectedly — stop the broker with a
+            // ConnectNamedPipe failed unexpectedly -- stop the broker with a
             // nonzero infrastructure result instead of falling through as a
             // successful serve session. ERROR_PIPE_CONNECTED is handled by
             // serveConnectExitCode as the normal client-connect race.
@@ -8315,7 +8315,7 @@ DWORD WINAPI runServe(LPVOID param) {
                 // as an attempted batch item even when a later validation
                 // step fails (unknown type, missing source, ...): emit the
                 // same started/completed pair and enrich the ordinary
-                // failure response — still exactly one frame. Requests
+                // failure response -- still exactly one frame. Requests
                 // rejected for invalid 'batch' metadata itself keep
                 // hasBatch==false, so the pair is empty (untagged failure,
                 // no progress).
@@ -8338,7 +8338,7 @@ DWORD WINAPI runServe(LPVOID param) {
             }
 
             // WHServer VAS-headroom guard (TVS-1c): gate BEFORE dispatch,
-            // mirroring runBatch's between-items check — a tagged request
+            // mirroring runBatch's between-items check -- a tagged request
             // that is refused was never attempted, so it gets NO
             // started/completed item events (like a batch not-run marker);
             // the refusal response frame still carries the tagged
@@ -8351,28 +8351,28 @@ DWORD WINAPI runServe(LPVOID param) {
                                     &p->recycle, lib, sessionAttached,
                                     &foreignClients,
                                     &recycleOutcome, &recycleRan)) {
-                // Best-effort write (design §4.3 teardown rule): when the recycle ran the broker
-                // MUST tear down regardless of the write result — a broker
+                // Best-effort write (design Sec. 4.3 teardown rule): when the recycle ran the broker
+                // MUST tear down regardless of the write result -- a broker
                 // left alive after close/skip-close is an open-warehouse
                 // linger / 0x4E re-activation hazard.
                 const bool refusalWritten =
                     writeServeResponse(pipe, vasRefusal, req);
                 if (recycleRan) {
-                    // §4.3/§5 tail-bypass teardown: flush the pipe, then
-                    // exit the broker — delete lib (post-close teardown)
+                    // Sec. 4.3/Sec. 5 tail-bypass teardown: flush the pipe, then
+                    // exit the broker -- delete lib (post-close teardown)
                     // where safe, or emit+flush+TerminateProcess-self(19)
                     // on the close_failed path. The tail closeWarehouse +
                     // exit-1 downgrade is never reached; the process exit
                     // code is 18/19 directly.
                     // R2 granted defer: terminateSelf==false +
-                    // safeToDeleteLib==true — the bounded close already
+                    // safeToDeleteLib==true -- the bounded close already
                     // ran inside serveVasGuardRefuse (above), so this
                     // takes the GRACEFUL `delete lib` + worker-return +
-                    // ExitProcess(18) path — the only teardown that
+                    // ExitProcess(18) path -- the only teardown that
                     // releases the broker's +7 m_nLock contribution (a
                     // TerminateProcess corpse orphans it for >=minutes,
                     // live-proven 2026-10-21). A REFUSED defer
-                    // (terminateSelf) dies the open-session way — never
+                    // (terminateSelf) dies the open-session way -- never
                     // `delete lib`/ExitProcess into a possibly-open
                     // warehouse.
                     FlushFileBuffers(pipe);
@@ -8402,14 +8402,14 @@ DWORD WINAPI runServe(LPVOID param) {
             // Dispatch on THIS thread (TsDevLib is thread-affine to this
             // 64MB-stack worker). Catch unexpected exceptions and respond
             // with an internal_error result (exit 1) instead of crashing.
-            // NOTE: do NOT use exit 6 here — exit 6 is only used for
+            // NOTE: do NOT use exit 6 here -- exit 6 is only used for
             // entry_op_failure (insert/modify/delete/upsert), so an unexpected
             // exception would be misclassified. Exit 1 / internal_error is
             // unambiguous.
             // Warehouse-using ops only (the R1 recycleSiteDefers gate):
             // backup-cache/restore-cache are pure filesystem and never
-            // attach — they must NOT set sessionAttached (a breach would
-            // then defer at a site that is really never-attached — a
+            // attach -- they must NOT set sessionAttached (a breach would
+            // then defer at a site that is really never-attached -- a
             // spurious extra respawn). Every other dispatched op
             // attaches lazily on first use ('quit' is handled above and
             // never reaches here).
@@ -8418,12 +8418,12 @@ DWORD WINAPI runServe(LPVOID param) {
             try {
                 r = dispatchServeRequest(*lib, req, p->tsPathOverride);
                 // The first dispatched warehouse request lazily attaches
-                // the session — from here on a recycle breach is an
+                // the session -- from here on a recycle breach is an
                 // attached site and defers (R1 recycleSiteDefers).
                 if (warehouseOp) sessionAttached = true;
             } catch (const std::exception& e) {
                 // Conservative-on-throw: a warehouse op may have
-                // attached before throwing — treat the session as
+                // attached before throwing -- treat the session as
                 // existing so a later breach defers rather than running
                 // the engine at a misclassified never-attached site.
                 if (warehouseOp) sessionAttached = true;
@@ -8440,7 +8440,7 @@ DWORD WINAPI runServe(LPVOID param) {
                     req.op, req.batchIndex, req.batchTotal, r,
                     p->jsonProgress));
             }
-            // One request still yields exactly one response frame — the
+            // One request still yields exactly one response frame -- the
             // ordinary cliResultToJson body plus the tagged "progress"
             // member (a no-op for untagged requests).
             if (!writeServeResponse(pipe, r, req)) break;
@@ -8473,10 +8473,10 @@ DWORD WINAPI runServe(LPVOID param) {
         std::fprintf(stderr,
             "tsdev_cli: closeWarehouse failed at end of serve session\n");
         if (p->exitCode == 0) p->exitCode = 1;
-        // §5 teardown (dispatch_watchdog convention): the failed close
-        // leaves the session possibly open with uncertain teardown state —
+        // Sec. 5 teardown (dispatch_watchdog convention): the failed close
+        // leaves the session possibly open with uncertain teardown state --
         // `delete lib` (OrlibExit) + ExitProcess would DLL-detach into it,
-        // raising the blocking "WHouse stays in memory" dialog — an
+        // raising the blocking "WHouse stays in memory" dialog -- an
         // INVISIBLE deadlock under this SW_HIDE broker. All pipe output
         // was already flushed at the disconnect above and the diagnostic
         // went to stderr, so die here via TerminateProcess with the same
@@ -8579,7 +8579,7 @@ int cmdServe(int argc, char** argv, bool jsonMode,
     return params.exitCode;
 }
 
-// Vectored Exception Handler — catches fatal exceptions (access violations,
+// Vectored Exception Handler -- catches fatal exceptions (access violations,
 // stack overflows, heap corruption) BEFORE orlib20's unhandled exception
 // filter can spawn TSCrashReport.exe. Calls TerminateProcess with the
 // exception code so the process exits cleanly with a known exit code
@@ -8588,14 +8588,14 @@ int cmdServe(int argc, char** argv, bool jsonMode,
 // Python client cannot kill it.
 LONG WINAPI vehCrashHandler(PEXCEPTION_POINTERS ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
-    // Only handle truly fatal, noncontinuable exceptions — never normal
-    // C++ exceptions (0xE06D7363 — continuable until proven unhandled) or
+    // Only handle truly fatal, noncontinuable exceptions -- never normal
+    // C++ exceptions (0xE06D7363 -- continuable until proven unhandled) or
     // debug breakpoints (a VEH eat would kill the process instead of
     // breaking into the debugger). Unhandled codes OUTSIDE this list still
     // die with the SEH code one dispatch later in uefCrashHandler; this
     // list exists to die one dispatch earlier and to cover any window in
     // which orlib20's UEF is the outermost filter (P4 gap-e ordering).
-    // Conservative list — every entry is fatal-by-default, never a
+    // Conservative list -- every entry is fatal-by-default, never a
     // continuable/benign trap: VEH sees EVERY exception in the process, so
     // adding a benign code here would kill on first occurrence.
     if (code == EXCEPTION_ACCESS_VIOLATION ||       // 0xC0000005
@@ -8616,78 +8616,78 @@ LONG WINAPI vehCrashHandler(PEXCEPTION_POINTERS ep) {
 // Own-process fatal-termination containment (P4 gap-e hardening)
 //
 // The VEH above converts the most common fatal SEH codes into a
-// TerminateProcess(code) silent death — no dialog, no WerFault, no
+// TerminateProcess(code) silent death -- no dialog, no WerFault, no
 // TSCrashReport.exe. Field evidence (2026-10-19): tsdev_cli.exe crashed 4x
-// WITH TSCrashReport — a fatal path bypassed the VEH. The remaining fatal
+// WITH TSCrashReport -- a fatal path bypassed the VEH. The remaining fatal
 // channels of OUR process, and the mechanism that closes each:
 //
-//   1. C++ exceptions that would kill the process — two delivery paths,
-//      both closed. (a) std::terminate itself — noexcept violations,
-//      exceptions during unwinding, frames that filter to terminate — is
+//   1. C++ exceptions that would kill the process -- two delivery paths,
+//      both closed. (a) std::terminate itself -- noexcept violations,
+//      exceptions during unwinding, frames that filter to terminate -- is
 //      closed by std::set_terminate -> onFatalTerminate ->
 //      TerminateProcess(20). set_terminate is PER-THREAD in the MSVC CRT
 //      (MSDN: "terminate functions are maintained separately for each
 //      thread; each new thread needs its own handler installed"), so every
 //      thread entry point in this file calls
 //      installThreadFatalContainment() first. (b) An exception escaping
-//      every frame: VERIFIED on this CRT — it is delivered to the process
+//      every frame: VERIFIED on this CRT -- it is delivered to the process
 //      UEF as the MSVC C++ exception code 0xE06D7363, NOT routed through
-//      std::terminate — so channel (4) is what actually closes it (the
+//      std::terminate -- so channel (4) is what actually closes it (the
 //      UEF dies with 0xE06D7363).
 //   2. abort()/SIGABRT itself (assert-style fatals, and the unreachable
 //      std::abort() tails after TerminateProcess): with _WRITE_ABORT_MSG
 //      and _CALL_REPORTFAULT cleared, abort() emits no message and invokes
-//      no WER — but its tail is still _exit(3) -> ExitProcess -> DLL
+//      no WER -- but its tail is still _exit(3) -> ExitProcess -> DLL
 //      detach, which raises the blocking "WHouse stays in memory" dialog
-//      on a possibly-open warehouse session (the §5 teardown hazard; an
+//      on a possibly-open warehouse session (the Sec. 5 teardown hazard; an
 //      invisible deadlock under the SW_HIDE serve broker). The SIGABRT
 //      handler (onFatalSigabrt) -> TerminateProcess(21) dies before that
-//      tail — skipping ALL DLL detach.
+//      tail -- skipping ALL DLL detach.
 //   3. CRT invalid-parameter calls (the *_s functions rejecting bad args)
 //      and pure virtual calls: both default into _invoke_watson -> WER
-//      (WerFault.exe) UNCONDITIONALLY — the abort-behavior flags do not
+//      (WerFault.exe) UNCONDITIONALLY -- the abort-behavior flags do not
 //      gate them. Closed by _set_invalid_parameter_handler ->
 //      TerminateProcess(22) and _set_purecall_handler ->
-//      TerminateProcess(23). Every path here is fatal by CRT contract —
-//      the stock handlers never resume the caller — so only the death
+//      TerminateProcess(23). Every path here is fatal by CRT contract --
+//      the stock handlers never resume the caller -- so only the death
 //      style changes; nothing continuable is suppressed.
-//   4. Unhandled SEH exceptions outside the VEH list — including the
+//   4. Unhandled SEH exceptions outside the VEH list -- including the
 //      0xE06D7363 C++ escape from ANY frame that has no handler (main or
-//      a raw CreateThread worker — verified delivery: exception escapes
-//      go straight to the process UEF on this CRT) — closed by
+//      a raw CreateThread worker -- verified delivery: exception escapes
+//      go straight to the process UEF on this CRT) -- closed by
 //      uefCrashHandler via SetUnhandledExceptionFilter. A record that
 //      reaches the process UEF is unhandled BY DEFINITION (the process is
 //      already dying); the filter TerminateProcess(ExceptionCode)s every
 //      record it sees and does NOT chain into orlib20's filter (TSCrash.dll
-//      spawns TSCrashReport.exe there and blocks on it — KB §14 —
+//      spawns TSCrashReport.exe there and blocks on it -- KB Sec. 14 --
 //      chaining would re-open the exact channel this closes).
 //
-// UEF ORDERING vs orlib20 — the only part of this hardening that depends
+// UEF ORDERING vs orlib20 -- the only part of this hardening that depends
 // on foreign code:
 //   - ALL orlib20 initialization happens inside `new TsDevLib` on the
 //     64 MB-stack worker: LoadLibraryW(orlib20.dll) in the OrlibResolver
 //     ctor (tsdev_lib.cpp), the seven support-DLL pre-loads, the patch
-//     application, and OrlibInit(NULL, 1). Any UEF orlib installs — at
-//     DLL attach or inside OrlibInit (KB §14 proves TSCrash.dll installs
-//     one; its exact install site is not documented) — lands INSIDE that
+//     application, and OrlibInit(NULL, 1). Any UEF orlib installs -- at
+//     DLL attach or inside OrlibInit (KB Sec. 14 proves TSCrash.dll installs
+//     one; its exact install site is not documented) -- lands INSIDE that
 //     ctor, on that thread.
 //   - installProcessUef() therefore runs once in main() (covers the
 //     pre-orlib window) and again in every worker IMMEDIATELY after `new
-//     TsDevLib` returns — ours is outermost for the whole warehouse
+//     TsDevLib` returns -- ours is outermost for the whole warehouse
 //     session that follows. SetUnhandledExceptionFilter is last-writer-
 //     wins on a single process-global slot, so each call is a full
 //     re-assert, idempotent.
 //   - Residual (documented, bounded): an orlib code path that RE-installs
-//     its UEF AFTER construction (lazy attach / first dispatch — not
+//     its UEF AFTER construction (lazy attach / first dispatch -- not
 //     documented, and unprovable absent without re-running binary
 //     analysis) would supersede ours until the next re-assert. The
-//     1-second re-arm sentry (startUefRearmSentry — same spawn-once /
+//     1-second re-arm sentry (startUefRearmSentry -- same spawn-once /
 //     never-joined lifecycle as the dispatch watchdog) bounds that
 //     window to one poll interval; the VEH list and the CRT guards hold
 //     regardless.
 //
 // Exit codes 20-24 (0-11 CLI ops, 12 client markers, 13 diag watchdog,
-// 14 VAS abort, 15 dispatch watchdog, 16-17 cache, 18-19 recycle — this
+// 14 VAS abort, 15 dispatch watchdog, 16-17 cache, 18-19 recycle -- this
 // block takes the next free codes; also documented in the header comment):
 constexpr DWORD kExitFatalTerminate        = 20;  // std::terminate
 constexpr DWORD kExitFatalAbort            = 21;  // abort()/SIGABRT
@@ -8699,47 +8699,47 @@ constexpr DWORD kExitFatalNoException      = 24;  // defensive: UEF invoked
                                                   // API contract)
 
 // Shared non-returning tail for every fatal-containment handler.
-// TerminateProcess is the ONLY exit that skips ALL DLL detach — ExitProcess
+// TerminateProcess is the ONLY exit that skips ALL DLL detach -- ExitProcess
 // on a possibly-open warehouse session raises the blocking "WHouse stays in
-// memory" dialog (§5). The _exit tail is unreachable (TerminateProcess does
+// memory" dialog (Sec. 5). The _exit tail is unreachable (TerminateProcess does
 // not return) and exists only so no handler falls through into a return
 // that the CRT could interpret as "continue"; it deliberately is NOT
-// std::abort() — that would re-enter onFatalSigabrt.
+// std::abort() -- that would re-enter onFatalSigabrt.
 [[noreturn]] void terminateFatal(DWORD code) {
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
-    _exit(static_cast<int>(code));  // unreachable — TerminateProcess does not return
+    _exit(static_cast<int>(code));  // unreachable -- TerminateProcess does not return
 }
 
-// std::terminate handler — channel (1).
+// std::terminate handler -- channel (1).
 [[noreturn]] void onFatalTerminate() {
     terminateFatal(kExitFatalTerminate);
 }
 
-// SIGABRT handler — channel (2). signal()-installed; abort() reaches it
+// SIGABRT handler -- channel (2). signal()-installed; abort() reaches it
 // once its message/WER steps are suppressed by _set_abort_behavior, and
 // never returns past it (the _exit(3) tail is skipped entirely).
 void __cdecl onFatalSigabrt(int) {
     terminateFatal(kExitFatalAbort);
 }
 
-// CRT invalid-parameter handler — channel (3a). The five report strings
+// CRT invalid-parameter handler -- channel (3a). The five report strings
 // (expression/function/file/line/reserved) are nullptr/0 in release builds
-// and are unused — the fixed exit code is the whole diagnostic.
+// and are unused -- the fixed exit code is the whole diagnostic.
 void __cdecl onFatalInvalidParameter(const wchar_t*, const wchar_t*,
                                      const wchar_t*, unsigned int,
                                      uintptr_t) {
     terminateFatal(kExitFatalInvalidParameter);
 }
 
-// Pure virtual call handler — channel (3b).
+// Pure virtual call handler -- channel (3b).
 void __cdecl onFatalPurecall() {
     terminateFatal(kExitFatalPureCall);
 }
 
-// Process unhandled-exception filter — channel (4). Installed outermost
+// Process unhandled-exception filter -- channel (4). Installed outermost
 // after orlib init and re-asserted by the sentry (ordering note above).
-// Every record reaching it is unhandled by definition — the process is
-// already dying — so it dies with the SEH code, silently: no TSCrashReport
+// Every record reaching it is unhandled by definition -- the process is
+// already dying -- so it dies with the SEH code, silently: no TSCrashReport
 // (orlib's filter is never chained), no WerFault, no DLL detach.
 LONG WINAPI uefCrashHandler(PEXCEPTION_POINTERS ep) {
     DWORD code = kExitFatalNoException;
@@ -8749,17 +8749,17 @@ LONG WINAPI uefCrashHandler(PEXCEPTION_POINTERS ep) {
     terminateFatal(code);
 }
 
-// Per-THREAD CRT guards — MSVC keeps the terminate handler per-thread
+// Per-THREAD CRT guards -- MSVC keeps the terminate handler per-thread
 // (MSDN: maintained separately for each thread; each new thread needs its
 // own installed), so every thread entry point calls this first. Threads in
 // OTHER translation units (dispatch watchdog, cache-compress worker)
-// cannot reach this anonymous-namespace helper — an escaped C++ exception
+// cannot reach this anonymous-namespace helper -- an escaped C++ exception
 // there still dies via the process-wide SIGABRT/UEF guards below.
 void installThreadFatalContainment() {
     std::set_terminate(onFatalTerminate);
 }
 
-// Per-PROCESS CRT guards — install once in main(). This state lives in OUR
+// Per-PROCESS CRT guards -- install once in main(). This state lives in OUR
 // module's CRT instance (orlib20 links a different, older CRT and cannot
 // overwrite it), so one install is durable. Idempotent; also installs the
 // calling thread's terminate guard so main() needs no second call.
@@ -8773,14 +8773,14 @@ void installFatalContainment() {
     installThreadFatalContainment();
 }
 
-// Install (or re-assert) our UEF outermost — last SetUnhandledExceptionFilter
+// Install (or re-assert) our UEF outermost -- last SetUnhandledExceptionFilter
 // wins on the single process-global slot. See the ordering note above.
 void installProcessUef() {
     SetUnhandledExceptionFilter(uefCrashHandler);
 }
 
 // One-second UEF re-arm (the ordering residual). Also re-asserts
-// SEM_NOGPFAULTERRORBOX — the same process-global exposure (any loaded DLL
+// SEM_NOGPFAULTERRORBOX -- the same process-global exposure (any loaded DLL
 // could clear it). Cannot throw: pure Win32 on a POD body.
 DWORD WINAPI uefRearmSentryProc(LPVOID) {
     installThreadFatalContainment();
@@ -8791,7 +8791,7 @@ DWORD WINAPI uefRearmSentryProc(LPVOID) {
     }
 }
 
-// Spawn-once, never-joined — the thread dies with the process (identical
+// Spawn-once, never-joined -- the thread dies with the process (identical
 // lifecycle to the dispatch watchdog thread). Returns false when already
 // running or CreateThread failed; the post-ctor re-asserts remain in force
 // either way.
@@ -9555,13 +9555,13 @@ int cmdUpdate(const UpdateArgs& ua, bool jsonMode, bool pbar) {
 
 #ifndef TSDEV_CLI_TEST
 int main(int argc, char** argv) {
-    // §7.1 diagnostic build: file sink + watchdog (no-op in the production
+    // Sec. 7.1 diagnostic build: file sink + watchdog (no-op in the production
     // build). First statement so the log covers everything that follows.
     TSDEV_DIAG_INIT();
 
 #ifdef TSDEV_DIAG
-    // §7.1 diag (run-identifiability record): every run must be identifiable from its log
-    // alone — the 2026-09-02 incident run could only be identified as
+    // Sec. 7.1 diag (run-identifiability record): every run must be identifiable from its log
+    // alone -- the 2026-09-02 incident run could only be identified as
     // `serve` by parsing the preserved minidump's PEB. Log the argv values
     // as-is (this is a local diagnostic tool run by the user themselves),
     // except that each argument is truncated to 200 chars and the whole list
@@ -9585,14 +9585,14 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // Install VEH crash handler — must be before any orlib20 calls.
+    // Install VEH crash handler -- must be before any orlib20 calls.
     // Catches fatal exceptions and terminates cleanly instead of spawning
     // TSCrashReport.exe (which runs elevated and can't be killed by non-elevated clients).
     AddVectoredExceptionHandler(1, vehCrashHandler);
     // Also suppress WerFault.exe as belt-and-suspenders (won't suppress TSCrashReport
     // but prevents the standard Windows crash dialog too).
     SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
-    // P4 gap-e: the remaining fatal channels of OUR process — C++ terminate
+    // P4 gap-e: the remaining fatal channels of OUR process -- C++ terminate
     // (per-thread in the MSVC CRT), abort/SIGABRT, CRT invalid-parameter +
     // purecall WER paths, and the process UEF. orlib20's own UEF
     // (TSCrash.dll -> TSCrashReport.exe) is superseded here and re-asserted
@@ -9622,7 +9622,7 @@ int main(int argc, char** argv) {
     //            "-vv", "-vvv" (bundled shorts: any arg matching -v+, the
     //            count is the number of v chars), bare "--verbose", and
     //            "--verbose=<value>" (any value after '=' is ignored and the
-    //            occurrence counts as ONE — mirrors the --json=... behavior).
+    //            occurrence counts as ONE -- mirrors the --json=... behavior).
     //            "Space + value" (--verbose 2) is NOT supported: the value
     //            token is not a flag and flows to reducedArgv like any other
     //            positional. Repeated separate occurrences accumulate.
@@ -9635,7 +9635,7 @@ int main(int argc, char** argv) {
     bool pbar = false;        // --pbar (stderr progress bar)
     bool batchControl = false;  // --batch-progress-control (batch-* only)
     int batchControlCount = 0;  // occurrences; >1 rejected post-elevation
-    // R6: bounded batch-control decision wait in seconds (0 disables —
+    // R6: bounded batch-control decision wait in seconds (0 disables --
     // documented escape hatch). Default 900 s. Only meaningful with
     // --batch-progress-control; a lone flag is a usage error.
     unsigned batchControlTimeoutSecs = 900;
@@ -9657,7 +9657,7 @@ int main(int argc, char** argv) {
     RecycleConfig recycle;
     bool recycleFlagSeen = false;    // --recycle-whserver seen
     bool recycleNoFlagSeen = false;  // --no-recycle-whserver seen
-    // TVS-3: dispatch watchdog bound in seconds (0 disables). Default 300 —
+    // TVS-3: dispatch watchdog bound in seconds (0 disables). Default 300 --
     // far above the ~3.4 s legit max single-dispatch duration, far below
     // forever. --dispatch-timeout-secs / TSDEV_DISPATCH_TIMEOUT_SECS.
     unsigned dispatchTimeoutSecs = 300;
@@ -9670,7 +9670,7 @@ int main(int argc, char** argv) {
     bool noCacheCompressFlag = false;  // --no-cache-compress
     CacheBackupPolicy cachePolicy = CacheBackupPolicy::Prompt;  // default
     bool cachePolicyFlagSet = false;   // --cache-backup-policy seen
-    // --update-result-file <path> (self-update §8): hidden GLOBAL value
+    // --update-result-file <path> (self-update Sec. 8): hidden GLOBAL value
     // flag, non-repeatable. Recognized and consumed here (the
     // --batch-progress-control precedent) so the path is already in hand
     // for every pre-dispatch exit incl. the elevation guard; validated
@@ -9791,7 +9791,7 @@ int main(int argc, char** argv) {
         } else if (arg == "--pbar" || arg.rfind("--pbar=", 0) == 0) {
             // Boolean switch like --json: presence enables the stderr
             // progress bar; any value after '=' is ignored. Repeats are
-            // harmless (idempotent — the flag simply stays true).
+            // harmless (idempotent -- the flag simply stays true).
             pbar = true;
         } else if (arg == "--batch-progress-control" ||
                    arg.rfind("--batch-progress-control=", 0) == 0) {
@@ -9975,7 +9975,7 @@ int main(int argc, char** argv) {
         } else if (arg == "--batch-control-timeout-secs" ||
                    arg.rfind("--batch-control-timeout-secs=", 0) == 0) {
             // Space ("--batch-control-timeout-secs <N>") or equals form;
-            // strict decimal seconds 0..86400 (0 disables the bound — the
+            // strict decimal seconds 0..86400 (0 disables the bound -- the
             // documented unbounded-wait escape hatch). Invalid -> usage
             // error (see parseTimeoutSecs). Requires
             // --batch-progress-control (validated post-elevation).
@@ -10073,7 +10073,7 @@ int main(int argc, char** argv) {
 
     // TVS-1b: TSDEV_WHSERVER_* env mirrors for the VAS-headroom guard,
     // applied BEFORE dispatch; explicit CLI flags win (same convention as
-    // TSDEV_DIAG_WATCHDOG_SECS — a garbage/missing value keeps the
+    // TSDEV_DIAG_WATCHDOG_SECS -- a garbage/missing value keeps the
     // default). TSDEV_NO_WHSERVER_VAS_GUARD: any value other than "0"
     // disables the guard (an explicit --no-whserver-vas-guard flag also
     // wins over an env "0", matching the flag's presence semantics).
@@ -10180,8 +10180,8 @@ int main(int argc, char** argv) {
     // dispatch. One call covers single ops, batch workers, and the serve
     // broker (spawn-once; the thread lives for the process lifetime). Every
     // orlib20 warehouse call in tsdev_lib.cpp raises the in-flight marker
-    // the watchdog watches; an in-flight dispatch older than the bound — or
-    // a WHServer crash/disappearance mid-flight — aborts the process with
+    // the watchdog watches; an in-flight dispatch older than the bound -- or
+    // a WHServer crash/disappearance mid-flight -- aborts the process with
     // exit 15. A non-elevated run exits 11 below before any dispatch can be
     // in-flight, so an early start cannot false-fire.
     tsdev::startDispatchWatchdog(dispatchTimeoutSecs);
@@ -10228,7 +10228,7 @@ int main(int argc, char** argv) {
 
     // The policy only applies to --backup-cache; an explicit
     // --cache-backup-policy without it (also under --restore-cache alone)
-    // would otherwise be silently ignored — a usage error instead. Checked
+    // would otherwise be silently ignored -- a usage error instead. Checked
     // before the no-subcommand usage error below so a bare
     // `tsdev_cli --cache-backup-policy=<mode>` reports the real problem.
     if (cachePolicyFlagSet && !backupCacheFlag) {
@@ -10241,7 +10241,7 @@ int main(int argc, char** argv) {
     }
 
     // No-subcommand is a usage error UNLESS a standalone cache op
-    // (--backup-cache / --restore-cache) was requested — those run without
+    // (--backup-cache / --restore-cache) was requested -- those run without
     // a subcommand.
     if (reducedArgc < 2 && !backupCacheFlag && !restoreCacheFlag) {
         CliResult r;
@@ -10265,7 +10265,7 @@ int main(int argc, char** argv) {
     // The existing toWide() helper lives in an anonymous namespace in
     // tsdev_lib.cpp (file-local, not accessible here), so the conversion is
     // performed inline using MultiByteToWideChar (the same Windows API that
-    // toWide() wraps) — no duplicate named helper is introduced.
+    // toWide() wraps) -- no duplicate named helper is introduced.
     std::wstring tsPathWide;
     const wchar_t* tsPathWidePtr = nullptr;
     if (tsPathOverride) {
@@ -10311,7 +10311,7 @@ int main(int argc, char** argv) {
     // --pbar validations live here, AFTER the unchanged elevation guard (a
     // non-elevated caller still gets exit 11 first). The --json conflict is
     // checked first (it is mode-defining), then the serve restriction.
-    // --pbar + --batch-progress-control is permitted — no interaction.
+    // --pbar + --batch-progress-control is permitted -- no interaction.
     if (pbar && jsonMode) {
         CliResult r;
         r.exitCode = 1;
@@ -10355,7 +10355,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     // --batch-control-timeout-secs only tunes the --batch-progress-control
-    // decision wait — a lone flag is a user error, not a silent no-op
+    // decision wait -- a lone flag is a user error, not a silent no-op
     // (same convention as the --recycle-whserver combination refusals).
     if (batchControlTimeoutFlagSet && !batchControl) {
         CliResult r;
@@ -10368,7 +10368,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (batchControl) {
-        // Shared batch-* subcommand list (isBatchSubcommand) — same set
+        // Shared batch-* subcommand list (isBatchSubcommand) -- same set
         // the --recycle-whserver restriction builds on.
         if (!isBatchSubcommand(subcommand)) {
             CliResult r;
@@ -10387,7 +10387,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // --update-result-file (self-update §8): the flag is recognized and
+    // --update-result-file (self-update Sec. 8): the flag is recognized and
     // consumed by the global pre-scan, but both validations live here,
     // AFTER the unchanged elevation guard (a non-elevated caller still
     // gets exit 11 first): non-repeatable, and update-subcommand-only.
@@ -10412,8 +10412,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // --recycle-whserver (design §6.1): validated here, AFTER the unchanged
-    // elevation guard (a non-elevated caller still gets exit 11 first) —
+    // --recycle-whserver (design Sec. 6.1): validated here, AFTER the unchanged
+    // elevation guard (a non-elevated caller still gets exit 11 first) --
     // same convention as --batch-progress-control. EXPLICIT Full mode only:
     // refuses up front the --no-whserver-vas-guard and
     // --batch-progress-control combinations and any non-batch/non-serve
@@ -10484,8 +10484,8 @@ int main(int argc, char** argv) {
     }
 
     // Cache phase (--backup-cache / --restore-cache): runs after ALL
-    // validation above and before any subcommand dispatch — before any
-    // worker thread or TsDevLib exists — in the fixed order backup ->
+    // validation above and before any subcommand dispatch -- before any
+    // worker thread or TsDevLib exists -- in the fixed order backup ->
     // restore -> subcommand. A failure exits before the subcommand runs;
     // a standalone invocation (no subcommand) returns its exit code here.
     if (backupCacheFlag || restoreCacheFlag) {

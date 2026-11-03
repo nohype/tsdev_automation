@@ -5,7 +5,7 @@
 //
 // This is a PURE UNIT TEST. It does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT construct TsDevLib. It measures the
-// VAS of THIS test process and of a spawned ping.exe child — read-only process
+// VAS of THIS test process and of a spawned ping.exe child -- read-only process
 // inspection only (PROCESS_QUERY_INFORMATION).
 //
 // The implementation in src/whserver_health.cpp is compiled directly into
@@ -82,7 +82,7 @@ int runTests() {
         // A trivial long-lived child with no GUI: ping sleeps between
         // echo requests, keeping the process alive for ~30 s. Spawn
         // ping.exe DIRECTLY (not via cmd /c) so TerminateProcess below
-        // kills the measured process itself — a cmd wrapper would orphan
+        // kills the measured process itself -- a cmd wrapper would orphan
         // the ping.exe grandchild.
         char cmd[] = "ping.exe -n 30 127.0.0.1";
         if (!CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
@@ -125,7 +125,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 5: vasBreach — the pure runBatch guard decision. Semantics:
+    // Group 5: vasBreach -- the pure runBatch guard decision. Semantics:
     // STRICTLY below the threshold breaches; exactly-at-threshold passes.
     // -------------------------------------------------------------------
     {
@@ -156,10 +156,10 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 6: findWhServerPids snapshotOk overload — the success arm
+    // Group 6: findWhServerPids snapshotOk overload -- the success arm
     // yields the authoritative set. A real snapshot must report true; the
     // returned set must equal an independent Toolhelp enumeration taken
-    // here (the walk ran to clean completion — not a truncated set), and
+    // here (the walk ran to clean completion -- not a truncated set), and
     // every listed pid must independently verify as a WHServer.exe image
     // via OpenProcess + QueryFullProcessImageNameW. The false arm is NOT
     // exercisable here: the Toolhelp calls are direct with no seam, so a

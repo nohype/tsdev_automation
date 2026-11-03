@@ -25,7 +25,7 @@ bool findWhServerPids(std::vector<DWORD>& pids) {
     }
     // ERROR_NO_MORE_FILES is the clean end of both arms: on First it is a
     // genuinely empty snapshot (authoritative-empty), on Next a completed
-    // walk. Any other error is a truncated enumeration — a partial set is
+    // walk. Any other error is a truncated enumeration -- a partial set is
     // never evidence, so the poll is inconclusive and carries no set.
     const bool ok = (GetLastError() == ERROR_NO_MORE_FILES);
     CloseHandle(snap);

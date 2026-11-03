@@ -103,7 +103,7 @@ DWORD WINAPI runTest(LPVOID param) {
                  "surface (unit) ===\n");
 
     // ------------------------------------------------------------------
-    // Check 1: isRecycleWhserverSubcommand — the §6.1 valid set is exactly
+    // Check 1: isRecycleWhserverSubcommand -- the Sec. 6.1 valid set is exactly
     // the 8 batch-* subcommands + serve, case-insensitive.
     // ------------------------------------------------------------------
     {
@@ -134,7 +134,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 1b: isBatchSubcommand — the shared SSOT batch-* list both
+    // Check 1b: isBatchSubcommand -- the shared SSOT batch-* list both
     // flag validations use (--batch-progress-control and
     // --recycle-whserver). Exactly the 8 batch-* names; "serve" and every
     // single-op/unknown token fail.
@@ -300,7 +300,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 3: envPresenceEnabled — set-and-not-"0" semantics on a
+    // Check 3: envPresenceEnabled -- set-and-not-"0" semantics on a
     // test-private variable (real TSDEV_RECYCLE_WHSERVER is left alone).
     // ------------------------------------------------------------------
     {
@@ -461,7 +461,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 4: emitRecycleWhserverWarning — verbatim §6.3 bytes on stderr,
+    // Check 4: emitRecycleWhserverWarning -- verbatim Sec. 6.3 bytes on stderr,
     // emitted exactly once (the second call is a no-op).
     // Redirect C stderr onto a binary tmpfile like test_pbar check 16.
     // ------------------------------------------------------------------
@@ -627,7 +627,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

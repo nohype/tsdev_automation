@@ -9,15 +9,15 @@
 // The test is self-cleaning: it deletes the test entry's .ell file before
 // and after the run so it can be repeated idempotently.
 //
-// Flow (historical sequence summarized in docs/FEASIBILITY.md §5.3; the
+// Flow (historical sequence summarized in docs/FEASIBILITY.md Sec. 5.3; the
 // underlying orlib_param_orders.md record is transient/unavailable):
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. findExistPos(name, Strategy) — skip if already present (re-run ok)
-//   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
-//   4. saveSource(Strategy, progId, source) — assert success
-//   5. verifyModule(Strategy, progId) — assert error string empty
-//   6. closeWarehouse() — assert explicit flush status
-//   7. ellFileExists(Strategy, progId) — assert true
+//   2. findExistPos(name, Strategy) -- skip if already present (re-run ok)
+//   3. createEntry(Strategy, name, errCode) -- assert ProgId > 0
+//   4. saveSource(Strategy, progId, source) -- assert success
+//   5. verifyModule(Strategy, progId) -- assert error string empty
+//   6. closeWarehouse() -- assert explicit flush status
+//   7. ellFileExists(Strategy, progId) -- assert true
 //   8. Print SUCCESS with ProgId and .ell path
 //
 // Exit code: 0 on success, non-zero on failure.
@@ -25,7 +25,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread.
 
@@ -90,7 +90,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: findExistPos — check if it already exists ---
+    // --- Step 2: findExistPos -- check if it already exists ---
     std::fprintf(stdout, "\n[2] findExistPos(\"%s\", Strategy)...\n",
                  kTestName);
     st->progId = lib->findExistPos(kTestName, ComponentType::Strategy);

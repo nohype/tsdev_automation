@@ -11,7 +11,7 @@
 // and `_GetMasterRecByType@16` (ord 568). The current M.4 production path
 // uses the linker (ordinal 85) and linked per-element dep-lists.
 //
-// === ABI of Ordinal_69 (FUN_101a3e00) — Ghidra-confirmed ===
+// === ABI of Ordinal_69 (FUN_101a3e00) -- Ghidra-confirmed ===
 //
 //   Calling convention: __cdecl (RET, no immediate; caller cleans stack).
 //     Evidence: prologue `PUSH EBP; MOV EBP,ESP; SUB ESP,0x150`; epilogue
@@ -20,7 +20,7 @@
 //     GetDefaultText @0x10153bf1; _GetInputCount@8 @0x10153cea;
 //     _GetInputNameEx@16 @0x10153dc6; FUN_10153e40 @0x10153ebb;
 //     CELProgramInputs @0x101413c8) push 3 DWORDs and follow the CALL with
-//     `ADD ESP,0xC` — caller cleanup of 12 bytes => 3 args, __cdecl.
+//     `ADD ESP,0xC` -- caller cleanup of 12 bytes => 3 args, __cdecl.
 //
 //   Signature (decompiled):
 //     undefined4 FUN_101a3e00(char param_1, undefined4 param_2, int param_3);
@@ -39,21 +39,21 @@
 //                FUN_101bff20/FUN_101a9650/FUN_101cff60 dance. Frida shows
 //                TSDev passing 0x0 (use the full master-record lookup path).
 //
-//   Return: undefined4 — a POINTER to the live in-memory master record
+//   Return: undefined4 -- a POINTER to the live in-memory master record
 //     (FUN_101cff60's `param_4` out-buffer, allocated via operator_new(0x10A)
 //     when the caller passes NULL, or the caller-supplied buffer otherwise).
 //     Returns 0 on failure (record not found, warehouse unavailable, or
 //     category == 0x32). The returned record is the SAME 0x10A-byte layout
 //     as _GetMasterRecByType@16's copy BUT populated with the live element
 //     array pointer at +0x4f, element count at +0x29, dep-list ptr at
-//     element+0x7b, etc. — because FUN_101cff60 returns the in-memory ctx
+//     element+0x7b, etc. -- because FUN_101cff60 returns the in-memory ctx
 //     record (or a freshly new'd 0x10A buffer that FUN_101a3a90 then
 //     populates via the FUN_101a25a0/FUN_101a22c0/FUN_101a2430 linkers).
 //
 //   Memory ownership: REFCOUNTED. The returned record has a refcount at
 //     +0xCA. FUN_101a3a90 (the short-circuit path) and FUN_101cff60 both
 //     INCREMENT +0xCA before returning. The caller MUST decrement via
-//     Ordinal_70 (FUN_1015df30, RVA 0x15DF30) — `FUN_1015df30(rec, 0)` —
+//     Ordinal_70 (FUN_1015df30, RVA 0x15DF30) -- `FUN_1015df30(rec, 0)` --
 //     which atomically decrements +0xCA and, when it hits 0, frees the
 //     +0xD2 buffer and the record itself. DO NOT free() / GlobalFree() the
 //     returned pointer. All 3 in-tree call sites in FUN_10196440 follow
@@ -66,7 +66,7 @@
 //     frees +0xD2 buffer and the record. The `flag` arg (param_2) is passed
 //     through to inner cleanup but is empirically 0 at all call sites.
 //
-// === Ordinal_28 (FUN_101a03f0, RVA 0x1A03F0) — NOT a prerequisite ===
+// === Ordinal_28 (FUN_101a03f0, RVA 0x1A03F0) -- NOT a prerequisite ===
 //
 //   Ordinal_28 is a SIBLING helper, not a prerequisite. Its decompiled body
 //   is structurally identical to Ordinal_69's full path
@@ -77,7 +77,7 @@
 //   outBuf). It does NOT touch any global state that Ordinal_69 depends on
 //   (both call the same FUN_101a9650(0) warehouse getter, which is
 //   self-initializing via FUN_101cf1f0). Calling Ordinal_69 alone is
-//   sufficient — TSDev's Frida trace shows the call sequence
+//   sufficient -- TSDev's Frida trace shows the call sequence
 //   `Ordinal_69(0x4, 0x127, 0x0)` with NO preceding Ordinal_28.
 //
 // This diagnostic:
@@ -86,7 +86,7 @@
 //   2. Resolves Ordinal_69 via OrlibResolver::resolveExportByOrdinal(69).
 //   3. Resolves Ordinal_70 via resolveExportByOrdinal(70) (refcount-dec).
 //   4. Resolves Ordinal_28 via resolveExportByOrdinal(28) (sibling, for
-//      comparison — NOT a prerequisite, but probed for completeness).
+//      comparison -- NOT a prerequisite, but probed for completeness).
 //   5. Resolves GetDependencies (ord 487) by name (for the post-Ord69 probe).
 //   6. Inserts + verifies a Function "TS_AUTO_M4_ORD69_FUNC" with source
 //      `TS_AUTO_M4_ORD69_FUNC = 1;`.
@@ -116,8 +116,8 @@
 //   docs/RE/RE_M4_GETDEPENDENCIES_ABI.md (GetDependencies, FUN_10153ad0)
 //   src/tsdev_lib.h (GetMasterRecByTypeFn typedef, _GetMasterRecByType@16)
 //
-// Ordinal_69 — __cdecl, 3 args (category:char, progId:int, flag:int).
-//   Returns live record pointer (refcounted — release via Ordinal_70).
+// Ordinal_69 -- __cdecl, 3 args (category:char, progId:int, flag:int).
+//   Returns live record pointer (refcounted -- release via Ordinal_70).
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
@@ -296,7 +296,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -399,7 +399,7 @@ void hexDump(const unsigned char* buf, size_t n, const char* label) {
 //
 // Field layout (per Frida MODREC_FIELDS trace + Ghidra FUN_10153ad0 /
 //   FUN_10153980 reads):
-//   +0x00: first field (short — ProgId)
+//   +0x00: first field (short -- ProgId)
 //   +0x15: byte flags
 //   +0x26: SafeArray pointer
 //   +0x29: element count (int)        <<< KEY
@@ -435,7 +435,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
     // 2. Field reads (all SEH-protected).
     std::printf("\n  --- FIELD READS ---\n");
 
-    // +0x00: first field (short — ProgId)
+    // +0x00: first field (short -- ProgId)
     short firstShort = 0;
     bool okFs = sehReadShort(rec + 0x00, &firstShort);
     std::printf("    +0x00 first field (short): %s = %d (0x%04X)  "
@@ -456,7 +456,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                 okSa ? "OK" : "<SEH>", safeArrayPtr,
                 (safeArrayPtr != nullptr) ? "NON-NULL" : "NULL");
 
-    // +0x29: element count (int) — KEY FIELD
+    // +0x29: element count (int) -- KEY FIELD
     int elemCount = 0;
     bool okEc = sehReadInt(rec + 0x29, &elemCount);
     std::printf("    +0x29 element count (int): %s = %d (0x%X)  "
@@ -464,7 +464,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
                 okEc ? "OK" : "<SEH>", elemCount, (unsigned)elemCount,
                 (elemCount == 0) ? "ZERO" : "NONZERO");
 
-    // +0x4f: element array pointer — KEY FIELD
+    // +0x4f: element array pointer -- KEY FIELD
     void* elemArrayPtr = nullptr;
     bool okEap = sehReadPtr(rec + 0x4f, &elemArrayPtr);
     std::printf("    +0x4f element array ptr: %s = %p  "
@@ -478,7 +478,7 @@ void analyzeLiveRecord(const void* recPtr, const char* label,
     std::printf("    +0x55 verified flag (byte): %s = 0x%02X (%u)\n",
                 okVf ? "OK" : "<SEH>", verified, verified);
 
-    // +0x7b: dep list pointer (record-level — note: per the Frida trace,
+    // +0x7b: dep list pointer (record-level -- note: per the Frida trace,
     //   +0x7b is read at the RECORD level for some records, but the
     //   canonical dep-list walk in FUN_10153ad0 reads +0x7b at the
     //   ELEMENT level, stride 0xb5. We read both for completeness.)
@@ -879,7 +879,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     }
 
     // --- Step 12b: probe Ordinal_28 (sibling) for completeness.
-    //   Ordinal_28(category, progId, flag, outBuf) — writes a 0x10A-byte
+    //   Ordinal_28(category, progId, flag, outBuf) -- writes a 0x10A-byte
     //   COPY into outBuf and returns 1 if found. NOT a prerequisite for
     //   Ordinal_69; probed only to confirm the sibling ABI.
     if (ord28) {
@@ -895,7 +895,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         if (ord28Ok && ord28Seh.result == 1) {
             // Read +0x29 and +0x4f from the copy to confirm whether
             // Ordinal_28's copy has the element array populated (it should
-            // NOT — same partial-copy behavior as _GetMasterRecByType@16).
+            // NOT -- same partial-copy behavior as _GetMasterRecByType@16).
             int ec = 0;
             sehReadInt(ord28buf + 0x29, &ec);
             void* eap = nullptr;
@@ -980,7 +980,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 90-second hard timeout — report a hang without terminating the worker.
+    // 90-second hard timeout -- report a hang without terminating the worker.
     // Ordinal_69 + analysis + dependency probes may take longer than the 60s
     // used by simpler diagnostics.
     DWORD wait = WaitForSingleObject(hThread, 90000);

@@ -76,7 +76,7 @@ static int HexCharVal(char c) {
 }
 
 /// \brief Parse a space-separated hex pattern ("55 8B EC ?? ??") into parallel
-///        byte + mask vectors. "??" → wildcard (mask 0x00). Returns false on
+///        byte + mask vectors. "??" -> wildcard (mask 0x00). Returns false on
 ///        parse error.
 static bool ParseHexPattern(const std::string& pattern,
                             std::vector<uint8_t>& bytes,
@@ -115,7 +115,7 @@ static bool ParseHexBytes(const std::string& hex, std::vector<uint8_t>& out) {
     return true;
 }
 
-/// \brief Parse PE headers (DOS → NT → sections) to find the .text section.
+/// \brief Parse PE headers (DOS -> NT -> sections) to find the .text section.
 ///        Returns false on invalid PE.
 static bool FindTextSection(const std::vector<uint8_t>& image,
                             uint32_t& textRva,
@@ -296,7 +296,7 @@ static bool ParseSignaturesFromJson(const std::string& jsonPath,
             }
         }
 
-        // hexPattern → bytes + mask
+        // hexPattern -> bytes + mask
         if (!entry.contains("hexPattern") || !entry["hexPattern"].is_string()) {
             std::fprintf(stderr,
                 "ERROR: signature \"%s\" missing \"hexPattern\".\n",
@@ -429,7 +429,7 @@ static std::unique_ptr<OrlibResolver> MakeResolver(
     }
 }
 
-/// \brief sigtool verify — scan all signatures, report PASS/FAIL.
+/// \brief sigtool verify -- scan all signatures, report PASS/FAIL.
 static int CmdVerify(const std::string& dllPath,
                      const std::string& signaturesPath,
                      bool verbose) {
@@ -508,7 +508,7 @@ static int CmdVerify(const std::string& dllPath,
     return (failCount == 0) ? 0 : 1;
 }
 
-/// \brief sigtool verify-patch — validate patch-site original bytes.
+/// \brief sigtool verify-patch -- validate patch-site original bytes.
 static int CmdVerifyPatch(const std::string& dllPath,
                           const std::string& signaturesPath) {
     std::vector<uint8_t> image;
@@ -586,7 +586,7 @@ static int CmdVerifyPatch(const std::string& dllPath,
     return (failCount == 0) ? 0 : 1;
 }
 
-/// \brief sigtool info — print DLL version indicators.
+/// \brief sigtool info -- print DLL version indicators.
 static int CmdInfo(const std::string& dllPath) {
     std::vector<uint8_t> image;
     auto resolver = MakeResolver(dllPath, image);
@@ -601,7 +601,7 @@ static int CmdInfo(const std::string& dllPath) {
     std::printf("File size: %u bytes\n",
                 static_cast<unsigned int>(vd.fileSize));
 
-    // .text section info — parse PE headers directly from the buffer.
+    // .text section info -- parse PE headers directly from the buffer.
     uint32_t textRva = 0, textRawOff = 0, textRawSize = 0, textVsize = 0;
     if (FindTextSection(image, textRva, textRawOff, textRawSize)) {
         // Get virtual size from the section header.
@@ -629,7 +629,7 @@ static int CmdInfo(const std::string& dllPath) {
         std::printf(".text section: not found\n");
     }
 
-    // Export info — parse export directory directly.
+    // Export info -- parse export directory directly.
     uint32_t funcCount = 0, namedCount = 0;
     if (ParseExportCounts(image, funcCount, namedCount)) {
         std::printf("Exports: %u functions, %u named\n",
@@ -641,7 +641,7 @@ static int CmdInfo(const std::string& dllPath) {
     return 0;
 }
 
-/// \brief sigtool scan — scan an ad-hoc hex pattern, report all match RVAs.
+/// \brief sigtool scan -- scan an ad-hoc hex pattern, report all match RVAs.
 static int CmdScan(const std::string& dllPath, const std::string& pattern) {
     std::vector<uint8_t> image;
     if (!ReadFile(dllPath, image)) {
@@ -686,7 +686,7 @@ static int CmdScan(const std::string& dllPath, const std::string& pattern) {
     return (matchOffsets.size() >= 1) ? 0 : 1;
 }
 
-/// \brief sigtool manifest — look up FileVersion in the version manifest.
+/// \brief sigtool manifest -- look up FileVersion in the version manifest.
 static int CmdManifest(const std::string& dllPath) {
     std::vector<uint8_t> image;
     auto resolver = MakeResolver(dllPath, image);

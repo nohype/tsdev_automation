@@ -1,35 +1,35 @@
 // test_compiler_layout.cpp
 //
-// Workstream M slice M.1 — TDD RED->GREEN integration test for the
+// Workstream M slice M.1 -- TDD RED->GREEN integration test for the
 // CELCompiler allocation / setup / destruction parity with TSDev.exe.
 //
 // Historical M.1 facts (Ghidra static + Frida trace cross-check; see the
-// tracked `docs/M1_HANDOFF.md` §§R-M.1.1–R-M.1.5). The underlying tmp/ notes are
+// tracked `docs/M1_HANDOFF.md` Secs. R-M.1.1-R-M.1.5). The underlying tmp/ notes are
 // transient and unavailable in a fresh tracked checkout:
 //
-//   R-M.1.1 — TSDev allocates+constructs the CELCompiler via orlib20 ordinal
+//   R-M.1.1 -- TSDev allocates+constructs the CELCompiler via orlib20 ordinal
 //   export 66 (FUN_10165f70 = operator_new(0x58) + ctor) and destructs+frees
 //   via ordinal 67 (FUN_10165fd0 = dtor + operator delete(p, 0x58)).
 //
-//   R-M.1.2 — Field layout written by TSDev (FUN_00451800 at
+//   R-M.1.2 -- Field layout written by TSDev (FUN_00451800 at
 //   0x00451ac4-0x00451af9):
-//     +0x08 = category (whType low 8 bits)   — getCategory(type)
-//     +0x0C = subtype                        — getSubType(type)
-//     +0x10 = ProgId                         — the progId arg
-//     +0x18 = notification HWND              — m_editorHwnd
+//     +0x08 = category (whType low 8 bits)   -- getCategory(type)
+//     +0x0C = subtype                        -- getSubType(type)
+//     +0x10 = ProgId                         -- the progId arg
+//     +0x18 = notification HWND              -- m_editorHwnd
 //     +0x00, +0x04 = result fields, zeroed by FUN_004D9480 AFTER
 //                    StartCompilingProcess, BEFORE _VerifyModule_New.
 //     +0x14 = ctor-zeroed (not written by verify chain).
 //
-//   R-M.1.3 — +0x28 is NOT WRITTEN by TSDev. The CLI's prior +0x28 = 6 write
+//   R-M.1.3 -- +0x28 is NOT WRITTEN by TSDev. The CLI's prior +0x28 = 6 write
 //   has no TSDev counterpart and must be removed (left as uninitialized heap;
-//   ctor does NOT zero it — runtime value is indeterminate garbage).
+//   ctor does NOT zero it -- runtime value is indeterminate garbage).
 //
-//   R-M.1.4 — +0x18 = notification HWND (same handle passed to
+//   R-M.1.4 -- +0x18 = notification HWND (same handle passed to
 //   _VerifyModule_New as hwnd arg; Frida trace confirms
 //   _SaveModule_New editorHwnd == _VerifyModule_New hwnd).
 //
-//   R-M.1.5 — Category/subtype come from getCategory(type) / getSubType(type)
+//   R-M.1.5 -- Category/subtype come from getCategory(type) / getSubType(type)
 //   (warehouse type mapping), NOT from source-text parsing.
 //
 // This test exercises the onCompilerReady test hook (populated via
@@ -41,9 +41,9 @@
 // and asserts the TSDev-parity layout.
 //
 // Two test cases:
-//   1. Strategy (category=0, subtype=0) — the historical pre-M.1 case caught
+//   1. Strategy (category=0, subtype=0) -- the historical pre-M.1 case caught
 //      +0x10 (ProgId vs 0xA02) and +0x28 (0 vs 6) divergences.
-//   2. Indicator (category=2, subtype=0) — the historical pre-M.1 case also
+//   2. Indicator (category=2, subtype=0) -- the historical pre-M.1 case also
 //      caught the +0x08 divergence (Strategy has category=0, so +0x08=0 could
 //      pass even when the field was omitted). The current M.1 implementation
 //      writes the TSDev-parity fields for both cases.
@@ -77,7 +77,7 @@ using namespace tsdev;
 namespace {
 
 // ---------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // ---------------------------------------------------------------------------
 static int g_failCount = 0;
 static int g_passCount = 0;
@@ -117,7 +117,7 @@ void onCompilerReadyHook(void* compilerMem, int componentType, int progId) {
 }
 
 // ---------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // ---------------------------------------------------------------------------
 ComApi realComApi() {
@@ -175,7 +175,7 @@ int fail(const char* msg, int code) {
 // ---------------------------------------------------------------------------
 // Run one test case against an ALREADY-CONSTRUCTED TsDevLib (passed by
 // reference). The caller (runTest) constructs ONE TsDevLib for the whole
-// worker thread and passes it to both cases — this matches the operational
+// worker thread and passes it to both cases -- this matches the operational
 // invariant used by every other integration test in this codebase (see
 // test_auto_cleanup.cpp, test_stress_batch.cpp): a SINGLE TsDevLib per
 // worker thread. Constructing a second TsDevLib on the same thread (the
@@ -278,7 +278,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
     // FUN_004D9480 before _VerifyModule_New).
     //
     // NOTE: the compiler object is still LIVE here (verifyModule has not
-    // returned yet — the hook runs synchronously inside it). The object
+    // returned yet -- the hook runs synchronously inside it). The object
     // remains valid until callDestroy runs after _VerifyModule_New returns.
     // Reading the fields here is safe.
     char* base = static_cast<char*>(g_capture.compilerMem);
@@ -294,10 +294,10 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
     int   f10 = *reinterpret_cast<int*>(base + 0x10);
     HWND  f18 = *reinterpret_cast<HWND*>(base + 0x18);
     // +0x28 is intentionally NOT read or asserted here. Per the historical M.1
-    // handoff (`docs/M1_HANDOFF.md` §R-M.1.3; raw note unavailable), +0x28 is
+    // handoff (`docs/M1_HANDOFF.md` Sec. R-M.1.3; raw note unavailable), +0x28 is
     // NOT written by TSDev's
     // CELCompiler constructor nor by operator_new inside ordinal 66, so it
-    // "remains uninitialized" — its runtime value is indeterminate garbage
+    // "remains uninitialized" -- its runtime value is indeterminate garbage
     // (observed as 0 in one run and 71704709 in another). The M.1 parity for
     // +0x28 is that OUR code does NOT WRITE to it (the legacy `+0x28 = 6`
     // write was removed); that parity is verified by code review, NOT by

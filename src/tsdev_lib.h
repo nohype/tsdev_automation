@@ -1,13 +1,13 @@
 // tsdev_lib.h
 //
-// Shared wrapper module for orlib20.dll — the "engine" for the tsdev_automation
+// Shared wrapper module for orlib20.dll -- the "engine" for the tsdev_automation
 // CLI. Encapsulates the confirmed orlib20 operation set (init, name lookup,
 // entry creation, source save, compile/verify, warehouse close) behind a clean,
 // RAII C++ API.
 //
 // The historical findings are preserved in the feasibility report and current
 // catalog; the original raw record is gitignored and unavailable in a fresh
-// checkout. See docs/FEASIBILITY.md §5.1 and archive/elevated_test20.cpp.
+// checkout. See docs/FEASIBILITY.md Sec. 5.1 and archive/elevated_test20.cpp.
 //
 // This module is 32-bit only (orlib20.dll is a 32-bit PE).
 
@@ -24,14 +24,14 @@
 
 class ComApartmentGuard;   // forward declaration (global namespace, matches com_apartment_guard.h)
 
-// TVS-L.13 test-only construction seam (GREEN — implemented).
+// TVS-L.13 test-only construction seam (GREEN -- implemented).
 //
 // TsDevLibTestConfig is an OPAQUE, forward-declared struct from the point of
 // view of this PUBLIC header. Its definition lives ONLY in the internal/test-
 // only header src/tsdev_lib_test_hooks.h, which is NOT included here and is
 // NOT part of the public user API. The definition carries the injected COM
 // API (ComApi) and a flag that simulates a later-constructor exception
-// immediately after a successful COM init — but NONE of those COM details
+// immediately after a successful COM init -- but NONE of those COM details
 // appear in this public header, so no COM configuration (ComApi,
 // CoInitializeEx function-pointer types, <objbase.h>) leaks into the public
 // user API. Users see only an opaque struct name and a PRIVATE constructor
@@ -69,7 +69,7 @@ TsDevLogLevel tsdev_log_get_level();
 
 // Emit a log message to stderr if `level` is <= the current global level.
 // `fmt` uses printf formatting (forwarded to vfprintf); output is flushed.
-// ALL log output goes to stderr only — stdout stays byte-pure for results
+// ALL log output goes to stderr only -- stdout stays byte-pure for results
 // and JSON. Message text is passed through verbatim (no prefixes added).
 void tsdev_log_message(TsDevLogLevel level, const char* fmt, ...);
 
@@ -107,7 +107,7 @@ void tsdev_log_close_file();
 // (and its master-record contract-check) for STRATEGY (category-0) roots.
 // Default false = skip. A strategy cannot be a dependency target: dep-list
 // entries (0xFA3/0xFA4) record FUNCTION references only, and TSDev's own
-// dependent query returns empty for strategy roots — the per-item
+// dependent query returns empty for strategy roots -- the per-item
 // whole-library scan was the dominant driver of WHServer VAS exhaustion
 // while being provably vacuous for cat-0. Set true to restore the legacy
 // traversal (CLI: --traverse-strategy-dependents /
@@ -115,8 +115,8 @@ void tsdev_log_close_file();
 void tsdev_set_traverse_strategy_dependents(bool enabled);
 bool tsdev_get_traverse_strategy_dependents();
 
-// Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md §Mapping to
-// orlib20 warehouse types and §Encoding formula). The enum value is the
+// Confirmed warehouse types (see docs/TS_COMPONENT_TYPES.md Sec. Mapping to
+// orlib20 warehouse types and Sec. Encoding formula). The enum value is the
 // EXPANDED whType (= (subType << 8) | category). For types with sub-type 0
 // (Strategy, Indicator, Function), expanded whType == category.
 // For TradingApp, expanded whType (5122) != category (2).
@@ -181,10 +181,10 @@ struct EnumerateResult {
 //   TsDevLib must be constructed, used, and destroyed on a single thread.
 //   The COM guard (m_comGuard) initializes STA COM on the owning thread via
 //   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) as the very first
-//   effective action of the constructor — BEFORE any SetDllDirectoryW,
+//   effective action of the constructor -- BEFORE any SetDllDirectoryW,
 //   LoadLibraryW, OrlibResolver construction, support-DLL load, patch
-//   application, or OrlibInit — and balances it with CoUninitialize as the
-//   last effective action of the destructor — AFTER OrlibExit, hidden-window
+//   application, or OrlibInit -- and balances it with CoUninitialize as the
+//   last effective action of the destructor -- AFTER OrlibExit, hidden-window
 //   destruction, and patch restoration. CoInitializeEx / CoUninitialize are
 //   thread-affine: balancing COM on a different thread from the one that
 //   entered the apartment is undefined behavior. The owning TsDevLib is
@@ -203,7 +203,7 @@ public:
     TsDevLib(TsDevLib&&)                 = delete;
     TsDevLib& operator=(TsDevLib&&)      = delete;
 
-    // --- TVS-L.13 test-only construction seam (GREEN — implemented) ---
+    // --- TVS-L.13 test-only construction seam (GREEN -- implemented) ---
     // PRIVATE constructor + friend factory. This is NOT part of the public
     // user API: it is private, and the only caller intended is the test-only
     // free function tsdev::makeTsDevLibForTest(...) declared in the INTERNAL
@@ -220,7 +220,7 @@ public:
     //     S_FALSE (e.g. RPC_E_CHANGED_MODE, E_FAIL), throws std::runtime_error
     //     with the HRESULT in the message and performs NO SetDllDirectoryW,
     //     NO orlib20 load, NO patch application, NO OrlibInit, and NO warehouse
-    //     access — COM failure is a hard stop before every later step.
+    //     access -- COM failure is a hard stop before every later step.
     //   - If config.throwAfterCom is true AND COM init succeeded, throws
     //     std::runtime_error immediately after the COM guard is constructed
     //     (simulating a later-constructor exception). The COM guard's
@@ -229,7 +229,7 @@ public:
     //     warehouse side effect runs.
     //   - Otherwise (COM success, throwAfterCom == false) proceeds with the
     //     normal constructor body (SetDllDirectoryW, OrlibResolver, support
-    //     DLLs, patches, OrlibInit, hidden EDIT control) — identical to the
+    //     DLLs, patches, OrlibInit, hidden EDIT control) -- identical to the
     //     public constructor above.
     explicit TsDevLib(const wchar_t* tsPathOverride,
                       const TsDevLibTestConfig& config);
@@ -276,11 +276,11 @@ public:
     // path: FUN_101d05e0 (BST search wrapper, __thiscall:
     //     ECX=warehouse, stack=(typeFilter, name, *outNode); RET 0xC) +
     //     FUN_101c36d0 (verbatim name getter, __fastcall: ECX=node pointer,
-    //     no stack args; RET — returns char* from the warehouse node at
+    //     no stack args; RET -- returns char* from the warehouse node at
     //     offset +0x1D). FUN_101d05e0 finds the BST node for the item name;
     //     FUN_101c36d0 reads the verbatim stored name directly from that
     //     node. (FUN_101a42d0 was the original candidate but was found to
-    //     return the ProgId — not the verbatim name — in non-server mode,
+    //     return the ProgId -- not the verbatim name -- in non-server mode,
     //     so it cannot be used to get the verbatim name; it is retained as
     //     m_pFindItemGetName for reference only.) The stored name comes
     //     from the WAREHOUSE, not from source text (HARD RULE 0).
@@ -314,8 +314,8 @@ public:
     // StartCompilingProcess + VerifyModule_New + EndCompilingProcess, then
     // destroys the compiler object.
     // Returns the compilation error string (empty string == success).
-    // Uses the internal hidden EDIT control (m_editorHwnd) — the same
-    // control saveSource uses — for both VerifyModule_New and the
+    // Uses the internal hidden EDIT control (m_editorHwnd) -- the same
+    // control saveSource uses -- for both VerifyModule_New and the
     // CELCompiler +0x18 field.
     //
     // TVS-L.10: verifyModule no longer owns create-path partial-entry
@@ -326,10 +326,10 @@ public:
     // To let doInsert report WHICH verify-internal path failed (and to make
     // coverage of every failure mode explicit), verifyModule optionally
     // writes the failure stage to `*outStage`:
-    //   * nullptr (default) — stage not reported (used by modifyEntry, which
+    //   * nullptr (default) -- stage not reported (used by modifyEntry, which
     //     operates on an existing entry and must never trigger create-path
     //     cleanup).
-    //   * non-null  — set to the matching CreatePathFailureStage enumerator
+    //   * non-null  -- set to the matching CreatePathFailureStage enumerator
     //     on every non-empty (failure) return path: OOM, SEH in ctor /
     //     StartCompiling / VerifyModule_New, and compile errors. Left
     //     untouched on the success (empty-string) return.
@@ -365,7 +365,7 @@ public:
     // separate persistence guarantee.
     // NOTE: When called with NULL (0), the warehouse may not actually be
     // closed due to an internal path-mismatch in orlib20. This is acceptable
-    // for the delete flow — the deletion is persisted via OrlibExit (in the
+    // for the delete flow -- the deletion is persisted via OrlibExit (in the
     // destructor) and the in-memory BST is updated via DeleteFromTree.
     bool closeWarehouse();
 
@@ -373,18 +373,18 @@ public:
     // found, if the explicit warehouse close raises SEH, OR if a delete-path
     // disk-cleanup failure occurred (TVS-L.12). The
     // flow (confirmed via Frida trace of live TSDev.exe):
-    //   FindExistPos(name, whType) →
+    //   FindExistPos(name, whType) ->
     //   FUN_101a8360 (delete orchestrator: __fastcall ECX=whType, EDX=progId)
-    //     — loads program, marks deleted, runs CELProgramWriter cleanup,
-    //       sends command 0x4E (cache reset) and command 0x17 (save/commit) →
-    //   InitGlobalLookup → DeleteFromTree(globalLookup, whType, progId, 3) →
-    //   closeWarehouse (explicit flush; failure returns false) →
-    //   OrlibExit (in destructor, persists the deletion) →
+    //     -- loads program, marks deleted, runs CELProgramWriter cleanup,
+    //       sends command 0x4E (cache reset) and command 0x17 (save/commit) ->
+    //   InitGlobalLookup -> DeleteFromTree(globalLookup, whType, progId, 3) ->
+    //   closeWarehouse (explicit flush; failure returns false) ->
+    //   OrlibExit (in destructor, persists the deletion) ->
     //   delete .ell/.xml files via Windows API.
     //
     // TVS-L.12: step 5 (delete .ell/.xml) consults
     // deleteDiskCleanupErrorFailsResult() for EACH DeleteFileA call. A real
-    // removal failure (e.g. ERROR_ACCESS_DENIED — artifact present but could
+    // removal failure (e.g. ERROR_ACCESS_DENIED -- artifact present but could
     // not be removed) now makes deleteEntry return false instead of
     // unconditionally returning true. ERROR_SUCCESS and ERROR_FILE_NOT_FOUND
     // remain non-failures (idempotent absence is not a failure). When false is
@@ -393,7 +393,7 @@ public:
     //
     // `diskCleanupErrorOut` (optional, may be nullptr): when provided and
     // deleteEntry returns false due to a disk-cleanup failure, it is populated
-    // with a human-readable description of the residual artifact(s) — the path
+    // with a human-readable description of the residual artifact(s) -- the path
     // and the Windows error code for each DeleteFileA that failed the
     // decision. It is left untouched for non-cleanup failures (not found /
     // orchestrator SEH) so a caller can distinguish "warehouse entry removed,
@@ -406,17 +406,17 @@ public:
                      std::string* diskCleanupErrorOut = nullptr);
 
     // Modify an existing component's EasyLanguage source and recompile/re-verify.
-    // Flow (reuses the existing INSERT primitives directly — no new orlib20
+    // Flow (reuses the existing INSERT primitives directly -- no new orlib20
     // calls, no new RVAs):
-    //   findExistPos(name, type) → lookup existing ProgId
+    //   findExistPos(name, type) -> lookup existing ProgId
     //     - if not found (progId <= 0): return Result{success=false,
     //       message="component not found"}
-    //   saveSource(type, progId, newSource) → replace source in the existing
-    //     entry (the ProgId does NOT change — no createEntry)
-    //   verifyModule(type, progId) → recompile + reverify + persist .ell
+    //   saveSource(type, progId, newSource) -> replace source in the existing
+    //     entry (the ProgId does NOT change -- no createEntry)
+    //   verifyModule(type, progId) -> recompile + reverify + persist .ell
     //     - if verifyModule returns a non-empty error string (compilation
     //       failed): return Result{success=false, message=<error>,
-    //       progId=progId} — fail loudly with the error
+    //       progId=progId} -- fail loudly with the error
     //     - if verifyModule returns an empty string (success): return
     //       Result{success=true, message="", progId=progId}
     // The .ell file is updated on disk via verifyModule's existing
@@ -444,21 +444,21 @@ public:
 
     // M.4b.1: Warehouse-level reverse-dependent (Callers) enumeration
     // primitive. Drives the orlib20 warehouse worker-thread command protocol
-    // (cmd 0x0D → cmd 0x3B) — the SAME mechanism TSDev.exe uses
+    // (cmd 0x0D -> cmd 0x3B) -- the SAME mechanism TSDev.exe uses
     // (FUN_004cad90 / FUN_004D91E0; see
-    // docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md §9). Read-only: does
+    // docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md Sec. 9). Read-only: does
     // NOT compile, verify, or modify any item.
     //
     // Flow:
     //   1. Resolve the root item's ProgId via findExistPos.
     //   2. Get the warehouse singleton (callGetWarehouse).
     //   3. Set warehouse+0x12 = category, warehouse+0x16 = ProgId.
-    //   4. Dispatch cmd 0x0D (ProgramById) via callCmdDispatcher — stores the
+    //   4. Dispatch cmd 0x0D (ProgramById) via callCmdDispatcher -- stores the
     //      root CELProgram record at warehouse+0x5e.
-    //   5. Dispatch cmd 0x3B (IProgram::Callers) via callCmdDispatcher —
+    //   5. Dispatch cmd 0x3B (IProgram::Callers) via callCmdDispatcher --
     //      populates the reverse-dependent SafeArray at warehouse+0x26.
     //   6. Guard: warehouse+0x4e == 0 (status/error).
-    //   7. Read the SafeArray from warehouse+0x26, parse entries per §9.7.
+    //   7. Read the SafeArray from warehouse+0x26, parse entries per Sec. 9.7.
     //   8. Return a vector of CallerInfo.
     //
     // All orlib20 calls are SEH-protected. Returns an empty vector on any
@@ -486,7 +486,7 @@ private:
     // SetDllDirectoryW / LoadLibraryW / OrlibResolver / patch / OrlibInit)
     // and destructed LAST (CoUninitialize runs after the destructor body's
     // OrlibExit + hidden-window destruction + patch restoration, and after
-    // every other member's destructor — members are destructed in reverse
+    // every other member's destructor -- members are destructed in reverse
     // declaration order). PIMPL via unique_ptr so the ComApartmentGuard
     // definition (com_apartment_guard.h) is not required in this header.
     // The default ComApi binds the real CoInitializeEx / CoUninitialize.
@@ -542,11 +542,11 @@ private:
                                                   int progId, void* password);
     typedef int (__stdcall *LoadMasterRecsExFn)(int category, HGLOBAL* outBuf,
                                                 const char* path, int filterMode);
-    // _GetMasterRecByType@16 — __stdcall, 4 params (category, subtype,
+    // _GetMasterRecByType@16 -- __stdcall, 4 params (category, subtype,
     // index=ProgId, outBuf). Returns 1 on success (record found and copied
     // to outBuf), 0 on failure (not found or warehouse unavailable).
     // The record is 0x10A bytes with the stored name at offset 0x17.
-    // Dispatches cmd 0x0D via FUN_101d15c0 (local mode) — requires the
+    // Dispatches cmd 0x0D via FUN_101d15c0 (local mode) -- requires the
     // FUN_101d15c0_thread_check_INT3 patch.
     typedef int (__stdcall *GetMasterRecByTypeFn)(int category, int subType,
                                                   int index, void* outBuf);
@@ -578,7 +578,7 @@ private:
     // pre-verify link fails (no object code yet); calling Ordinal_69
     // after verify populates the dep-list cache so subsequent Ordinal_85
     // (linker) calls return a record with 0xFA3 entries. Returns a linked
-    // record pointer (refcounted — release via Ordinal_70) or 0 on failure.
+    // record pointer (refcounted -- release via Ordinal_70) or 0 on failure.
     typedef void* (__cdecl *Ordinal69Fn)(int category, int progId,
                                          void* partialBuf);
     typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
@@ -614,8 +614,8 @@ private:
     // resolved by orlib20 ORDINAL (66 / 67), not by signature scan of the
     // raw ctor/dtor. The typedefs are declared locally here (structurally
     // identical to tsdev::CELCompilerAllocFn / tsdev::CELCompilerDestroyFn
-    // in orlib_resolver.h — function pointer types with the same signature
-    // convert implicitly). See docs/M1_HANDOFF.md §R-M.1.1; the underlying raw
+    // in orlib_resolver.h -- function pointer types with the same signature
+    // convert implicitly). See docs/M1_HANDOFF.md Sec. R-M.1.1; the underlying raw
     // Ghidra note is historical/transient and unavailable in a fresh checkout.
     //   Ordinal 66: __cdecl, no args, returns void* (alloc + construct).
     //   Ordinal 67: __stdcall, one arg (void* p), returns void (dtor + free).
@@ -626,10 +626,10 @@ private:
     // (2 dword args): (unsigned short category, unsigned short progId).
     // Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
     // msg=0x40A, calls tslib!PosMessageToClients. Always returns 1 (the
-    // return value is NOT a delivery guarantee — see
-    // docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1). The typedef is declared
+    // return value is NOT a delivery guarantee -- see
+    // docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 3.1). The typedef is declared
     // locally here (structurally identical to tsdev::NotifyLibChangedFn in
-    // orlib_resolver.h). See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2.
+    // orlib_resolver.h). See docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 1.2.
     typedef void (__stdcall *NotifyLibChanged_t)(unsigned short category,
                                                  unsigned short progId);
     // InitGlobalLookup: __cdecl, no args
@@ -658,34 +658,34 @@ private:
     // (57). Stored as the local typedef (NotifyLibChanged_t), which is
     // structurally identical to tsdev::NotifyLibChangedFn. nullptr in
     // production if ordinal 57 resolution failed (notification silently
-    // skipped — see docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+    // skipped -- see docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 3.1).
     NotifyLibChanged_t      m_pNotifyLibChanged   = nullptr;
     InitGlobalLookup_t      m_pInitGlobalLookup = nullptr;
     void*                   m_pDeleteFromTree   = nullptr;
     GetWarehouse_t          m_pGetWarehouse     = nullptr;
-    // FUN_101cf5b0 — the generic command dispatcher (__thiscall:
+    // FUN_101cf5b0 -- the generic command dispatcher (__thiscall:
     // ECX=warehouse, stack=commandId). Already INT3-patched at offset 36.
     // Stored as void* and invoked via inline asm in a POD-only helper
     // (callCmdDispatcher) because MSVC has no direct __thiscall function-
     // pointer type. Used by refreshCache() to dispatch cmd 0x4E.
     void*                   m_pCmdDispatcher    = nullptr;
-    // FUN_101d0950 — the cmd 0x0F dispatch helper (__thiscall:
+    // FUN_101d0950 -- the cmd 0x0F dispatch helper (__thiscall:
     // ECX=warehouse, stack=typeArray, progId, &outParam). Already INT3-patched
     // (FUN_101d0950_thread_check_INT3). Stored as void* and invoked via
     // inline asm in callCmd0FDispatcher. Used by refreshCache() to set
     // [warehouse+0x5E] (COM interface) before dispatching cmd 0x4E.
     void*                   m_pCmd0FDispatcher   = nullptr;
-    // FUN_101d43a0 — the type-array builder (__stdcall: 2 stack args —
+    // FUN_101d43a0 -- the type-array builder (__stdcall: 2 stack args --
     // category, outArray). Stored as void* and invoked via inline asm in
     // callBuildTypeArray. Used by refreshCache() to build the type array
     // needed by the cmd 0x0F dispatch.
     void*                   m_pBuildTypeArray    = nullptr;
-    // FUN_1000dd30 — the CELProgramWriter constructor (__fastcall:
+    // FUN_1000dd30 -- the CELProgramWriter constructor (__fastcall:
     // ECX=buffer). Stored as void* and invoked via inline asm in
     // callCelProgramWriterCtor. Used by refreshCache() to initialize the
     // output buffer before calling FUN_101d0950 (cmd 0x0F dispatch).
     void*                   m_pCelProgWriterCtor = nullptr;
-    // FUN_101cfce0 — the cmd 0x0D dispatch helper (__thiscall:
+    // FUN_101cfce0 -- the cmd 0x0D dispatch helper (__thiscall:
     // ECX=warehouse, stack=type, param). Already INT3-patched
     // (FUN_101cfce0_thread_check_INT3). Stored as void* and invoked via
     // inline asm in callCmd0DDispatcher. Used by refreshCache() to obtain
@@ -694,7 +694,7 @@ private:
     // _LoadMasterRecsEX@16) reads to enumerate records. The cmd 0x0F
     // interface is stale after create/modify; cmd 0x0D gets a fresh one.
     void*                   m_pCmd0DDispatcher   = nullptr;
-    // FUN_101a42d0 — find item by name + get verbatim stored name
+    // FUN_101a42d0 -- find item by name + get verbatim stored name
     // (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
     // outVerbatimName; RET 0x8). Stored as void* and invoked via inline asm
     // in callFindItemGetName. SUPERSEDED / DEAD CODE (retained for
@@ -704,13 +704,13 @@ private:
     // name-index lookup uses FUN_101d05e0 (m_pBstSearchWrapper) +
     // FUN_101c36d0 (m_pVerbatimNameGetter) instead.
     void*                   m_pFindItemGetName   = nullptr;
-    // FUN_101d05e0 — BST search wrapper (non-server mode)
+    // FUN_101d05e0 -- BST search wrapper (non-server mode)
     // (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);
     // RET 0xC). Stored as void* and invoked via inline asm in
     // callBstSearchWrapper. Used by enumerateRecords()'s name-index lookup
     // to find the BST node for a given item name.
     void*                   m_pBstSearchWrapper   = nullptr;
-    // FUN_101c36d0 — verbatim name getter (__fastcall: ECX=node pointer,
+    // FUN_101c36d0 -- verbatim name getter (__fastcall: ECX=node pointer,
     // no stack args; RET). Stored as void* and invoked via inline asm in
     // callVerbatimNameGetter. Used by enumerateRecords()'s name-index
     // lookup to get the verbatim stored name from the BST node found by
@@ -729,9 +729,9 @@ private:
     // struct definition. Always nullptr for the public ctor (production).
     //
     // Signature: void(*)(void* compilerMem, int componentType, int progId)
-    //   compilerMem    — pointer to the live CELCompiler object
-    //   componentType  — static_cast<int>(type) being verified
-    //   progId         — the ProgId passed to verifyModule
+    //   compilerMem    -- pointer to the live CELCompiler object
+    //   componentType  -- static_cast<int>(type) being verified
+    //   progId         -- the ProgId passed to verifyModule
     void (*m_onCompilerReady)(void* compilerMem, int componentType,
                               int progId) = nullptr;
 
@@ -749,16 +749,16 @@ private:
     // Signature:
     //   void(*)(const unsigned int* flags, const char* passwordBuf,
     //           int passwordBufSize, int componentType, int progId)
-    //   flags          — pointer to the non-NULL flags word passed as arg3 by
+    //   flags          -- pointer to the non-NULL flags word passed as arg3 by
     //                    current production saveSource(): category bits plus
     //                    0x60, with 0x10 added when re-saving a verified item.
-    //   passwordBuf    — pointer to the non-NULL 64-byte buffer passed as arg5;
+    //   passwordBuf    -- pointer to the non-NULL 64-byte buffer passed as arg5;
     //                    it is zero-initialized first, then the 10-byte
     //                    internal default string is copied into its leading
     //                    bytes, leaving only the unused tail zero.
-    //   passwordBufSize— buffer size (64 in current production).
-    //   componentType  — static_cast<int>(type) being saved.
-    //   progId         — the ProgId passed to saveSource.
+    //   passwordBufSize-- buffer size (64 in current production).
+    //   componentType  -- static_cast<int>(type) being saved.
+    //   progId         -- the ProgId passed to saveSource.
     void (*m_onSaveModuleNewReady)(const unsigned int*, const char*,
                                    int, int, int) = nullptr;
 
@@ -766,7 +766,7 @@ private:
     // Optional callback populated from TsDevLibTestConfig::onNotifyReady
     // during construction via makeTsDevLibForTest (the private test-only
     // ctor). When non-null, verifyModule() (on the success path) and
-    // deleteEntry() (on the success path, gated category != 4 — read-only
+    // deleteEntry() (on the success path, gated category != 4 -- read-only
     // Function (cat 4) only; editable Function (cat 1) deletes DO send) invoke it
     // immediately BEFORE the 0x40A notification would be sent via orlib20
     // Ordinal_57, capturing the (msg, wParam, lParam) tuple plus the
@@ -780,11 +780,11 @@ private:
     // Signature:
     //   void(*)(UINT msg, WPARAM wParam, LPARAM lParam,
     //           int componentType, int progId)
-    //   msg           — 0x040A (the message ID about to be posted).
-    //   wParam        — 0.
-    //   lParam        — (category << 16) | (ProgId & 0xFFFF).
-    //   componentType — static_cast<int>(type) of the affected module.
-    //   progId        — the ProgId of the affected module.
+    //   msg           -- 0x040A (the message ID about to be posted).
+    //   wParam        -- 0.
+    //   lParam        -- (category << 16) | (ProgId & 0xFFFF).
+    //   componentType -- static_cast<int>(type) of the affected module.
+    //   progId        -- the ProgId of the affected module.
     void (*m_onNotifyReady)(UINT, WPARAM, LPARAM, int, int) = nullptr;
 
     // Optional callback populated from
@@ -815,8 +815,8 @@ private:
     // has been constructed and verified initialized (S_OK / S_FALSE). This
     // avoids duplicating the ~110-line init sequence (SetDllDirectoryW,
     // OrlibResolver, support DLLs, patches, OrlibInit, hidden EDIT control)
-    // across the two constructors. It is a private implementation detail —
-    // not part of the public API — and exists solely to keep the two
+    // across the two constructors. It is a private implementation detail --
+    // not part of the public API -- and exists solely to keep the two
     // construction paths behaviorally identical past the COM-init step.
     void initAfterCom(const wchar_t* tsPathOverride);
 
@@ -850,7 +850,7 @@ private:
     // nested struct so the diagnostic can call the ACTUAL production
     // implementation directly without going through verifyModule (which
     // would compile/modify items). This declaration changes NO production
-    // behavior — it only grants name access to a test accessor struct
+    // behavior -- it only grants name access to a test accessor struct
     // defined in tests/diag_m4_reverse_enum.cpp.
     friend struct DiagM4ReverseEnumAccess;
 };

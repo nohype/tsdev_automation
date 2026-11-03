@@ -5,12 +5,12 @@
 //
 // The decision is a pure function of (progId, stage):
 //   * progId <= 0 -> createEntry did NOT succeed; no partial warehouse entry
-//                    exists. Returns false for every stage — there is nothing
+//                    exists. Returns false for every stage -- there is nothing
 //                    to clean up, and a caller that blindly deleted would risk
 //                    removing an unrelated entry.
 //   * progId >  0 -> createEntry DID succeed; a partial warehouse entry now
 //                    lives in the in-memory BST. Returns true for EVERY stage
-//                    enumerated in CreatePathFailureStage — saveSource failure
+//                    enumerated in CreatePathFailureStage -- saveSource failure
 //                    AND every verifyModule early-return / SEH / OOM /
 //                    compile-error mode. Once createEntry has succeeded, ANY
 //                    subsequent failure in the create-path must remove the
@@ -24,9 +24,9 @@
 //
 // The stage argument is carried by the caller for two reasons that do NOT
 // affect the boolean:
-//   1. Diagnostics — the create-path owner can report WHICH post-create step
+//   1. Diagnostics -- the create-path owner can report WHICH post-create step
 //      failed (saveSource vs. OOM vs. SEH-ctor vs. ...).
-//   2. Coverage — the unit test (tests/test_create_path_cleanup.cpp) iterates
+//   2. Coverage -- the unit test (tests/test_create_path_cleanup.cpp) iterates
 //      every stage so that adding a new failure mode without routing it
 //      through this owner is detected.
 //

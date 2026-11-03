@@ -1,7 +1,7 @@
 // test_whserver_recycle.cpp
 //
 // Unit test for src/whserver_recycle.cpp: the WHServer gated auto-recycle
-// engine (tmp/RECYCLE_ENGINE_DESIGN.md §2 steps 1-6 — R3 "engine skeleton:
+// engine (tmp/RECYCLE_ENGINE_DESIGN.md Sec. 2 steps 1-6 -- R3 "engine skeleton:
 // census->refuse path + all refuse exits; ForceShutDown behind the
 // IRecycleAttach seam; process reads/clock behind IRecycleSampler").
 //
@@ -9,8 +9,8 @@
 // a scripted census/death poll stream + a scripted attach result. No
 // WHServer, no COM attach, no orlib20, no TradeStation contact. The
 // production ComRecycleAttach TU is compiled in but never invoked
-// (attachAndForceShutDown on the empty-MyWork path is exercised — it must
-// refuse WITHOUT touching COM, the §2 step-4 hard precondition).
+// (attachAndForceShutDown on the empty-MyWork path is exercised -- it must
+// refuse WITHOUT touching COM, the Sec. 2 step-4 hard precondition).
 //
 // The implementation .cpp files are compiled directly into this test
 // executable (see CMakeLists.txt), so no library link is needed.
@@ -85,7 +85,7 @@ std::vector<tsdev::CensusPoll> passCensus(DWORD pid, double step = 0.2,
     return v;
 }
 
-// A lock>0 census (foreign client) — decideCensus refuses at budget end.
+// A lock>0 census (foreign client) -- decideCensus refuses at budget end.
 std::vector<tsdev::CensusPoll> lockedCensus(DWORD pid, double step = 0.2,
                                           double span = 0.8) {
     std::vector<tsdev::CensusPoll> v;
@@ -463,7 +463,7 @@ int main() {
         }
     }
 
-    // -- Group 12: census-absent arm — server already gone ---------------------------
+    // -- Group 12: census-absent arm -- server already gone ---------------------------
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -496,7 +496,7 @@ int main() {
             p.reads = {lockRead(1001, 0), lockRead(1002, 0)};
             f.sampler.census.push_back(p);
         }
-        // Death: pid 1002 still active for the first two polls, then gone —
+        // Death: pid 1002 still active for the first two polls, then gone --
         // needs >=3 consecutive fully-dead polls.
         tsdev::RecycleDeathPoll alive;
         alive.snapshotOk = true;
@@ -545,7 +545,7 @@ int main() {
         f.sampler.deaths = {d, d, d, d, d};
         tsdev::RecycleResult r = f.run();
         // P4 f-iv: every poll inconclusive => the honest refuse label is
-        // death_unverifiable — nothing was ever observed alive OR dead.
+        // death_unverifiable -- nothing was ever observed alive OR dead.
         if (r.outcome != tsdev::RecycleOutcome::RefuseVerifyDeath ||
             r.reason != "death_unverifiable" || r.exitCode != 19) {
             return fail("inconclusive crash enum -> death_unverifiable", 141);
@@ -567,8 +567,8 @@ int main() {
             !tsdev::resolveMyWorkDirFromBinPath("Bin").empty()) {
             return fail("unresolved MyWork -> empty", 151);
         }
-        // Empty MyWork => AttachFailed WITHOUT touching COM (§2 step-4 hard
-        // precondition) — safe to call in a unit test with no COM init.
+        // Empty MyWork => AttachFailed WITHOUT touching COM (Sec. 2 step-4 hard
+        // precondition) -- safe to call in a unit test with no COM init.
         tsdev::ComRecycleAttach real(L"");
         std::string det;
         if (real.attachAndForceShutDown({1}, det) !=
@@ -578,7 +578,7 @@ int main() {
         }
     }
 
-    // -- Group 15b: died-mid-census (review F9) — the census passes via the
+    // -- Group 15b: died-mid-census (review F9) -- the census passes via the
     //    absent arm over a NON-EMPTY pid union: attach must NOT run (it
     //    would CoGetClassObject-spawn a FRESH WHServer the gate never
     //    measured) and verify-death is redundant (>=3 consecutive
@@ -605,11 +605,11 @@ int main() {
         }
     }
 
-    // -- Group 15c: MIXED pass — one pid still listed+zero while another
+    // -- Group 15c: MIXED pass -- one pid still listed+zero while another
     //    went absent-confirmed: attach MUST still run for the live pid,
     //    and only the live pid may be handed to the attach seam (P4 f-i:
-    //    the confirmed-absent 4344 would fail the image gate — OpenProcess
-    //    on a dead pid — blocking a legitimate recycle of 4343).
+    //    the confirmed-absent 4344 would fail the image gate -- OpenProcess
+    //    on a dead pid -- blocking a legitimate recycle of 4343).
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -643,14 +643,14 @@ int main() {
 
     // -- Group 16: production WhRecycleSampler::deathPoll fail-closed
     //    branches on REAL processes (review F8; the R1 self-targeting
-    //    convention — no TS, no WHServer needed). Exercises
+    //    convention -- no TS, no WHServer needed). Exercises
     //    whserver_recycle.cpp's OpenProcess/STILL_ACTIVE arm, which the
     //    scripted FakeSampler never reaches.
     {
         tsdev::WhRecycleSampler s;
 
         // (a) Own pid: OpenProcess ok + STILL_ACTIVE -> stillActive
-        //     (the alive/denied arm — the fail-closed direction).
+        //     (the alive/denied arm -- the fail-closed direction).
         tsdev::RecycleDeathPoll dp;
         const DWORD self = GetCurrentProcessId();
         if (!s.deathPoll({self}, dp) || !dp.snapshotOk) {
@@ -663,7 +663,7 @@ int main() {
 
         // (b) Spawned-then-exited pid: OpenProcess fails
         //     (ERROR_INVALID_PARAMETER) or GetExitCodeProcess != STILL_ACTIVE
-        //     — either way it must NOT land in stillActive.
+        //     -- either way it must NOT land in stillActive.
         STARTUPINFOA si{}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         char cmd[] = "cmd.exe /c exit 0";
@@ -687,7 +687,7 @@ int main() {
 
     // -- Group 17: image-identity gate at census level (R5) --------------------
     // A census pid whose image is not the probed WHServer build reads a
-    // persistent 0 at the stale VA — the exact false-pass the gate exists
+    // persistent 0 at the stale VA -- the exact false-pass the gate exists
     // to prevent. decideCensus makes it Indeterminate => the engine
     // refuses census_indeterminate and never reaches attach.
     {
@@ -712,7 +712,7 @@ int main() {
 
     // -- Group 18: attach-site identity gate (R5) ------------------------------
     // ComRecycleAttach must refuse BEFORE any COM call when a census pid's
-    // image is not the probed build — the raw-COM chain's hardcoded vtable
+    // image is not the probed build -- the raw-COM chain's hardcoded vtable
     // offsets/dispids are layout facts of that one build, so the gate holds
     // even when a caller reaches attach directly (defense-in-depth behind
     // the census-level gate). Uses a RESOLVED MyWork so the check order is
@@ -741,12 +741,12 @@ int main() {
         }
     }
 
-    // -- Group 19: step-2 bounded close — a hanging close fires the bound ------
+    // -- Group 19: step-2 bounded close -- a hanging close fires the bound ------
     // The close must stay on the engine thread (CELWHouse is bound per
     // (thread,path)), so the bound is the monitor thread. A close that
-    // outlives closeBoundSecs fires onCloseBoundExceeded — production's
+    // outlives closeBoundSecs fires onCloseBoundExceeded -- production's
     // default is stderr + TerminateProcess(19); the injected stub records
-    // the fire and unblocks the scripted close — and the engine then
+    // the fire and unblocks the scripted close -- and the engine then
     // refuses close_timeout on the same teardown contract: the late
     // return is never trusted and census/ForceShutDown are never reached.
     {
@@ -785,7 +785,7 @@ int main() {
         }
     }
 
-    // -- Group 20: step-2 bounded close — a fast close never fires ------------
+    // -- Group 20: step-2 bounded close -- a fast close never fires ------------
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -807,9 +807,9 @@ int main() {
     // -- Group 21: P4-(b) pre-close corpse gate --------------------------------
     // A crash-frozen WHServer still enumerates (a frozen corpse is not
     // absent), so the guard can trip on it and closeWarehouse would wedge
-    // inside the dispatch — previously discovered only when the close
+    // inside the dispatch -- previously discovered only when the close
     // bound killed the process. The gate refuses BEFORE the close with
-    // the stage-tagged reason (terminateSelf — an own session may still
+    // the stage-tagged reason (terminateSelf -- an own session may still
     // be open; the close never ran).
     {
         Fixture f;
@@ -860,7 +860,7 @@ int main() {
         }
     }
     // Never-attached site: the pre-close gate is SKIPPED (there is no
-    // close to wedge); the corpse — whose frozen memory reads lock==0 —
+    // close to wedge); the corpse -- whose frozen memory reads lock==0 --
     // passes the census and is caught by the PRE-ATTACH gate instead
     // (the exact never-attached hazard from P4-(b)).
     {
@@ -894,7 +894,7 @@ int main() {
         f.rp.ownSessionExists = false;
         f.sampler.census = passCensus(6262);
         tsdev::RecycleZombiePoll z;
-        z.snapshotOk = false;        // WHServer re-enum failed — inconclusive
+        z.snapshotOk = false;        // WHServer re-enum failed -- inconclusive
         z.crashSnapshotOk = true;
         f.sampler.zombies = {z};
         tsdev::RecycleResult r = f.run();
@@ -908,7 +908,7 @@ int main() {
     // -- Group 22: closeBoundSecs<=0 params guard (P4 f-ii) --------------------
     // 0 fires the monitor instantly; a negative wraps the DWORD ms
     // conversion to ~49.7 days of silently-unbounded close. Both refuse
-    // at engine entry — the close and every later stage never run.
+    // at engine entry -- the close and every later stage never run.
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -946,7 +946,7 @@ int main() {
 
     // -- Group 23: verify-death reason precision (P4 f-iv) ---------------------
     // Conclusive-dead polls that never reach the confirm streak plus an
-    // inconclusive tail => death_unverifiable — the pid was never
+    // inconclusive tail => death_unverifiable -- the pid was never
     // observed alive, so "forceshutdown_inert" would be a guess.
     {
         Fixture f;
@@ -964,7 +964,7 @@ int main() {
         }
     }
     // A conclusive alive/inert observation followed by an inconclusive
-    // tail keeps the inert label — it is positive evidence, not a guess.
+    // tail keeps the inert label -- it is positive evidence, not a guess.
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -989,7 +989,7 @@ int main() {
     // -- Group 24: census refuse reason precision (P4 f-iv) --------------------
     // A Refuse dominated by re-enumeration failures (a pid was listed
     // once, then every snapshot fails so the absent arm can never
-    // confirm) is "census_unverifiable" — no held lock was ever observed;
+    // confirm) is "census_unverifiable" -- no held lock was ever observed;
     // the old "census_lock" labeled unverifiable evidence as a lock.
     {
         Fixture f;
@@ -1013,7 +1013,7 @@ int main() {
         }
     }
     // A sub-window zero stream ending without a verdict is the same
-    // unverifiable class: quiescence was measured but never sustained —
+    // unverifiable class: quiescence was measured but never sustained --
     // and no lock>0 was ever observed.
     {
         Fixture f;
@@ -1029,7 +1029,7 @@ int main() {
         }
     }
     // A positively-observed held lock still labels census_lock even when
-    // the tail went inconclusive — affirmative evidence wins the label.
+    // the tail went inconclusive -- affirmative evidence wins the label.
     {
         Fixture f;
         f.rp.ownSessionExists = true;
@@ -1055,12 +1055,12 @@ int main() {
         }
     }
 
-    // -- Group 25: pollIntervalSecs<=0 params guard (P4 nit — identical ----
+    // -- Group 25: pollIntervalSecs<=0 params guard (P4 nit -- identical ----
     // wrap class to closeBoundSecs) ---------------------------------------
     // A negative interval wraps the static_cast<unsigned>(secs*1000.0)
     // sleepMs conversion to ~49.7 days at every census/verify-death poll
     // (a silently stalled engine); 0 is not a usable interval either. Both
-    // refuse at engine entry — before the close and every later stage — on
+    // refuse at engine entry -- before the close and every later stage -- on
     // the same params-invalid/teardown contract as close_bound_invalid.
     {
         Fixture f;
@@ -1098,8 +1098,8 @@ int main() {
         }
     }
 
-    // -- Group 26: boundedCloseWarehouse direct (R2 exported §5 close ----
-    //    stage seam — the SAME machinery the engine's step-2 runs:
+    // -- Group 26: boundedCloseWarehouse direct (R2 exported Sec. 5 close ----
+    //    stage seam -- the SAME machinery the engine's step-2 runs:
     //    zombie pre-check then the monitor-bounded close on the calling
     //    thread). The R2 attached-site defer drives it to release the
     //    +7 via graceful teardown; pin every outcome arm here so the
@@ -1214,7 +1214,7 @@ int main() {
 
         // (g) hanging close + non-fatal injected action -> the bound
         //     fires, the action runs on the monitor thread, and the
-        //     result is close_timeout — the late return is untrusted.
+        //     result is close_timeout -- the late return is untrusted.
         {
             FakeSampler s(&log);
             s.zombies.assign(1, cleanZombiePoll());

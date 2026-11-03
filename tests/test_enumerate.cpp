@@ -14,10 +14,10 @@
 //
 // Flow (mirrors tests/test_exists.cpp, per F5-S2 plan):
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. Pre-clean: findExistPos(name, Strategy) — delete if it already exists
-//   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
-//   4. saveSource(Strategy, progId, source) — assert success
-//   5. verifyModule(Strategy, progId) — assert no errors
+//   2. Pre-clean: findExistPos(name, Strategy) -- delete if it already exists
+//   3. createEntry(Strategy, name, errCode) -- assert ProgId > 0
+//   4. saveSource(Strategy, progId, source) -- assert success
+//   5. verifyModule(Strategy, progId) -- assert no errors
 //   6. enumerateRecords(Strategy, nameUpper) -- ASSERT exists == true,
 //      storedName == kTestName (verbatim, correct case), progId > 0,
 //      lookupOk == true
@@ -39,7 +39,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread.
 
@@ -58,7 +58,7 @@ namespace {
 // sorts it to the end of the warehouse and signals a test entry.
 const char* kTestName = "zzz_test_ci_probe";
 
-// The same name converted to UPPERCASE — used to verify case-insensitive
+// The same name converted to UPPERCASE -- used to verify case-insensitive
 // matching via enumerateRecords (the stored name is lowercase/mixed, the
 // query is uppercase; the returned storedName must be the verbatim original).
 const char* kTestNameUpper = "ZZZ_TEST_CI_PROBE";
@@ -198,7 +198,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: Pre-clean — ensure the entry does not already exist ---
+    // --- Step 2: Pre-clean -- ensure the entry does not already exist ---
     std::fprintf(stdout, "\n[2] Pre-clean: findExistPos(\"%s\", Strategy)...\n",
                  kTestName);
     int existing = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -312,7 +312,7 @@ DWORD WINAPI runTest(LPVOID param) {
                  "progId=%d)\n",
                  result.storedName.c_str(), result.progId);
 
-    // --- Step 7: enumerateRecords for a NONEXISTENT name — ASSERT not found ---
+    // --- Step 7: enumerateRecords for a NONEXISTENT name -- ASSERT not found ---
     // Fail-loud note (tri-state contract, docs/KNOWLEDGE_BASE.md Sec. 22/23):
     // this fixture covers ONLY the honest missing-item shape -- the BST search
     // answers "not found" AND stores no node (a consistent answer), which must
@@ -463,7 +463,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     } // end Step 7b guard (skipped when Step 7a failed)
 
-    // --- Step 8: Cleanup — delete the probe entry ---
+    // --- Step 8: Cleanup -- delete the probe entry ---
     std::fprintf(stdout, "\n[8] Cleanup: deleteEntry(Strategy, \"%s\")...\n",
                  kTestName);
     bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);

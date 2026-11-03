@@ -3,7 +3,7 @@
 // Unit test for TVS-K.2: the reusable cliResultToJson() serialization helper
 // extracted from emitOutput().
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises the implemented cliResultToJson() helper in src/tsdev_cli.cpp:
 //   - cliResultToJson(const CliResult& r) : returns ordered_json matching the
@@ -304,8 +304,8 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 6: CliResult::sessionMayBeOpen (§5 teardown flag) is INTERNAL
-    //   ONLY — never serialized by cliResultToJson. A flagged close-failure
+    // Check 6: CliResult::sessionMayBeOpen (Sec. 5 teardown flag) is INTERNAL
+    //   ONLY -- never serialized by cliResultToJson. A flagged close-failure
     //   result must produce the byte-identical schema as an unflagged one
     //   (exit 6, entry_op_failure); the teardown contract changes HOW the
     //   process dies, never what it emitted.
@@ -350,10 +350,10 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 7: deleteResultLeavesSessionOpen() — the §5 classification of
+    // Check 7: deleteResultLeavesSessionOpen() -- the Sec. 5 classification of
     //   a deleteEntry result. Full truth table over
     //   (deleted x diskCleanupErrorEmpty x flushPerItem):
-    //   true ONLY for (deleted=false, empty=true, flush=true) — the
+    //   true ONLY for (deleted=false, empty=true, flush=true) -- the
     //   single-op failure bundle where the op's close did not provably
     //   complete (entry vanished / orchestrator SEH / close failed are
     //   inseparable at this level). Everything else leaves the session
@@ -363,13 +363,13 @@ DWORD WINAPI runTest(LPVOID param) {
         struct Row { bool deleted; bool empty; bool flush; bool want; };
         const Row rows[] = {
             // deleted, diskCleanupErrorEmpty, flushPerItem -> flag
-            { false, true,  true,  true  },  // close fail / never ran — FLAG
-            { false, true,  false, false },  // same failure, batch/serve —
+            { false, true,  true,  true  },  // close fail / never ran -- FLAG
+            { false, true,  false, false },  // same failure, batch/serve --
                                              // session open by design
             { false, false, true,  false },  // disk-cleanup fail => close
                                              // SUCCEEDED first
             { false, false, false, false },
-            { true,  true,  true,  false },  // success — no failure at all
+            { true,  true,  true,  false },  // success -- no failure at all
             { true,  true,  false, false },
             { true,  false, true,  false },
             { true,  false, false, false },
@@ -395,7 +395,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

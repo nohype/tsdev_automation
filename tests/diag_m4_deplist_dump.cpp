@@ -49,11 +49,11 @@
 //             - Release via Ordinal_70(rec, 0).
 //   6. Also test 10 existing Indicators (category 2) with the same approach.
 //   7. Also test 5 existing Functions (category 4, built-in; user-created
-//      Functions are now category 1) — although empty dep-lists were the
+//      Functions are now category 1) -- although empty dep-lists were the
 //      historical expectation, verify and print for completeness.
 //   8. Check for TSCrashReport.exe after all operations.
 //
-// All orlib20 calls are SEH-protected (__try/__except). READ-ONLY — does NOT
+// All orlib20 calls are SEH-protected (__try/__except). READ-ONLY -- does NOT
 // insert/modify/delete any items. Its 240-second limit is an operational
 // timeout, not a measured completion time or M.4 acceptance evidence.
 
@@ -101,14 +101,14 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 //   Writes a 0x10A-byte partial copy into outBuf. Returns 1 if found/copied.
 //
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args, RET 0x08.
-//   int (void* rec, int flag) — releases refcounted record.
+//   int (void* rec, int flag) -- releases refcounted record.
 //
 // _LoadMasterRecsEX@16 (ord 568): __stdcall, 4 args, RET 0x10.
 //   int (int category, HGLOBAL* outBuf, const char* path, int filterMode)
 //   Returns count; allocates HGLOBAL of count * 0x10A bytes. ProgId at +0x00
 //   (2-byte short) in each record.
 //
-// Linker FUN_101a3340 (ordinal 85): __fastcall/__stdcall hybrid — ECX=type,
+// Linker FUN_101a3340 (ordinal 85): __fastcall/__stdcall hybrid -- ECX=type,
 //   EDX=id, stack: errorFlag (int), partialBuf (void*). We use the manual
 //   inline-asm wrapper from diag_m4_frida_linker.cpp so the call is robust
 //   to either RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped 8)
@@ -153,7 +153,7 @@ bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -235,7 +235,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -274,7 +274,7 @@ void hexDump(const unsigned char* buf, size_t n, const char* label) {
 
 // -------------------------------------------------------------------------
 // Existing-record enumeration via _LoadMasterRecsEX@16.
-// Read-only — does NOT modify any record.
+// Read-only -- does NOT modify any record.
 // -------------------------------------------------------------------------
 struct ExistingRec {
     short progId = 0;
@@ -347,7 +347,7 @@ std::vector<ExistingRec> enumerateExisting(LoadMasterRecsExFn loadFn,
 //
 // Entry layout (per task spec):
 //   +0x00: type   (dword, 4 bytes)
-//   +0x04: length (byte, 1 byte)  — total entry length INCLUDING this header
+//   +0x04: length (byte, 1 byte)  -- total entry length INCLUDING this header
 //   +0x05: sourceLine (int, 4 bytes)
 //   +0x09: sourceCol  (int, 4 bytes)
 //   +0x0d: payload    (variable; under the historical 0xfa4 expectation, the
@@ -406,7 +406,7 @@ ParseResult parseDepList(const unsigned char* buf, size_t bufLen) {
 // -------------------------------------------------------------------------
 // Per-item test: get partial record, call linker, walk element array,
 // dump + parse each element's dep-list (element+0x73 size, element+0x7b ptr).
-// READ-ONLY — does NOT modify any item.
+// READ-ONLY -- does NOT modify any item.
 // -------------------------------------------------------------------------
 struct ElementDepInfo {
     int elemIdx = 0;
@@ -700,7 +700,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     std::printf("\n[3] Enumerating EXISTING items (READ-ONLY -- no "
                 "modification)...\n");
 
-    // 3a. Existing Strategies (category 0) — first 10.
+    // 3a. Existing Strategies (category 0) -- first 10.
     std::printf("\n  --- 3a. Existing Strategies (category 0, first 10) "
                 "---\n");
     auto existingStrats = enumerateExisting(loadMasterRecsEx, /*cat=*/0,
@@ -716,7 +716,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [no existing Strategies enumerated]\n");
     }
 
-    // 3b. Existing Indicators (category 2) — first 10.
+    // 3b. Existing Indicators (category 2) -- first 10.
     std::printf("\n  --- 3b. Existing Indicators (category 2, first 10) "
                 "---\n");
     auto existingInds = enumerateExisting(loadMasterRecsEx, /*cat=*/2,
@@ -732,7 +732,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         std::printf("    [no existing Indicators enumerated]\n");
     }
 
-    // 3c. Existing built-in Functions (category 4) — first 5 (expected empty
+    // 3c. Existing built-in Functions (category 4) -- first 5 (expected empty
     // dep-lists). User-created Functions are now category 1.
     std::printf("\n  --- 3c. Existing Functions (category 4, built-in, "
                 "first 5 -- expected empty dep-lists) ---\n");
@@ -874,7 +874,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 240-second hard timeout — report a hang without terminating the worker.
+    // 240-second hard timeout -- report a hang without terminating the worker.
     // Enumeration of 3 categories + linker calls on up to 25 items may take
     // longer than 180 seconds.
     DWORD wait = WaitForSingleObject(hThread, 240000);

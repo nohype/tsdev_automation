@@ -1,6 +1,6 @@
 // test_reverse_dependent_revalidation.cpp
 //
-// Workstream M slice M.4 — integration test for reverse-dependent revalidation
+// Workstream M slice M.4 -- integration test for reverse-dependent revalidation
 // parity with TSDev.exe FUN_004D91E0. The current production implementation
 // uses the linker-based path; CLI-created object code currently has version=0,
 // so the dependency cases remain blocked rather than constituting a green
@@ -9,7 +9,7 @@
 // CONFIRMED FACTS (Ghidra static analysis of TSDev.exe FUN_004D91E0; see
 // docs/RE/RE_M4_REVERSE_DEPENDENT_REVALIDATION.md):
 //
-//   R-M.4.1 — Traversal: after a successful root verify via
+//   R-M.4.1 -- Traversal: after a successful root verify via
 //   _VerifyModule_New@20, for categories 0 (Strategy), 1 (Function), and 4
 //   (SystemFunction) ONLY, TSDev enumerates reverse dependents (callers) of
 //   the just-verified module and recompiles+reverifies each one via a
@@ -23,24 +23,24 @@
 //   evidence note records the GetDependencies type-code mismatch and the
 //   linker-based correction.
 //
-//   R-M.4.2 — Contract-change detection (FUN_004d9040) is purely
+//   R-M.4.2 -- Contract-change detection (FUN_004d9040) is purely
 //   warehouse-record metadata: compares field offsets +0xd6, +0x15 (bits
 //   1,2,3,4,5,6), +0x7f (bits 0-2,12,13,15), +0x81 (bits 8,11,12,13,14,15),
 //   +0x29 (count), and a per-element array at +0x4f (stride 0xb5, element
 //   fields +0xd/+0x11/+0x15/+0x83/+0x87/+0xb1). NO source-text parsing.
 //   Returns 1 = no change, 0 = changed.
 //
-//   R-M.4.3 — Recursion / cycle handling: TSDev has NO visited-set and NO
+//   R-M.4.3 -- Recursion / cycle handling: TSDev has NO visited-set and NO
 //   depth counter; cycle protection is implicit (per-record +0x55 "verified"
 //   flag + contract-change gate). The CLI replication MUST use an explicit
 //   visited-set (stricter than TSDev).
 //
-//   R-M.4.4 — Failure reporting: the per-dependent loop does NOT abort on
+//   R-M.4.4 -- Failure reporting: the per-dependent loop does NOT abort on
 //   failure; the compiler +0x04 is a running AND of all verify results. The
-//   ROOT result (+0x00) drives UI success/failure — dependent failures do
+//   ROOT result (+0x00) drives UI success/failure -- dependent failures do
 //   NOT flip root success.
 //
-//   R-M.4.5 — No single orlib20 export performs reverse-dependent
+//   R-M.4.5 -- No single orlib20 export performs reverse-dependent
 //   revalidation. The implemented traversal is composed from the linker
 //   (ordinal 85), Ordinal_28 (partial-record setup), Ordinal_70 (linked-record
 //   release), _LoadMasterRecsEX@16 (candidate enumeration), and
@@ -48,7 +48,7 @@
 //   per-element dep-lists directly; the forward GetDependencies exports are
 //   not used by production.
 //
-//   Category gate (RE note §1.3, 0x004d92b2-0x004d92bd): reverse dependents
+//   Category gate (RE note Sec. 1.3, 0x004d92b2-0x004d92bd): reverse dependents
 //   are processed ONLY when the root verify succeeded AND the category is
 //   0 (Strategy), 1 (Function), or 4 (SystemFunction). Other categories
 //   (2 Indicator, 3 ActivityBar, etc.) skip the traversal entirely.
@@ -66,19 +66,19 @@
 // the test is green. The category-gate assertion remains meaningful: an
 // Indicator (category 2) must not start the traversal. The cycle-safety case
 // remains a unit-level hook contract pin; a live warehouse cycle is deferred
-// to the lowest safe boundary described by plan §M.4 TDD step 4.
+// to the lowest safe boundary described by plan Sec. M.4 TDD step 4.
 
 // 5 test cases:
-//   1. Strategy caller of a Function — modify the Function, assert the
+//   1. Strategy caller of a Function -- modify the Function, assert the
 //      traversal ran and the Strategy was revalidated.
-//   2. Indicator caller of a Function — modify the Function, assert the
+//   2. Indicator caller of a Function -- modify the Function, assert the
 //      Indicator was revalidated.
-//   3. Negative: Function with NO callers — modify it, assert the traversal
+//   3. Negative: Function with NO callers -- modify it, assert the traversal
 //      was entered (sentinel fired) but zero dependent callbacks fired.
-//   4. Category gate: modify an Indicator (category 2, NOT in 0/1/4) —
+//   4. Category gate: modify an Indicator (category 2, NOT in 0/1/4) --
 //      assert NO traversal-started sentinel fired (the gate excludes
 //      category 2).
-//   5. Cycle safety (unit-level contract pin) — documents the live-cycle
+//   5. Cycle safety (unit-level contract pin) -- documents the live-cycle
 //      test as deferred and asserts the hook signature carries a
 //      traversalDepth field.
 //
@@ -109,7 +109,7 @@ using namespace tsdev;
 namespace {
 
 // ---------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // ---------------------------------------------------------------------------
 static int g_failCount = 0;
 static int g_passCount = 0;
@@ -186,7 +186,7 @@ void resetCapture() {
 }
 
 // ---------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // ---------------------------------------------------------------------------
 ComApi realComApi() {
@@ -254,9 +254,9 @@ std::string makeIndicatorSourceCalling(const std::string& /*name*/,
 
 // A modified Function source that changes the contract (signature) so the
 // M.4 contract-change comparison (FUN_004d9040 field offsets) detects a
-// change. We change the function body to return a different constant — this
+// change. We change the function body to return a different constant -- this
 // alters the compiled contract metadata, which the warehouse record reflects.
-// (The exact field that flips is one of those documented in RE note §2; the
+// (The exact field that flips is one of those documented in RE note Sec. 2; the
 // test does not depend on which specific field changes, only that the
 // revalidation traversal runs for the caller.)
 std::string makeFunctionSourceModified(const std::string& name) {
@@ -293,7 +293,7 @@ bool cleanEllFile(const std::string& path) {
 }
 
 // ---------------------------------------------------------------------------
-// insertAndVerify — helper: pre-clean, create, save, verify a disposable
+// insertAndVerify -- helper: pre-clean, create, save, verify a disposable
 // item. Returns the ProgId on success, 0 on a fatal setup error. The caller
 // is responsible for cleanup (deleteEntry) after the assertions.
 // ---------------------------------------------------------------------------
@@ -342,7 +342,7 @@ int insertAndVerify(TsDevLib& lib, ComponentType type,
 // Case 1: Strategy caller of a Function.
 //
 // Insert a Function (the callee). Insert a Strategy that calls the Function
-// (the caller — establishes a compiled Strategy->Function dependency). Modify
+// (the caller -- establishes a compiled Strategy->Function dependency). Modify
 // the Function's source (contract change) and re-verify the Function. Assert:
 //   - the traversal-started sentinel fired (root = the Function),
 //   - at least one per-dependent event fired for the Strategy (the caller),
@@ -595,10 +595,10 @@ int runIndicatorCallerCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// Case 3: Negative — Function with NO callers.
+// Case 3: Negative -- Function with NO callers.
 //
 // Insert a leaf Function (no callers), modify + re-verify it. Assert:
-//   - the traversal-started sentinel fired (the traversal was entered —
+//   - the traversal-started sentinel fired (the traversal was entered --
 //     category 1 is in the gate), AND
 //   - ZERO per-dependent events fired (no reverse dependents exist).
 //
@@ -668,7 +668,7 @@ int runNoCallerNegativeCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// Case 4: Category gate — modify an Indicator (category 2, NOT in 0/1/4).
+// Case 4: Category gate -- modify an Indicator (category 2, NOT in 0/1/4).
 //
 // Insert an Indicator, modify + re-verify it. Assert:
 //   - the traversal-started sentinel did NOT fire (the category gate excludes
@@ -743,8 +743,8 @@ int runCategoryGateCase(TsDevLib& lib, int caseNum,
 //
 // A live warehouse cycle (A->B->A) is not feasible at the unit level without
 // a synthetic dependency cycle, which would require inserting two Functions
-// that mutually reference each other — EasyLanguage may reject this at
-// compile time, and the test would be fragile. Per plan §M.4 TDD step 4,
+// that mutually reference each other -- EasyLanguage may reject this at
+// compile time, and the test would be fragile. Per plan Sec. M.4 TDD step 4,
 // the live cycle test is deferred to the regression at the lowest safe
 // boundary.
 //
@@ -943,13 +943,13 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 3: Negative — Function with NO callers ---
+    // --- Case 3: Negative -- Function with NO callers ---
     {
         int rc = runNoCallerNegativeCase(*lib, 3, funcCName);
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 4: Category gate — modify an Indicator (category 2) ---
+    // --- Case 4: Category gate -- modify an Indicator (category 2) ---
     {
         int rc = runCategoryGateCase(*lib, 4, indDName);
         if (rc != 0) { st->exitCode = rc; return 0; }

@@ -2,7 +2,7 @@
 //
 // Unit test for TVS-L.10: a SINGLE ownership decision that covers create-path
 // partial-entry cleanup after a successful createEntry for EVERY failure stage
-// — saveSource failure AND verifyModule early-return / SEH / OOM — rather than
+// -- saveSource failure AND verifyModule early-return / SEH / OOM -- rather than
 // leaving cleanup scattered across failure branches.
 //
 // This is a PURE UNIT TEST. It does NOT load orlib20.dll, does NOT touch the
@@ -121,7 +121,7 @@ int runTests() {
     // -------------------------------------------------------------------
     // Group 2: createEntry did NOT succeed (progId <= 0).
     //   No partial entry exists. The single owner MUST NOT require cleanup
-    //   for any stage — there is nothing to clean up. This guards against a
+    //   for any stage -- there is nothing to clean up. This guards against a
     //   implementation that blindly returns true and would attempt to
     //   delete a non-existent / unrelated entry.
     // -------------------------------------------------------------------

@@ -11,13 +11,13 @@
 //   1. Warehouse indirection: state handlers access *(param_1+0xc)+0x26, NOT
 //      param_1+0x26. param_1 is a per-module wrapper; param_1+0xc is a
 //      pointer to the CELWHouse. If Ordinal_10(0) returns the wrapper, then
-//      wrapper+0x26 is NOT the SafeArray mailbox — *(wrapper+0xc)+0x26 IS.
+//      wrapper+0x26 is NOT the SafeArray mailbox -- *(wrapper+0xc)+0x26 IS.
 //
 //   2. Compressed vs decompressed: the .ell file contains COMPRESSED object
 //      code. The decompression step (FUN_101dd260) strips a 0x44-byte header
 //      and decompresses. The 0xBBC magic would be in the DECOMPRESSED data,
 //      not the raw .ell file. Prior .ell scans were looking for 0xBBC in the
-//      compressed file — wrong.
+//      compressed file -- wrong.
 //
 // The linker's data flow:
 //   state 0x38 -> SafeArray at *(per_module+0xc)+0x26
@@ -49,7 +49,7 @@
 //   7. Read the object code buffer AFTER the linker call. Using the correct
 //      indirection: read wrapper+0x1c0 (cached flag), wrapper+0x1c1 (buffer
 //      ptr), wrapper+0x1c5 (size?). Dump first 512 bytes. Check offset 0x26
-//      (4 bytes) — is it 0x2000000 or 0? Check offset 0x24 (version field).
+//      (4 bytes) -- is it 0x2000000 or 0? Check offset 0x24 (version field).
 //      Scan for 0xBBC and 0xBB9 magic in the entire buffer.
 //   8. Read the SafeArray at the correct indirection. Read *(wrapper+0xc)+
 //      0x26 (the SafeArray mailbox). If valid (SafeArrayGetDim == 1): get
@@ -66,9 +66,9 @@
 //  11. Clean up: delete the Function. Check for TSCrashReport.exe.
 //
 // All orlib20 calls are SEH-protected. The warehouse pointer from
-// Ordinal_10(0) is a LIVE pointer — it is NOT freed. The object code buffer
-// at wrapper+0x1c1 is owned by the warehouse — it is NOT freed. The
-// SafeArray is owned by the warehouse — we use SafeArrayAccessData /
+// Ordinal_10(0) is a LIVE pointer -- it is NOT freed. The object code buffer
+// at wrapper+0x1c1 is owned by the warehouse -- it is NOT freed. The
+// SafeArray is owned by the warehouse -- we use SafeArrayAccessData /
 // SafeArrayUnaccessData but NEVER SafeArrayDestroy.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
@@ -112,11 +112,11 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 //
 // Ordinal_10 (GetWarehouse, FUN at RVA 0x1A9650): __cdecl, 1 arg (path; 0
 //   = default). Returns the warehouse singleton pointer (CELWHouse*) OR a
-//   per-module wrapper — this diagnostic disambiguates.
+//   per-module wrapper -- this diagnostic disambiguates.
 typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (category:char, progId:int,
-//   flag:int). Returns live record pointer (refcounted — release via
+//   flag:int). Returns live record pointer (refcounted -- release via
 //   Ordinal_70).
 typedef void* (__cdecl *Ordinal69Fn)(char category, int progId, int flag);
 
@@ -168,7 +168,7 @@ bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -249,7 +249,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -575,7 +575,7 @@ struct WhIndir {
     int   innerHr4e;      // *(ptr+0x0c)+0x4e (potential HRESULT)
     unsigned char wrapper1c0; // ptr+0x1c0 (potential cached flag)
     void* wrapper1c1;     // ptr+0x1c1 (potential object code buffer ptr)
-    void* ptr26_old;      // ptr+0x26 (old way — direct mailbox?)
+    void* ptr26_old;      // ptr+0x26 (old way -- direct mailbox?)
     bool  looksLikeWrapper; // heuristic: ptr+0x1c1 non-NULL OR ptr+0x0c non-NULL
 };
 
@@ -660,7 +660,7 @@ void inspectObjCodeBuffer(const char* tag, void* bufPtr, void* wrapperPtr,
     // Dump first 512 bytes (SEH-protected memcpy into a local buffer).
     unsigned char local[512] = {};
     size_t dumpN = assumeSize < sizeof(local) ? assumeSize : sizeof(local);
-    if (dumpN == 0) dumpN = sizeof(local);  // size unknown — try 512
+    if (dumpN == 0) dumpN = sizeof(local);  // size unknown -- try 512
     if (!sehMemcpy(bufPtr, local, dumpN)) {
         std::printf("    [memcpy of first %zu bytes raised SEH -- trying "
                     "smaller]\n", dumpN);
@@ -675,7 +675,7 @@ void inspectObjCodeBuffer(const char* tag, void* bufPtr, void* wrapperPtr,
     std::snprintf(label, sizeof(label), "objcode first %zu bytes", dumpN);
     hexDump(label, local, dumpN);
 
-    // Check offset 0x26 (4 bytes) — is it 0x2000000 or 0?
+    // Check offset 0x26 (4 bytes) -- is it 0x2000000 or 0?
     int v26 = 0;
     if (dumpN >= 0x2a) sehMemcpy(local + 0x26, &v26, 4);
     std::printf("    objcode+0x26 (4 bytes) = 0x%08X (%d)  [%s]\n",
@@ -921,7 +921,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     // --- Step 7: read the object code buffer AFTER the linker call. ---
     std::printf("\n[7] Reading the object code buffer AFTER the linker "
                 "call...\n");
-    // Re-probe the warehouse — the wrapper fields may have been populated
+    // Re-probe the warehouse -- the wrapper fields may have been populated
     // by the linker call.
     WhIndir whPost = {};
     if (getWarehouse) {
@@ -939,7 +939,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     // Try to find the object code buffer. Two candidates:
     //   (a) wrapper+0x1c1 (if ptr is the wrapper)
     //   (b) if ptr is the CELWHouse, we have no direct path to the wrapper
-    //       — but we can still inspect the SafeArray mailbox.
+    //       -- but we can still inspect the SafeArray mailbox.
     void* objCodeBuf = nullptr;
     void* wrapperPtr = nullptr;
     if (whPost.ptr) {
@@ -952,7 +952,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             std::printf("    -> ptr does NOT look like the wrapper. "
                         "wrapper+0x1c1 path unavailable.\n");
             // Fallback: maybe ptr+0x1c1 is still meaningful even if ptr is
-            // the CELWHouse — read it for completeness.
+            // the CELWHouse -- read it for completeness.
             wrapperPtr = whPost.ptr;
             objCodeBuf = whPost.wrapper1c1;
         }
@@ -1138,7 +1138,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // Insert+verify + linker + objcode dump + SafeArray/ELL inspection may
     // take longer.
     DWORD wait = WaitForSingleObject(hThread, 120000);

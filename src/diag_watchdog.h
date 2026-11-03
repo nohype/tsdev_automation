@@ -1,13 +1,13 @@
 // diag_watchdog.h
 //
-// Watchdog thread for the §7.1 diagnostic build
-// (reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md §7.1 2d/2e).
+// Watchdog thread for the Sec. 7.1 diagnostic build
+// (reports/2026-09-02_v0.1.0_batch_hang_root_cause_analysis.md Sec. 7.1 2d/2e).
 // Compiled ONLY when TSDEV_DIAG is defined; in the production build every
 // macro expands to `((void)0)` and this TU is not linked.
 //
 // Behavior: if no site log record has been written for N seconds (default 60;
 // env TSDEV_DIAG_WATCHDOG_SECS overrides; a value <= 0 DISABLES the watchdog
-// entirely — no fire path — for long-idle roles like the `serve` broker,
+// entirely -- no fire path -- for long-idle roles like the `serve` broker,
 // which idles by design while waiting for pipe clients), the watchdog
 //   (1) appends ALL thread stacks of the process as module+offset to the log,
 //   (2) appends the warehouse protocol state ([wh+0x04] cmd, [wh+0x6A] /
@@ -19,16 +19,16 @@
 //   (3b) refreshes the tsproc.inventory record and writes read-only
 //        minidumps of any running WHServer.exe / TSDev.exe / orchart.exe
 //        next to the log (report 2026-09-29_dist_logs_crash_analysis.md
-//        §5.1 — the server side of the wedged COM call that the self-dump
+//        Sec. 5.1 -- the server side of the wedged COM call that the self-dump
 //        cannot show); failures are logged and non-fatal, and the targets
 //        are never suspended or terminated,
 //   (4) aborts loudly: final log record, a clear stderr message naming the
 //       watchdog and the log/dump paths, then terminates the process with
-//       exit code 13 (unused elsewhere — see diag_watchdog.cpp).
-// While idle it samples WHServer.exe liveness every 5 s (§7.1 2e).
-// At init it also logs one tsproc.inventory record — a csv of procname:pid
+//       exit code 13 (unused elsewhere -- see diag_watchdog.cpp).
+// While idle it samples WHServer.exe liveness every 5 s (Sec. 7.1 2e).
+// At init it also logs one tsproc.inventory record -- a csv of procname:pid
 // for WHServer.exe / TSDev.exe / orchart.exe / TSCrashReport.exe and any
-// other tsdev_cli*.exe instance — refreshed again in the fire path.
+// other tsdev_cli*.exe instance -- refreshed again in the fire path.
 //
 // Idle-by-design phases (review F3b): code that enters a legitimately idle
 // wait (the serve broker blocked in ConnectNamedPipe) brackets it with
@@ -51,7 +51,7 @@
 // Register the warehouse singleton pointer so the watchdog can read the
 // protocol state. The pointer is obtained in tsdev_lib.cpp via the resolved
 // GetWarehouse export (existing project knowledge, docs/KNOWLEDGE_BASE.md
-// §2) — never by hacking orlib20 internals.
+// Sec. 2) -- never by hacking orlib20 internals.
 #define TSDEV_DIAG_SET_WAREHOUSE(ptr) \
     ::tsdev::diag::setWarehousePointer(ptr)
 
@@ -78,7 +78,7 @@ void idlePhaseEnd();
 }  // namespace diag
 }  // namespace tsdev
 
-#else  // !TSDEV_DIAG — production build: everything compiles out.
+#else  // !TSDEV_DIAG -- production build: everything compiles out.
 
 #define TSDEV_DIAG_INIT() ((void)0)
 #define TSDEV_DIAG_SET_WAREHOUSE(ptr) ((void)0)

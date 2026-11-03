@@ -2,11 +2,11 @@
 //
 // Minimal Volume Shadow Copy (VSS) snapshot lifecycle for reading files that
 // another process holds open deny-read (e.g. TradeStation Desktop's locked
-// cache files). Crash-consistent ONLY — NO writer coordination
+// cache files). Crash-consistent ONLY -- NO writer coordination
 // (GatherWriterMetadata is deliberately never called); the snapshot is a
 // point-in-time filesystem view used to satisfy "copy locked files".
 //
-// RAII: the snapshot is deleted (DeleteSnapshots + Release) on ALL exits —
+// RAII: the snapshot is deleted (DeleteSnapshots + Release) on ALL exits --
 // success, failure, and best-effort on crash (process teardown).
 //
 // Sequence (MSDN-canonical): CoCreateInstance(CLSID_VSSCoordinator,
@@ -67,12 +67,12 @@ public:
 private:
     // Second mechanism: WMI Win32_ShadowCopy (see .cpp). Used when the
     // in-proc vssapi coordinator cannot be created with
-    // REGDB_E_CLASSNOTREG — the 32-bit-build-on-x64-Windows case, where the
+    // REGDB_E_CLASSNOTREG -- the 32-bit-build-on-x64-Windows case, where the
     // VSS requestor COM class is registered 64-bit only.
     bool createViaWmi(const std::wstring& pathOnVolume, std::string* err);
 
     // createViaWmi stage 1: direct COM WMI call from this process. Fails on
-    // x64 when built Win32 — the shadow-copy method provider refuses WOW64
+    // x64 when built Win32 -- the shadow-copy method provider refuses WOW64
     // clients (WBEM_E_PROVIDER_NOT_FOUND / initialization failure).
     bool createViaWmiDirect(const std::wstring& volumeRoot, std::string* err);
 

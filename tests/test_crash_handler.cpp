@@ -10,7 +10,7 @@
 //   1. Normal mode (no args): a PURE UNIT TEST. It verifies that the
 //      containment symbols exist (by taking their addresses), that
 //      AddVectoredExceptionHandler is available, that the install helpers
-//      run, AND — the self-crash suite — spawns CHILD copies of this same
+//      run, AND -- the self-crash suite -- spawns CHILD copies of this same
 //      executable with each deliberate-crash flag, asserting the child's
 //      exit code and that no crash-reporter process (TSCrashReport.exe /
 //      WerFault.exe) is left running parented by the child. The parent
@@ -34,7 +34,7 @@
 //                       lets an ordinary C++ exception escape main
 //                       unhandled. On this CRT the escape is delivered to
 //                       the process UEF as SEH code 0xE06D7363 (MSVC C++
-//                       exception) — NOT routed through std::terminate —
+//                       exception) -- NOT routed through std::terminate --
 //                       so the expected death is the UEF's
 //                       TerminateProcess(0xE06D7363). Proves the realistic
 //                       "C++ exception escapes" channel dies silently.
@@ -55,9 +55,9 @@
 //      Every mode installs the REAL production helpers
 //      (installFatalContainment / installProcessUef) so the children
 //      exercise the same code path main() installs. Expected exit codes
-//      are the production constants (kExitFatal*) — the child never
+//      are the production constants (kExitFatal*) -- the child never
 //      returns normally; each mode's tail is unreachable. The crash modes
-//      do NOT use the 64 MB worker thread or the SEH wrapper — we WANT the
+//      do NOT use the 64 MB worker thread or the SEH wrapper -- we WANT the
 //      crash to happen and reach the production guard under test.
 //
 //      The standalone wrapper tests/test_crash_handler.ps1 additionally
@@ -76,8 +76,8 @@
 // Exit codes:
 //   Normal mode: 0 only if ALL checks pass; distinct nonzero codes per failure.
 //   Crash modes: the channel's own production code (20/21/22/23) or the
-//                SEH code (0xC0000005 / the raised code); any other code —
-//                or a spawned crash reporter — is a failure detected by the
+//                SEH code (0xC0000005 / the raised code); any other code --
+//                or a spawned crash reporter -- is a failure detected by the
 //                parent (this file) or the PowerShell wrapper.
 
 // Exclude tsdev_cli.cpp's main() so this test can define its own.
@@ -109,7 +109,7 @@ int fail(const char* msg, int code) {
 // Self-spawn machinery (normal mode): run this same executable with one
 // crash-mode arg as a CHILD process, bounded-wait, return its exit code.
 // The child deliberately dies; the parent asserts the production code and
-// that no crash-reporter process was spawned for it — the same contract the
+// that no crash-reporter process was spawned for it -- the same contract the
 // standalone tests/test_crash_handler.ps1 wrapper asserts for --crash.
 // ---------------------------------------------------------------------------
 
@@ -122,7 +122,7 @@ struct ChildResult {
 
 // Spawn our own exe with `arg`, wait up to timeoutMs, collect the exit code.
 // On timeout the child is force-killed (a hung child means a dialog or a
-// deadlock — either way the containment failed).
+// deadlock -- either way the containment failed).
 ChildResult runChildMode(const char* arg, DWORD timeoutMs) {
     ChildResult cr;
     char exePath[MAX_PATH];
@@ -161,11 +161,11 @@ ChildResult runChildMode(const char* arg, DWORD timeoutMs) {
 }
 
 // Count crash-reporter processes (TSCrashReport.exe / WerFault.exe) whose
-// PARENT pid is `parentPid` — the spawn signature proven in KB §14
+// PARENT pid is `parentPid` -- the spawn signature proven in KB Sec. 14
 // (TSCrash.dll launches the reporter from inside the crashing process;
 // WerFault is likewise spawned by the faulting process on the WER path).
 // Any found reporter is force-killed before counting continues so the
-// machine is left clean. Returns -1 on snapshot failure (inconclusive —
+// machine is left clean. Returns -1 on snapshot failure (inconclusive --
 // treated as a failure by the caller: never evidence of "no reporter").
 int countCrashReportersForParent(DWORD parentPid) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -257,7 +257,7 @@ int runNormalMode() {
     // Check 1: vehCrashHandler exists and is a callable function pointer.
     // Taking its address verifies the symbol is present in the translation
     // unit (it lives in the anonymous namespace of the included .cpp). We do
-    // NOT call it with a real exception record — that would terminate the
+    // NOT call it with a real exception record -- that would terminate the
     // process. We only verify the symbol resolves to a non-null function.
     // ------------------------------------------------------------------
     {
@@ -298,7 +298,7 @@ int runNormalMode() {
     // Check 3: Verify the VEH can be installed and removed without error.
     // This exercises the real AddVectoredExceptionHandler /
     // RemoveVectoredExceptionHandler path with vehCrashHandler as the
-    // callback. No exception is raised — we only confirm the install/remove
+    // callback. No exception is raised -- we only confirm the install/remove
     // round-trip succeeds (returns a non-null handle).
     // ------------------------------------------------------------------
     {
@@ -324,7 +324,7 @@ int runNormalMode() {
 
     // ------------------------------------------------------------------
     // Check 4 (P4 gap-e): every containment symbol exists. Same mechanism
-    // as check 1 — address-of proves the definition is present; none of
+    // as check 1 -- address-of proves the definition is present; none of
     // these are safe to invoke with a live fatal condition (they terminate
     // the process), so presence is what is asserted here. The behavioral
     // proof is the child suite below.
@@ -369,7 +369,7 @@ int runNormalMode() {
     // process without error. installFatalContainment() installs the
     // per-process CRT guards (abort behavior, SIGABRT, terminate,
     // invalid-param, purecall); installProcessUef() installs our UEF
-    // outermost. Both are idempotent and change only DEATH behavior —
+    // outermost. Both are idempotent and change only DEATH behavior --
     // safe to run in the test harness, and it means this test process is
     // itself guarded (a real bug here dies silently with a channel code).
     // ------------------------------------------------------------------
@@ -399,7 +399,7 @@ int runNormalMode() {
             { "--crash",        0xC0000005u,                 "VEH access violation" },
             // C++ terminate channel (direct std::terminate call).
             { "--terminate",    kExitFatalTerminate,         "std::terminate" },
-            // Unhandled C++ exception escaping main — reaches the process
+            // Unhandled C++ exception escaping main -- reaches the process
             // UEF as SEH 0xE06D7363 on this CRT (never std::terminate).
             { "--throw",        0xE06D7363u,                 "unhandled C++ escape" },
             // abort()/SIGABRT channel.
@@ -440,7 +440,7 @@ int runNormalMode() {
 
 // --- Shared install for the non-VEH crash modes ------------------------------
 // Mirrors main(): the CRT guards plus our UEF outermost. The VEH is NOT
-// installed in these modes — the channels under test bypass it by design,
+// installed in these modes -- the channels under test bypass it by design,
 // and the UEF is the production backstop for any SEH escape.
 void installProductionContainment() {
     installFatalContainment();
@@ -457,7 +457,7 @@ void installProductionContainment() {
 // TerminateProcess(0xC0000005), so the process exits with code
 // 0xC0000005 (=-1073741819) and NO crash dialog spawns.
 //
-// This function does NOT return under normal operation — the VEH terminates
+// This function does NOT return under normal operation -- the VEH terminates
 // the process. If it DOES return (VEH failed to fire), we exit with a
 // distinct code so the PowerShell wrapper can detect the failure.
 int runCrashMode() {
@@ -478,7 +478,7 @@ int runCrashMode() {
     std::fprintf(stdout, "  VEH installed (%p)\n", veh);
 
     // Suppress the standard Windows crash dialog (WerFault.exe) as
-    // belt-and-suspenders. This does NOT suppress TSCrashReport.exe — the
+    // belt-and-suspenders. This does NOT suppress TSCrashReport.exe -- the
     // VEH is what prevents that by terminating before orlib20's filter runs.
     SetErrorMode(SetErrorMode(0) | SEM_NOGPFAULTERRORBOX);
     std::fprintf(stdout, "  Error mode set (SEM_NOGPFAULTERRORBOX)\n");
@@ -492,9 +492,9 @@ int runCrashMode() {
     // the write away. The VEH should catch this and TerminateProcess with
     // EXCEPTION_ACCESS_VIOLATION (0xC0000005).
     volatile int* nullPtr = nullptr;
-    *nullPtr = 42;  // ACCESS_VIOLATION — VEH should catch and terminate
+    *nullPtr = 42;  // ACCESS_VIOLATION -- VEH should catch and terminate
 
-    // If we reach here, the VEH did NOT fire — that is a failure.
+    // If we reach here, the VEH did NOT fire -- that is a failure.
     std::fprintf(stderr,
                  "[FAIL] VEH did not catch the access violation (reached line after crash)\n");
     return 60;
@@ -514,13 +514,13 @@ int runAbortMode() {
     std::fflush(stdout);
     std::abort();  // SIGABRT -> onFatalSigabrt -> TerminateProcess(21)
 
-    // Unreachable — the SIGABRT handler terminates the process.
+    // Unreachable -- the SIGABRT handler terminates the process.
     std::fprintf(stderr, "[FAIL] std::abort() returned\n");
     return 61;
 }
 
 // --- Crash mode: std::terminate() -> terminate handler -> exit 20 ------------
-// std::terminate invokes the CURRENT per-thread terminate handler — ours
+// std::terminate invokes the CURRENT per-thread terminate handler -- ours
 // (onFatalTerminate, installed by installFatalContainment's
 // installThreadFatalContainment call) -> TerminateProcess(kExitFatalTerminate).
 // This is the direct exercise of the terminate channel: the same handler an
@@ -535,7 +535,7 @@ int runTerminateMode() {
     std::fflush(stdout);
     std::terminate();  // -> onFatalTerminate -> TerminateProcess(20)
 
-    // Unreachable — the terminate handler terminates the process.
+    // Unreachable -- the terminate handler terminates the process.
     std::fprintf(stderr, "[FAIL] std::terminate() returned\n");
     return 62;
 }
@@ -543,8 +543,8 @@ int runTerminateMode() {
 // --- Crash mode: unhandled C++ exception escape -> UEF -> exit 0xE06D7363 ----
 // An ordinary throw escaping every frame is a regular UNHANDLED exception.
 // Empirically on this CRT it is delivered to the process UEF as the MSVC
-// C++ exception code 0xE06D7363 — it does NOT route through
-// std::terminate — so the expected death is the production UEF's
+// C++ exception code 0xE06D7363 -- it does NOT route through
+// std::terminate -- so the expected death is the production UEF's
 // TerminateProcess(exception code): still silent, still no reporter, just
 // a different (self-describing) exit code. No SEH dispatch reaches the VEH
 // for this either (0xE06D7363 is not in the fatal list), which is exactly
@@ -563,7 +563,7 @@ int runThrowMode() {
     std::fflush(stdout);
     doEscapeThrow();  // unhandled -> uefCrashHandler -> exit 0xE06D7363
 
-    // Unreachable — the UEF terminates the process.
+    // Unreachable -- the UEF terminates the process.
     std::fprintf(stderr, "[FAIL] unhandled throw returned\n");
     return 66;
 }
@@ -583,7 +583,7 @@ int runInvalidParamMode() {
     std::fflush(stdout);
     char dst[8] = {0};
     const errno_t rc = strcpy_s(dst, sizeof(dst), nullptr);
-    // Unreachable — the invalid-parameter handler terminates the process.
+    // Unreachable -- the invalid-parameter handler terminates the process.
     std::fprintf(stderr,
                  "[FAIL] strcpy_s(nullptr) returned %d -- invalid-parameter "
                  "handler did not fire\n", static_cast<int>(rc));
@@ -614,7 +614,7 @@ int runPureCallMode() {
     PureCallDerived d;  // base ctor -> f() -> _purecall -> TerminateProcess(23)
     (void)d;
 
-    // Unreachable — the purecall handler terminates the process.
+    // Unreachable -- the purecall handler terminates the process.
     std::fprintf(stderr, "[FAIL] pure virtual call returned\n");
     return 64;
 }
@@ -622,7 +622,7 @@ int runPureCallMode() {
 // --- Crash mode: process UEF with a non-VEH code -> exit <raised code> -------
 // A foreign UEF stands in for orlib20/TSCrash.dll RE-installing its filter
 // over ours (the ordering hazard). installProcessUef() must re-assert ours
-// outermost — the proof is the exit code: our filter dies with the raised
+// outermost -- the proof is the exit code: our filter dies with the raised
 // SEH code; had the foreign filter run, the process would have exited 77.
 LONG WINAPI foreignUef(PEXCEPTION_POINTERS) {
     ExitProcess(77);  // sentinel: proves THIS filter ran (must never happen)
@@ -634,7 +634,7 @@ int runUefMode() {
     installProductionContainment();
 
     // Simulate orlib20 installing its own UEF after ours (load-time or a
-    // lazy re-install) — our filter is no longer outermost.
+    // lazy re-install) -- our filter is no longer outermost.
     SetUnhandledExceptionFilter(foreignUef);
     std::fprintf(stdout,
                  "  foreign UEF installed over ours (orlib re-install simulation)\n");
@@ -652,7 +652,7 @@ int runUefMode() {
     std::fflush(stdout);
     RaiseException(code, EXCEPTION_NONCONTINUABLE, 0, nullptr);
 
-    // Unreachable — our UEF terminates the process with `code`.
+    // Unreachable -- our UEF terminates the process with `code`.
     std::fprintf(stderr, "[FAIL] RaiseException returned\n");
     return 65;
 }
@@ -671,7 +671,7 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[1], "--uef") == 0)          return runUefMode();
     }
 
-    // Normal mode: pure unit test (no crash in THIS process — the
+    // Normal mode: pure unit test (no crash in THIS process -- the
     // deliberate crashes all happen in spawned children).
     int exitCode = runNormalMode();
     std::fprintf(stdout,

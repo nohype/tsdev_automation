@@ -159,8 +159,8 @@ function Invoke-CliRaw {
         $ErrorActionPreference = 'Continue'
         try {
             # OS-level redirection writes the child's raw stdout/stderr bytes
-            # to files. `2>` on a native command wraps stderr in ErrorRecords —
-            # prefixing the first line and injecting error-record text — which
+            # to files. `2>` on a native command wraps stderr in ErrorRecords --
+            # prefixing the first line and injecting error-record text -- which
             # corrupts line-exact assertions on batch progress output.
             $proc = Start-Process -FilePath $script:CliPath `
                 -ArgumentList $argString `
@@ -405,7 +405,7 @@ $badSrc = "This is not valid EasyLanguage !!!"
 
 try {
     # -------------------------------------------------------------------
-    # BU1: batch-upsert via MANIFEST FILE — mixed insert-path + modify-path
+    # BU1: batch-upsert via MANIFEST FILE -- mixed insert-path + modify-path
     # -------------------------------------------------------------------
     $bu1Mod = "E2E_BatchUpsertTest_${runId}_BU1_Mod"; $allTestNames += $bu1Mod
     $bu1Ins = "E2E_BatchUpsertTest_${runId}_BU1_Ins"; $allTestNames += $bu1Ins
@@ -460,7 +460,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # BU2: batch-upsert via --batch-stdin — mixed insert-path + modify-path
+    # BU2: batch-upsert via --batch-stdin -- mixed insert-path + modify-path
     # -------------------------------------------------------------------
     $bu2Mod = "E2E_BatchUpsertTest_${runId}_BU2_Mod"; $allTestNames += $bu2Mod
     $bu2Ins = "E2E_BatchUpsertTest_${runId}_BU2_Ins"; $allTestNames += $bu2Ins

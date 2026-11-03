@@ -26,7 +26,7 @@
                               final stdout result array.
 
 .NOTES
-    The registry key path does NOT contain WOW6432Node — the KEY_WOW64_32KEY
+    The registry key path does NOT contain WOW6432Node -- the KEY_WOW64_32KEY
     flag (0x100 = 256) handles 32-bit registry redirection. This was a critical
     finding in TVS-B.7.
 #>
@@ -55,7 +55,7 @@ function Find-TsInstallPath {
         if (Test-Path -Path $TsPath -PathType Container) {
             return $TsPath
         }
-        # Provided but invalid — fall through to discovery rather than failing.
+        # Provided but invalid -- fall through to discovery rather than failing.
     }
 
     # 2 & 3. Registry discovery (KEY_WOW64_32KEY = 0x100 = 256).
@@ -80,7 +80,7 @@ function Find-TsInstallPath {
             }
         }
         catch {
-            # Key not present or access denied — try the next candidate.
+            # Key not present or access denied -- try the next candidate.
         }
     }
 
@@ -115,12 +115,12 @@ function Ensure-BaselineDll {
         [string]$TsPath
     )
 
-    # DLL present — nothing to do.
+    # DLL present -- nothing to do.
     if (Test-Path -Path $DllPath -PathType Leaf) {
         return $true
     }
 
-    # DLL missing — prompt the user.
+    # DLL missing -- prompt the user.
     Write-Host ""
     Write-Host "Baseline DLL not found at: $DllPath" -ForegroundColor Yellow
     Write-Host "This DLL is required for: test_orlib_resolver, sigtool verify gate." -ForegroundColor Yellow
@@ -146,7 +146,7 @@ function Ensure-BaselineDll {
         Write-Host "  You can manually copy orlib20.dll to the target path." -ForegroundColor Yellow
     }
 
-    # Prompt — do NOT continue without a user decision.
+    # Prompt -- do NOT continue without a user decision.
     $response = Read-Host "Copy the DLL now? (Y/N)"
 
     if ($response -eq 'Y' -or $response -eq 'y') {
@@ -168,7 +168,7 @@ function Ensure-BaselineDll {
             return $false
         }
     } else {
-        # User declined — return false; callers skip DLL-dependent tests.
+        # User declined -- return false; callers skip DLL-dependent tests.
         Write-Host "User declined to copy the baseline DLL." -ForegroundColor DarkYellow
         Write-Host "Tests requiring this DLL will be SKIPPED:" -ForegroundColor DarkYellow
         Write-Host "  - test_orlib_resolver (signature resolution + patch-site validation)" -ForegroundColor DarkYellow
@@ -184,11 +184,11 @@ function Ensure-BaselineDll {
 # Assert-BatchStderrProgress
 #
 # Asserts the default (human) batch progress events on stderr under the new
-# output contract: NO BATCH START lines at all — exactly one BATCH
+# output contract: NO BATCH START lines at all -- exactly one BATCH
 # SUCCESS/FAILED completion line per attempted item in order (op/type/name/
 # index/total matching the expected results), then exactly one BATCH
 # COMPLETE whose counters/exit match the final results. A FAILED line may be
-# followed by the item's full human detail block (e.g. "tsdev_cli: ERROR —
+# followed by the item's full human detail block (e.g. "tsdev_cli: ERROR --
 # ..." plus compiler error text); detail lines do not start with "BATCH "
 # and are ignored by the line filter, like other diagnostics. Requires a
 # non-empty $Results array. Throws on the first mismatch.
@@ -199,7 +199,7 @@ function Ensure-BaselineDll {
 # array).
 #
 # PRECONDITION: this helper is for healthy-path suites where the batch
-# closed cleanly — the BATCH COMPLETE line is validated FIRST and must show
+# closed cleanly -- the BATCH COMPLETE line is validated FIRST and must show
 # close_failed=false (plus cancelled=false, not_run=0). Only under a clean
 # close do the per-item event results equal the final results; a failed
 # end-of-batch closeWarehouse rewrites still-successful final results, so
@@ -256,7 +256,7 @@ function Assert-BatchStderrProgress {
 # Assert-BatchJsonProgress
 #
 # Asserts that under --json the stderr progress lines are one JSON object per
-# line in order — a batch_item_started / batch_item_completed pair per
+# line in order -- a batch_item_started / batch_item_completed pair per
 # attempted item (matching the authoritative final stdout result array), then
 # exactly one batch_completed whose counters/exit match the final results.
 # Each completed event's nested "result" object must be structurally equal to
@@ -266,7 +266,7 @@ function Assert-BatchStderrProgress {
 # the first mismatch.
 #
 # PRECONDITION: this helper is for healthy-path suites where the batch
-# closed cleanly — the batch_completed event is validated FIRST and must
+# closed cleanly -- the batch_completed event is validated FIRST and must
 # show close_failed=false (plus cancelled=false, not_run=0). Only under a
 # clean close do the per-item event results equal the final stdout results;
 # a failed end-of-batch closeWarehouse rewrites still-successful final

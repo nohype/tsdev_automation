@@ -1,4 +1,4 @@
-// dispatch_watchdog.cpp — see dispatch_watchdog.h for the contract.
+// dispatch_watchdog.cpp -- see dispatch_watchdog.h for the contract.
 //
 // Production bounded-wait containment (TVS-3): in-flight dispatch marker +
 // 1 s polling watchdog + TerminateProcess(15) fire path. Compiled in BOTH
@@ -22,7 +22,7 @@ namespace {
 
 // --- In-flight marker state --------------------------------------------------
 // Mutex-protected (any thread may enter/leave; the watchdog thread reads).
-// Cost per dispatch: one mutex lock + a few stores — negligible against the
+// Cost per dispatch: one mutex lock + a few stores -- negligible against the
 // multi-millisecond warehouse calls it brackets.
 struct MarkerState {
     char     site[64];
@@ -45,7 +45,7 @@ constexpr DWORD    kPollMs = 1000;
 
 // --- Fire path ----------------------------------------------------------------
 // Truthful abort: say exactly which dispatch is wedged, how long it has been
-// in-flight, the configured bound, and the detection reason — then die.
+// in-flight, the configured bound, and the detection reason -- then die.
 [[noreturn]] void fire(DispatchFireReason reason,
                        const DispatchMarkerSnapshot& marker,
                        double ageSecs, double thresholdSecs) {
@@ -80,7 +80,7 @@ constexpr DWORD    kPollMs = 1000;
     // AGENTS.md): ExitProcess runs DLL_PROCESS_DETACH for every loaded DLL,
     // and orlib20's detach path on a process holding an open warehouse
     // raises the BLOCKING dialog "TradeStation internal error, WHouse is
-    // going to stay in memory (1)" (proven field incident — identical
+    // going to stay in memory (1)" (proven field incident -- identical
     // reasoning to the diag watchdog fire() in diag_watchdog.cpp). stderr
     // is flushed above, so the process must die immediately WITHOUT running
     // any DLL detach, worker join, or closeWarehouse (which would itself
@@ -99,10 +99,10 @@ DWORD WINAPI watchdogProc(LPVOID) {
 
     // Per-flight memory: WHServer must have been OBSERVED at least once
     // during the current flight before its disappearance can fire
-    // whserver_gone (WHServer is a lazy singleton — absent while idle and
+    // whserver_gone (WHServer is a lazy singleton -- absent while idle and
     // for a short window at flight start while the dispatch itself spawns
     // it), and the absence must persist across
-    // kWhServerGoneConfirmSamples consecutive CONFIRMED-empty polls — a
+    // kWhServerGoneConfirmSamples consecutive CONFIRMED-empty polls -- a
     // failed Toolhelp32 snapshot is inconclusive (NEVER an empty sample)
     // and resets the streak via accountWhServerSample, so consecutive
     // snapshot failures can never kill a healthy in-flight dispatch.
@@ -132,7 +132,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
         }
 
         // snapshotOk overload (NOT the collapsing one): a failed
-        // Toolhelp32 snapshot is INCONCLUSIVE — it must never count as an
+        // Toolhelp32 snapshot is INCONCLUSIVE -- it must never count as an
         // empty sample toward whserver_gone (consecutive failures
         // mid-flight would otherwise kill a HEALTHY in-flight dispatch).
         // Same fail-closed convention as the census/deathPoll
@@ -148,7 +148,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
         accountWhServerSample(whSnapOk, whPids, whSeen, emptyWhSamples);
         std::vector<DWORD> crashParents;
         if (!findCrashReportParentPids(crashParents)) {
-            // Inconclusive — NOT "no reporters": the whserver_crashed fast
+            // Inconclusive -- NOT "no reporters": the whserver_crashed fast
             // path is blind this poll. Not-firing is the fail-safe
             // direction for a fire path (firing on an inconclusive set
             // could kill a healthy dispatch); the in-flight-age bound
@@ -160,7 +160,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
 
 #ifdef TSDEV_DIAG
         // A TSCrashReport.exe whose parent is OUR pid is our own crash being
-        // reported — never a fire condition; record it distinctly so the log
+        // reported -- never a fire condition; record it distinctly so the log
         // explains the nearby process death.
         for (DWORD p : crashParents) {
             if (p == GetCurrentProcessId()) {
@@ -182,7 +182,7 @@ DWORD WINAPI watchdogProc(LPVOID) {
                                     static_cast<LONGLONG>(marker.enterQpc)) /
                 static_cast<double>(freq.QuadPart);
             fire(reason, marker, ageSecs, thresholdSecs);
-            // Unreachable — fire() terminates the process.
+            // Unreachable -- fire() terminates the process.
         }
     }
 }
@@ -254,7 +254,7 @@ DispatchFireReason decideDispatchFire(
     }
 
     // (2) Fast path: TSCrashReport.exe running as a CHILD of a WHServer.exe
-    // pid — TSCrash.dll launches the reporter from inside the crashing
+    // pid -- TSCrash.dll launches the reporter from inside the crashing
     // process, so the wedged COM call will never return. Parents that are
     // not WHServer pids (another process's crash, including our own) do
     // NOT fire.
@@ -266,12 +266,12 @@ DispatchFireReason decideDispatchFire(
         }
     }
 
-    // (3) Fast path: WHServer vanished mid-flight after having been seen —
+    // (3) Fast path: WHServer vanished mid-flight after having been seen --
     // dead is dead. WHServer never seen during this flight (lazy singleton
     // still spawning) is NOT a fire condition, and neither is a streak of
     // fewer than kWhServerGoneConfirmSamples empty samples: the caller
     // increments whServerEmptySamples ONLY on confirmed-empty polls (a
-    // failed Toolhelp32 snapshot is inconclusive and resets the streak —
+    // failed Toolhelp32 snapshot is inconclusive and resets the streak --
     // accountWhServerSample), so the absence must persist across
     // kWhServerGoneConfirmSamples consecutive confirmed-empty polls
     // before it counts.
@@ -287,11 +287,11 @@ void accountWhServerSample(bool snapshotOk,
                            const std::vector<DWORD>& whServerPids,
                            bool& whSeen, unsigned& emptyWhSamples) {
     if (!snapshotOk) {
-        // Inconclusive poll — not an empty sample and not a sighting. The
+        // Inconclusive poll -- not an empty sample and not a sighting. The
         // confirmed-empty streak RESETS: whserver_gone requires
         // consecutive CONFIRMED-empty polls and a gap in confirmation
         // breaks consecutiveness (the census "inconclusive never counts"
-        // discipline — whserver_census.cpp emptyStreak/absentStreak and
+        // discipline -- whserver_census.cpp emptyStreak/absentStreak and
         // whserver_recycle.cpp deadStreak). whSeen keeps its per-flight
         // value: a failed snapshot is no evidence of presence either.
         emptyWhSamples = 0;
@@ -319,9 +319,9 @@ bool findCrashReportParentPids(std::vector<DWORD>& parents) {
         } while (Process32NextW(snap, &pe));
     }
     // Same ERROR_NO_MORE_FILES convention as findWhServerPids
-    // (whserver_health.cpp): the clean end of both arms — a genuinely
+    // (whserver_health.cpp): the clean end of both arms -- a genuinely
     // empty snapshot on First, a completed walk on Next. Any other error
-    // is a truncated enumeration — a partial set is never evidence of
+    // is a truncated enumeration -- a partial set is never evidence of
     // "no crash reporters", so the result is inconclusive and carries no
     // set.
     const bool ok = (GetLastError() == ERROR_NO_MORE_FILES);

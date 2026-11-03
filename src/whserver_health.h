@@ -8,7 +8,7 @@
 // blob-read COM handler. These helpers measure a target process's free user
 // address space FROM OUR process via VirtualQueryEx (requires only
 // PROCESS_QUERY_INFORMATION; we are elevated, same session, same bitness).
-// kernel32 + toolhelp only — NO new .lib dependencies.
+// kernel32 + toolhelp only -- NO new .lib dependencies.
 //
 // The TU is pure Win32: no orlib20, no warehouse, no diag dependency.
 // Currently shared: measureVasFree() is called by the diag watchdog's
@@ -16,7 +16,7 @@
 // test_whserver_health unit test (which compiles this .cpp directly).
 // whserverSample() deliberately keeps its own snapshotProcesses() +
 // _wcsicmp pid-discovery loop instead of calling findWhServerPids():
-// that path must log `process-snapshot-failed err=…` on snapshot failure,
+// that path must log `process-snapshot-failed err=...` on snapshot failure,
 // which findWhServerPids() cannot distinguish from "no WHServer running".
 // findWhServerPids()' production consumers are the VAS-headroom guard
 // (tsdev_cli.cpp) and the dispatch watchdog (dispatch_watchdog.cpp); it is
@@ -39,22 +39,22 @@ struct WhVasStats {
     uint64_t totalFreeBytes;         // sum of MEM_FREE region sizes below 2GB
     uint64_t largestFreeBlockBytes;  // largest single MEM_FREE region below 2GB
     uint64_t privateBytes;           // reserved for psapi GetProcessMemoryInfo;
-                                     // always 0 (psapi is not linked — zero new
+                                     // always 0 (psapi is not linked -- zero new
                                      // link deps is a hard requirement)
 };
 
 // All pids whose process image name is "WHServer.exe" (case-insensitive), via
 // a single Toolhelp32 process snapshot. Empty when none are running (or the
-// enumeration failed — discovery failure is indistinguishable and
+// enumeration failed -- discovery failure is indistinguishable and
 // non-fatal for the caller's telemetry path).
 std::vector<DWORD> findWhServerPids();
 
 // snapshotOk variant of the same enumeration: returns false ONLY when the
-// enumeration is inconclusive — the Toolhelp32 snapshot itself failed, or
+// enumeration is inconclusive -- the Toolhelp32 snapshot itself failed, or
 // the process walk did not run to clean completion (a Process32FirstW or
 // Process32NextW failure whose GetLastError is not ERROR_NO_MORE_FILES; a
 // truncated set is never evidence). Callers that must distinguish
-// "no WHServer running" from "enumeration inconclusive" — e.g. the census
+// "no WHServer running" from "enumeration inconclusive" -- e.g. the census
 // gate's per-poll re-enumeration, where a failed enumeration is never
 // evidence of absence. On true, `pids` is the authoritative pid set
 // (possibly empty). On false, `pids` is cleared.
@@ -74,11 +74,11 @@ bool measureVasFree(DWORD pid, WhVasStats& out);
 
 // Pure breach decision for the runBatch VAS-headroom guard, in MB so the
 // caller's threshold config and the measured values share one unit.
-// Breach semantics: STRICTLY BELOW — a measured value exactly equal to its
+// Breach semantics: STRICTLY BELOW -- a measured value exactly equal to its
 // threshold is healthy (pass). Breach when EITHER the total free VAS is
 // below `thresholdTotalMB` OR the largest contiguous free block is below
 // `thresholdContigMB` (fragmentation kills contiguous `new[]` allocations
-// even while total free looks ample — the observed crash signature).
+// even while total free looks ample -- the observed crash signature).
 inline bool vasBreach(uint64_t totalFreeMB, uint64_t largestFreeMB,
                       uint64_t thresholdTotalMB, uint64_t thresholdContigMB) {
     return totalFreeMB < thresholdTotalMB ||

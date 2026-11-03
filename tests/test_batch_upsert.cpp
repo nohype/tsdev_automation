@@ -31,20 +31,20 @@
 //
 // Flow:
 //   1. Construct ONE TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. Pre-clean: for each probe, findExistPos(name, Strategy) — delete if exists
-//   3. For each probe, findExistPos(name, Strategy) — ASSERT returns <= 0 (absent)
-//   4. For each probe (insert-path, NO closeWarehouse between items — the
-//      batch flushPerItem=false invariant): createEntry — assert ProgId > 0.
+//   2. Pre-clean: for each probe, findExistPos(name, Strategy) -- delete if exists
+//   3. For each probe, findExistPos(name, Strategy) -- ASSERT returns <= 0 (absent)
+//   4. For each probe (insert-path, NO closeWarehouse between items -- the
+//      batch flushPerItem=false invariant): createEntry -- assert ProgId > 0.
 //      Record each ProgId.
-//   5. For each probe: saveSource(sourceA) — assert success
-//   6. For each probe: verifyModule — assert no errors
-//   7. For each probe: findExistPos — ASSERT returns SAME ProgId (found after
+//   5. For each probe: saveSource(sourceA) -- assert success
+//   6. For each probe: verifyModule -- assert no errors
+//   7. For each probe: findExistPos -- ASSERT returns SAME ProgId (found after
 //      insert, no flush)
 //   8. For each probe (modify-path, still NO closeWarehouse): modifyEntry(
-//      sourceB) — assert success
-//   9. For each probe: findExistPos — ASSERT returns SAME ProgId (KEY
+//      sourceB) -- assert success
+//   9. For each probe: findExistPos -- ASSERT returns SAME ProgId (KEY
 //      batch-upsert invariant: preserved after modify, no per-item flush)
-//  10. Cleanup — deleteEntry for each probe
+//  10. Cleanup -- deleteEntry for each probe
 //  11. closeWarehouse() ONCE at the end (the batch "flush once" pattern), assert status
 //  12. Print PASS / FAIL
 //
@@ -53,7 +53,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_new) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread. An SEH wrapper around the worker thread body
 // catches any unhandled structured exception and converts it to a nonzero
@@ -86,7 +86,7 @@ const char* kSourceA_A =
     "Buy (\"EnterLong\") next bar at Market;\r\n";
 
 // Modified source (source B) for probe A: changes the strategy from Buy to
-// Sell. This is the "update" half of the upsert — the same modification
+// Sell. This is the "update" half of the upsert -- the same modification
 // pattern used in test_modify.cpp.
 const char* kSourceB_A =
     "{ zzz_test_batch_upsert_a }\r\n"
@@ -136,7 +136,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: Pre-clean — ensure neither entry already exists ---
+    // --- Step 2: Pre-clean -- ensure neither entry already exists ---
     std::fprintf(stdout, "\n[2] Pre-clean: findExistPos for each probe...\n");
     for (int i = 0; i < 2; i++) {
         int existing = lib->findExistPos(names[i], ComponentType::Strategy);
@@ -152,7 +152,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
     }
 
-    // --- Step 3: findExistPos for NONEXISTENT names — ASSERT <= 0 ---
+    // --- Step 3: findExistPos for NONEXISTENT names -- ASSERT <= 0 ---
     std::fprintf(stdout,
                  "\n[3] findExistPos for each probe -- asserting absent...\n");
     for (int i = 0; i < 2; i++) {
@@ -236,7 +236,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
     }
 
-    // --- Step 7: findExistPos for EXISTING names — ASSERT same ProgId ---
+    // --- Step 7: findExistPos for EXISTING names -- ASSERT same ProgId ---
     std::fprintf(stdout,
                  "\n[7] findExistPos for each probe -- asserting exists with same ProgId...\n");
     for (int i = 0; i < 2; i++) {
@@ -291,7 +291,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
     }
 
-    // --- Step 9: findExistPos again — ASSERT SAME ProgId (KEY invariant) ---
+    // --- Step 9: findExistPos again -- ASSERT SAME ProgId (KEY invariant) ---
     std::fprintf(stdout,
                  "\n[9] findExistPos for each probe -- asserting SAME ProgId after modify...\n");
     for (int i = 0; i < 2; i++) {
@@ -326,7 +326,7 @@ DWORD WINAPI runTest(LPVOID param) {
                      i, after);
     }
 
-    // --- Step 10: Cleanup — delete each probe entry ---
+    // --- Step 10: Cleanup -- delete each probe entry ---
     std::fprintf(stdout, "\n[10] Cleanup: deleteEntry for each probe...\n");
     for (int i = 0; i < 2; i++) {
         bool deleted = lib->deleteEntry(ComponentType::Strategy, names[i]);
@@ -362,7 +362,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);

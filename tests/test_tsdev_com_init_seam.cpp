@@ -7,7 +7,7 @@
 // initialization with injected COM HRESULTs WITHOUT leaking COM
 // configuration into the public user API (src/tsdev_lib.h).
 //
-// The seam (declared and implemented — see src/tsdev_lib.h and
+// The seam (declared and implemented -- see src/tsdev_lib.h and
 // src/tsdev_lib_test_hooks.h):
 //   - src/tsdev_lib.h forward-declares `struct TsDevLibTestConfig;` and
 //     declares a PRIVATE constructor
@@ -16,7 +16,7 @@
 //         std::unique_ptr<TsDevLib> tsdev::makeTsDevLibForTest(
 //             const wchar_t*, const TsDevLibTestConfig&);
 //     No ComApi / <objbase.h> / COM function-pointer type appears in the
-//     public header — the public user API sees only an opaque
+//     public header -- the public user API sees only an opaque
 //     forward-declared struct name and a private ctor it cannot call.
 //   - src/tsdev_lib_test_hooks.h (INTERNAL, test-only, NOT a public header)
 //     defines TsDevLibTestConfig { ComApi comApi; bool throwAfterCom; } and
@@ -26,7 +26,7 @@
 // GREEN signal:
 //   The factory and the private ctor are DEFINED in src/tsdev_lib.cpp. This
 //   test references makeTsDevLibForTest and links cleanly against tsdev_lib,
-//   so the test executable builds, links, and runs the assertions below —
+//   so the test executable builds, links, and runs the assertions below --
 //   the GREEN signal.
 //
 // Contract (enforced by the assertions below):
@@ -41,7 +41,7 @@
 //      naming HRESULT 0x80010106; mock CoUninitialize NOT called; NO
 //      SetDllDirectoryW, NO orlib20 / support-DLL load, NO patch, NO OrlibInit,
 //      NO warehouse access (COM failure is a HARD stop before every later
-//      step — the intended contract called out by TVS-L.13).
+//      step -- the intended contract called out by TVS-L.13).
 //   4. E_FAIL (generic): same as (3) with E_FAIL (0x80004005).
 //   5. Later-constructor exception after COM success (S_OK + throwAfterCom):
 //      COM succeeds, the ctor throws at the injected post-COM point, mock
@@ -143,7 +143,7 @@ bool containsCI(const std::string& haystack, const char* needle) {
 
 // Build a TsDevLibTestConfig with the mock COM API and the given
 // throwAfterCom flag. The injected HRESULT that mockCoInitializeEx returns is
-// NOT set here — it is installed separately via resetMock() before each
+// NOT set here -- it is installed separately via resetMock() before each
 // construction (mockCoInitializeEx reads g_mock.nextInitResult at call time).
 // The real CoInitializeEx / CoUninitialize are never referenced by this test.
 TsDevLibTestConfig makeConfig(bool throwAfterCom) {
@@ -240,7 +240,7 @@ int checkSFalseThenThrow() {
 }
 
 // ---------------------------------------------------------------------------
-// Check 3: RPC_E_CHANGED_MODE — COM init hard failure.
+// Check 3: RPC_E_CHANGED_MODE -- COM init hard failure.
 //
 // The injected CoInitializeEx returns RPC_E_CHANGED_MODE (0x80010106),
 // indicating the thread is already in an incompatible apartment. The ctor
@@ -248,7 +248,7 @@ int checkSFalseThenThrow() {
 // CoUninitialize (the COM runtime was never entered). Crucially, NO later
 // constructor step may run: NO SetDllDirectoryW, NO orlib20 / support-DLL
 // load, NO patch application, NO OrlibInit, NO warehouse access. This is the
-// intended TVS-L.13 contract — COM failure is a HARD stop before every
+// intended TVS-L.13 contract -- COM failure is a HARD stop before every
 // later step. (The "no later side effect" property is implied by the throw
 // point: the ctor throws at the COM-init check, which is the FIRST effective
 // action, so no later step is reached. The GREEN implementation must keep
@@ -295,7 +295,7 @@ int checkChangedModeHardStop() {
 }
 
 // ---------------------------------------------------------------------------
-// Check 4: Generic failure (E_FAIL) — same hard-stop contract as check 3.
+// Check 4: Generic failure (E_FAIL) -- same hard-stop contract as check 3.
 // ---------------------------------------------------------------------------
 int checkGenericFailHardStop() {
     std::fprintf(stdout, "  [check 4] E_FAIL generic hard stop (no CoUninitialize, no later side effects)\n");
@@ -333,20 +333,20 @@ int checkGenericFailHardStop() {
 }
 
 // ---------------------------------------------------------------------------
-// Check 5: Later-constructor exception after COM success — DISTINCT from
+// Check 5: Later-constructor exception after COM success -- DISTINCT from
 // check 1 by verifying the exception MESSAGE.
 //
 // COM succeeds (S_OK), then the ctor throws at the injected post-COM point
 // (config.throwAfterCom == true). The COM guard's destructor runs during
 // stack unwinding and calls the injected CoUninitialize EXACTLY once. This
 // proves COM is balanced on the constructing thread even when a later
-// constructor step fails — the same property TVS-L.2 established for
+// constructor step fails -- the same property TVS-L.2 established for
 // ComApartmentGuard, now verified at the TsDevLib layer through the new seam.
 //
 // DISTINCT from check 1 (which also uses S_OK + throwAfterCom and checks the
 // same COM-balancing counters): check 5 additionally captures the exception
 // MESSAGE and asserts it identifies the throw as the injected post-COM
-// exception — it MUST contain "post-COM" and MUST NOT contain "HRESULT"
+// exception -- it MUST contain "post-COM" and MUST NOT contain "HRESULT"
 // (the COM-init hard-stop branch's diagnostic). This proves the throw came
 // from the post-COM point and not from the COM-init hard-stop branch, which
 // check 1 does not verify.
@@ -414,7 +414,7 @@ int runTests() {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID /*param*/) {
     DWORD exitCode = 0;
     __try {

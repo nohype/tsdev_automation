@@ -1,6 +1,6 @@
 // diag_log.cpp
 //
-// Implementation of the §7.1 diagnostic file sink. See diag_log.h for the
+// Implementation of the Sec. 7.1 diagnostic file sink. See diag_log.h for the
 // contract. This TU is compiled only into the diagnostic build (TSDEV_DIAG);
 // the production build neither compiles it nor links it.
 
@@ -33,7 +33,7 @@ std::string g_logPathUtf8;  // full path of the current log file (UTF-8)
 LARGE_INTEGER g_qpcStart;  // QPC at sink init (elapsed-seconds origin)
 LARGE_INTEGER g_freq;
 
-// Watchdog progress (§7.1 2f): QPC of the last site record. Watchdog-written
+// Watchdog progress (Sec. 7.1 2f): QPC of the last site record. Watchdog-written
 // records do NOT update this (they must not keep the watchdog fed).
 std::atomic<long long> g_lastRecordQpc{0};
 
@@ -58,7 +58,7 @@ void sanitizeOneLine(const char* src, char* dst, size_t dstSize) {
 
 // Core write. Caller holds g_sinkLock. Single WriteFile per record so the
 // record is contiguous and flushed (FILE_FLAG_WRITE_THROUGH) when the call
-// returns — it survives a crash or hang-kill of the process.
+// returns -- it survives a crash or hang-kill of the process.
 void writeRecordLocked(const char* site, const char* payload, bool progress) {
     if (!g_initialized || g_file == INVALID_HANDLE_VALUE) return;
 
@@ -119,7 +119,7 @@ bool initSink() {
     // Directory: TSDEV_DIAG_DIR overrides the process working directory.
     // Review F7(b): an overlong TSDEV_DIAG_DIR value (>= MAX_PATH, i.e. it
     // did not fit into the buffer above) silently falls back to the process
-    // working directory — the log is still created (and its path printed to
+    // working directory -- the log is still created (and its path printed to
     // stderr), just not in the requested directory. Accepted diag-of-diag
     // behavior: say-so here instead of failing the run over a log path.
     wchar_t dir[MAX_PATH];
@@ -150,7 +150,7 @@ bool initSink() {
     }
 
     // FILE_FLAG_WRITE_THROUGH: every WriteFile goes to stable storage before
-    // returning, so records survive process death (§7.1 2a).
+    // returning, so records survive process death (Sec. 7.1 2a).
     HANDLE h = CreateFileW(fname, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
@@ -172,7 +172,7 @@ bool initSink() {
     g_initialized = true;
     LeaveCriticalSection(&g_sinkLock);
 
-    // Print the log file path once to stderr at startup (§7.1 2a).
+    // Print the log file path once to stderr at startup (Sec. 7.1 2a).
     std::fprintf(stderr, "tsdev_diag: log file: %s\n", g_logPathUtf8.c_str());
     std::fflush(stderr);
     return true;

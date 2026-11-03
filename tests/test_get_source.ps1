@@ -9,7 +9,7 @@
     The `get-source` op retrieves the raw EL source text of an existing item.
     Exit codes:
       0 = success (source retrieved)
-      5 = not_found (item does not exist — an error for get-source, unlike exists)
+      5 = not_found (item does not exist -- an error for get-source, unlike exists)
       2 = unknown_type (unrecognized component type string)
       1 = usage_error (missing/incorrect arguments)
 
@@ -358,7 +358,7 @@ try {
         -Arguments @("insert","strategy",$probeName,$fGS1) `
         -ExpectedExit 0 -ExpectSubstr "SUCCESS" -TestName $probeName -TestType "strategy" | Out-Null
 
-    # get-source for the existing item — expect exit 0, stdout contains key
+    # get-source for the existing item -- expect exit 0, stdout contains key
     # substrings from the source.
     Invoke-Test -TestId "GS1" -Step "get-source (existing item, raw)" `
         -Arguments @("get-source","strategy",$probeName) `

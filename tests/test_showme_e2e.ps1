@@ -357,7 +357,7 @@ New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 $probeName    = "TestShowMe_K1_$PID"
 $invalidName  = "TestShowMe_K1_Invalid_$PID"
 
-# Valid ShowMe EasyLanguage source (uses Plot1 — allowed in ShowMe studies).
+# Valid ShowMe EasyLanguage source (uses Plot1 -- allowed in ShowMe studies).
 # ShowMe studies mark conditions on charts; they can plot but cannot issue
 # order statements (Buy/Sell are Strategy-only).
 $showmeInsertSrc = @"
@@ -373,7 +373,7 @@ if Close < Open then
     Plot1(Low, "Down bar");
 "@
 
-# Invalid ShowMe EasyLanguage source (uses Buy order statement — NOT allowed
+# Invalid ShowMe EasyLanguage source (uses Buy order statement -- NOT allowed
 # in ShowMe studies; the compiler rejects it with "This word not allowed in
 # a study.").
 $showmeInvalidSrc = @"
@@ -387,7 +387,7 @@ $insertProgId = 0
 
 try {
     # =====================================================================
-    # SM1: INSERT — create a ShowMe with valid EL source (uses Plot1)
+    # SM1: INSERT -- create a ShowMe with valid EL source (uses Plot1)
     # =====================================================================
     Write-Host "--- SM1: insert showme (valid Plot1 source) ---" -ForegroundColor Cyan
 
@@ -410,7 +410,7 @@ try {
     }
 
     # =====================================================================
-    # SM2: EXISTS (exact) — verify the ShowMe exists with exact name match
+    # SM2: EXISTS (exact) -- verify the ShowMe exists with exact name match
     # =====================================================================
     Write-Host "--- SM2: exists showme (exact match) ---" -ForegroundColor Cyan
 
@@ -429,7 +429,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM3: EXISTS (case-insensitive) — query with different case; verify
+    # SM3: EXISTS (case-insensitive) -- query with different case; verify
     #      stored_name matches the ORIGINAL case.
     # =====================================================================
     Write-Host "--- SM3: exists showme --case-insensitive (different case query) ---" -ForegroundColor Cyan
@@ -452,7 +452,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM4: GET-SOURCE — retrieve the ShowMe's source; verify expected content
+    # SM4: GET-SOURCE -- retrieve the ShowMe's source; verify expected content
     # =====================================================================
     Write-Host "--- SM4: get-source showme (after insert) ---" -ForegroundColor Cyan
 
@@ -470,7 +470,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM5: MODIFY — replace the source with new EL source; verify success
+    # SM5: MODIFY -- replace the source with new EL source; verify success
     #      and that the ProgId is preserved (same as insert ProgId).
     # =====================================================================
     Write-Host "--- SM5: modify showme (new Plot1 source) ---" -ForegroundColor Cyan
@@ -490,7 +490,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM6: GET-SOURCE (after modify) — verify the source was updated
+    # SM6: GET-SOURCE (after modify) -- verify the source was updated
     # =====================================================================
     Write-Host "--- SM6: get-source showme (after modify) ---" -ForegroundColor Cyan
 
@@ -510,7 +510,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM7: SEMANTIC ERROR TEST — insert a ShowMe with a Buy order statement.
+    # SM7: SEMANTIC ERROR TEST -- insert a ShowMe with a Buy order statement.
     #      Order statements are NOT allowed in ShowMe studies (Strategy-only).
     #      Expected: exit 8 (compile error), JSON compile_errors contains
     #      the study rejection message.
@@ -535,7 +535,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM8: DELETE — delete the ShowMe
+    # SM8: DELETE -- delete the ShowMe
     # =====================================================================
     Write-Host "--- SM8: delete showme ---" -ForegroundColor Cyan
 
@@ -549,7 +549,7 @@ try {
         } | Out-Null
 
     # =====================================================================
-    # SM9: EXISTS (after delete) — verify it no longer exists
+    # SM9: EXISTS (after delete) -- verify it no longer exists
     # =====================================================================
     Write-Host "--- SM9: exists showme (after delete) ---" -ForegroundColor Cyan
 

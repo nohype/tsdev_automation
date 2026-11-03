@@ -3,7 +3,7 @@
 // Unit test (RED-GREEN TDD) for the ShowMe ComponentType enum entry
 // and the category/sub-type decomposition layer (getCategory / getSubType).
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack. It only exercises
 // the ComponentType enum and the inline getCategory/getSubType helpers defined
 // in tsdev_lib.h. It runs on a worker thread with a 64 MB stack only to match
@@ -13,7 +13,7 @@
 // ShowMe parameters (confirmed via Ghidra RE):
 //   Expanded whType: 1282 (0x0502)
 //   Category: 2 (same as Indicator and TradingApp)
-//   Subtype: 0x05 (5) — canonical subtype
+//   Subtype: 0x05 (5) -- canonical subtype
 //   Raw subtypes in warehouse records: 0x03 and 0x05 (both map to ShowMe)
 //
 // Checks:
@@ -182,7 +182,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

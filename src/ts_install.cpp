@@ -2,11 +2,11 @@
 //
 // TradeStation install-root resolution, extracted VERBATIM from the former
 // anonymous-namespace block in src/tsdev_lib.cpp (TVS-B.7). Semantics and
-// precedence are unchanged: --ts-path override → registry (Installing →
-// Versions\9.05.00) → conventional default; validation requires
+// precedence are unchanged: --ts-path override -> registry (Installing ->
+// Versions\9.05.00) -> conventional default; validation requires
 // <root>\Program\orlib20.dll.
 //
-// Pure Win32 (kernel32 + advapi32) — no orlib20, no warehouse.
+// Pure Win32 (kernel32 + advapi32) -- no orlib20, no warehouse.
 
 #include "ts_install.h"
 
@@ -28,7 +28,7 @@ std::wstring normalizeTrailingBackslash(std::wstring path) {
 
 // Read a REG_SZ value from the registry. Returns the value as a std::wstring,
 // or an empty string on failure. Uses KEY_WOW64_32KEY to access the 32-bit
-// registry view (the subkey path must NOT include WOW6432Node — the flag
+// registry view (the subkey path must NOT include WOW6432Node -- the flag
 // handles the redirection; including both causes double-redirection).
 std::wstring readRegistryRootDir(HKEY hive, const wchar_t* subkey,
                                  const wchar_t* valueName) {
@@ -59,7 +59,7 @@ std::wstring readRegistryRootDir(HKEY hive, const wchar_t* subkey,
 // %ProgramFiles(x86)% environment variable + "\TradeStation 9.5". If the
 // env var is not set (very unlikely on modern Windows), falls back to
 // "C:\Program Files (x86)" (a Windows convention, not a TS-specific
-// hardcoding — contains no "TradeStation 9.5" string).
+// hardcoding -- contains no "TradeStation 9.5" string).
 std::wstring getConventionalDefaultRoot() {
     wchar_t pfBuf[MAX_PATH] = {0};
     DWORD pfLen = GetEnvironmentVariableW(L"ProgramFiles(x86)", pfBuf, MAX_PATH);
@@ -84,7 +84,7 @@ bool validateTsInstall(const std::wstring& root) {
     return (attr != INVALID_FILE_ATTRIBUTES);
 }
 
-// Resolves the TS install root path. Priority: override → registry → default.
+// Resolves the TS install root path. Priority: override -> registry -> default.
 // Reports which mechanism was used via an Info-level log message (visible at
 // -v and above; suppressed at the default Warning level).
 std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
@@ -123,7 +123,7 @@ std::wstring resolveTsInstallRoot(const wchar_t* overridePath) {
         return root;
     }
 
-    // (4) Conventional default (last resort) — constructed from %ProgramFiles(x86)%
+    // (4) Conventional default (last resort) -- constructed from %ProgramFiles(x86)%
     root = getConventionalDefaultRoot();
     tsdev_log_message(TsDevLogLevel::Info,
                  "tsdev: TS install path resolved via conventional default: %ls\n",

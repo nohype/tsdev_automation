@@ -24,7 +24,7 @@ ComApartmentGuard::ComApartmentGuard(ComApi api)
     // S_OK  : the apartment was freshly entered on this thread.
     // S_FALSE: the apartment was already entered on this thread (a previous
     //          CoInitializeEx succeeded). Per COM rules, each successful
-    //          CoInitializeEx — including the S_FALSE one — must be balanced
+    //          CoInitializeEx -- including the S_FALSE one -- must be balanced
     //          by exactly one CoUninitialize on the same thread.
     // Any other HRESULT (including RPC_E_CHANGED_MODE): the COM runtime was
     // NOT entered on this thread, so NO CoUninitialize must be called. The

@@ -1,9 +1,9 @@
 // test_diag_log.cpp
 //
-// Pure unit test for the §7.1 diagnostic file sink (src/diag_log.h,
+// Pure unit test for the Sec. 7.1 diagnostic file sink (src/diag_log.h,
 // src/diag_log.cpp). Covers the three required sink behaviors:
 //   1. A record is present in the log file IMMEDIATELY after the log call
-//      (before any close/flush at exit) — i.e. every record is flushed per
+//      (before any close/flush at exit) -- i.e. every record is flushed per
 //      write and survives process death.
 //   2. Atomic interleaving under concurrent writers from multiple threads:
 //      every record lands as one intact line, none lost, none torn.

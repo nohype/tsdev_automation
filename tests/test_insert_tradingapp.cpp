@@ -15,12 +15,12 @@
 // Flow:
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
 //   2. Pre-clean: deleteEntry if a stale entry exists from a prior failed run
-//   3. createEntry(TradingApp, "test_ta_insert_c4") — assert ProgId > 0
-//   4. saveSource(TradingApp, progId, source) — assert success
-//   5. verifyModule(TradingApp, progId) — assert error string empty
+//   3. createEntry(TradingApp, "test_ta_insert_c4") -- assert ProgId > 0
+//   4. saveSource(TradingApp, progId, source) -- assert success
+//   5. verifyModule(TradingApp, progId) -- assert error string empty
 //   6. Verify .ell file exists at elmodule_5122_<progId>.ell
 //   7. Verify .ell file magic is "RNAM" (first 4 bytes)
-//   8. deleteEntry(TradingApp, "test_ta_insert_c4") — assert true
+//   8. deleteEntry(TradingApp, "test_ta_insert_c4") -- assert true
 //   9. Exit 0 on success
 //
 // Exit code: 0 on success, non-zero on failure.
@@ -46,7 +46,7 @@ const char* kTestName = "test_ta_insert_c4";
 // Minimal TradingApp source proven to compile in the TVS-C.3 E2E CLI test.
 const char* kTestSource = "using elsystem;\r\n";
 
-// Full TradingApp candidate (from TVS-C.2) — used as fallback if the minimal
+// Full TradingApp candidate (from TVS-C.2) -- used as fallback if the minimal
 // source fails to compile.
 const char* kFullSource =
     "using elsystem;\r\n"
@@ -177,7 +177,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    magic = RNAM (OK)\n");
 
-    // --- Step 8: Cleanup — deleteEntry ---
+    // --- Step 8: Cleanup -- deleteEntry ---
     std::fprintf(stdout, "\n[8] deleteEntry(TradingApp, \"%s\")...\n",
                  kTestName);
     bool deleted = lib->deleteEntry(ComponentType::TradingApp, kTestName);

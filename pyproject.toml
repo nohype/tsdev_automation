@@ -38,4 +38,4 @@ markers = [
     "e2e: end-to-end tests that drive the real tsdev_cli.exe and TradeStation warehouse",
 ]
 # Only collect Python test files; ignore the C++/PowerShell artifacts in tests/.
-python_files = ["test_tsdev_client.py"]
+python_files = ["test_tsdev_client.py", "test_ascii_hygiene.py"]

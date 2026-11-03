@@ -1,4 +1,4 @@
-// test_delete_check.cpp — quick check if deleted entries persist across restarts
+// test_delete_check.cpp -- quick check if deleted entries persist across restarts
 #include "tsdev_lib.h"
 #include <cstdio>
 using namespace tsdev;

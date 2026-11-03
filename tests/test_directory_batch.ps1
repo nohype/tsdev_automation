@@ -186,8 +186,8 @@ function Invoke-CliRaw {
         $ErrorActionPreference = 'Continue'
         try {
             # OS-level redirection writes the child's raw stdout/stderr bytes
-            # to files. `2>` on a native command wraps stderr in ErrorRecords —
-            # prefixing the first line and injecting error-record text — which
+            # to files. `2>` on a native command wraps stderr in ErrorRecords --
+            # prefixing the first line and injecting error-record text -- which
             # corrupts line-exact assertions on batch progress output.
             $proc = Start-Process -FilePath $script:CliPath `
                 -ArgumentList $argString `

@@ -786,7 +786,7 @@ class TestBatch:
 
     def test_batch_prevalid_failure_items_return_in_position(
             self, client: TsDevClient, monkeypatch) -> None:
-        """``BatchItem.prevalid_failure`` items are never dispatched —
+        """``BatchItem.prevalid_failure`` items are never dispatched --
         each becomes a per-item failure result in position (the C++
         preValid=false shape), while dispatchable items still run."""
         arr = json.dumps(
@@ -826,7 +826,7 @@ class TestBatch:
         dispatch: the client must return the per-item failure results in
         position instead of spawning the CLI with an empty stdin manifest
         (which would exit 1 "manifest from stdin is empty" and raise,
-        losing the per-item failures) — matching the serve path, which
+        losing the per-item failures) -- matching the serve path, which
         already returns the failures without a broker request."""
         def boom(*a, **k):
             raise AssertionError("subprocess.run must not be spawned")
@@ -1063,7 +1063,7 @@ class TestBatchStdin:
 
     def test_build_manifest_quotes_spaced_names(self, client: TsDevClient) -> None:
         """Spaced names (the TradeStation norm) emit the quoted form the
-        CLI parser accepts — an unquoted spaced name would re-parse to a
+        CLI parser accepts -- an unquoted spaced name would re-parse to a
         DIFFERENT component and a delete would silently retarget."""
         cleanup: list[Path] = []
         m = client._build_manifest_string(
@@ -1083,8 +1083,8 @@ class TestBatchStdin:
             p.unlink(missing_ok=True)
 
     def test_build_manifest_refuses_unrepresentable_names(self, client: TsDevClient) -> None:
-        """Names that can never round-trip fail closed with ValueError —
-        line break, quote-leading, quote+whitespace — while a bare quote
+        """Names that can never round-trip fail closed with ValueError --
+        line break, quote-leading, quote+whitespace -- while a bare quote
         in a whitespace-free name is written unquoted and round-trips."""
         for bad in ('has "quote', '"leading', "has\nbreak", "has\rbreak"):
             with pytest.raises(ValueError):
@@ -1098,7 +1098,7 @@ class TestBatchStdin:
 
     def test_build_manifest_quotes_vt_ff_names(self, client: TsDevClient) -> None:
         """'\\v'/'\\f' are manifest whitespace (the C-locale isspace set
-        the C++ parser's trim() uses) — a name containing them must emit
+        the C++ parser's trim() uses) -- a name containing them must emit
         the quoted form so re-parsing preserves the SAME component; an
         unquoted '\\v' at a token edge would silently retarget a delete."""
         m = client._build_manifest_string(
@@ -1110,7 +1110,7 @@ class TestBatchStdin:
     def test_build_manifest_refuses_quote_plus_vt_ff(
             self, client: TsDevClient) -> None:
         """A '\"' combined with '\\v'/'\\f' is unrepresentable exactly like
-        '\"'+space — unquoted it splits at the '\\v', quoted the '\"'
+        '\"'+space -- unquoted it splits at the '\\v', quoted the '\"'
         terminates the token early.  Refuse fail-closed."""
         for bad in ('a"\x0bb', 'a"\x0cb'):
             with pytest.raises(ValueError):
@@ -1120,7 +1120,7 @@ class TestBatchStdin:
 
     def test_manifest_source_paths_vt_ff_names(self, tmp_path) -> None:
         """``_manifest_source_paths`` must reproduce the C++ parse for
-        '\\v'/'\\f' names — the C++ line tokenizer treats them as
+        '\\v'/'\\f' names -- the C++ line tokenizer treats them as
         whitespace while Python ``splitlines``/generic whitespace split
         would diverge and corrupt the carve-out keep-set (a retained
         manifest's referenced temp source would be deleted)."""
@@ -1229,7 +1229,7 @@ class TestBatchDir:
 
     Each drives the corresponding ``batch-<op>-dir`` CLI subcommand with
     ``<type> <dir_path> [-t <ext>...]`` arguments.  Extensions default to
-    ``None`` (no ``-t`` flags → CLI uses its built-in defaults of .el+.txt).
+    ``None`` (no ``-t`` flags -> CLI uses its built-in defaults of .el+.txt).
     An empty extensions list is treated the same as ``None``.
     """
 
@@ -1323,11 +1323,11 @@ class TestBatchDir:
         assert len(t_indices) == 2
         assert cmd[t_indices[0] + 1] == "el"
         assert cmd[t_indices[1] + 1] == "txt"
-        # Empty list → treated as None → no -t flags.
+        # Empty list -> treated as None -> no -t flags.
         client.batch_insert_dir("strategy", "C:/mydir", extensions=[])
         cmd = seen["cmd"]
         assert "-t" not in cmd
-        # None → no -t flags.
+        # None -> no -t flags.
         client.batch_insert_dir("strategy", "C:/mydir", extensions=None)
         cmd = seen["cmd"]
         assert "-t" not in cmd
@@ -1715,7 +1715,7 @@ class TestVerboseForwarding:
              "--dispatch-timeout-secs", "86400"]
         )
         # Garbage/out-of-range values are dropped (env semantics: keep default).
-        for bad in ("bogus", "86401", "-5", "12.5", "", "²"):
+        for bad in ("bogus", "86401", "-5", "12.5", "", "\u00b2"):
             monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", bad)
             assert _build_serve_parameters(None, "C:/hs.pipe") == subprocess.list2cmdline(
                 ["serve", "--serve-pipe-file", "C:/hs.pipe"]
@@ -2123,7 +2123,7 @@ class TestRecycleWhserver:
         """Env-only ``TSDEV_RECYCLE_WHSERVER`` authorization emits NO
         literal ``--recycle-whserver`` on the direct path: the child
         inherits the caller's environment block (subprocess.run passes no
-        env=), so the CLI reads the env var itself — forwarding the flag
+        env=), so the CLI reads the env var itself -- forwarding the flag
         would flip its authorizedViaEnv attribution off and make a refusal
         misname the env var's source."""
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
@@ -2218,7 +2218,7 @@ class TestRecycleWhserver:
     def test_recycle_env_plus_on_progress_raises(
         self, client: TsDevClient, monkeypatch
     ) -> None:
-        """The env-var OR-arm also trips the ValueError — env "0" does not,
+        """The env-var OR-arm also trips the ValueError -- env "0" does not,
         matching the pinned presence semantics."""
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
         monkeypatch.setattr(
@@ -2229,7 +2229,7 @@ class TestRecycleWhserver:
             client._batch("delete", [BatchItem("strategy", "A")],
                           on_progress=lambda p: True, recycle_whserver=False)
         # env "0" clears the env arm; without kwarg/ctor the combination is
-        # legal — assert only that the ValueError is NOT raised at the gate
+        # legal -- assert only that the ValueError is NOT raised at the gate
         # (the controlled run itself is mocked out via _run_batch_controlled).
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "0")
         monkeypatch.setattr(client, "_run_batch_controlled", lambda *a, **k: [])
@@ -2240,7 +2240,7 @@ class TestRecycleWhserver:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """The per-call ``recycle_whserver=True`` kwarg on a serve-path
-        ``_batch``/``_batch_dir`` call raises ValueError — broker
+        ``_batch``/``_batch_dir`` call raises ValueError -- broker
         authorization is fixed at broker launch, so the kwarg cannot be
         honored and must not be silently dropped."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
@@ -2255,8 +2255,8 @@ class TestRecycleWhserver:
     def test_serve_recycle_plus_on_progress_allowed(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Serve mode ALLOWS recycle + on_progress (design §4.3
-        tagged-progress resume) — the direct-path ValueError must not
+        """Serve mode ALLOWS recycle + on_progress (design Sec. 4.3
+        tagged-progress resume) -- the direct-path ValueError must not
         fire on the serve path."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         fake_broker = _serve_batch_broker([
@@ -2346,10 +2346,10 @@ class TestRecycleWhserver:
     def test_batch_direct_noguard_refused_before_warning(
         self, client: TsDevClient, monkeypatch
     ) -> None:
-        """Post-validation ordering (mirrors the C++ §6.3 emission): a
+        """Post-validation ordering (mirrors the C++ Sec. 6.3 emission): a
         recycle+``TSDEV_NO_WHSERVER_VAS_GUARD`` combination is refused
         client-side with ValueError BEFORE the warning can fire and
-        before any child is spawned — the client must not warn about a
+        before any child is spawned -- the client must not warn about a
         recycle the CLI would refuse."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
@@ -2390,7 +2390,7 @@ class TestRecycleWhserver:
     ) -> None:
         """A non-elevated ``use_serve=False`` client raises
         ElevationRequiredError inside ``_run_batch`` before any child
-        exists — no recycle warning may precede it."""
+        exists -- no recycle warning may precede it."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False,
@@ -2411,7 +2411,7 @@ class TestRecycleWhserver:
     ) -> None:
         """F4: ``TSDEV_RECYCLE_WHSERVER`` set after the broker was
         launched without authorization is silently inert (the flag is
-        fixed on the launch command line; runas does not inherit env) —
+        fixed on the launch command line; runas does not inherit env) --
         the serve batch path warns instead of running unrecycled
         unnoticed."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
@@ -2423,11 +2423,11 @@ class TestRecycleWhserver:
         broker._started = True
         broker._recycle_authorized_at_launch = False
         c = _serve_client(tmp_path, broker)
-        # The env var appears only now — after broker launch.
+        # The env var appears only now -- after broker launch.
         monkeypatch.setenv("TSDEV_RECYCLE_WHSERVER", "1")
         with pytest.warns(UserWarning, match="fixed at broker launch"):
             results = c.batch_delete([BatchItem("strategy", "A")])
-        # The batch still ran — warn (fail-loud), not refuse.
+        # The batch still ran -- warn (fail-loud), not refuse.
         assert len(results) == 1 and results[0].success
 
     def test_serve_batch_no_env_warning_when_explicit_optout(
@@ -2463,7 +2463,7 @@ class TestRecycleWhserver:
     ) -> None:
         """Negative pin for F4: a broker launched WITH authorization does
         not warn, and an env var set while the broker is unauthorized but
-        NOT yet started is honored at start() — no warning either."""
+        NOT yet started is honored at start() -- no warning either."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         broker = _serve_batch_broker([
             {"op": "delete", "type": "strategy", "name": "A",
@@ -2628,7 +2628,7 @@ class TestRecycleWhserver:
         self, client: TsDevClient, monkeypatch, tmp_path: Path
     ) -> None:
         """F5b: ``_batch_dir`` runs the same post-validation ordering as
-        ``_batch`` — recycle + ``TSDEV_NO_WHSERVER_VAS_GUARD`` is refused
+        ``_batch`` -- recycle + ``TSDEV_NO_WHSERVER_VAS_GUARD`` is refused
         with ValueError before any child spawn and before the warning."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.setenv("TSDEV_NO_WHSERVER_VAS_GUARD", "1")
@@ -2652,8 +2652,8 @@ class TestRecycleWhserver:
     def test_batch_dir_warns_when_recycle_authorized(
         self, client: TsDevClient, monkeypatch, tmp_path: Path
     ) -> None:
-        """F5b: ``_batch_dir``'s warning gate mirrors ``_batch`` — the
-        client-side §6.3 brief fires when authorized AND a child will
+        """F5b: ``_batch_dir``'s warning gate mirrors ``_batch`` -- the
+        client-side Sec. 6.3 brief fires when authorized AND a child will
         actually be spawned (elevated or use_serve)."""
         monkeypatch.delenv("TSDEV_RECYCLE_WHSERVER", raising=False)
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
@@ -2670,7 +2670,7 @@ class TestRecycleWhserver:
         self, client: TsDevClient, monkeypatch, tmp_path: Path
     ) -> None:
         """F5b: env-only authorization on ``_batch_dir`` emits NO literal
-        ``--recycle-whserver`` (same env-attribution rule as ``_batch`` —
+        ``--recycle-whserver`` (same env-attribution rule as ``_batch`` --
         the child inherits the env var, and forwarding the flag would
         flip the CLI's authorizedViaEnv attribution off)."""
         monkeypatch.delenv("TSDEV_NO_WHSERVER_VAS_GUARD", raising=False)
@@ -2712,7 +2712,7 @@ class TestRecycleWhserver:
     def test_batch_direct_env_sourced_noguard_refused(
         self, client: TsDevClient, monkeypatch
     ) -> None:
-        """F5c: the env-sourced arm of the direct-path noguard refusal —
+        """F5c: the env-sourced arm of the direct-path noguard refusal --
         ``TSDEV_RECYCLE_WHSERVER`` env (no kwarg/ctor) + noguard env
         raises ValueError naming the env var as the authorization
         source, before any spawn."""
@@ -3051,7 +3051,7 @@ class TestCliNewSubcommands:
     def test_cli_batch_stderr_diagnostic_line_echoed(
             self, monkeypatch, capsys, tmp_path: Path) -> None:
         """FB: non-``{``-leading stderr lines are real human diagnostics
-        (e.g. a resume-manifest refusal) and must still be surfaced —
+        (e.g. a resume-manifest refusal) and must still be surfaced --
         while the JSON frames on the same stream are filtered out."""
         diag = "tsdev_cli: refusing to resume batch: manifest digest mismatch"
         stderr = (
@@ -3183,13 +3183,13 @@ class TestCliNewSubcommands:
 
 class TestCliReadManifest:
     """``_cli._read_manifest`` must reproduce the C++ ``parseManifestLines``
-    tokenization — it is the same schema the resume-manifest writer emits,
+    tokenization -- it is the same schema the resume-manifest writer emits,
     so a divergence (``splitlines`` splitting on ``\\v``/``\\f``, generic
     Unicode whitespace treating ``\\xa0`` as a delimiter, no quoted-name
     support) would fail or RETARGET lines the C++ side resumes fine."""
 
     def test_quoted_name_round_trip(self, tmp_path: Path) -> None:
-        """A spaced name in the quoted form parses to the SAME component —
+        """A spaced name in the quoted form parses to the SAME component --
         the shape a resume manifest written for a spaced dir-batch stem
         carries."""
         from tsdev_automation._cli import _read_manifest
@@ -3212,7 +3212,7 @@ class TestCliReadManifest:
         assert [(i.type, i.name) for i in items] == [("strategy", "del me now")]
 
     def test_nbsp_is_not_manifest_whitespace(self, tmp_path: Path) -> None:
-        """U+00A0 must NOT split a name — the C-locale isspace set is the
+        """U+00A0 must NOT split a name -- the C-locale isspace set is the
         only delimiter; treating it as whitespace would retarget."""
         from tsdev_automation._cli import _read_manifest
         m = tmp_path / "m.txt"
@@ -3222,7 +3222,7 @@ class TestCliReadManifest:
             ("strategy", "a\u00a0b", "./x.el")]
 
     def test_vt_does_not_split_lines(self, tmp_path: Path) -> None:
-        """A \\v inside the line does not start a new manifest line —
+        """A \\v inside the line does not start a new manifest line --
         ``str.splitlines`` would split there and turn the tail into a
         SECOND item. C++ keeps the whole physical line: ONE item whose
         ``<source_file>`` (the trimmed rest of the line) carries the
@@ -3236,7 +3236,7 @@ class TestCliReadManifest:
 
     def test_malformed_quote_per_item_failure(self, tmp_path: Path) -> None:
         """Unterminated quote and junk fused after the closing quote are
-        per-item pre-validation failures (the C++ preValid=false shape) —
+        per-item pre-validation failures (the C++ preValid=false shape) --
         never silently re-tokenized, never batch-aborting."""
         from tsdev_automation._cli import _read_manifest
         for bad, kind in (('function "broken name ./x.el\n', "unterminated"),
@@ -3272,7 +3272,7 @@ class TestCliReadManifest:
             self, tmp_path: Path) -> None:
         """C++ validates <type> BEFORE <name>: an unknown type with a
         valid name is a per-item exit-2 failure (not batch-aborting), and
-        a type-only line whose token is unknown reports the type error —
+        a type-only line whose token is unknown reports the type error --
         not 'name must not be empty'."""
         from tsdev_automation._cli import _read_manifest
         m = tmp_path / "m.txt"
@@ -3286,7 +3286,7 @@ class TestCliReadManifest:
         assert ec == 2 and 'unknown type "strat2"' in msg
 
     def test_non_utf8_manifest_raises(self, tmp_path: Path) -> None:
-        """Strict UTF-8 decode — a non-UTF-8 manifest must raise loudly
+        """Strict UTF-8 decode -- a non-UTF-8 manifest must raise loudly
         (exit 3 via the ValueError handler), never silently corrupt
         names to U+FFFD."""
         from tsdev_automation._cli import _read_manifest
@@ -3297,7 +3297,7 @@ class TestCliReadManifest:
 
     def test_manifest_ws_is_the_c_locale_isspace_set(self) -> None:
         """Python ``_MANIFEST_WS`` must equal the exact 6-char C-locale
-        set the C++ pins as ``kManifestWs`` — a drift retargets names."""
+        set the C++ pins as ``kManifestWs`` -- a drift retargets names."""
         from tsdev_automation.client import _MANIFEST_WS
         assert _MANIFEST_WS == " \t\n\v\f\r"
         assert len(_MANIFEST_WS) == 6
@@ -3468,7 +3468,7 @@ class TestResolveCliPath:
 
 
 # ---------------------------------------------------------------------------
-# Serve-broker integration (TVS-K.5) — mocked unit tests
+# Serve-broker integration (TVS-K.5) -- mocked unit tests
 # ---------------------------------------------------------------------------
 
 
@@ -3855,7 +3855,7 @@ class TestServeBrokerTermination:
 
 class TestServeBrokerWatchdogAbort:
     """A broker killed by the dispatch watchdog (exit 15) must NOT be
-    reconnected/retried — a fresh elevated broker would retry the same
+    reconnected/retried -- a fresh elevated broker would retry the same
     request into the same wedged WHServer."""
 
     def test_exit_15_raises_watchdog_abort_without_reconnect(
@@ -3879,7 +3879,7 @@ class TestServeBrokerWatchdogAbort:
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.CloseHandle", lambda h: True
         )
-        # Any reconnect attempt would go through start() — record it.
+        # Any reconnect attempt would go through start() -- record it.
         start_calls: list = []
         monkeypatch.setattr(broker, "start", lambda: start_calls.append(1))
 
@@ -3920,7 +3920,7 @@ class TestServeRouting:
 
     def test_uses_subprocess_when_use_serve_false(self, fake_cli: Path, monkeypatch) -> None:
         """When ``use_serve=False`` is passed explicitly (and elevated), the
-        subprocess.run path is used directly — no broker."""
+        subprocess.run path is used directly -- no broker."""
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False)
         # Force _is_elevated to True: use_serve=False means no broker, and when
         # elevated the direct subprocess path works without the elevation guard.
@@ -4151,8 +4151,8 @@ def _serve_batch_broker(outcomes: list[dict]) -> MagicMock:
     """Fake serve broker enforcing the tagged-batch request/response contract.
 
     ``call()`` requires every request to carry ``batch`` metadata of exactly
-    ``{id, index, total}`` — a ``uuid4().hex`` id stable across the whole
-    batch and ``1 <= index <= total`` — and returns the next outcome dict
+    ``{id, index, total}`` -- a ``uuid4().hex`` id stable across the whole
+    batch and ``1 <= index <= total`` -- and returns the next outcome dict
     enriched with the matching ``progress`` member, mirroring the real serve
     response enrichment.
     """
@@ -4411,7 +4411,7 @@ class TestServeBatchRouting:
             ],
             on_progress=on_progress,
         )
-        # No request was sent for item C — the batch stopped at the refusal.
+        # No request was sent for item C -- the batch stopped at the refusal.
         assert fake_broker.call.call_count == 2
         assert len(results) == 3
         assert results[0].success is True
@@ -4457,17 +4457,17 @@ class TestServeBatchRouting:
 
 
 class TestServeBatchRecycleBoundary:
-    """Serve-path recycle boundary frames (design §4.3): exit 18 = the
-    broker recycled WHServer and exited — respawn the broker and resubmit
+    """Serve-path recycle boundary frames (design Sec. 4.3): exit 18 = the
+    broker recycled WHServer and exited -- respawn the broker and resubmit
     from the refused index (the refused item is retried, not marked
-    not-run), bounded by ``max_recycles``; exit 19 = recycle refused —
+    not-run), bounded by ``max_recycles``; exit 19 = recycle refused --
     abort with not-run markers and NO respawn. Without the exit-code
     handling the dead-pipe retry in ``_ServeBroker.call`` would respawn
     per remaining item (unbounded; one spawn + census + refusal each)."""
 
     def test_exit18_respawns_and_resubmits_refused_item(self, tmp_path):
         """An exit-18 frame respawns the broker and retries the REFUSED
-        index on it — the retried item's fresh result replaces the
+        index on it -- the retried item's fresh result replaces the
         boundary frame (no 18 left in the list, no marker)."""
         fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
@@ -4496,7 +4496,7 @@ class TestServeBatchRecycleBoundary:
         assert fake_broker._reset_pipe.call_count == 0
         assert fake_broker.start.call_count == 1
         assert [r.success for r in results] == [True, True, True]
-        # The retried item's real result stands at position 2 — no
+        # The retried item's real result stands at position 2 -- no
         # exit-18 frame and no not-run marker leaks into the list.
         assert results[1].exit_code == 0
         assert results[1].prog_id == 2
@@ -4504,7 +4504,7 @@ class TestServeBatchRecycleBoundary:
     def test_exit19_aborts_without_respawn(self, tmp_path):
         """An exit-19 frame aborts the batch: the refusal result stands,
         the remainder becomes exit-12 refusal markers, and the broker is
-        NOT respawned (a refused server is still breached — a respawn per
+        NOT respawned (a refused server is still breached -- a respawn per
         item would pay spawn + census + refusal each)."""
         fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "A", "success": True, "exit_code": 0, "prog_id": 1},
@@ -4539,7 +4539,7 @@ class TestServeBatchRecycleBoundary:
 
     def test_exit18_bound_exhausted_stops_batch(self, tmp_path):
         """When the max_recycles bound is hit the exit-18 result stands
-        and the remainder becomes bound-exhaustion markers — the batch
+        and the remainder becomes bound-exhaustion markers -- the batch
         stops instead of looping breach->recycle->breach."""
         fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "A", "success": False, "exit_code": 18,
@@ -4612,15 +4612,15 @@ class TestServeBatchRecycleBoundary:
 class TestRecycleRespawnWaitOnlyReap:
     """The exit-18 recycle-respawn reap is WAIT-ONLY.
 
-    An exit-18 broker is mid-graceful-teardown — boundary frame flushed,
+    An exit-18 broker is mid-graceful-teardown -- boundary frame flushed,
     then ``delete lib`` -> ``OrlibExit`` releasing its +7 WHServer
     ``m_nLock`` session refs before ExitProcess.  ``TerminateProcess``
     on it would orphan those refs for minutes: the respawned broker's
-    census then sees lock>0 -> census_lock -> exit 19 — the deadlock the
+    census then sees lock>0 -> census_lock -> exit 19 -- the deadlock the
     recycle design exists to prevent.  So the reap only waits, bounded
     by the broker's own dispatch-watchdog window (+margin, floor 360 s)
     so even a wedged teardown ends the wait; bound expiry raises
-    ``TimeoutError`` — loud, never a silent kill.  Other reap paths
+    ``TimeoutError`` -- loud, never a silent kill.  Other reap paths
     (``_reset_pipe`` default, ``shutdown``, ``_close_handles``) keep the
     pre-existing 5 s + TerminateProcess contract for hung brokers.
     """
@@ -4660,7 +4660,7 @@ class TestRecycleRespawnWaitOnlyReap:
         # "0" disables the broker watchdog -> the floor is the only bound.
         monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "0")
         assert _recycle_respawn_reap_timeout_ms() == 360_000
-        # Invalid env values are dropped — the broker keeps its default.
+        # Invalid env values are dropped -- the broker keeps its default.
         monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "abc")
         assert _recycle_respawn_reap_timeout_ms() == 360_000
         monkeypatch.setenv("TSDEV_DISPATCH_TIMEOUT_SECS", "99999")
@@ -4704,7 +4704,7 @@ class TestRecycleRespawnWaitOnlyReap:
     ) -> None:
         """On bound expiry the wait-only reap raises ``TimeoutError``
         (mid-graceful-teardown diagnosis) and NEVER calls
-        TerminateProcess — the still-running broker finishes teardown."""
+        TerminateProcess -- the still-running broker finishes teardown."""
         monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
         broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
         broker._started = True
@@ -4716,7 +4716,7 @@ class TestRecycleRespawnWaitOnlyReap:
 
         def fake_wait(handle, ms):
             wait_calls.append(int(ms.value))
-            return 0x00000102  # WAIT_TIMEOUT — teardown still in flight
+            return 0x00000102  # WAIT_TIMEOUT -- teardown still in flight
 
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.WaitForSingleObject", fake_wait
@@ -4730,7 +4730,7 @@ class TestRecycleRespawnWaitOnlyReap:
             broker._reset_pipe_for_recycle_respawn()
 
         assert terminate_calls == []
-        # One wait at the recycle-respawn bound — no terminate-confirm wait.
+        # One wait at the recycle-respawn bound -- no terminate-confirm wait.
         assert wait_calls == [360_000]
         # The live broker handle is retained, not closed or discarded.
         assert broker._process_handle == 222
@@ -4740,7 +4740,7 @@ class TestRecycleRespawnWaitOnlyReap:
         self, monkeypatch, tmp_path: Path
     ) -> None:
         """``_reset_pipe``/``shutdown`` keep the existing 5 s +
-        TerminateProcess contract — the wait-only path is confined to
+        TerminateProcess contract -- the wait-only path is confined to
         the recycle-respawn reap."""
         broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
         broker._started = True
@@ -4771,7 +4771,7 @@ class TestRecycleRespawnWaitOnlyReap:
         self, monkeypatch, tmp_path: Path
     ) -> None:
         """Through ``_batch_serve`` with the real broker class: an exit-18
-        frame drives the wait-only reap — WaitForSingleObject sees the
+        frame drives the wait-only reap -- WaitForSingleObject sees the
         recycle-respawn bound and TerminateProcess is never called."""
         monkeypatch.delenv("TSDEV_DISPATCH_TIMEOUT_SECS", raising=False)
         broker = _ServeBroker(tmp_path / "tsdev_cli.exe")
@@ -4786,7 +4786,7 @@ class TestRecycleRespawnWaitOnlyReap:
             "tsdev_automation.client._kernel32.TerminateProcess",
             lambda *args: terminate_calls.append(args) or True,
         )
-        # WAIT_OBJECT_0 — the teardown completed inside the bound.
+        # WAIT_OBJECT_0 -- the teardown completed inside the bound.
         monkeypatch.setattr(
             "tsdev_automation.client._kernel32.WaitForSingleObject",
             lambda handle, ms: wait_calls.append(int(ms.value)) or 0,
@@ -4863,10 +4863,10 @@ def _recycled_event(manifest: str | None) -> str:
 
 
 class TestDirectBatchRecycleResume:
-    """Direct-path resume contract (design §4.1/§4.2): exit 18 makes the
+    """Direct-path resume contract (design Sec. 4.1/Sec. 4.2): exit 18 makes the
     client resubmit the CLI's resume manifest to a fresh ``batch-<op>``
-    invocation — the attempted head is kept, the marker tail is replaced
-    by the resumed results — bounded by ``max_recycles``; the manifest is
+    invocation -- the attempted head is kept, the marker tail is replaced
+    by the resumed results -- bounded by ``max_recycles``; the manifest is
     caller-owned and deleted once the resumed batch has returned."""
 
     def _direct_cmd(self, cli: Path, sub: str = "batch-insert") -> list[str]:
@@ -4909,7 +4909,7 @@ class TestDirectBatchRecycleResume:
                                     input="strategy A C:/a.el\n")
         assert len(calls) == 2
         # The resubmission is a manifest-file batch: same head flags, the
-        # non-dir batch-<op> subcommand, the manifest path — no
+        # non-dir batch-<op> subcommand, the manifest path -- no
         # --batch-stdin.
         assert calls[1] == calls[0][:-2] + ["batch-insert", str(manifest)]
         assert "--batch-stdin" not in calls[1]
@@ -4954,7 +4954,7 @@ class TestDirectBatchRecycleResume:
 
     def test_exit18_bound_returns_boundary_array(self, client, monkeypatch,
                                                  tmp_path) -> None:
-        """Bound exhaustion returns the boundary array as-is — the
+        """Bound exhaustion returns the boundary array as-is -- the
         attempted head plus the marker tail; no further spawn, no item
         dropped or duplicated."""
         manifests = []
@@ -4990,16 +4990,16 @@ class TestDirectBatchRecycleResume:
         assert len(results) == 3
         assert results[0].success is True
         # The resubmitted run's own boundary stands: its head result plus
-        # the marker tail — the boundary array is returned as-is.
+        # the marker tail -- the boundary array is returned as-is.
         assert [r.exit_code for r in results] == [0, 0, 12]
         # The consumed manifest is deleted once its resumed batch has
         # returned; the bound-exhausted run's own manifest is caller-owned
-        # forensic/resume data — its tail was never consumed, so it stays.
+        # forensic/resume data -- its tail was never consumed, so it stays.
         assert not manifests[0].exists()
         assert manifests[-1].exists()
 
     def test_exit19_returns_array_as_is(self, client, monkeypatch) -> None:
-        """Exit 19 aborts the batch — the array (head + refusal markers)
+        """Exit 19 aborts the batch -- the array (head + refusal markers)
         is returned verbatim; nothing is resubmitted."""
         calls = 0
 
@@ -5045,11 +5045,11 @@ class TestDirectBatchRecycleResume:
         assert calls == 1
         assert [r.exit_code for r in results] == [0, 12]
         # The marker tail is re-worded: a missing manifest means nothing
-        # can be resubmitted — the "resubmit remaining items" tail would
+        # can be resubmitted -- the "resubmit remaining items" tail would
         # advise an impossible action.
         assert results[1].error is not None
         # Neutral wording: "unavailable", and NO "may exist on disk"
-        # claim — without a stderr diagnostic there is no evidence a
+        # claim -- without a stderr diagnostic there is no evidence a
         # file was written.
         assert "resume manifest unavailable" in results[1].error.message
         assert "not re-attempted" in results[1].error.message
@@ -5060,7 +5060,7 @@ class TestDirectBatchRecycleResume:
         """A manifest WAS written but its non-ASCII path was dropped from
         the JSON event (this is an ANSI-codepage build): the marker must
         carry the stderr diagnostic, and the still-existing file
-        references this batch's temp sources — the sentinel retention
+        references this batch's temp sources -- the sentinel retention
         spares ALL temps so manual resubmission works."""
         dropped_diag = (
             "tsdev_cli: resume manifest path is not representable in "
@@ -5092,7 +5092,7 @@ class TestDirectBatchRecycleResume:
         assert marker is not None
         assert "resume manifest unavailable" in marker.message
         assert "not representable" in marker.message
-        # Every materialized temp source survives — the referenced set
+        # Every materialized temp source survives -- the referenced set
         # cannot be enumerated without the manifest path.
         assert len(src_paths) == 2
         assert all(Path(p).exists() for p in src_paths)
@@ -5102,7 +5102,7 @@ class TestDirectBatchRecycleResume:
     def test_exit18_writer_refusal_marker_names_item(
             self, client, monkeypatch) -> None:
         """Writer refusal (a preValid=false tail item cannot be
-        represented): NO manifest exists — the marker carries the
+        represented): NO manifest exists -- the marker carries the
         refusal reason verbatim, which names the refusing item and
         states the remaining items were not re-attempted."""
         refusal_diag = (
@@ -5129,7 +5129,7 @@ class TestDirectBatchRecycleResume:
         assert "resume manifest unavailable" in marker.message
         assert 'cannot represent item 2' in marker.message
         assert "no manifest written" in marker.message
-        # No file exists — nothing is retained and no "exists on disk"
+        # No file exists -- nothing is retained and no "exists on disk"
         # claim is made.
         assert client._retained_resume_manifest is None
         assert "may exist on disk" not in marker.message
@@ -5171,7 +5171,7 @@ class TestDirectBatchRecycleResume:
     def test_exit18_raise_attaches_partial_results(
             self, client, monkeypatch, tmp_path) -> None:
         """A resumed run that raises must not discard the attempted
-        head — the completed-so-far results ride the exception as
+        head -- the completed-so-far results ride the exception as
         ``batch_partial_results``."""
         manifest = tmp_path / "tsdev_resume_1_9.manifest"
         manifest.write_text("strategy B C:/b.el\n")
@@ -5200,7 +5200,7 @@ class TestDirectBatchRecycleResume:
 
     def test_exit18_resubmit_strips_cache_flags(self, client, monkeypatch,
                                                 tmp_path) -> None:
-        """The resubmission must NOT re-run cache phases — the backup was
+        """The resubmission must NOT re-run cache phases -- the backup was
         already taken in the first invocation, and re-running it under the
         default abort policy exits 17 before the batch (which previously
         also discarded the pending manifest on the raise).  Cache flags
@@ -5240,7 +5240,7 @@ class TestDirectBatchRecycleResume:
 
     def test_resume_batch_cmd_strips_space_form_value(self) -> None:
         """The space form ``--cache-backup-policy <mode>`` is two argv
-        tokens — the strip must consume the value token too, and must not
+        tokens -- the strip must consume the value token too, and must not
         eat a non-cache flag's value."""
         assert _resume_batch_cmd(
             ["cli", "--ts-path", "C:/ts", "--json",
@@ -5259,7 +5259,7 @@ class TestDirectBatchRecycleResume:
     def test_exit18_resume_raise_retains_manifest(self, client, monkeypatch,
                                                   tmp_path) -> None:
         """When the RESUMED batch raises (here: timeout) the resume
-        manifest is NOT deleted — it was never consumed, so it must
+        manifest is NOT deleted -- it was never consumed, so it must
         survive for manual resubmission/forensics."""
         manifest = tmp_path / "tsdev_resume_1_5.manifest"
         manifest.write_text("strategy B C:/b.el\n")
@@ -5289,7 +5289,7 @@ class TestDirectBatchRecycleResume:
                                                       monkeypatch,
                                                       tmp_path) -> None:
         """Bound exhaustion re-words the not-run markers to the bound
-        message (same contract as the serve path) — the generic
+        message (same contract as the serve path) -- the generic
         'resubmit' text would advise a resubmission the client
         deliberately refused to make."""
         calls = 0
@@ -5311,7 +5311,7 @@ class TestDirectBatchRecycleResume:
         assert len(results) == 1
         assert results[0].exit_code == 12
         assert results[0].error is not None
-        # The bound-exhausted run's own manifest is retained on disk —
+        # The bound-exhausted run's own manifest is retained on disk --
         # the marker names its path (F8: it otherwise only reaches the
         # child's stderr, invisible to the caller).
         assert results[0].error.message == (
@@ -5322,7 +5322,7 @@ class TestDirectBatchRecycleResume:
     def test_exit18_failed_head_item_kept_before_boundary(self, client,
                                                           monkeypatch,
                                                           tmp_path) -> None:
-        """The boundary is the FIRST exit-12 result — a genuinely failed
+        """The boundary is the FIRST exit-12 result -- a genuinely failed
         attempted item (any other exit code) before it belongs to the
         kept head and is never mistaken for the marker tail."""
         manifest = tmp_path / "tsdev_resume_1_6.manifest"
@@ -5357,7 +5357,7 @@ class TestDirectBatchRecycleResume:
                                                    monkeypatch,
                                                    tmp_path) -> None:
         """Exit 19: the CLI's refusal markers are re-worded to name the
-        retained resume manifest (F8 — the path otherwise only reaches
+        retained resume manifest (F8 -- the path otherwise only reaches
         the child's stderr, invisible to the caller)."""
         manifest = tmp_path / "tsdev_resume_1_7.manifest"
         manifest.write_text("strategy B C:/b.el\n")
@@ -5394,7 +5394,7 @@ class TestDirectBatchRecycleResume:
     def test_exit18_raise_retains_manifest_temp_sources(
             self, client, monkeypatch, tmp_path) -> None:
         """F5: when the resumed batch raises, the retained manifest still
-        references the batch's temp .el sources — _batch's cleanup must
+        references the batch's temp .el sources -- _batch's cleanup must
         spare the paths the manifest names so manual resubmission
         works."""
         manifest = tmp_path / "tsdev_resume_1_8.manifest"
@@ -5430,7 +5430,7 @@ class TestDirectBatchRecycleResume:
             ])
         assert manifest.exists(), "retained manifest must survive"
         # The manifest's referenced temp source was carved out of
-        # cleanup — resubmitting the manifest file still works.
+        # cleanup -- resubmitting the manifest file still works.
         assert Path(src_paths[1]).exists(), (
             "temp source referenced by the retained manifest must not "
             "be deleted")
@@ -5541,7 +5541,7 @@ class TestServeBatchDirRouting:
         d.mkdir()
         (d / "real.el").write_text("// real")
         sub = d / "subdir.el"
-        sub.mkdir()  # a directory named .el — should be skipped
+        sub.mkdir()  # a directory named .el -- should be skipped
         fake_broker = _serve_batch_broker([
             {"op": "insert", "type": "strategy", "name": "real", "success": True, "exit_code": 0, "prog_id": 1},
         ])
@@ -5595,7 +5595,7 @@ class TestServeBatchDirRouting:
         assert results[0].error.code == "source_file_error"
         assert results[1].name == "good"
         assert results[1].success is True
-        # Broker was only called for the good file — at its input position.
+        # Broker was only called for the good file -- at its input position.
         assert fake_broker.call.call_count == 1
         req = fake_broker.call.call_args[0][0]
         _assert_batch_request(req, "insert", "strategy", "good", 2, 2, "// good source")
@@ -5900,7 +5900,7 @@ class TestServeBatchOnProgress:
 
         def cb(p):
             seen.append(p)
-            # False only on the final item — must be ignored.
+            # False only on the final item -- must be ignored.
             return p.index < p.total
 
         results = c.batch_delete(
@@ -6110,7 +6110,7 @@ class TestServeBatchDirOnProgress:
 
     def test_dir_read_failure_invokes_callback_and_can_cancel(self, tmp_path, monkeypatch):
         """A local source-read failure is an actual completed result: it
-        invokes the callback, and False cancels — remaining items become
+        invokes the callback, and False cancels -- remaining items become
         exact not-run markers."""
         d = self._make_dir(tmp_path, "bad.el", "good.el", "last.el")
         broker = MagicMock()
@@ -6307,7 +6307,7 @@ class _FakePipeWriter(io.BufferedIOBase):
 
     With ``buffered=True`` this emulates the real ``Popen(stdin=PIPE)``
     ``BufferedWriter``: bytes sit in a pending buffer until ``flush()`` /
-    ``close()`` (or the pending buffer fills) — a producer that never
+    ``close()`` (or the pending buffer fills) -- a producer that never
     flushes never delivers, which is the real-pipe contract the controller
     must honor.  With ``buffered=False`` bytes go straight into the pipe
     (the child's own stdout/stderr producers).
@@ -6851,8 +6851,8 @@ class TestDirectBatchOnProgress:
     ``cancel`` decisions, no temp manifest); directory batches keep the
     native ``batch-*-dir`` argv with stdin carrying decisions only.
     ``batch_item_completed`` NDJSON events on stderr drive synchronous
-    callbacks; the final stdout JSON array — exit-12 markers and the
-    close-failure rewrite included — is the authoritative return value.
+    callbacks; the final stdout JSON array -- exit-12 markers and the
+    close-failure rewrite included -- is the authoritative return value.
     """
 
     _ITEM_OPS = [
@@ -6953,7 +6953,7 @@ class TestDirectBatchOnProgress:
         assert cmd.count("--batch-progress-control") == 1
         assert "--batch-stdin" not in cmd, "dir batches never use stdin manifest framing"
         assert proc.manifest_bytes is None
-        # stdin carries decision lines only — no manifest framing.
+        # stdin carries decision lines only -- no manifest framing.
         assert bytes(proc.stdin_wire) == b"continue\n"
         assert proc.decisions == ["continue"]
         assert [p.index for p in seen] == [1, 2]
@@ -7095,7 +7095,7 @@ class TestDirectBatchOnProgress:
     ) -> None:
         src = tmp_path / "s.el"
         src.write_text("// s", encoding="utf-8")
-        name = "名Café"  # multi-byte UTF-8: byte length != char length
+        name = "\u540dCaf\u00e9"  # multi-byte UTF-8: byte length != char length
         scenario = _CliScenario(
             op="insert",
             items=[_CliItem("strategy", name, json.loads(_success_json("insert", "strategy", name)))],
@@ -7196,7 +7196,7 @@ class TestDirectBatchOnProgress:
         self, client: TsDevClient, monkeypatch
     ) -> None:
         """A ``batch_control_error`` line from the child is a retained
-        stderr diagnostic, not a protocol violation — the run still
+        stderr diagnostic, not a protocol violation -- the run still
         completes and returns the authoritative array."""
         res_a = json.loads(_success_json("delete", "strategy", "A"))
         control_err = json.dumps(
@@ -7363,7 +7363,7 @@ class TestDirectBatchOnProgress:
 
     def test_timeout_maps_to_timeout_error(self, fake_cli: Path, monkeypatch) -> None:
         """A non-responsive child is terminated and waited on, then mapped to
-        ``TimeoutError`` — same contract as the ``subprocess.run`` path."""
+        ``TimeoutError`` -- same contract as the ``subprocess.run`` path."""
         scenario = _CliScenario(op="delete", items=[], hang=True)
         procs = _install_fake_popen(monkeypatch, scenario)
         c = TsDevClient(cli_path=str(fake_cli), use_serve=False, timeout=0.5)
@@ -7384,7 +7384,7 @@ class TestDirectBatchOnProgress:
         self, client: TsDevClient, monkeypatch, exit_code, crash_name
     ) -> None:
         """An NT-status crash exit mid-run maps through ``_is_crash_exit`` to
-        ``TsDevCrashError`` — same contract as the ``subprocess.run`` path."""
+        ``TsDevCrashError`` -- same contract as the ``subprocess.run`` path."""
         res_a = json.loads(_success_json("delete", "strategy", "A"))
         scenario = _CliScenario(
             op="delete",
@@ -7430,7 +7430,7 @@ class TestDirectBatchOnProgress:
 
     def test_prerun_exit1_raises_tsdev_error(self, client: TsDevClient, monkeypatch) -> None:
         """A pre-run failure (usage/manifest, exit 1) emits no events and maps
-        to ``TsDevError`` — same contract as the ``subprocess.run`` path."""
+        to ``TsDevError`` -- same contract as the ``subprocess.run`` path."""
         scenario = _CliScenario(
             op="delete", items=[], exit_code=1,
             pre_run_stderr="tsdev_cli: usage error",
@@ -7501,7 +7501,7 @@ class TestElevationGuard:
         assert c._is_elevated is False
         assert c._use_serve is False
 
-        # subprocess.run must never be called — fail loudly if it is.
+        # subprocess.run must never be called -- fail loudly if it is.
         def _no_run(*a, **k):
             raise AssertionError("subprocess.run must not be called when not elevated")
 
@@ -7551,7 +7551,7 @@ class TestElevationGuard:
         self, fake_cli: Path, monkeypatch
     ) -> None:
         """When use_serve=True (default) and not elevated, the broker path is
-        taken — the elevation guard in _run_cli is never reached."""
+        taken -- the elevation guard in _run_cli is never reached."""
         monkeypatch.setattr(
             "tsdev_automation.client._detect_elevation", lambda: False
         )
@@ -7600,7 +7600,7 @@ class TestDetectElevation:
 
 
 # ---------------------------------------------------------------------------
-# Crash detection (VEH / NT status code exit codes) — mocked unit tests
+# Crash detection (VEH / NT status code exit codes) -- mocked unit tests
 # ---------------------------------------------------------------------------
 
 
@@ -8006,19 +8006,19 @@ class TestE2E:
         ``_real_client`` cleanup fixture (which sweeps ``_TEST_NAMES`` across
         ``_ALL_TYPES``) for orphan prevention. ELL/XML artifact and GUID
         checks are intentionally omitted because no such helpers exist for
-        any other component type in ``TestE2E`` — the existing lifecycle
+        any other component type in ``TestE2E`` -- the existing lifecycle
         tests assert only ``r.ell_path`` (non-empty), which this test mirrors.
         """
         name = "TS_AUTO_PY_SHOWME_L14A"
 
-        # 1. insert — valid ShowMe source using Plot1.
+        # 1. insert -- valid ShowMe source using Plot1.
         r = self.c.insert("showme", name, _src("showme", "insert", name))
         assert r.success, r
         assert r.prog_id is not None and r.prog_id > 0
         assert r.ell_path, "insert must report a non-empty ell_path"
         prog_id = r.prog_id
 
-        # 2. exists — case-sensitive exact match returns the verbatim name
+        # 2. exists -- case-sensitive exact match returns the verbatim name
         #    and the same ProgId assigned at insert.
         ex = self.c.exists("showme", name)
         assert ex.success, ex
@@ -8026,36 +8026,36 @@ class TestE2E:
         assert ex.prog_id == prog_id, "exists must report the same ProgId as insert"
         assert ex.stored_name == name, f"stored_name must be {name!r}, got {ex.stored_name!r}"
 
-        # 3. get-source — retrieved source must contain the insert marker.
+        # 3. get-source -- retrieved source must contain the insert marker.
         gs = self.c.get_source("showme", name)
         assert gs.success, gs
         assert gs.source is not None, "get-source must return a non-null source"
         assert "Plot1" in gs.source, "get-source must contain the Plot1 marker from insert source"
 
-        # 4. modify — replace source; ProgId must be preserved.
+        # 4. modify -- replace source; ProgId must be preserved.
         m = self.c.modify("showme", name, _src("showme", "modify", name))
         assert m.success, m
         assert m.prog_id == prog_id, "ProgId must be preserved across modify"
         assert m.ell_path, "modify must report a non-empty ell_path"
 
-        # 5. get-source after modify — the new source must round-trip.
+        # 5. get-source after modify -- the new source must round-trip.
         gs2 = self.c.get_source("showme", name)
         assert gs2.success, gs2
         assert gs2.source is not None
         assert "Down bar" in gs2.source, "get-source after modify must contain the modify marker"
 
-        # 6. upsert-existing — item already exists, so upsert must take the
+        # 6. upsert-existing -- item already exists, so upsert must take the
         #    modify-path and preserve the ProgId.
         u = self.c.upsert("showme", name, _src("showme", "insert", name))
         assert u.success, u
         assert u.prog_id == prog_id, "ProgId must be preserved on upsert-existing (modify-path)"
         assert u.ell_path, "upsert-existing must report a non-empty ell_path"
 
-        # 7. delete — remove the ShowMe item.
+        # 7. delete -- remove the ShowMe item.
         d = self.c.delete("showme", name)
         assert d.success, d
 
-        # 8. exists after delete — must report exists=False, ProgId 0.
+        # 8. exists after delete -- must report exists=False, ProgId 0.
         ex2 = self.c.exists("showme", name)
         assert ex2.success, ex2
         assert ex2.exists is False, "exists must be False after delete"
@@ -8339,7 +8339,7 @@ class TestE2E:
         ``tsdev_cli --batch-progress-control``.
 
         Requires an ELEVATED session (``use_serve=False``): the client drives
-        one ``tsdev_cli`` child on binary pipes — a framed
+        one ``tsdev_cli`` child on binary pipes -- a framed
         ``TSDEV_BATCH_CONTROL/1`` manifest + ``continue``/``cancel``
         decisions on stdin for manifest batches, decisions-only stdin for
         directory batches, NDJSON progress on stderr, and the authoritative
@@ -8380,7 +8380,7 @@ class TestE2E:
 
         def _same_result(a: TsDevResult, b: TsDevResult) -> bool:
             # Event-time nested results carry no captured stdout/stderr while
-            # final-array results do — compare the JSON-derived fields only.
+            # final-array results do -- compare the JSON-derived fields only.
             # Close-failure rewriting can legitimately change attempted
             # successes between the event and the final (authoritative) array;
             # every scenario here closes cleanly, so the fields must match.
@@ -8523,7 +8523,7 @@ class TestE2E:
         5 types; each must raise NotFoundError, proving no orphaned warehouse
         entries remain. The autouse ``_real_client`` fixture already cleans up
         after every test, so this is not reliant on alphabetical-last ordering
-        — it simply re-verifies explicitly so a leftover entry is reported as a
+        -- it simply re-verifies explicitly so a leftover entry is reported as a
         test failure rather than silently swallowed."""
         for name in self._TEST_NAMES:
             for t in _ALL_TYPES:
@@ -8536,7 +8536,7 @@ class TestE2E:
 
 
 # ---------------------------------------------------------------------------
-# Cache-phase flags (--backup-cache / --restore-cache) — mocked unit tests
+# Cache-phase flags (--backup-cache / --restore-cache) -- mocked unit tests
 # ---------------------------------------------------------------------------
 
 
@@ -9117,7 +9117,7 @@ class TestBatchCachePhaseErrors:
 
 class TestServeBatchCachePhase:
     """Serve-path cache pre-requests precede the batch and suppress it on
-    failure — for both _batch_serve and _batch_dir_serve."""
+    failure -- for both _batch_serve and _batch_dir_serve."""
 
     @staticmethod
     def _broker_ok(ops: list[str]) -> MagicMock:
@@ -9197,7 +9197,7 @@ class TestServeBatchCachePhase:
 
     def test_batch_dir_serve_cache_phase_precedes_dir_validation(self, tmp_path: Path) -> None:
         """A failed cache pre-request raises before the directory is even
-        validated — matching the direct path where the CLI runs the cache
+        validated -- matching the direct path where the CLI runs the cache
         phase before opening the directory."""
         broker = MagicMock()
         broker.call.return_value = json.loads(
@@ -9210,7 +9210,7 @@ class TestServeBatchCachePhase:
 
 
 class TestCacheMaintenanceMethod:
-    """``cache_maintenance`` — the one-call standalone backup+restore."""
+    """``cache_maintenance`` -- the one-call standalone backup+restore."""
 
     def test_direct_combined_single_process_split_results(self, client: TsDevClient, monkeypatch) -> None:
         """Direct mode spawns ONE process; the two-flag object is split into

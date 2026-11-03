@@ -27,7 +27,7 @@
 //
 // Fixture scenarios (each writes pre-op + post-op temp files):
 //
-//   (a) VerifiedRefresh — successful refresh:
+//   (a) VerifiedRefresh -- successful refresh:
 //       pre-ELL: bytes WITHOUT the new GUID.
 //       post-ELL: bytes WITH the new GUID embedded EXACTLY ONCE in its
 //                 mixed-endian binary form, plus extra filler so the SHA-256
@@ -37,7 +37,7 @@
 //       sourceEqualProven = false.
 //       Expected verdict: VerifiedRefresh.
 //
-//   (b) FaultA_StaleEll — stale ELL + new XML GUID (Fault A):
+//   (b) FaultA_StaleEll -- stale ELL + new XML GUID (Fault A):
 //       pre-ELL == post-ELL (bytes identical, so ELL SHA-256 UNCHANGED), and
 //       the ELL does NOT contain the new GUID.
 //       post-XML: minimal XML containing the new GUID (XML hash CHANGED).
@@ -45,7 +45,7 @@
 //       sourceEqualProven = false.
 //       Expected verdict: FaultA_StaleEll.
 //
-//   (c) NoOpAllowed — identical-source no-op:
+//   (c) NoOpAllowed -- identical-source no-op:
 //       pre-ELL == post-ELL (ELL SHA-256 unchanged), pre-XML == post-XML
 //       (XML SHA-256 unchanged, SAME GUID in both).
 //       sourceEqualProven = TRUE (the caller proved source-equality first).
@@ -149,7 +149,7 @@ std::string sha256Hex(const std::vector<uint8_t>& data) {
 // form into 5 numeric components. Throws on malformed input.
 //
 // guidToMixedEndian: render a GUID as its 16-byte Windows binary layout
-// (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) — the form embedded in
+// (Data1 LE, Data2 LE, Data3 LE, Data4 byte-preserved) -- the form embedded in
 // the `.ell`.
 // ---------------------------------------------------------------------------
 struct GuidParts {

@@ -26,7 +26,7 @@
           "TS install path resolved"; stdout captured for byte-compare.
       V2  -v run (exists): stderr DOES contain "TS install path resolved";
           stdout byte-identical to the V1 default run.
-      V3  -vv run (dependents): Debug level active — stderr contains the
+      V3  -vv run (dependents): Debug level active -- stderr contains the
           "enumCallersByProgId: ENTER" debug trace (unconditional first
           statement of TsDevLib::enumerateCallersByProgId, src/tsdev_lib.cpp,
           reached via doDependents on the EXISTING fixture; dependents on a
@@ -37,16 +37,16 @@
           the same as V2's `-v exists ...` (flag BEFORE): info line present,
           stdout byte-identical to V2.
       V5  bundled -vv equals separate -v -v (dependents): both runs reach the
-          Debug level — asserted via the debug/info markers (level-class
+          Debug level -- asserted via the debug/info markers (level-class
           assertions). NO cross-run byte equality is asserted for the
           debug-marker cases: Debug traces embed process-dependent values, so
           marker presence/absence is the stable equivalence check. (stdout
           byte-equality is kept only on the existing-fixture `exists` path:
           V2/V4/V6/V7.)
-      V6  bare --verbose (exists): counts as one occurrence — info line
+      V6  bare --verbose (exists): counts as one occurrence -- info line
           present.
       V7  --verbose=<value> (exists): value ignored, counts as ONE
-          occurrence — info line present.
+          occurrence -- info line present.
 
     Prerequisites:
       - Direct `tsdev_cli` requires an elevated administrator process. Run
@@ -59,8 +59,8 @@
       stdout and stderr are captured SEPARATELY, each to its own temp file
       (1>file 2>file). File capture (instead of the pipeline) keeps the two
       streams apart so the byte-compare cases (V2/V4/V6/V7) compare
-      consistent bytes across runs (PS re-encodes native output — UTF-16LE
-      under PS 5.1 — but identically for every run, so equality is still
+      consistent bytes across runs (PS re-encodes native output -- UTF-16LE
+      under PS 5.1 -- but identically for every run, so equality is still
       exact). This is the same stream-separation rationale as the other E2E
       tests (test_exists.ps1 / test_json_output.ps1), tightened to byte level.
 
@@ -115,13 +115,13 @@ $failCount = 0
 # each entry is a hashtable with Name and Type keys. The fixture is tracked
 # BEFORE its insert result is validated, so the finally block attempts the
 # delete even when a later case fails or the insert outcome could not be
-# confirmed (delete exit 5 = item never created / already gone — handled
+# confirmed (delete exit 5 = item never created / already gone -- handled
 # gracefully).
 $CreatedItems = New-Object System.Collections.Generic.List[object]
 
 # Fixture Function for this run. Unique per run (same run-id timestamp pattern
 # as test_upsert.ps1's probe names) so parallel/stale runs never collide.
-# Created in SETUP, deleted in CLEANUP — no persistent probe item is needed.
+# Created in SETUP, deleted in CLEANUP -- no persistent probe item is needed.
 $ProbeName = "E2E_VerboseFlag_${runId}_Fn"
 
 # Info-level marker: emitted by resolveTsInstallRoot() at Info (visible at
@@ -133,7 +133,7 @@ $InfoMarker = "TS install path resolved"
 # src/tsdev_lib.cpp). Reached via `dependents` on the EXISTING fixture:
 # doDependents exits 5 ("not found") BEFORE the enumeration when the item is
 # missing, and `exists` on a found item emits no debug line (found in pass 0;
-# refreshCache is lazy) — so the Debug marker uses the read-only `dependents`
+# refreshCache is lazy) -- so the Debug marker uses the read-only `dependents`
 # query against the fixture.
 $DebugMarker = "enumCallersByProgId: ENTER"
 
@@ -191,7 +191,7 @@ function Invoke-CliFiles {
 
     $stdoutBytes = [System.IO.File]::ReadAllBytes($stdoutFile)
     # PS 5.1 "1>file" re-encodes native stdout as UTF-16LE (BOM FF FE), so the
-    # string must be decoded with BOM auto-detection (same as Stderr below) —
+    # string must be decoded with BOM auto-detection (same as Stderr below) --
     # an explicit UTF-8 decode yields mojibake and breaks JSON parsing.
     $stdoutStr = [System.IO.File]::ReadAllText($stdoutFile).TrimEnd()
     $stderrStr = ""
@@ -363,14 +363,14 @@ try {
     try {
         # Valid EasyLanguage Function source (same pattern as
         # test_upsert.ps1): "{ name }`r`nname = 1;". The "{ name }" text is
-        # arbitrary fixture content only — stored metadata comes from
+        # arbitrary fixture content only -- stored metadata comes from
         # warehouse APIs, never from source text.
         $funcSrc = "{ $ProbeName }`r`n$ProbeName = 1;"
         $fixtureSrcFile = Write-SourceFile "verbose_fixture_src" $funcSrc
 
         # Track the fixture BEFORE validating the insert result: the finally
         # block then attempts the delete even if success cannot be confirmed
-        # (delete exit 5 = never created / already gone — handled gracefully).
+        # (delete exit 5 = never created / already gone -- handled gracefully).
         $CreatedItems.Add(@{ Name = $ProbeName; Type = "function" }) | Out-Null
 
         $setup = Invoke-CliFiles -Arguments @("--json", "insert", "function", $ProbeName, $fixtureSrcFile)
@@ -414,7 +414,7 @@ try {
     else {
 
     # =====================================================================
-    # V1: Default run — stderr must NOT contain the Info marker.
+    # V1: Default run -- stderr must NOT contain the Info marker.
     # =====================================================================
     Write-Host "--- V1: default run (warnings + errors only) ---" -ForegroundColor Cyan
     $v1 = $null
@@ -425,7 +425,7 @@ try {
     }
 
     # =====================================================================
-    # V2: -v run — Info marker present; stdout byte-identical to V1.
+    # V2: -v run -- Info marker present; stdout byte-identical to V1.
     # =====================================================================
     Write-Host "--- V2: -v run (Info level) ---" -ForegroundColor Cyan
     $v2 = $null
@@ -438,7 +438,7 @@ try {
     }
 
     # =====================================================================
-    # V3: -vv run — Debug level active (debug trace present; Info inclusive).
+    # V3: -vv run -- Debug level active (debug trace present; Info inclusive).
     # =====================================================================
     Write-Host "--- V3: -vv run (Debug level) ---" -ForegroundColor Cyan
     $v3 = $null
@@ -452,7 +452,7 @@ try {
     }
 
     # =====================================================================
-    # V4: Position-free — flag after the subcommand behaves like V2.
+    # V4: Position-free -- flag after the subcommand behaves like V2.
     # =====================================================================
     Write-Host "--- V4: position-free flag ---" -ForegroundColor Cyan
     Run-TestCase -TestId "V4" -Step "exists ... -v == -v exists ..." -Body {
@@ -468,7 +468,7 @@ try {
     # V5: Bundled -vv equals separate -v -v (same op, same level).
     # Level equivalence is asserted via the markers: both runs must reach
     # Debug (enumCallersByProgId ENTER trace) and keep the inclusive Info
-    # line. NO cross-run byte equality is asserted here — the debug-marker
+    # line. NO cross-run byte equality is asserted here -- the debug-marker
     # cases use marker presence/absence (level-class assertions) because
     # Debug stderr traces embed process-dependent values. Byte-equality is
     # kept only on the existing-fixture `exists` path (V2/V4/V6/V7).
@@ -497,7 +497,7 @@ try {
     }
 
     # =====================================================================
-    # V7: --verbose=<value> — value ignored, counts as ONE occurrence.
+    # V7: --verbose=<value> -- value ignored, counts as ONE occurrence.
     # =====================================================================
     Write-Host "--- V7: --verbose=<value> form ---" -ForegroundColor Cyan
     Run-TestCase -TestId "V7" -Step "--verbose=x shows info" -Body {

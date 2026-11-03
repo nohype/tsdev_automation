@@ -26,7 +26,7 @@
 //      For each item, performs Steps 1-3 below.
 //   4. For each item:
 //        Step 1: Get partial record via Ordinal_28(category, progId, 0, buf).
-//                Read +0x79 (gate flag — bit 2 = 0x04), +0x29 (elemCount),
+//                Read +0x79 (gate flag -- bit 2 = 0x04), +0x29 (elemCount),
 //                +0x4f (elemArrayPtr).
 //        Step 2: Call the linker directly (ordinal 85) via callLinkerSafe.
 //                If rec is non-NULL, read rec+0x29 (elemCount),
@@ -36,10 +36,10 @@
 //                64 bytes of the dep-list buffer (SEH-protected).
 //                Release via Ordinal_70(rec, 0).
 //        Step 3: For each element (up to 5), read element+0x73 (size) and
-//                element+0x7b (ptr) — SEH-protected.
+//                element+0x7b (ptr) -- SEH-protected.
 //   5. Check for TSCrashReport.exe before and after.
 //
-// All orlib20 calls are SEH-protected (__try/__except). READ-ONLY — does NOT
+// All orlib20 calls are SEH-protected (__try/__except). READ-ONLY -- does NOT
 // insert/modify/delete any items. Its 180-second limit is an operational
 // timeout, not a measured completion time or M.4 acceptance evidence.
 
@@ -87,14 +87,14 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 //   Writes a 0x10A-byte partial copy into outBuf. Returns 1 if found/copied.
 //
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args, RET 0x08.
-//   int (void* rec, int flag) — releases refcounted record.
+//   int (void* rec, int flag) -- releases refcounted record.
 //
 // _LoadMasterRecsEX@16 (ord 568): __stdcall, 4 args, RET 0x10.
 //   int (int category, HGLOBAL* outBuf, const char* path, int filterMode)
 //   Returns count; allocates HGLOBAL of count * 0x10A bytes. ProgId at +0x00
 //   (2-byte short) in each record.
 //
-// Linker FUN_101a3340 (ordinal 85): __fastcall/__stdcall hybrid — ECX=type,
+// Linker FUN_101a3340 (ordinal 85): __fastcall/__stdcall hybrid -- ECX=type,
 //   EDX=id, stack: errorFlag (int), partialBuf (void*). We use the manual
 //   inline-asm wrapper from diag_m4_frida_linker.cpp so the call is robust
 //   to either RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped 8)
@@ -139,7 +139,7 @@ bool callLoadMasterRecsEx(LoadMasterRecsExFn fn, int category, HGLOBAL* outBuf,
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -221,7 +221,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -260,7 +260,7 @@ void hexDump(const unsigned char* buf, size_t n, const char* label) {
 
 // -------------------------------------------------------------------------
 // Existing-record enumeration via _LoadMasterRecsEX@16.
-// Read-only — does NOT modify any record.
+// Read-only -- does NOT modify any record.
 // -------------------------------------------------------------------------
 struct ExistingRec {
     short progId = 0;
@@ -331,7 +331,7 @@ std::vector<ExistingRec> enumerateExisting(LoadMasterRecsExFn loadFn,
 
 // -------------------------------------------------------------------------
 // Per-item test: Steps 1-3 from the task spec.
-// READ-ONLY — does NOT modify any item.
+// READ-ONLY -- does NOT modify any item.
 // -------------------------------------------------------------------------
 struct ItemTestResult {
     int progId = 0;
@@ -684,7 +684,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 180-second hard timeout — report a hang without terminating the worker.
+    // 180-second hard timeout -- report a hang without terminating the worker.
     // Enumeration of 3 categories + linker calls on 15 items may take longer
     // than 120 seconds.
     DWORD wait = WaitForSingleObject(hThread, 180000);

@@ -1,6 +1,6 @@
 // test_save_module.cpp
 //
-// Workstream M slice M.2 — TDD RED->GREEN integration test for the
+// Workstream M slice M.2 -- TDD RED->GREEN integration test for the
 // _SaveModule_New@20 flags (arg3) and password buffer (arg5) parity with
 // TSDev.exe.
 //
@@ -8,7 +8,7 @@
 // 0x00452290, the unique caller of _SaveModule_New@20; see
 // docs/RE/RE_M2_SAVEMODULE_NEW.md, UPDATE 2026-08-25 Corrections 1 and 2):
 //
-//   R-M.2.1 — The flags word (arg3) is computed by FUN_00452290 as a
+//   R-M.2.1 -- The flags word (arg3) is computed by FUN_00452290 as a
 //   per-item bitfield:
 //     flags = (type_word & 0x7)              // bits 0-2: component category
 //           | ((has_expdate  & 1) << 3)      // bit 3: has expiration date
@@ -25,7 +25,7 @@
 //       ShowMe    (category 2): flags = 0x62
 //       TradingApp (category 2): flags = 0x62
 //
-//   R-M.2.3 — The password buffer (arg5) is a 64-byte stack buffer
+//   R-M.2.3 -- The password buffer (arg5) is a 64-byte stack buffer
 //   constructed by FUN_00452290 as:
 //     memset(buffer, 0, 0x40);                  // 64 bytes zeroed
 //     memcpy(buffer, "!p$Kn@aSus", 10);         // then 10-byte default copied in
@@ -35,7 +35,7 @@
 //   force-protects. The CLI must replicate this fixed internal default
 //   string, never accept user input for it.
 //
-//   R-M.2.4 — There is exactly ONE _SaveModule_New call per verify
+//   R-M.2.4 -- There is exactly ONE _SaveModule_New call per verify
 //   operation (pre-verify); no post-verify save. The CLI's single
 //   saveSource() before verifyModule() matches this ordering.
 //
@@ -56,18 +56,18 @@
 // both arg3 (flags) and arg5 (password). The hook received those NULL values,
 // so the two non-NULL assertions failed. The current M.2 implementation passes
 // the non-NULL flags word and 64-byte password buffer matching the TSDev values
-// above. The historical RED→GREEN transition is retained in the slice handoff.
+// above. The historical RED->GREEN transition is retained in the slice handoff.
 //
 // Six insert/modify test cases + one batch-reuse case (adversarial review
 // findings #1, #2, #4):
-//   1. Strategy   (category 0) — expected insert flags 0x60
-//   2. Indicator  (category 2) — expected insert flags 0x62
-//   3. Function   (category 1) — expected insert flags 0x61
-//   4. MODIFY Strategy — insert (0x60) -> verify -> modify save (0x70, bit 4
+//   1. Strategy   (category 0) -- expected insert flags 0x60
+//   2. Indicator  (category 2) -- expected insert flags 0x62
+//   3. Function   (category 1) -- expected insert flags 0x61
+//   4. MODIFY Strategy -- insert (0x60) -> verify -> modify save (0x70, bit 4
 //      is_verified set). Proves the modify path sets flags bit 4.
-//   5. ShowMe     (category 2) — expected insert flags 0x62
-//   6. TradingApp (category 2) — expected insert flags 0x62
-//   7. BATCH REUSE — 3 consecutive insert+save+verify+delete cycles on the
+//   5. ShowMe     (category 2) -- expected insert flags 0x62
+//   6. TradingApp (category 2) -- expected insert flags 0x62
+//   7. BATCH REUSE -- 3 consecutive insert+save+verify+delete cycles on the
 //      SAME shared TsDevLib, asserting flags=0x60 + password on EACH
 //      iteration (proves stack buffers re-init per call in serve/batch mode).
 //
@@ -102,7 +102,7 @@ using namespace tsdev;
 namespace {
 
 // ---------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // ---------------------------------------------------------------------------
 static int g_failCount = 0;
 static int g_passCount = 0;
@@ -164,7 +164,7 @@ void onSaveModuleNewReadyHook(const unsigned int* flags,
 }
 
 // ---------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // ---------------------------------------------------------------------------
 ComApi realComApi() {
@@ -225,7 +225,7 @@ std::string makeShowMeSource(const std::string& name) {
            "    Plot1(High, \"Up bar\");\r\n";
 }
 
-// TradingApp minimal source — proven to compile in TVS-C.3 E2E and
+// TradingApp minimal source -- proven to compile in TVS-C.3 E2E and
 // test_insert_tradingapp.cpp. "using elsystem;" is the minimal valid
 // TradingApp source; the full Form-based source is a fallback only.
 std::string makeTradingAppSource(const std::string& /*name*/) {
@@ -247,7 +247,7 @@ int fail(const char* msg, int code) {
 // ---------------------------------------------------------------------------
 // Run one test case against an ALREADY-CONSTRUCTED TsDevLib (passed by
 // reference). The caller (runTest) constructs ONE TsDevLib for the whole
-// worker thread and passes it to all three cases — this matches the
+// worker thread and passes it to all three cases -- this matches the
 // operational invariant used by every other integration test in this
 // codebase (see test_auto_cleanup.cpp, test_stress_batch.cpp,
 // test_compiler_layout.cpp): a SINGLE TsDevLib per worker thread.
@@ -297,7 +297,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
         return fail("createEntry returned ProgId <= 0", 100 + caseNum * 10 + 2);
     }
 
-    // --- 4. saveSource (fires the hook — captures flags + password) ---
+    // --- 4. saveSource (fires the hook -- captures flags + password) ---
     std::printf("  [4] saveSource(%s, %d, source)...\n", typeLabel, progId);
     bool saved = lib.saveSource(tc.type, progId, tc.source);
     std::printf("      saveSource = %s\n", saved ? "true" : "false");
@@ -411,7 +411,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
         CHECK(saved, buf);
     }
 
-    // --- 13. verifyModule (complete the insert — may succeed or fail) ---
+    // --- 13. verifyModule (complete the insert -- may succeed or fail) ---
     // The RED test is about the flags/password assertions above; verifyModule
     // is invoked to complete the insert path so the warehouse state is
     // consistent for the getSource round-trip and the cleanup. A verify
@@ -426,7 +426,7 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
         std::printf("      verifyModule: no errors (compilation OK)\n");
     }
 
-    // --- 14. getSource round-trip — assert retrieved source contains the
+    // --- 14. getSource round-trip -- assert retrieved source contains the
     // original source text. The warehouse may normalize whitespace/line
     // endings, so we use substring checks on key tokens. ---
     std::printf("  [14] getSource(%s, \"%s\") -- round-trip...\n",
@@ -494,20 +494,20 @@ int runOneCase(TsDevLib& lib, const TestCase& tc, int caseNum) {
 }
 
 // ---------------------------------------------------------------------------
-// runModifyCase — adversarial review finding #1: no modify case.
+// runModifyCase -- adversarial review finding #1: no modify case.
 //
 // Exercises the MODIFY path (saveSource with isVerified=true), which must set
 // flags bit 4 (is_verified) per TSDev FUN_00452290. The flow:
-//   1. createEntry (insert)        — saveSource #1 with isVerified=false
-//   2. verifyModule                — compile + persist (item now verified)
-//   3. saveSource #2 with isVerified=true  — the MODIFY save, fires the hook
+//   1. createEntry (insert)        -- saveSource #1 with isVerified=false
+//   2. verifyModule                -- compile + persist (item now verified)
+//   3. saveSource #2 with isVerified=true  -- the MODIFY save, fires the hook
 //   4. Assert the SECOND hook capture: flags == 0x70 (0x60 | 0x10), password
 //      buffer still "!p$Kn@aSus", bytes 10-63 still zero.
 //   5. getSource round-trip after modify (substring + length tolerance).
 //   6. Cleanup: deleteEntry.
 //
 // The KEY assertion is that the second saveSource call (the modify) captures
-// flags=0x70, NOT 0x60 — proving bit 4 (is_verified) is set on the modify
+// flags=0x70, NOT 0x60 -- proving bit 4 (is_verified) is set on the modify
 // path. This is the production-code change the PM made (saveSource now takes
 // isVerified; modifyEntry passes true).
 //
@@ -547,7 +547,7 @@ int runModifyCase(TsDevLib& lib, int caseNum,
                     100 + caseNum * 10 + 2);
     }
 
-    // --- 3. saveSource #1 (INSERT, isVerified=false) — fires hook ---
+    // --- 3. saveSource #1 (INSERT, isVerified=false) -- fires hook ---
     g_capture = SaveModuleCapture{};
     std::printf("  [3] saveSource #1 INSERT (isVerified=false)...\n");
     bool saved1 = lib.saveSource(type, progId, insertSource, /*isVerified=*/false);
@@ -574,7 +574,7 @@ int runModifyCase(TsDevLib& lib, int caseNum,
         CHECK(saved1, buf);
     }
 
-    // --- 4. verifyModule (compile + persist — item is now verified) ---
+    // --- 4. verifyModule (compile + persist -- item is now verified) ---
     std::printf("  [4] verifyModule(%s, %d)...\n", typeLabel, progId);
     std::string errors = lib.verifyModule(type, progId);
     if (!errors.empty()) {
@@ -585,7 +585,7 @@ int runModifyCase(TsDevLib& lib, int caseNum,
         std::printf("      verifyModule: no errors (compilation OK)\n");
     }
 
-    // --- 5. saveSource #2 (MODIFY, isVerified=true) — fires hook ---
+    // --- 5. saveSource #2 (MODIFY, isVerified=true) -- fires hook ---
     // This is the KEY assertion: the second saveSource must capture flags=0x70
     // (bit 4 set), proving the modify path sets is_verified.
     g_capture = SaveModuleCapture{};
@@ -710,17 +710,17 @@ int runModifyCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runBatchReuseCase — adversarial review finding #2: no batch/serve mode
+// runBatchReuseCase -- adversarial review finding #2: no batch/serve mode
 // coverage.
 //
 // Proves the stack buffers (saveFlags, savePasswordBuf in saveSource) are
 // correctly re-initialized on EVERY iteration within a single long-lived
-// TsDevLib process — the batch/serve reuse pattern. Performs N consecutive
+// TsDevLib process -- the batch/serve reuse pattern. Performs N consecutive
 // insert+saveSource+verifyModule+deleteEntry cycles on Strategy items with
 // distinct names, asserting the hook fires with correct flags (0x60) and
 // password on EACH iteration.
 //
-// Uses the SAME shared TsDevLib instance (passed by reference) — this is the
+// Uses the SAME shared TsDevLib instance (passed by reference) -- this is the
 // critical invariant: a single instance reused across many operations, as the
 // serve-mode daemon and the batch CLI do.
 //
@@ -829,7 +829,7 @@ int runBatchReuseCase(TsDevLib& lib, int caseNum,
             CHECK(saved, buf);
         }
 
-        // verifyModule (complete the insert — diagnostic only).
+        // verifyModule (complete the insert -- diagnostic only).
         std::string errors = lib.verifyModule(type, progId);
         if (!errors.empty()) {
             std::fprintf(stderr,

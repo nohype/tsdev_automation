@@ -155,8 +155,8 @@ function Invoke-CliRaw {
         $ErrorActionPreference = 'Continue'
         try {
             # OS-level redirection writes the child's raw stdout/stderr bytes
-            # to files. `2>` on a native command wraps stderr in ErrorRecords —
-            # prefixing the first line and injecting error-record text — which
+            # to files. `2>` on a native command wraps stderr in ErrorRecords --
+            # prefixing the first line and injecting error-record text -- which
             # corrupts line-exact assertions on batch progress output.
             $proc = Start-Process -FilePath $script:CliPath `
                 -ArgumentList $argString `
@@ -390,7 +390,7 @@ $badSrc = "This is not valid EasyLanguage !!!"
 
 try {
     # -------------------------------------------------------------------
-    # S1: batch-stdin insert — 2 valid + 1 compile-error + 1 missing source
+    # S1: batch-stdin insert -- 2 valid + 1 compile-error + 1 missing source
     # -------------------------------------------------------------------
     $s1a = "BatchStdinTest_${runId}_Ins1"; $allTestNames += $s1a
     $s1b = "BatchStdinTest_${runId}_Ins2"; $allTestNames += $s1b
@@ -433,7 +433,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # S2: batch-stdin delete — 1 existing + 1 non-existing
+    # S2: batch-stdin delete -- 1 existing + 1 non-existing
     # -------------------------------------------------------------------
     $s2Existing = $s1a  # inserted in S1
     $s2Missing = "BatchStdinTest_${runId}_DelMissing"
@@ -459,7 +459,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # S3: batch-stdin modify — 1 existing (ProgId preserved) + 1 non-existing
+    # S3: batch-stdin modify -- 1 existing (ProgId preserved) + 1 non-existing
     # -------------------------------------------------------------------
     # First insert a component via stdin batch-insert to modify later.
     $s3Mod = "BatchStdinTest_${runId}_Mod"; $allTestNames += $s3Mod

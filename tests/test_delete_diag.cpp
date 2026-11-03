@@ -1,4 +1,4 @@
-// test_delete_diag.cpp — deterministic DELETE diagnostic test harness
+// test_delete_diag.cpp -- deterministic DELETE diagnostic test harness
 //
 // Verifies the DELETE flow end-to-end with post-run checks:
 //   SETUP: Ensure test component (zzz_cli_delete_test, Strategy) exists;
@@ -266,7 +266,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    TsDevLib destroyed OK\n");
 
     // ================================================================
-    // PHASE 6: Verify — MWRKArea.wrk timestamp or size changed
+    // PHASE 6: Verify -- MWRKArea.wrk timestamp or size changed
     // ================================================================
     std::fprintf(stdout,
                  "\n--- Phase 6: Verify MWRKArea.wrk changed ---\n");
@@ -299,7 +299,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 7: Verify — Fresh FindExistPos returns <= 0
+    // PHASE 7: Verify -- Fresh FindExistPos returns <= 0
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 7: Fresh FindExistPos ---\n");
     try {
@@ -327,7 +327,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 8: Verify — No .ell file remains on disk (and check .xml)
+    // PHASE 8: Verify -- No .ell file remains on disk (and check .xml)
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 8: Verify .ell file gone ---\n");
     bool ellAfter = fileExists(ellPath.c_str());
@@ -383,7 +383,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is
 // legal. Catches any unhandled structured exception from runTest (e.g.,
 // access violation in the delete orchestrator, InitGlobalLookup, or
 // OrlibExit) and converts it to a nonzero exit code instead of letting

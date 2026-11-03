@@ -4,13 +4,13 @@
 // to production code: this file does NOT modify any src/ file.
 //
 // Purpose: verify the ABI of `Ordinal_71` (orlib20 ordinal 71, RVA 0x1A9460,
-// FUN_101a9460 — "InitGlobalLookup") and determine whether calling it (or
+// FUN_101a9460 -- "InitGlobalLookup") and determine whether calling it (or
 // replicating the worker-thread command 0x0D path) populates the
 // reverse-dependent SafeArray at warehouse+0x26 / record+0x26.
 //
 // === Ghidra-confirmed findings (PART 1) ===
 //
-// 1. Ordinal_71 (FUN_101a9460, RVA 0x1A9460) — InitGlobalLookup
+// 1. Ordinal_71 (FUN_101a9460, RVA 0x1A9460) -- InitGlobalLookup
 //    Decompiled body:
 //      void FUN_101a9460(void) {
 //        if (DAT_1023ced4 == 0) {
@@ -22,11 +22,11 @@
 //      }
 //    - Calling convention: __cdecl. The function prologue is
 //      `PUSH EBP; MOV EBP,ESP; ...` and epilogue is `MOV ESP,EBP; POP EBP; RET`
-//      (bare RET — NO RET n). The 13 internal call sites (e.g. FUN_101d05e0
+//      (bare RET -- NO RET n). The 13 internal call sites (e.g. FUN_101d05e0
 //      @0x101d05f3) PUSH 2 DWORDs before the CALL but perform NO `ADD ESP,8`
-//      afterward — they rely on the EBP-frame epilogue to discard the args.
+//      afterward -- they rely on the EBP-frame epilogue to discard the args.
 //      The decompiler therefore labels the body `void FUN_101a9460(void)`
-//      because the body NEVER references [EBP+8] or [EBP+0xC] — the args are
+//      because the body NEVER references [EBP+8] or [EBP+0xC] -- the args are
 //      IGNORED.
 //    - Parameters: 2 args are PUSHED by callers (type, ProgId) but the
 //      function IGNORES them. It is effectively a zero-arg lazy initializer.
@@ -40,7 +40,7 @@
 //      SetEvent/WaitForSingleObject/ReleaseMutex calls. It does NOT call
 //      FUN_101cf5b0.
 //    - Does it return a record pointer? NO. It returns the global lookup
-//      structure pointer (DAT_1023ced4) in EAX — a 0x2c-byte BST-control
+//      structure pointer (DAT_1023ced4) in EAX -- a 0x2c-byte BST-control
 //      block, NOT a module record.
 //    - Does it set warehouse+0xc2 to 1 (the "cached" flag)? NO. It does not
 //      touch the warehouse object at all.
@@ -59,7 +59,7 @@
 //    (worker trigger) + FUN_101c36d0 (verbatim name getter, which dispatches
 //    command 0x34 via FUN_101cf5b0).
 //
-// 2. Ordinal_10 (FUN_101a9650, RVA 0x1A9650) — GetWarehouse
+// 2. Ordinal_10 (FUN_101a9650, RVA 0x1A9650) -- GetWarehouse
 //    - Calling convention: __cdecl, 1 arg (path index; 0 = default TS path).
 //    - Returns: the warehouse singleton pointer (CELWHouse*). On first call
 //      with a given path, allocates 0xea bytes via operator_new and
@@ -100,7 +100,7 @@
 //        ReleaseMutex(*(param_1 + 0x72));
 //      FUN_101cf5b0 is called from 44 internal sites. It is NOT exported.
 //
-// 4. Ordinal_68 (FUN_101a87d0, RVA 0x1A87D0) — count accessor
+// 4. Ordinal_68 (FUN_101a87d0, RVA 0x1A87D0) -- count accessor
 //    - Calls FUN_101e5970 which returns *(obj+0x0C). trivial getter.
 //
 // CONCLUSION: Ordinal_71 is a lazy BST-global initializer. Calling it alone
@@ -123,11 +123,11 @@
 //      value. Reads warehouse+0xc2 again. Reads warehouse +0x04/+0x12/+0x16/
 //      +0x4e/+0x26.
 //   7. If Ordinal_71 returns a non-NULL pointer, reads its fields (it should
-//      be the 0x2c-byte BST control block, NOT a record — verify +0x08 is a
+//      be the 0x2c-byte BST control block, NOT a record -- verify +0x08 is a
 //      critical section, +0x00 is a BST root node).
 //   8. Tries Ordinal_71 with (0, 0) and no-arg variants.
 //   9. Attempts the direct worker-thread command 0x0D replication
-//      (FUN_101cfce0 pattern) — SAVE/RESTORE warehouse fields, signal
+//      (FUN_101cfce0 pattern) -- SAVE/RESTORE warehouse fields, signal
 //      event+0x6e, wait on event+0x6a, check +0x4e, read +0x26 SafeArray.
 //  10. Cleanup: delete the Function. Check for TSCrashReport.exe.
 
@@ -184,7 +184,7 @@ typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 typedef void* (__cdecl *Ordinal71Fn)(int type, int progId);
 
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (category:char, progId:int,
-//   flag:int). Returns live record pointer (refcounted — release via
+//   flag:int). Returns live record pointer (refcounted -- release via
 //   Ordinal_70).
 typedef void* (__cdecl *Ordinal69Fn)(char category, int progId, int flag);
 
@@ -344,7 +344,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -594,7 +594,7 @@ void inspectSafeArray(void* saPtr, const char* label) {
 
 // -------------------------------------------------------------------------
 // Analyze the pointer returned by Ordinal_71.
-//   Per Ghidra: Ordinal_71 returns DAT_1023ced4 — a 0x2c-byte BST control
+//   Per Ghidra: Ordinal_71 returns DAT_1023ced4 -- a 0x2c-byte BST control
 //   block (NOT a module record). Layout (from FUN_101e3230):
 //     +0x00: BST root node pointer (0x24-byte node; self-ref left/right/
 //            parent; +0x0C balance=0x101)
@@ -642,7 +642,7 @@ void analyzeOrd71Result(const void* ptr, const char* label) {
     if (anySeh) std::printf("    [one or more reads raised SEH]\n");
 
     // Verify this is NOT a module record by checking if +0x26 looks like a
-    // SafeArray pointer (it shouldn't — +0x26 in the BST block is inside the
+    // SafeArray pointer (it shouldn't -- +0x26 in the BST block is inside the
     // critical section).
     void* maybeSA = nullptr;
     if (sehReadPtr(p + 0x26, &maybeSA)) {
@@ -1061,7 +1061,7 @@ DWORD WINAPI runDiag(LPVOID param) {
 
     // --- Step 9b: probe Ordinal_68 on the Ordinal_71 return value.
     //   Ordinal_68 returns *(obj+0x0C). On the BST control block, +0x0C is
-    //   inside the critical section — should be garbage. On a real record,
+    //   inside the critical section -- should be garbage. On a real record,
     //   +0x0C is the count field.
     std::printf("\n[9b] Probing Ordinal_68 on Ordinal_71 return value...\n");
     if (ord68 && ord71Ok && ord71Seh.ptr) {
@@ -1176,7 +1176,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // The direct cmd 0x0D attempt + SafeArray inspection + Ordinal_69
     // comparison may take longer.
     DWORD wait = WaitForSingleObject(hThread, 120000);

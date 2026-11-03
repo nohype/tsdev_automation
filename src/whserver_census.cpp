@@ -3,7 +3,7 @@
 // Implementation of the WHServer m_nLock census declared in
 // whserver_census.h. decideCensus is a pure function over an injected
 // sample stream (the fail-closed gate of tmp/RECYCLE_ENGINE_DESIGN.md
-// §3.3/§3.4); readWhLockSample is the thin OpenProcess+RPM seam.
+// Sec. 3.3/Sec. 3.4); readWhLockSample is the thin OpenProcess+RPM seam.
 // Pure Win32 (kernel32); see the header for the pinned contract.
 
 #include "whserver_census.h"
@@ -93,7 +93,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
 
     // windowSecs <= 0 is invalid input: a non-positive sustained-zero
     // window would let a single zero poll satisfy "sustained >= window"
-    // and fail the gate OPEN. Refuse instead (fail closed, §3.3).
+    // and fail the gate OPEN. Refuse instead (fail closed, Sec. 3.3).
     if (windowSecs <= 0.0) return dec;
 
     std::map<DWORD, CensusPidState> state;
@@ -137,7 +137,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
 
             // A pid APPEARING (never seen, or reappearing after a confirmed
             // absence) resets the sustained-zero window for the WHOLE
-            // census (design §3.4): every run must re-accumulate windowSecs
+            // census (design Sec. 3.4): every run must re-accumulate windowSecs
             // measured from this poll.
             bool appeared = false;
             for (DWORD p : poll.pids) {
@@ -168,7 +168,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
                 }
 
                 // Listed pid: ANY openError/rpmError on a still-listed pid
-                // is Indeterminate — an error is never evidence of absence
+                // is Indeterminate -- an error is never evidence of absence
                 // and never evidence of zero. A listed pid with no read at
                 // all is equally unverifiable: fail closed the same way.
                 const CensusPidRead* read = nullptr;
@@ -182,7 +182,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
                     return dec;
                 }
                 // Image gate: an attempted read on an unprobed WHServer
-                // build is untrusted — the fixed VAs are single-build
+                // build is untrusted -- the fixed VAs are single-build
                 // layout facts and can still map while reading a
                 // persistent 0. Same fail-closed class as an openError.
                 if (!read->imageKnown) {
@@ -208,7 +208,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
             }
         }
 
-        // Pass evaluation (design §3.4): every ever-known pid is either
+        // Pass evaluation (design Sec. 3.4): every ever-known pid is either
         // confirmed absent or, in the latest snapshotOk set, on a
         // sustained-zero run >=windowSecs measured from the last
         // appearance epoch. A never-any-pids census needs the same >=3
@@ -227,7 +227,7 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
                 const CensusPidState& s = kv.second;
                 if (s.absentConfirmed) continue;
                 // A non-absent pid resolves ONLY through a sustained-zero
-                // run inside the latest snapshotOk set — a vanished pid
+                // run inside the latest snapshotOk set -- a vanished pid
                 // with a stale zero run is not evidence of anything until
                 // its absence is re-enumeration-confirmed.
                 const bool listed =
@@ -252,9 +252,9 @@ CensusDecision decideCensus(const std::vector<CensusPoll>& polls,
             dec.pid = outstanding;
         }
 
-        // Budget elapsed without a verdict: refuse — lock>0 (or
+        // Budget elapsed without a verdict: refuse -- lock>0 (or
         // unverifiable state) at budget end means foreign client-held
-        // objects (or rundown lag; conservative direction only, §3.3).
+        // objects (or rundown lag; conservative direction only, Sec. 3.3).
         if (poll.timeSecs - t0 >= budgetSecs) {
             dec.verdict = CensusVerdict::Refuse;
             return dec;
@@ -285,7 +285,7 @@ bool readWhLockSample(const CensusTarget& target, WhLockSample& out) {
         return false;
     }
 
-    // m_bActivity: corroborating only — a failed read never fails the sample.
+    // m_bActivity: corroborating only -- a failed read never fails the sample.
     if (target.activityVa != 0) {
         uint8_t b = 0;
         SIZE_T m = 0;

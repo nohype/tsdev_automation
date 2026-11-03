@@ -113,7 +113,7 @@ bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
     return true;
 }
 
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 ComApi realComApi() {
     return ComApi{&CoInitializeEx, &CoUninitialize};
@@ -149,7 +149,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         TsDevLibTestConfig cfg;
         cfg.comApi        = realComApi();
         cfg.throwAfterCom = false;
-        // All hooks left nullptr — we do not drive any verify/delete here.
+        // All hooks left nullptr -- we do not drive any verify/delete here.
         lib = tsdev::makeTsDevLibForTest(/*tsPathOverride=*/nullptr, cfg);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FATAL: TsDevLib construction threw: %s\n",
@@ -420,7 +420,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 30-second hard timeout — report a hang without terminating the worker.
+    // 30-second hard timeout -- report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 30000);
     if (wait == WAIT_TIMEOUT) {
         std::fprintf(stderr,

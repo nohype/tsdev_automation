@@ -12,7 +12,7 @@
 // candidate record it called GetDependencies(candidateWhType, candidateProgId,
 // elementIndex, &depCount) and checked if the root ProgId appeared in the
 // returned int array. The historical M.4 test reported the sentinel firing
-// (traversal ran) but no per-dependent events — i.e. GetDependencies never
+// (traversal ran) but no per-dependent events -- i.e. GetDependencies never
 // returned the Function's ProgId for any candidate.
 //
 // This diagnostic:
@@ -109,7 +109,7 @@ bool callGetDependencies(GetDependenciesFn fn, int whType, int progId,
     return true;
 }
 
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 ComApi realComApi() {
     return ComApi{&CoInitializeEx, &CoUninitialize};
@@ -266,7 +266,7 @@ DWORD WINAPI runDiag(LPVOID param) {
         TsDevLibTestConfig cfg;
         cfg.comApi        = realComApi();
         cfg.throwAfterCom = false;
-        // No hooks — we drive GetDependencies directly via a separate
+        // No hooks -- we drive GetDependencies directly via a separate
         // OrlibResolver, not via verifyModule's traversal.
         lib = tsdev::makeTsDevLibForTest(/*tsPathOverride=*/nullptr, cfg);
     } catch (const std::exception& e) {
@@ -369,7 +369,7 @@ DWORD WINAPI runDiag(LPVOID param) {
     for (const auto& w : funcWhTypes) {
         std::printf("\n  >>> FUNCTION whType=0x%X  (%s)\n", w.whType, w.label);
         // Function has no callers we care about here; targetProgId is the
-        // Strategy's (which would NOT be a dep of the Function — the dep
+        // Strategy's (which would NOT be a dep of the Function -- the dep
         // direction is caller->callee, so the Strategy's deps include the
         // Function, not vice versa). Pass stratProgId just to confirm it
         // is NOT present.
@@ -445,7 +445,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 60-second hard timeout — report a hang without terminating the worker.
+    // 60-second hard timeout -- report a hang without terminating the worker.
     DWORD wait = WaitForSingleObject(hThread, 60000);
     if (wait == WAIT_TIMEOUT) {
         std::fprintf(stderr,

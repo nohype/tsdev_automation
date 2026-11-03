@@ -11,14 +11,14 @@
 //   2. Return Result{success=false} if the component does not exist.
 //   3. Replace the EasyLanguage source on the EXISTING ProgId (no createEntry).
 //   4. Recompile and re-verify (verifyModule).
-//   5. Fail on compilation errors — return the error string in Result.message.
+//   5. Fail on compilation errors -- return the error string in Result.message.
 //   6. Persist the new source (.ell file timestamp changes).
 //   7. ProgId must NOT change (modification, not re-creation).
 //
 // Test flow:
 //   SETUP:   INSERT a test TradingApp ("test_ta_modify_c6") with source A.
 //            Record ProgId and .ell timestamp.
-//   MODIFY:  modifyEntry(TradingApp, name, sourceB) — add a using clause.
+//   MODIFY:  modifyEntry(TradingApp, name, sourceB) -- add a using clause.
 //   VERIFY:  - modifyEntry returned success.
 //            - ProgId is preserved (same before and after).
 //            - .ell file timestamp changed (re-compiled + re-persisted).
@@ -49,7 +49,7 @@ using namespace tsdev;
 namespace {
 
 // ---------------------------------------------------------------------------
-// Test fixture constants — unique names to avoid collisions with C.4/C.5.
+// Test fixture constants -- unique names to avoid collisions with C.4/C.5.
 // ---------------------------------------------------------------------------
 
 const char* kTestName    = "test_ta_modify_c6";
@@ -229,7 +229,7 @@ DWORD WINAPI runTest(LPVOID param) {
         std::fprintf(stdout, "    PASS: .ell timestamp/size changed\n");
 
         // ================================================================
-        // PHASE 7: Negative test — modify a nonexistent component
+        // PHASE 7: Negative test -- modify a nonexistent component
         // ================================================================
         std::fprintf(stdout, "\n--- Phase 7: Negative test (nonexistent) ---\n");
         Result negRes = lib->modifyEntry(ComponentType::TradingApp,
@@ -304,7 +304,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 9: Cleanup — delete both test entries (always, best-effort)
+    // PHASE 9: Cleanup -- delete both test entries (always, best-effort)
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 9: Cleanup (deleteEntry) ---\n");
     if (lib) {
@@ -348,7 +348,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);

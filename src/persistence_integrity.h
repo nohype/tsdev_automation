@@ -60,7 +60,7 @@
 //
 // The "mixed-endian" GUID form is the standard Windows GUID binary layout
 // (Data1 little-endian, Data2 little-endian, Data3 little-endian, Data4
-// big-endian / byte-preserved) — the form orlib20/ELMDCore embeds in the `.ell`.
+// big-endian / byte-preserved) -- the form orlib20/ELMDCore embeds in the `.ell`.
 // The validator searches the post-op `.ell` bytes for this 16-byte sequence and
 // requires EXACTLY ONE occurrence for a VerifiedRefresh.
 
@@ -98,7 +98,7 @@ enum class IntegrityVerdict {
 
 // Inputs to the validator. All paths are filesystem paths to the POST-operation
 // artifact files. The pre-operation hashes are supplied by the caller (hex
-// SHA-256, uppercase or lowercase — the implementation compares case-insensitively)
+// SHA-256, uppercase or lowercase -- the implementation compares case-insensitively)
 // because the caller already had the pre-op artifacts in hand. An empty pre-hash
 // string means "unknown"; in that case the implementation cannot determine
 // ellChanged/xmlChanged and MUST return InvalidInput (it must not guess).

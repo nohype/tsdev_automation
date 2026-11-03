@@ -149,8 +149,8 @@ function Invoke-CliRaw {
         $ErrorActionPreference = 'Continue'
         try {
             # OS-level redirection writes the child's raw stdout/stderr bytes
-            # to files. `2>` on a native command wraps stderr in ErrorRecords —
-            # prefixing the first line and injecting error-record text — which
+            # to files. `2>` on a native command wraps stderr in ErrorRecords --
+            # prefixing the first line and injecting error-record text -- which
             # corrupts line-exact assertions on batch progress output.
             $proc = Start-Process -FilePath $script:CliPath `
                 -ArgumentList $argString `
@@ -301,7 +301,7 @@ $badSrc = "this is not valid easylanguage;"
 
 try {
     # -------------------------------------------------------------------
-    # Test 1: batch-insert — 2 valid + 1 compile-error + 1 missing source
+    # Test 1: batch-insert -- 2 valid + 1 compile-error + 1 missing source
     # -------------------------------------------------------------------
     $n1 = "BatchTest_${runId}_Ins1"; $allTestNames += $n1
     $n2 = "BatchTest_${runId}_Ins2"; $allTestNames += $n2
@@ -349,7 +349,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # Test 2: batch-delete — 1 existing + 1 non-existing
+    # Test 2: batch-delete -- 1 existing + 1 non-existing
     # -------------------------------------------------------------------
     $nDelExisting = $n1  # inserted in Test 1
     $nDelMissing = "BatchTest_${runId}_DelMissing"
@@ -376,7 +376,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # Test 3: batch-modify — 1 existing (ProgId preserved) + 1 non-existing
+    # Test 3: batch-modify -- 1 existing (ProgId preserved) + 1 non-existing
     # -------------------------------------------------------------------
     # First insert a component to modify.
     $nMod = "BatchTest_${runId}_Mod"; $allTestNames += $nMod
@@ -444,7 +444,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # Test 5: exit codes — all-success (exit 0), missing manifest (exit 1)
+    # Test 5: exit codes -- all-success (exit 0), missing manifest (exit 1)
     # -------------------------------------------------------------------
     $n5 = "BatchTest_${runId}_AllOk"; $allTestNames += $n5
     $f5 = Write-SourceFile "allok" $validSrc
@@ -458,7 +458,7 @@ try {
     Run-TestCase -TestId "B5a-all-success-exit0" -Body {
         # Human mode (no --json): stdout is EMPTY (the results array is
         # emitted only under --json) and stderr carries the human per-item
-        # completion lines — the hand-built expected result object stands
+        # completion lines -- the hand-built expected result object stands
         # in for the absent stdout array.
         $cli = Invoke-CliRaw -Arguments @("batch-insert", $manifestPath5)
         Assert-True ($cli.ExitCode -eq 0) "exit_code: expected 0 (all success), got $($cli.ExitCode)"
@@ -489,7 +489,7 @@ try {
     }
 
     # -------------------------------------------------------------------
-    # Test 6: larger batch (20 items) — init amortization, no degradation
+    # Test 6: larger batch (20 items) -- init amortization, no degradation
     # -------------------------------------------------------------------
     $bigNames = @()
     $bigManifestLines = @()

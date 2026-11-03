@@ -2,14 +2,14 @@
 //
 // Unit test for TVS-K.3: serve request dispatch layer.
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises the implemented parseServeRequest() helper in src/tsdev_cli.cpp:
 //   - parseServeRequest(const ordered_json& req, ServeRequest& out)
 //       -> CliResult (usage-error CliResult on malformed request).
 //
 // Per the TVS-K.3 plan, dispatchServeRequest() is NOT unit-tested here (it
-// needs a real TsDevLib, which is concrete and thread-affine — not mockable).
+// needs a real TsDevLib, which is concrete and thread-affine -- not mockable).
 // The dispatch switch is validated via the K.5/K.6a E2E integration path with
 // the real TsDevLib. This test focuses exclusively on parseServeRequest()
 // (pure logic, no TsDevLib).
@@ -40,7 +40,7 @@
 //      outputPath=="C:\\tmp\\out.el".
 //   4. Valid quit: {"op":"quit"} -> op=="quit".
 //
-// Checks (error cases — malformed requests return a usage-error CliResult):
+// Checks (error cases -- malformed requests return a usage-error CliResult):
 //   5. Missing op field: {} -> exitCode==1, error.code=="usage_error",
 //      error.message contains "op".
 //   6. Unknown op: {"op":"foobar"} -> exitCode==1, error.code=="usage_error",
@@ -85,7 +85,7 @@
 //      index<=total; 4294967296 rejected for index and for total (the
 //      binary is built Win32, size_t is 32-bit).
 //
-// Checks (serve cache ops — backup-cache/restore-cache):
+// Checks (serve cache ops -- backup-cache/restore-cache):
 //  19. Both ops parse with no type/name/source (quit-style early-out);
 //      absent "policy" -> out.policy "abort" on backup-cache (serve
 //      default; the broker has no console to prompt), empty on
@@ -95,7 +95,7 @@
 //      exit 1 (broker has no console); unknown/non-string values rejected.
 //  21. "policy" rejected exit 1 on non-backup-cache ops (quit/restore-cache/
 //      exists/insert).
-//  22. "batch" metadata rejected exit 1 on cache ops (mutating-op gate —
+//  22. "batch" metadata rejected exit 1 on cache ops (mutating-op gate --
 //      cache ops are not WHServer-mutating).
 //  23. CliResult::extraPayload merge: success CliResult carrying the
 //      standalone --json payload serializes its members at top level via
@@ -685,7 +685,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 15 (TVS A): untagged request unchanged — a valid insert
+    // Check 15 (TVS A): untagged request unchanged -- a valid insert
     //   with no "batch" member parses exactly as before and reports
     //   hasBatch==false.
     // ------------------------------------------------------------------
@@ -806,7 +806,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 17 (TVS A): tagged parse failures keep the progress data the
     //   serve loop needs. When 'batch' validated but a later step fails,
     //   out.hasBatch/batchIndex/batchTotal are populated and the failure
-    //   CliResult carries op/typeStr/name as far as validation reached —
+    //   CliResult carries op/typeStr/name as far as validation reached --
     //   taggedParseFailureLines(r, out, ...) must render the exact
     //   started/completed pair. When 'batch' itself is invalid,
     //   hasBatch==false and the helper returns an empty pair (untagged
@@ -909,7 +909,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
 
         // (c) invalid 'batch' metadata itself: hasBatch stays false, so
-        //   the helper returns an empty pair — an untagged parse failure
+        //   the helper returns an empty pair -- an untagged parse failure
         //   emits no progress.
         ordered_json reqJson3 = ordered_json::parse(
             "{\"op\":\"insert\",\"type\":\"strategy\",\"name\":\"T\","
@@ -997,7 +997,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 19: Serve cache ops parse with no type/name/source.
     //   {"op":"backup-cache"} and {"op":"restore-cache"}
     // Expected: parse succeeds, out.op set, absent "policy" resolves to
-    //   out.policy "abort" on backup-cache (the serve default — the broker
+    //   out.policy "abort" on backup-cache (the serve default -- the broker
     //   has no console) and stays empty on restore-cache; no type/name
     //   required (same early-out pattern as quit).
     // ------------------------------------------------------------------
@@ -1159,7 +1159,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 23: CliResult::extraPayload merge — the response-frame seam for
+    // Check 23: CliResult::extraPayload merge -- the response-frame seam for
     //   the serve cache ops. A success CliResult carrying the standalone
     //   --json payload object must serialize its members at top level via
     //   cliResultToJson (op/success/exit_code identical). This is the pure
@@ -1445,7 +1445,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

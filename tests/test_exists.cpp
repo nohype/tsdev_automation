@@ -13,15 +13,15 @@
 //
 // Flow:
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. Pre-clean: findExistPos(name, Strategy) — delete if it already exists
-//   3. createEntry(Strategy, name, errCode) — assert ProgId > 0
-//   4. saveSource(Strategy, progId, source) — assert success
-//   5. verifyModule(Strategy, progId) — assert no errors
-//   6. findExistPos(name, Strategy) — ASSERT ProgId > 0 (item exists)
-//   7. findExistPos("NonExistentNameXYZ", Strategy) — ASSERT returns <= 0
+//   2. Pre-clean: findExistPos(name, Strategy) -- delete if it already exists
+//   3. createEntry(Strategy, name, errCode) -- assert ProgId > 0
+//   4. saveSource(Strategy, progId, source) -- assert success
+//   5. verifyModule(Strategy, progId) -- assert no errors
+//   6. findExistPos(name, Strategy) -- ASSERT ProgId > 0 (item exists)
+//   7. findExistPos("NonExistentNameXYZ", Strategy) -- ASSERT returns <= 0
 //      (orlib20 returns -1 for not-found; the SEH wrapper returns 0; a
 //      positive ProgId would mean the item exists = failure)
-//   8. deleteEntry(Strategy, name) — cleanup
+//   8. deleteEntry(Strategy, name) -- cleanup
 //   9. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -29,7 +29,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread.
 
@@ -88,7 +88,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: Pre-clean — ensure the entry does not already exist ---
+    // --- Step 2: Pre-clean -- ensure the entry does not already exist ---
     std::fprintf(stdout, "\n[2] Pre-clean: findExistPos(\"%s\", Strategy)...\n",
                  kTestName);
     int existing = lib->findExistPos(kTestName, ComponentType::Strategy);
@@ -143,7 +143,7 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 6: findExistPos for the EXISTING name — ASSERT ProgId > 0 ---
+    // --- Step 6: findExistPos for the EXISTING name -- ASSERT ProgId > 0 ---
     std::fprintf(stdout,
                  "\n[6] findExistPos(\"%s\", Strategy) -- "
                  "asserting item EXISTS...\n",
@@ -160,7 +160,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    PASS: existing item found (ProgId=%d)\n",
                  foundProgId);
 
-    // --- Step 7: findExistPos for a NONEXISTENT name — ASSERT returns 0 ---
+    // --- Step 7: findExistPos for a NONEXISTENT name -- ASSERT returns 0 ---
     std::fprintf(stdout,
                  "\n[7] findExistPos(\"%s\", Strategy) -- "
                  "asserting item does NOT exist...\n",
@@ -179,7 +179,7 @@ DWORD WINAPI runTest(LPVOID param) {
                      notFoundProgId);
     }
 
-    // --- Step 8: Cleanup — delete the probe entry ---
+    // --- Step 8: Cleanup -- delete the probe entry ---
     std::fprintf(stdout, "\n[8] Cleanup: deleteEntry(Strategy, \"%s\")...\n",
                  kTestName);
     bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);

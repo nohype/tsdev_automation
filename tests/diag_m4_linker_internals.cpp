@@ -37,8 +37,8 @@
 //  12. Cleans up: deletes the Function. Checks for TSCrashReport.exe.
 //
 // All orlib20 calls are SEH-protected. The warehouse pointer from
-// Ordinal_10(0) is a LIVE pointer — it is NOT freed. The SafeArray at
-// warehouse+0x26 is owned by the warehouse — we use SafeArrayAccessData /
+// Ordinal_10(0) is a LIVE pointer -- it is NOT freed. The SafeArray at
+// warehouse+0x26 is owned by the warehouse -- we use SafeArrayAccessData /
 // SafeArrayUnaccessData but NEVER SafeArrayDestroy.
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
@@ -85,7 +85,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (category:char, progId:int,
-//   flag:int). Returns live record pointer (refcounted — release via
+//   flag:int). Returns live record pointer (refcounted -- release via
 //   Ordinal_70).
 typedef void* (__cdecl *Ordinal69Fn)(char category, int progId, int flag);
 
@@ -147,7 +147,7 @@ bool callOrd28(Ordinal28Fn fn, int category, int progId, int flag,
     return true;
 }
 
-// callLinkerManual — calls the linker with ALL 4 args on the stack
+// callLinkerManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -228,7 +228,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -761,7 +761,7 @@ DWORD WINAPI runDiag(LPVOID param) {
             std::printf("    [linker returned NULL -- no record to "
                         "inspect]\n");
         }
-        // Read warehouse+0x23d again — did it change?
+        // Read warehouse+0x23d again -- did it change?
         std::printf("\n  [6b] Reading warehouse+0x23d AFTER linker call...\n");
         readCachedLinkedRecord("AFTER linker call", whPtr, funcProgId);
 
@@ -926,7 +926,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // Insert+verify + linker + Ord69 x2 + SafeArray/ELL inspection may take
     // longer.
     DWORD wait = WaitForSingleObject(hThread, 120000);

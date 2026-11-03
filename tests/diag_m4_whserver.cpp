@@ -33,12 +33,12 @@
 //   +0xAA: secondary COM object
 //
 // Key orlib20 functions:
-//   Ordinal_10  (RVA 0x1A9650) — warehouse getter, returns CELWHouse pointer
-//   Ordinal_69  (RVA 0x1A3E00) — module-record retrieval, triggers linker
+//   Ordinal_10  (RVA 0x1A9650) -- warehouse getter, returns CELWHouse pointer
+//   Ordinal_69  (RVA 0x1A3E00) -- module-record retrieval, triggers linker
 //                                with param_3 != 0
-//   Ordinal_70  (RVA 0x15DF30) — refcount/free
-//   Ordinal_28  (RVA 0x1A03F0) — master-record lookup (partial copy)
-//   ordinal 85  (RVA 0x1A3340) — the linker (exported)
+//   Ordinal_70  (RVA 0x15DF30) -- refcount/free
+//   Ordinal_28  (RVA 0x1A03F0) -- master-record lookup (partial copy)
+//   ordinal 85  (RVA 0x1A3340) -- the linker (exported)
 //
 // This diagnostic:
 //   1. Constructs a TsDevLib (test-only ctor, real COM, no hooks) on a 64MB-
@@ -64,8 +64,8 @@
 //  11. Cleanup: delete the Function. Check for TSCrashReport.exe.
 //
 // All orlib20 calls are SEH-protected. The warehouse pointer from
-// Ordinal_10(0) is a LIVE pointer — it is NOT freed. Ordinal_69 returns a
-// refcounted record — released via Ordinal_70(rec, 0).
+// Ordinal_10(0) is a LIVE pointer -- it is NOT freed. Ordinal_69 returns a
+// refcounted record -- released via Ordinal_70(rec, 0).
 
 #include "../src/orlib_resolver.h"          // OrlibResolver (public)
 #include "../src/tsdev_lib_test_hooks.h"    // internal/test-only header
@@ -110,7 +110,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (category:char, progId:int,
-//   flag:int). Returns live record pointer (refcounted — release via
+//   flag:int). Returns live record pointer (refcounted -- release via
 //   Ordinal_70).
 typedef void* (__cdecl *Ordinal69Fn)(char category, int progId, int flag);
 
@@ -122,7 +122,7 @@ typedef int   (__stdcall *Ordinal70Fn)(void* rec, int flag);
 typedef unsigned int (__stdcall *Ordinal28Fn)(int category, int progId,
                                               int flag, void* outBuf);
 
-// Linker FUN_101a3340 (ordinal 85). Calling convention UNCERTAIN — Ghidra
+// Linker FUN_101a3340 (ordinal 85). Calling convention UNCERTAIN -- Ghidra
 // says __fastcall (ECX=type, EDX=id, stack: errorFlag, partialBuf), but the
 // Frida trace shows args on the stack (type, id, errorFlag, partialBuf) with
 // ECX/EDX holding unrelated values. We test BOTH conventions.
@@ -203,7 +203,7 @@ bool callLinkerStdcall(LinkerStdcallFn fn, int type, int id, int errorFlag,
     return true;
 }
 
-// callLinkerFastcallManual — calls the linker with ALL 4 args on the stack
+// callLinkerFastcallManual -- calls the linker with ALL 4 args on the stack
 // (as __stdcall would) AND loads ECX=type, EDX=id (as __fastcall would),
 // using inline assembly so we can manually restore ESP regardless of whether
 // the callee did RET 0x10 (stdcall, popped 16) or RET 0x8 (fastcall, popped
@@ -242,7 +242,7 @@ void* callLinkerFastcallManual(void* fn, int whType, int whId, int whErrFlag,
         call fn
         // Capture EAX (the return value) into retVal.
         mov  retVal, eax
-        // Restore ESP from the snapshot — this discards any stack imbalance
+        // Restore ESP from the snapshot -- this discards any stack imbalance
         // (whether the callee popped 16, 8, or 0 bytes via RET n).
         mov  esp, esi
     }
@@ -272,7 +272,7 @@ bool callLinkerFastcallSafe(void* fn, int type, int id, int errorFlag,
 
 bool callLinkerFastcall(LinkerFastcallFn fn, int type, int id, int errorFlag,
                         void* partialBuf, PtrSehResult* out) {
-    // Deprecated direct path (kept for reference) — NOT used because a
+    // Deprecated direct path (kept for reference) -- NOT used because a
     // convention mismatch corrupts the caller's stack. Use
     // callLinkerFastcallSafe instead.
     (void)fn; (void)type; (void)id; (void)errorFlag; (void)partialBuf;
@@ -320,7 +320,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -994,7 +994,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // Insert+verify + multiple linker calls + Ordinal_69 + log inspection may
     // take longer.
     DWORD wait = WaitForSingleObject(hThread, 120000);

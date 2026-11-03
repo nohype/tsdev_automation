@@ -15,23 +15,23 @@
 //
 // Flow:
 //   1. Construct TsDevLib (loads orlib20.dll, patches, inits, EDIT control)
-//   2. Pre-clean: findExistPos(strategyName, Strategy) — delete if exists
-//   3. Pre-clean: findExistPos(funcName, Function) — delete if exists
-//   4. createEntry(Strategy, strategyName, errCode) — assert ProgId > 0
-//   5. saveSource(Strategy, progId, strategySource) — assert success
-//   6. verifyModule(Strategy, progId) — assert no errors
-//   7. getSource(Strategy, strategyName) — ASSERT returned string contains
+//   2. Pre-clean: findExistPos(strategyName, Strategy) -- delete if exists
+//   3. Pre-clean: findExistPos(funcName, Function) -- delete if exists
+//   4. createEntry(Strategy, strategyName, errCode) -- assert ProgId > 0
+//   5. saveSource(Strategy, progId, strategySource) -- assert success
+//   6. verifyModule(Strategy, progId) -- assert no errors
+//   7. getSource(Strategy, strategyName) -- ASSERT returned string contains
 //      key substrings from the inserted source (G1 happy path)
-//   8. getSource(Strategy, "NonExistentName_GetSrcTest") — ASSERT returns
+//   8. getSource(Strategy, "NonExistentName_GetSrcTest") -- ASSERT returns
 //      empty string (G2 nonexistent)
-//   9. createEntry(Function, funcName, errCode) — assert ProgId > 0
-//  10. saveSource(Function, progId, funcSource) — assert success
-//  11. verifyModule(Function, progId) — assert no errors
-//  12. getSource(Function, funcName) — ASSERT returned string contains
+//   9. createEntry(Function, funcName, errCode) -- assert ProgId > 0
+//  10. saveSource(Function, progId, funcSource) -- assert success
+//  11. verifyModule(Function, progId) -- assert no errors
+//  12. getSource(Function, funcName) -- ASSERT returned string contains
 //      key substrings from the inserted source (G3 function type)
-//  13. deleteEntry(Strategy, strategyName) — cleanup
-//  14. deleteEntry(Function, funcName) — cleanup
-//  15. closeWarehouse() — assert explicit flush status
+//  13. deleteEntry(Strategy, strategyName) -- cleanup
+//  14. deleteEntry(Function, funcName) -- cleanup
+//  15. closeWarehouse() -- assert explicit flush status
 //  16. Print PASS / FAIL
 //
 // Exit code: 0 on success, nonzero on failure.
@@ -39,7 +39,7 @@
 // NOTE: The EasyLanguage compiler (invoked via VerifyModule_New) requires a
 // large stack, AND the hidden EDIT control created by TsDevLib is a Win32
 // window (thread-affine). The reference probe (archive/elevated_test20.cpp) runs its
-// ENTIRE flow — including orlib init and window creation — in a worker thread
+// ENTIRE flow -- including orlib init and window creation -- in a worker thread
 // with a 64 MB stack. We do the same: TsDevLib is constructed AND destructed
 // inside the worker thread. An SEH wrapper around the worker thread body
 // catches any unhandled structured exception and converts it to a nonzero
@@ -117,7 +117,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
     std::fprintf(stdout, "    TsDevLib constructed OK\n");
 
-    // --- Step 2: Pre-clean strategy — ensure it does not already exist ---
+    // --- Step 2: Pre-clean strategy -- ensure it does not already exist ---
     std::fprintf(stdout,
                  "\n[2] Pre-clean: findExistPos(\"%s\", Strategy)...\n",
                  kStrategyName);
@@ -134,7 +134,7 @@ DWORD WINAPI runTest(LPVOID param) {
                      deleted ? "true" : "false");
     }
 
-    // --- Step 3: Pre-clean function — ensure it does not already exist ---
+    // --- Step 3: Pre-clean function -- ensure it does not already exist ---
     std::fprintf(stdout,
                  "\n[3] Pre-clean: findExistPos(\"%s\", Function)...\n",
                  kFuncName);
@@ -177,7 +177,7 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 6: verifyModule (strategy — compile + persist) ---
+    // --- Step 6: verifyModule (strategy -- compile + persist) ---
     std::fprintf(stdout, "\n[6] verifyModule(Strategy, %d)...\n", progId);
     std::string errors =
         lib->verifyModule(ComponentType::Strategy, progId);
@@ -295,7 +295,7 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
 
-    // --- Step 11: verifyModule (function — compile + persist) ---
+    // --- Step 11: verifyModule (function -- compile + persist) ---
     std::fprintf(stdout, "\n[11] verifyModule(Function, %d)...\n",
                  funcProgId);
     std::string funcErrors =
@@ -351,7 +351,7 @@ DWORD WINAPI runTest(LPVOID param) {
                  "\"%s\"\n",
                  kFuncKeySubstr);
 
-    // --- Step 13: Cleanup — delete the strategy probe ---
+    // --- Step 13: Cleanup -- delete the strategy probe ---
     std::fprintf(stdout,
                  "\n[13] Cleanup: deleteEntry(Strategy, \"%s\")...\n",
                  kStrategyName);
@@ -363,7 +363,7 @@ DWORD WINAPI runTest(LPVOID param) {
         st->exitCode = fail("cleanup deleteEntry failed for strategy", 110);
     }
 
-    // --- Step 14: Cleanup — delete the function probe ---
+    // --- Step 14: Cleanup -- delete the function probe ---
     std::fprintf(stdout,
                  "\n[14] Cleanup: deleteEntry(Function, \"%s\")...\n",
                  kFuncName);
@@ -395,7 +395,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);

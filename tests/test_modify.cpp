@@ -8,9 +8,9 @@
 //   1. Find the existing component by name+type (FindExistPos).
 //   2. Return Result{success=false} if the component does not exist.
 //   3. Replace the component's EasyLanguage source with newSource (saveSource
-//      on the EXISTING ProgId — NO createEntry).
+//      on the EXISTING ProgId -- NO createEntry).
 //   4. Recompile and re-verify (verifyModule).
-//   5. Fail loudly on compilation errors — return the error string in
+//   5. Fail loudly on compilation errors -- return the error string in
 //      Result.message so the caller can report it.
 //   6. Persist the new source (the .ell file should be updated).
 //   7. The component's ProgId should NOT change (modification, not re-creation).
@@ -19,7 +19,7 @@
 //   SETUP:   Ensure test component (zzz_cli_modify_test, Strategy) exists with
 //            source A (Buy order). Insert if needed.
 //   RECORD:  Record .ell file path + timestamp/size.
-//   MODIFY:  modifyEntry(Strategy, name, sourceB) — changes Buy -> Sell.
+//   MODIFY:  modifyEntry(Strategy, name, sourceB) -- changes Buy -> Sell.
 //   VERIFY:  - modifyEntry returned success (no compile errors).
 //            - Component still exists; findExistPos returns the SAME ProgId.
 //            - .ell file exists and its timestamp changed (was updated).
@@ -73,7 +73,7 @@ const char* kInvalidSource =
 const char* kNonexistentName = "zzz_nonexistent_xyz";
 
 // ---------------------------------------------------------------------------
-// Process scanning (report only — do NOT kill)
+// Process scanning (report only -- do NOT kill)
 // ---------------------------------------------------------------------------
 
 int scanProcesses(const char* when, const char* const* names, int nameCount,
@@ -249,7 +249,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 4: Modify — change Buy -> Sell (source B)
+    // PHASE 4: Modify -- change Buy -> Sell (source B)
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 4: modifyEntry(Strategy, name, sourceB) ---\n");
     Result modRes = lib->modifyEntry(ComponentType::Strategy, kTestName,
@@ -330,7 +330,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 6: Negative test — modify a nonexistent component
+    // PHASE 6: Negative test -- modify a nonexistent component
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 6: Negative test (nonexistent) ---\n");
     Result negRes = lib->modifyEntry(ComponentType::Strategy,
@@ -345,7 +345,7 @@ DWORD WINAPI runTest(LPVOID param) {
     std::fprintf(stdout, "    PASS: modifyEntry(nonexistent) returned failure\n");
 
     // ================================================================
-    // PHASE 7: Compile-error test — invalid source
+    // PHASE 7: Compile-error test -- invalid source
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 7: Compile-error test (invalid source) ---\n");
     Result errRes = lib->modifyEntry(ComponentType::Strategy, kTestName,
@@ -364,7 +364,7 @@ DWORD WINAPI runTest(LPVOID param) {
         return 0;
     }
     // TVS-A.4: The error message must contain REAL compiler diagnostics with
-    // readable text — not the synthesized fallback AND not garbage bytes from
+    // readable text -- not the synthesized fallback AND not garbage bytes from
     // a misinterpreted std::string object (ABI bug). Real compiler error text
     // contains alphabetic characters (e.g. "Expected", "error", "syntax").
     if (errRes.message.find("VerifyModule_New returned") != std::string::npos) {
@@ -407,7 +407,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ================================================================
-    // PHASE 8: Cleanup — delete the test component
+    // PHASE 8: Cleanup -- delete the test component
     // ================================================================
     std::fprintf(stdout, "\n--- Phase 8: Cleanup (deleteEntry) ---\n");
     bool deleted = lib->deleteEntry(ComponentType::Strategy, kTestName);
@@ -445,7 +445,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);

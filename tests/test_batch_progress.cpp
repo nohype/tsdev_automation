@@ -4,7 +4,7 @@
 // exit-code helper (TVS A), plus the TVS C cooperative stdin batch-control
 // helpers (decision reader, control-error renderer, cancelled marker).
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises these helpers in src/tsdev_cli.cpp:
 //   - std::string batchItemStartedLine(const std::string& op, size_t index,
@@ -25,7 +25,7 @@
 //   - CliResult cancelledBatchItemResult(const std::string& op,
 //         const BatchItem& item);                                   (TVS C)
 //
-// Line contract (both renderers): the returned string is exactly ONE line —
+// Line contract (both renderers): the returned string is exactly ONE line --
 // it contains no '\n' or '\r' anywhere and no trailing newline (production
 // emission appends '\n' + fflush(stderr) later). JSON mode emits one compact
 // object per the approved schemas:
@@ -37,7 +37,7 @@
 //   {"event":"batch_completed","batch_operation":"...","completed":2,
 //    "total":3,"successes":1,"failures":1,"not_run":1,"cancelled":true,
 //    "close_failed":false,"exit_code":3}
-// Human mode emits one canonical line per event — the explicit tokens
+// Human mode emits one canonical line per event -- the explicit tokens
 // START / SUCCESS / FAILED / COMPLETE / CANCELLED, a 1-based "[index/total]"
 // on item lines, and ordered key=value fields carrying the equivalent data:
 //   BATCH START [i/n] op=<op> type="<type>" name="<name>"
@@ -73,7 +73,7 @@
 //   3. JSON batch_item_completed (success result): success:true, exit_code:0,
 //      "result" equal to cliResultToJson(r) verbatim.
 //   4. JSON batch_completed: exact member set incl. not_run, cancelled,
-//      close_failed, exit_code — boolean fields are JSON booleans, counters
+//      close_failed, exit_code -- boolean fields are JSON booleans, counters
 //      are JSON integers. Covered for a cancelled+close-failed batch and a
 //      clean batch.
 //   5. Human item lines: exact canonical START / SUCCESS / FAILED lines,
@@ -85,7 +85,7 @@
 //      form inside the canonical human line for BOTH the started and
 //      completed renderers, and round-trips verbatim through JSON mode.
 //   8. batchAggregateExitCode: all 8 (batchStarted, anyFailed, cancelled)
-//      combinations — !batchStarted -> 1, cancelled -> 3 (dominates),
+//      combinations -- !batchStarted -> 1, cancelled -> 3 (dominates),
 //      anyFailed -> 2, clean -> 0.
 //   9. (TVS C) readBatchControlDecision: exactly "continue\n" -> Continue
 //      and "cancel\n" -> Cancel; one stream yields one decision per call;
@@ -141,7 +141,7 @@ int fail(const char* msg, int code) {
     return code;
 }
 
-// Helper: returns true when `line` is exactly one physical line — non-empty,
+// Helper: returns true when `line` is exactly one physical line -- non-empty,
 // no '\n'/'\r' anywhere, hence no trailing newline either.
 bool isSingleLine(const std::string& line) {
     return !line.empty() &&
@@ -152,7 +152,7 @@ bool isSingleLine(const std::string& line) {
 // Helper (TVS C checks): returns a binary-mode FILE* positioned at the start
 // of an anonymous pipe pre-filled with `bytes`; once those bytes are consumed
 // the reader sees EOF. This feeds the stdin-shaped control protocol exact
-// byte sequences — including immediate EOF — without touching the real stdin
+// byte sequences -- including immediate EOF -- without touching the real stdin
 // or the filesystem. The FILE* owns the pipe read handle; fclose() releases
 // it. Returns nullptr on setup failure.
 FILE* fileFromBytes(const std::string& bytes) {
@@ -189,7 +189,7 @@ FILE* fileFromBytes(const std::string& bytes) {
     return f;
 }
 
-// Helper (TVS C checks): drains the remainder of `f` into a string — used to
+// Helper (TVS C checks): drains the remainder of `f` into a string -- used to
 // assert the byte-exact manifest/decision boundary on the input stream.
 std::string drainFile(FILE* f) {
     std::string out;
@@ -216,7 +216,7 @@ BatchControlDecision readerReturnsError(void*, std::string& err) {
     err = "injected read failure";
     return BatchControlDecision::Error;
 }
-// Blocks longer than any bound the test arms — models the orphaned
+// Blocks longer than any bound the test arms -- models the orphaned
 // control channel (dead parent, open pipe: fgetc never returns).
 BatchControlDecision readerBlocksForever(void* ctx, std::string& err) {
     err.clear();
@@ -363,7 +363,7 @@ DWORD WINAPI runTest(LPVOID param) {
             ec = fail("check2: exit_code != 8 (integer)", 29);
             return 0;
         }
-        // The "result" member must be the exact cliResultToJson object —
+        // The "result" member must be the exact cliResultToJson object --
         // the same element schema the final array and serve responses use.
         if (!j.contains("result") || !j["result"].is_object() ||
             j["result"] != cliResultToJson(r)) {
@@ -531,7 +531,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 5: Human item lines (jsonOutput=false) — exact canonical form.
+    // Check 5: Human item lines (jsonOutput=false) -- exact canonical form.
     //   (a) batchItemStartedLine("insert", 1, 3, "strategy", "MyStrat", false)
     //       == "BATCH START [1/3] op=insert type=\"strategy\"
     //           name=\"MyStrat\""
@@ -593,7 +593,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 6: Human batch_completed — exact canonical form.
+    // Check 6: Human batch_completed -- exact canonical form.
     //   (a) clean batch ==
     //       "BATCH COMPLETE op=insert completed=3 total=3 successes=3
     //        failures=0 not_run=0 cancelled=false close_failed=false
@@ -634,7 +634,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 7: Escaping — one event stays one physical line, through BOTH
+    // Check 7: Escaping -- one event stays one physical line, through BOTH
     //   the started and completed renderers.
     //   name = A"q<LF>B<CR>C\d  (quote, LF, CR, backslash)
     //   (a) human started: exact canonical line carrying the escaped form
@@ -709,7 +709,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 8: batchAggregateExitCode — every (batchStarted, anyFailed,
+    // Check 8: batchAggregateExitCode -- every (batchStarted, anyFailed,
     // cancelled) combination.
     //   !batchStarted -> 1 (pre-run usage/manifest/dir failures unchanged);
     //   cancelled -> 3 (dominates: cancelled + anyFailed is still 3);
@@ -751,12 +751,12 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 9 (TVS C): readBatchControlDecision — the between-items stdin
+    // Check 9 (TVS C): readBatchControlDecision -- the between-items stdin
     //   decision reader.
     //   Accepts EXACTLY "continue\n" -> BatchControlDecision::Continue and
     //   "cancel\n" -> BatchControlDecision::Cancel. EOF, a read error, or
     //   ANY other token (blank line, uppercase, leading/trailing spaces,
-    //   CRLF — the approved design admits only LF — garbage) ->
+    //   CRLF -- the approved design admits only LF -- garbage) ->
     //   BatchControlDecision::Error with a NON-EMPTY diagnostic in `error`.
     //   (a) "continue\n" -> Continue.
     //   (b) "cancel\n" -> Cancel.
@@ -813,7 +813,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
 
-        // Rejection table — every input must yield Error and a nonempty
+        // Rejection table -- every input must yield Error and a nonempty
         // diagnostic. "" is immediate EOF; "continue"/"cancel" without the
         // LF hit EOF mid-token (a channel anomaly, not a clean decision).
         const char* badInputs[] = {
@@ -859,16 +859,16 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 10 (TVS C): batchControlErrorLine — the batch_control_error
+    // Check 10 (TVS C): batchControlErrorLine -- the batch_control_error
     //   event renderer.
     //   (a) JSON: one physical line parsing to EXACTLY
     //       {"event":"batch_control_error","message":<msg>,
-    //        "action":"cancel"} — exactly three members.
+    //        "action":"cancel"} -- exactly three members.
     //   (b) human: exactly
     //       "BATCH CONTROL ERROR: <message>; cancelling before next item".
     //   (c) escaping: a message containing '"' + LF + CR + '\' stays on
     //       ONE physical line in both renderers; the human <message> slot
-    //       carries the JSON one-line escaped form (\" \\ \n \r — same
+    //       carries the JSON one-line escaped form (\" \\ \n \r -- same
     //       escaping jsonQuote applies, without the surrounding quotes),
     //       and the JSON "message" member round-trips verbatim.
     // ------------------------------------------------------------------
@@ -953,12 +953,12 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 11 (TVS C): cancelledBatchItemResult — the synthetic not-run
+    // Check 11 (TVS C): cancelledBatchItemResult -- the synthetic not-run
     //   marker CliResult for items never attempted after a cancel.
     //   Preserves the original op/type/name verbatim; success=false;
     //   exitCode=12; errorMessage is EXACTLY
     //   "Batch cancelled before this item was attempted". The serialized
-    //   form (cliResultToJson — the same schema the final array uses)
+    //   form (cliResultToJson -- the same schema the final array uses)
     //   carries error.code "cancelled", i.e. errorCodeString(12,op) ==
     //   "cancelled" for any op.
     // ------------------------------------------------------------------
@@ -1025,7 +1025,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 12 (TVS C): cancel composition — one attempted item plus
+    // Check 12 (TVS C): cancel composition -- one attempted item plus
     //   cancelledBatchItemResult markers for the remaining items keeps the
     //   results vector (and hence the emitted stdout array) FULL LENGTH,
     //   and the aggregate exit is 3 because cancelled dominates anyFailed.
@@ -1038,7 +1038,7 @@ DWORD WINAPI runTest(LPVOID param) {
     //       elements 1-2 are exit-12/cancelled markers.
     //   (b) batchAggregateExitCode(started, anyFailed, cancelled) == 3.
     //   (c) batchCompletedLine reports completed=1 (attempted),
-    //       not_run=2 (markers), cancelled=true, exit_code=3 — and
+    //       not_run=2 (markers), cancelled=true, exit_code=3 -- and
     //       completed + not_run == total.
     // ------------------------------------------------------------------
     {
@@ -1127,13 +1127,13 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 13 (TVS-1b): WHServer VAS-guard abort path —
+    // Check 13 (TVS-1b): WHServer VAS-guard abort path --
     //   (a) batchAggregateExitCode(started, anyFailed, cancelled=false,
     //       aborted=true) == 14; aborted dominates anyFailed.
     //   (b) batchCompletedLine with aborted=true + abortReason renders the
     //       ABORTED token and aborted/abort_reason fields (human + JSON);
     //       a non-aborted call stays byte-identical (already pinned by
-    //       checks 4/6 — re-asserted implicitly here via JSON members).
+    //       checks 4/6 -- re-asserted implicitly here via JSON members).
     //   (c) cancelledBatchItemResult with the abort message keeps exit 12
     //       and carries the abort reason verbatim.
     //   (d) whserverVasAbortLine / whserverVasMeasureFailedLine render one
@@ -1185,7 +1185,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         // Non-aborted JSON carries NO aborted members (byte-identical
-        // contract preserved — exact member count already pinned in
+        // contract preserved -- exact member count already pinned in
         // check 4a).
         if (aj.contains("not_run") != true) {
             ec = fail("check13b: JSON missing not_run", 164);
@@ -1258,18 +1258,18 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 14 (TVS-1c): serve-path VAS-guard refusal —
+    // Check 14 (TVS-1c): serve-path VAS-guard refusal --
     //   (a) serveVasGuardRefuse returns false for a disabled guard, for a
     //       non-mutating op (exists/get-source are never VAS-gated), and
     //       for a mutating op with zero thresholds (breach requires a
-    //       value STRICTLY below the threshold; 0 can never breach) — all
+    //       value STRICTLY below the threshold; 0 can never breach) -- all
     //       deterministic, no WHServer dependency.
     //   (b) The refusal CliResult serializes like a normal op failure:
     //       exit_code=14, error.code="whserver_vas_abort" via
-    //       errorCodeString, message carried verbatim — the contract the
+    //       errorCodeString, message carried verbatim -- the contract the
     //       Python client aborts on.
     //   (c) R1: the attached-site deferred recycle boundary (engine NOT
-    //       run — +7 m_nLock lasts the process's lifetime) serializes on
+    //       run -- +7 m_nLock lasts the process's lifetime) serializes on
     //       the same exit-18 "whserver_recycled" frame the client
     //       respawns on.
     // ------------------------------------------------------------------
@@ -1303,7 +1303,7 @@ DWORD WINAPI runTest(LPVOID param) {
         // Enabled guard + a mutating op but impossible thresholds (0):
         // every WHServer pid either fails to measure (warn-once, no
         // refusal) or reports free MB >= 0 -> never breaches. Deterministic
-        // whether or not WHServer is running — the one environmental input
+        // whether or not WHServer is running -- the one environmental input
         // that CAN still refuse is a real crash-frozen WHServer on this
         // machine (the zombie pre-check fires regardless of thresholds;
         // genuinely absent in test environments).
@@ -1340,7 +1340,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
 
         // R1: the attached-site deferred recycle boundary serializes on
-        // the same exit-18 frame the client respawns on — exit_code=18,
+        // the same exit-18 frame the client respawns on -- exit_code=18,
         // error.code "whserver_recycled" via errorCodeString (the frame
         // is the contract; the message says WHY deferred).
         CliResult def;
@@ -1367,7 +1367,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 15 (R6): bounded batch-control wait (design §5) — the decision
+    // Check 15 (R6): bounded batch-control wait (design Sec. 5) -- the decision
     //   read runs on a helper thread under a bounded wait; a stalled/open
     //   channel yields Error (cancel) instead of an unbounded orphan wait.
     //   runBoundedControlRead is exercised with INJECTED readers so the
@@ -1486,9 +1486,9 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 16 (P4 gaps a/g-1): zombie pre-check + enum-failure warning
-    // seams —
+    // seams --
     //   (a) whserverZombiePid: the first WHServer pid that parents a
-    //       TSCrashReport.exe, or 0 — intersection order, non-matching
+    //       TSCrashReport.exe, or 0 -- intersection order, non-matching
     //       parents, empty sets.
     //   (b) whserverZombieAbortLine / whserverEnumFailedLine render one
     //       physical line in both modes; JSON carries the honest fields
@@ -1516,7 +1516,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
 
-        // (b) renderer shape — single physical lines, honest fields.
+        // (b) renderer shape -- single physical lines, honest fields.
         std::string zhl = whserverZombieAbortLine(4321, false);
         std::string zjl = whserverZombieAbortLine(4321, true);
         std::string weh = whserverEnumFailedLine("whserver", false);
@@ -1559,7 +1559,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
 
-        // (c) zombie refusal shape — same exit-14 class as the VAS
+        // (c) zombie refusal shape -- same exit-14 class as the VAS
         // breach (the Python client aborts on exit 14 + error.code
         // "whserver_vas_abort"); the honest reason lives in the message.
         CliResult zref;
@@ -1625,7 +1625,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

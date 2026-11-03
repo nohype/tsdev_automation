@@ -1,14 +1,14 @@
 // test_recycle_resume.cpp
 //
 // Pure unit test for the R4 batch resume contract in src/tsdev_cli.cpp
-// (design tmp/RECYCLE_ENGINE_DESIGN.md §4.1):
+// (design tmp/RECYCLE_ENGINE_DESIGN.md Sec. 4.1):
 //
 //   - whserverRecycleEventLine(rec, json, pid, free_mb, index, total,
-//         manifest)                                   — full field set
+//         manifest)                                   -- full field set
 //   - writeResumeManifest(dir, items, firstIndex, needsSource,
-//         outPath, err)                               — §4.1 step-2 writer
-//   - cancelledBatchItemResult(op, item, message)     — marker shape
-//   - batchCompletedLine(..., aborted, abortReason)   — recycle summary
+//         outPath, err)                               -- Sec. 4.1 step-2 writer
+//   - cancelledBatchItemResult(op, item, message)     -- marker shape
+//   - batchCompletedLine(..., aborted, abortReason)   -- recycle summary
 //   - RecycleConfig tri-state defaults + mode->vasGuardAction wiring
 //     (check 16, tri-state authorization addendum)
 //
@@ -16,15 +16,15 @@
 // writeResumeManifest is re-read by parseManifest() with the SAME schema,
 // so resubmitting `tsdev_cli batch-<op> <resume-file>` re-attempts exactly
 // the not-run tail. A tail containing a preValid=false item is REFUSED
-// outright (fail-closed — a fabricated placeholder name must never become
+// outright (fail-closed -- a fabricated placeholder name must never become
 // a dispatchable line); representable preValid items round-trip and
 // reproduce the same pre-validation failure instead of being dropped.
 //
-// This is a PURE UNIT TEST — no orlib20, no TradeStation contact. The only
+// This is a PURE UNIT TEST -- no orlib20, no TradeStation contact. The only
 // filesystem mutation is a scratch directory + files under %TEMP%,
 // deleted afterwards.
 //
-// Linkage mechanism: identical to test_recycle_whserver_flag.cpp — the
+// Linkage mechanism: identical to test_recycle_whserver_flag.cpp -- the
 // helpers live inside tsdev_cli.cpp's anonymous namespace (internal
 // linkage), so the test #defines TSDEV_CLI_TEST and #includes the .cpp
 // directly (same TU; the file's main() is excluded by the guard).
@@ -67,7 +67,7 @@ std::string writeScratch(const std::filesystem::path& dir,
 // Scripted IRecycleSampler for the R2 defer-boundary checks
 // (recycleDeferredResult): only zombiePoll is consumed (the pre-close
 // corpse gate); census/death streams are never reached and return
-// stream-exhausted. `zombies` scripts the gate polls — the default is a
+// stream-exhausted. `zombies` scripts the gate polls -- the default is a
 // generous clean stream (snapshotOk + crashSnapshotOk, no zombie).
 struct DeferSampler : tsdev::IRecycleSampler {
     std::vector<tsdev::RecycleZombiePoll> zombies;
@@ -104,7 +104,7 @@ DWORD WINAPI runTest(LPVOID param) {
                  "(unit) ===\n");
 
     // ------------------------------------------------------------------
-    // Check 1: whserverRecycleEventLine — JSON full field set for a
+    // Check 1: whserverRecycleEventLine -- JSON full field set for a
     // between-items exit-18 boundary (recycled) and exit-19 (refused).
     // ------------------------------------------------------------------
     {
@@ -163,7 +163,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
 
         // Minimal call (serve path / pre-flight continue): only the base
-        // fields exist — no pid/free_mb/index/manifest members.
+        // fields exist -- no pid/free_mb/index/manifest members.
         const std::string jmin = whserverRecycleEventLine(rec, true);
         if (jmin.find("\"pid\"") != std::string::npos ||
             jmin.find("\"free_mb\"") != std::string::npos ||
@@ -176,7 +176,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 2: whserverRecycleEventLine — human rendering carries the
+    // Check 2: whserverRecycleEventLine -- human rendering carries the
     // same fields.
     // ------------------------------------------------------------------
     {
@@ -216,7 +216,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 3: writeResumeManifest round-trip (needsSource insert op) —
+    // Check 3: writeResumeManifest round-trip (needsSource insert op) --
     // parseManifest re-reads the exact tail.
     // ------------------------------------------------------------------
     {
@@ -357,7 +357,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 5: writeResumeManifest failure surface — an unwritable dir
+    // Check 5: writeResumeManifest failure surface -- an unwritable dir
     // returns false with a diagnostic and no path (fail-closed, never a
     // partial/phantom manifest).
     // ------------------------------------------------------------------
@@ -379,10 +379,10 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 6: recycle marker shape — cancelledBatchItemResult with the
+    // Check 6: recycle marker shape -- cancelledBatchItemResult with the
     // pinned recycle messages (exit 12 / "cancelled", verbatim message,
     // op/type/name preserved). RC-17: the granted DEFER carries its own
-    // text — outcome-Recycled but no recycle happened — keyed on reason,
+    // text -- outcome-Recycled but no recycle happened -- keyed on reason,
     // keeping the resumable-tail suffix.
     // ------------------------------------------------------------------
     {
@@ -453,7 +453,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 7: batch_completed on a recycle exit — the aborted summary
+    // Check 7: batch_completed on a recycle exit -- the aborted summary
     // carries aborted/abort_reason + the recycle exit code.
     // ------------------------------------------------------------------
     {
@@ -490,7 +490,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 8: whitespace names round-trip through the quoted-name form —
+    // Check 8: whitespace names round-trip through the quoted-name form --
     // dir batches derive the name verbatim from the file stem, so a
     // spaced stem must resume as the SAME component (insert case: the
     // item re-attempts under its real name; delete case: the resumed
@@ -569,7 +569,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         // Junk fused after the closing quote is equally fail-closed:
         // `delete "a"b` must NOT silently retarget to a delete of name
-        // `a` — a quote-leading name token that is not a well-formed
+        // `a` -- a quote-leading name token that is not a well-formed
         // quoted token is a pre-validation error, never a partial
         // reinterpretation.
         std::vector<BatchItem> malformed2;
@@ -599,7 +599,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 9: the writer refuses ONLY truly unrepresentable names
-    // fail-closed — a line break, a leading '"', or '"' combined with
+    // fail-closed -- a line break, a leading '"', or '"' combined with
     // whitespace (unquoted it would split, quoted it would terminate
     // early). A bare '"' inside a whitespace-free name IS representable
     // unquoted (it re-parses as a plain token) and must round-trip, not
@@ -637,7 +637,7 @@ DWORD WINAPI runTest(LPVOID param) {
         std::filesystem::remove(path, fsEc);
 
         // Unrepresentable: '"' combined with whitespace. (path is
-        // cleared first — the writer only sets outPath on success.)
+        // cleared first -- the writer only sets outPath on success.)
         items[1].name = "has \"quote";
         path.clear();
         if (writeResumeManifest(dir.string(), items, 0,
@@ -681,7 +681,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 10: '\v'/'\f' are manifest whitespace too — kManifestWs is the
+    // Check 10: '\v'/'\f' are manifest whitespace too -- kManifestWs is the
     // C-locale std::isspace set (" \t\n\v\f\r"), shared by trim(), token
     // splitting, and the writer's quoting/refusal predicates. A name
     // containing '\v'/'\f' must be written QUOTED and re-parse to the
@@ -700,7 +700,7 @@ DWORD WINAPI runTest(LPVOID param) {
         const std::string src =
             writeScratch(dir, "s.el", "variables: int w(0);\nw = 4;\n");
 
-        // Interior '\v', leading '\f', trailing '\v' — all quoted, all
+        // Interior '\v', leading '\f', trailing '\v' -- all quoted, all
         // preserved verbatim through the quoted-name form.
         std::vector<BatchItem> items;
         BatchItem v1; v1.typeStr = "indicator"; v1.name = "a\vb";
@@ -738,7 +738,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
         std::filesystem::remove(path, fsEc);
 
-        // delete form (2 tokens): a '\v'-name must round-trip quoted —
+        // delete form (2 tokens): a '\v'-name must round-trip quoted --
         // never re-parse to a whitespace-truncated different component.
         std::vector<BatchItem> ditems;
         BatchItem d1; d1.typeStr = "strategy"; d1.name = "a\vb";
@@ -760,7 +760,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
         // '"' combined with '\v'/'\f' refuses fail-closed, exactly like
         // '"'+space (unquoted it would split at the '\v'; quoted the '"'
-        // terminates the token early) — and '\r'/'\n' refusal is
+        // terminates the token early) -- and '\r'/'\n' refusal is
         // unchanged.
         items[1].name = "a\"\vb";
         if (writeResumeManifest(dir.string(), items, 0,
@@ -787,13 +787,13 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 11: the writer NEVER emits a dispatchable line for a
-    // preValid=false tail item — refuse-on-preValid-false (fail-closed).
+    // preValid=false tail item -- refuse-on-preValid-false (fail-closed).
     // The canonical case is the non-ANSI-filename placeholder item from
     // parseDirectory (a name containing a space would otherwise be
     // written QUOTED and a resumed batch-delete-dir would dispatch a
     // delete against a fabricated name). Malformed-quote items
     // (unterminated quote / junk after the closing quote) are also
-    // preValid=false — the same refusal covers them, so a resubmission
+    // preValid=false -- the same refusal covers them, so a resubmission
     // can never silently lose the original diagnostic.
     // ------------------------------------------------------------------
     {
@@ -850,7 +850,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
 
         // Malformed-quote items ARE preValid=false (unterminated quote
-        // and junk-after-quote paths in parseManifestLines) — the same
+        // and junk-after-quote paths in parseManifestLines) -- the same
         // refusal covers them.
         std::vector<BatchItem> tail;
         BatchItem g2; g2.typeStr = "function"; g2.name = "Fine";
@@ -886,7 +886,7 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         // firstIndex skips already-attempted items: a preValid=false item
-        // BELOW the boundary must not refuse — only the tail matters.
+        // BELOW the boundary must not refuse -- only the tail matters.
         std::vector<BatchItem> split;
         split.push_back(mq[0]);      // attempted (firstIndex excludes it)
         BatchItem g3; g3.typeStr = "strategy"; g3.name = "Tail";
@@ -903,12 +903,12 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 12: pin kManifestWs <-> isManifestWs equivalence — sweep all
+    // Check 12: pin kManifestWs <-> isManifestWs equivalence -- sweep all
     // 256 char values through the production seam (isManifestWs is the
     // C-locale std::isspace predicate trim() and token splitting actually
     // call). A drift would silently retarget quoted/unquoted names. Also
     // pin kManifestLineBreaks as a strict subset (the never-representable
-    // set — a line break ends the record).
+    // set -- a line break ends the record).
     // ------------------------------------------------------------------
     {
         for (int c = 0; c < 256; ++c) {
@@ -935,14 +935,14 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 13: parseDirectory pre-validation —
+    // Check 13: parseDirectory pre-validation --
     //   (a) an EMPTY .el file is a preValid=false exit-3 item with the
     //       same "source file is empty" text parseManifestLines and
     //       cmdInsert use (previously it dispatched as preValid=true);
     //   (b) a filename the ANSI code page cannot represent becomes the
     //       catch-branch placeholder item (preValid=false, exit 3,
     //       "<unrepresentable filename: ...>") instead of throwing out
-    //       of the scan — pinned via a real wide-named file when the
+    //       of the scan -- pinned via a real wide-named file when the
     //       system's narrow conversion provably fails on the probe
     //       char (skipped honestly otherwise).
     //   (c) a delete-op dir ignores content entirely: an empty file
@@ -1061,18 +1061,18 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 14 (R1+R2): the attached-site DEFER boundary — the engine may
+    // Check 14 (R1+R2): the attached-site DEFER boundary -- the engine may
     // run only never-attached (an attached process holds +7 m_nLock for
-    // its whole lifetime; closeWarehouse does NOT release it — only
+    // its whole lifetime; closeWarehouse does NOT release it -- only
     // GRACEFUL process teardown does). R2: the deferred exit-18 boundary
-    // releases the +7 by running the §5 close stage itself
+    // releases the +7 by running the Sec. 5 close stage itself
     // (boundedCloseWarehouse on the calling/session-owning thread) then
-    // taking the GRACEFUL teardown path — `delete lib` + worker return +
+    // taking the GRACEFUL teardown path -- `delete lib` + worker return +
     // ExitProcess(18), never TerminateProcess (an abrupt exit orphans
     // the +7 for >=minutes and the resumed census deadlocks on
-    // census_lock — live-proven 2026-10-21). A close that fails or
-    // outlives the bound REFUSES the defer on the §5 close-stage family
-    // (exit 19 + terminateSelf — the session may still be open).
+    // census_lock -- live-proven 2026-10-21). A close that fails or
+    // outlives the bound REFUSES the defer on the Sec. 5 close-stage family
+    // (exit 19 + terminateSelf -- the session may still be open).
     // recycleDeferredResult takes an injectable close seam + sampler
     // (zombie pre-check) + bound, so every arm is pinned here without
     // orlib20. Pin the shared site gate, the granted/refused shapes, and
@@ -1089,7 +1089,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
         // GRANTED: a scripted close that returns true inside the bound
         // -> Recycled-shaped exit-18 result (the resume boundary) that
-        // is NOW safe-to-delete-lib (the §5 post-close teardown class —
+        // is NOW safe-to-delete-lib (the Sec. 5 post-close teardown class --
         // the graceful exit releases the +7), never terminateSelf.
         {
             DeferSampler sampler;
@@ -1109,7 +1109,7 @@ DWORD WINAPI runTest(LPVOID param) {
             }
 
             // Contract pin: the defer event keeps the whserver_recycled
-            // name — _resume_manifest_path matches ONLY that name (and
+            // name -- _resume_manifest_path matches ONLY that name (and
             // whserver_recycle_refused) for the manifest member, and
             // exit_code 18 drives both the direct resume and the serve
             // respawn. reason says WHY (deferred, not performed).
@@ -1138,10 +1138,10 @@ DWORD WINAPI runTest(LPVOID param) {
             }
         }
 
-        // REFUSED: the close ran and returned false -> the §5 close-stage
+        // REFUSED: the close ran and returned false -> the Sec. 5 close-stage
         // family: RefuseCloseFailed + exit 19 + terminateSelf (the own
-        // session may still be open — never `delete lib`/ExitProcess
-        // into it). The event renders whserver_recycle_refused — the
+        // session may still be open -- never `delete lib`/ExitProcess
+        // into it). The event renders whserver_recycle_refused -- the
         // other name _resume_manifest_path matches.
         {
             DeferSampler sampler;
@@ -1168,7 +1168,7 @@ DWORD WINAPI runTest(LPVOID param) {
         }
 
         // The P4-(b) zombie pre-check runs BEFORE the defer close: a
-        // crash-frozen server would wedge the close into the bound —
+        // crash-frozen server would wedge the close into the bound --
         // refuse early (the close never ran, so the session may still
         // be open -> terminateSelf).
         {
@@ -1193,7 +1193,7 @@ DWORD WINAPI runTest(LPVOID param) {
             }
         }
         // An inconclusive gate (exhausted stream) fails closed the same
-        // way — never proceeds on unknown zombie state.
+        // way -- never proceeds on unknown zombie state.
         {
             DeferSampler sampler;
             sampler.zombies.clear();
@@ -1209,7 +1209,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
         // A hanging close fires the bound: production's default action
         // is stderr + TerminateProcess(19); the injected stub records
-        // the fire and unblocks the scripted close — the late return is
+        // the fire and unblocks the scripted close -- the late return is
         // never trusted -> close_timeout on the same teardown contract.
         {
             DeferSampler sampler;
@@ -1233,7 +1233,7 @@ DWORD WINAPI runTest(LPVOID param) {
                 return 0;
             }
         }
-        // closeBoundSecs<=0 refuses at the gate — the close never ran.
+        // closeBoundSecs<=0 refuses at the gate -- the close never ran.
         {
             DeferSampler sampler;
             int closeCalls = 0;
@@ -1456,13 +1456,13 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 17 (RC-18 opt 1): the recycle boundary is PRE-STAGED before
-    // the defer close stage runs. A close that hangs never returns — its
+    // the defer close stage runs. A close that hangs never returns -- its
     // monitor kills the process without returning, bypassing every
-    // post-close emission — so the durable record (results array on
+    // post-close emission -- so the durable record (results array on
     // stdout + resume manifest) is staged up front; the close outcome
     // then affects only the event line and the exit code. Scripted
     // close-hang: pre-stage with an attempted head, then run a hanging
-    // close with the injected non-fatal bound action — the defer refuses
+    // close with the injected non-fatal bound action -- the defer refuses
     // close_timeout while stdout ALREADY carries the full array (the
     // attempted head + deferred marker tail).
     // ------------------------------------------------------------------
@@ -1575,12 +1575,12 @@ DWORD WINAPI runTest(LPVOID param) {
             return 0;
         }
         // THEN the close stage hangs: the injected non-fatal action
-        // records the fire and unblocks the scripted close — the late
+        // records the fire and unblocks the scripted close -- the late
         // return is never trusted, so the defer refuses close_timeout
         // on the terminateSelf contract. The stdout record above was
         // already complete BEFORE this close ran (production's default
         // action would have killed the process here with no further
-        // emission — the array + manifest survive it).
+        // emission -- the array + manifest survive it).
         {
             DeferSampler sampler;
             HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -1610,7 +1610,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

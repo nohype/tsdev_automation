@@ -64,7 +64,7 @@ def _print_result(r: TsDevResult) -> None:
 
 def _print_stderr_once(results: list[TsDevResult]) -> None:
     """Print each distinct captured child stderr once (batch results all
-    carry the same run's stderr — diagnostics such as resume-manifest
+    carry the same run's stderr -- diagnostics such as resume-manifest
     refusals live there and would otherwise never be seen).
 
     Only non-JSON lines are surfaced: the always-on ``--json`` batch
@@ -357,22 +357,22 @@ def _read_manifest(path: Path, needs_source: bool) -> list[BatchItem]:
     """Read a batch manifest into ``BatchItem``s.
 
     Reproduces the C++ ``parseManifestLines`` tokenization EXACTLY via
-    :func:`client._manifest_line_tokens` — the same 6-char
+    :func:`client._manifest_line_tokens` -- the same 6-char
     ``_MANIFEST_WS`` whitespace class (NOT Python's generic whitespace:
     ``\\x0b``/``\\x0c`` delimit tokens but ``\\xa0`` does not), lines
     split on ``'\\n'`` only (``str.splitlines`` would also split on
     ``\\v``/``\\f``/``\\x85``/``\\u2028``), and the same double-quoted
     ``<name>`` form the resume-manifest writer emits.
 
-    Validation mirrors the C++ per-line order — malformed quoted name,
-    then ``<type>``, then non-empty ``<name>``, then ``<source_file>`` —
+    Validation mirrors the C++ per-line order -- malformed quoted name,
+    then ``<type>``, then non-empty ``<name>``, then ``<source_file>`` --
     and a line the C++ parser would mark a pre-validation failure
     produces an item carrying :attr:`BatchItem.prevalid_failure` (the
     C++ ``preValid=false`` shape: a per-item failure result, never a
     dispatch, never a silent re-tokenization that could retarget a
     delete), so the batch continues and reports it in position.
 
-    The file is decoded strictly as UTF-8 — a non-UTF-8 manifest raises
+    The file is decoded strictly as UTF-8 -- a non-UTF-8 manifest raises
     ``UnicodeDecodeError`` (a ``ValueError`` -> exit 3) rather than
     silently corrupting names to U+FFFD.
     """

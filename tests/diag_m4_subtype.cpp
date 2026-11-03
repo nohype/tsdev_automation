@@ -95,7 +95,7 @@ ProcessInspectionResult reportCrashReporter(const char* phase) {
 //
 // Ordinal_69 (FUN_101a3e00): __cdecl, 3 args (caller cleans 12 bytes).
 //   void* (char category, int progId, int flag)
-//   Returns live record pointer (refcounted — release via Ordinal_70).
+//   Returns live record pointer (refcounted -- release via Ordinal_70).
 //
 // Ordinal_70 (FUN_1015df30): __stdcall, 2 args, RET 0x08.
 //   int (void* rec, int flag)
@@ -200,7 +200,7 @@ bool sehMemcpy(const void* src, void* dst, size_t n) {
 }
 
 // -------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // -------------------------------------------------------------------------
 ComApi realComApi() {
@@ -214,7 +214,7 @@ std::string makeFunctionSource(const std::string& name) {
     return name + " = 1;\r\n";
 }
 
-// Simplest possible Strategy source — a single market order.
+// Simplest possible Strategy source -- a single market order.
 std::string makeStrategySourceSimple() {
     return std::string("Buy next bar at Market;\r\n");
 }
@@ -335,7 +335,7 @@ void hexDumpRange(const unsigned char* buf, size_t start, size_t end,
 // -------------------------------------------------------------------------
 // Enumerate existing records in a category via _LoadMasterRecsEX@16.
 // Returns a vector of (progId, subtype, name) for the first `maxCount`
-// records. Read-only — does NOT modify any record.
+// records. Read-only -- does NOT modify any record.
 // -------------------------------------------------------------------------
 struct ExistingRec {
     short progId = 0;
@@ -741,7 +741,7 @@ int main() {
                      GetLastError());
         return 11;
     }
-    // 120-second hard timeout — report a hang without terminating the worker.
+    // 120-second hard timeout -- report a hang without terminating the worker.
     // Insert+verify of 2 items + enumeration of 3 categories + Ord28 reads +
     // hex dumps may take longer than 90 seconds.
     DWORD wait = WaitForSingleObject(hThread, 120000);

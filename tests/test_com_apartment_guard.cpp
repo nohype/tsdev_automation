@@ -409,7 +409,7 @@ int runTests() {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID /*param*/) {
     DWORD exitCode = 0;
     __try {

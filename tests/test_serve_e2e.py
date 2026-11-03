@@ -67,12 +67,12 @@ class TestServeE2E:
 
     Verifies that a non-elevated Python process can use TsDevClient(use_serve=True)
     to auto-start an elevated broker (one ShellExecuteExW "runas") and perform
-    insert → exists → get-source → modify → get-source → delete → exists
+    insert -> exists -> get-source -> modify -> get-source -> delete -> exists
     against the real TSDev Library, with only ONE broker process for all ops.
     """
 
     def test_serve_full_lifecycle(self):
-        # Skip if elevated — serve mode only activates when NOT elevated
+        # Skip if elevated -- serve mode only activates when NOT elevated
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
 
@@ -120,7 +120,7 @@ class TestServeE2E:
             assert result.prog_id > 0, f"insert returned prog_id={result.prog_id}"
             prog_id = result.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, "broker should be started after first op"
 
@@ -188,7 +188,7 @@ class TestServeE2E:
         cli_path = _find_cli()
         test_name = "ServeE2eCompileFail"
         valid_name = "ServeE2eRecoveryStrat"
-        # Invalid EL source — syntax error that will fail compilation
+        # Invalid EL source -- syntax error that will fail compilation
         invalid_source = "{ broken strategy }\nInputs: ;\n{ syntax error }\n"
         valid_source = (
             "{ Recovery strategy }\n"
@@ -213,7 +213,7 @@ class TestServeE2E:
                 except Exception:
                     pass
 
-            # 1. Insert invalid source — should raise CompileError
+            # 1. Insert invalid source -- should raise CompileError
             with pytest.raises(CompileError):
                 client.insert("strategy", test_name, invalid_source)
 
@@ -230,7 +230,7 @@ class TestServeE2E:
                 "broker should not restart after compile failure + exists"
             )
 
-            # 3. Insert valid source — broker should still work
+            # 3. Insert valid source -- broker should still work
             result = client.insert("strategy", valid_name, valid_source)
             assert result.success, (
                 f"insert after compile failure should succeed: {result}"
@@ -268,7 +268,7 @@ class TestServeE2E:
            first batch op. The real bypass/lifetime proof is that the same
            broker handle, captured once and asserted identical after every
            subsequent batch op (Invariant 2), stays stable across the whole
-           batch — proving the broker was actually started and used, not the
+           batch -- proving the broker was actually started and used, not the
            ``subprocess.run`` direct path. If serve were bypassed (e.g.
            already elevated, or ``use_serve=False``), the handle would stay
            ``None`` and the Invariant 2 assertions fail.
@@ -279,7 +279,7 @@ class TestServeE2E:
            inter-batch ``exists`` queries). The serve broker holds a single
            long-lived ``TsDevLib`` (``flushPerItem=false``) for the whole
            session, so a stable handle proves no broker restart and no
-           per-op warehouse flush — the core batch-over-serve efficiency
+           per-op warehouse flush -- the core batch-over-serve efficiency
            invariant.
 
         3. **Python results match CLI JSON semantics.** Each per-item
@@ -292,14 +292,14 @@ class TestServeE2E:
            batch-upsert semantics. On ``batch_delete`` success,
            ``ell_path`` is ``None`` (omitted in JSON, matching the C++
            delete result) and ``prog_id`` equals the former ProgId captured
-           at insert (``prog_ids[i]``) — both the serve dispatch path and
+           at insert (``prog_ids[i]``) -- both the serve dispatch path and
            the C++ batch path emit the deleted item's former ProgId. Delete
            correctness is hard-asserted via ``success``, the former-ProgId
            match, and the post-delete ``exists`` (item gone).
 
         4. **Production-verified cleanup before emergency sanitation.** The
            test body explicitly runs ``batch_delete`` on all created items
-           and asserts every delete succeeded — this is the production
+           and asserts every delete succeeded -- this is the production
            cleanup path, verified end-to-end through the broker. The
            ``finally`` block performs emergency sanitation (best-effort
            individual deletes + broker shutdown) ONLY as a safety net for
@@ -310,7 +310,7 @@ class TestServeE2E:
            ``TS_AUTO_PY_SERVE_BATCH_L14B_<NN>`` prefix, unique to this test
            and disposable across runs.
         """
-        # Skip if elevated — serve mode only activates when NOT elevated.
+        # Skip if elevated -- serve mode only activates when NOT elevated.
         # run_serve_e2e.ps1 launches this test unelevated via Task Scheduler.
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
@@ -356,7 +356,7 @@ class TestServeE2E:
         # a launch that cannot be elevated may fail with
         # ERROR_ELEVATION_REQUIRED (Windows error 740) before the CLI starts;
         # an asInvoker build reaches the runtime guard and returns exit 11
-        # (not_elevated). If elevated, the direct path bypasses the broker —
+        # (not_elevated). If elevated, the direct path bypasses the broker --
         # neither is what this test is verifying. Note: the pre-cleanup loop
         # below may already start
         # the broker (its delete calls route through serve), so the handle
@@ -390,7 +390,7 @@ class TestServeE2E:
 
             # Capture the broker handle now (it may already be non-None from
             # the pre-cleanup deletes, or it may be started by this
-            # batch_insert). Either way it must be non-None here — if serve
+            # batch_insert). Either way it must be non-None here -- if serve
             # were bypassed the handle would stay None and this fails. The
             # stronger bypass/lifetime proof is the same-handle assertion
             # across all subsequent batch ops (Invariant 2).
@@ -494,7 +494,7 @@ class TestServeE2E:
                 # the result envelope must match the CLI JSON schema for a
                 # delete (op/type/name/exit_code). ell_path must be None
                 # (cliResultToJson omits it on delete). prog_id must equal
-                # the former ProgId captured at insert (prog_ids[i]) — both
+                # the former ProgId captured at insert (prog_ids[i]) -- both
                 # the serve dispatch path and the C++ batch path emit the
                 # deleted item's former ProgId on a successful delete.
                 assert r.success, f"batch_delete {n} failed: {r}"
@@ -586,7 +586,7 @@ class TestServeE2E:
            the two created items (A and B) and asserts success before the
            ``finally`` emergency sanitation.
         """
-        # Skip if elevated — serve mode only activates when NOT elevated.
+        # Skip if elevated -- serve mode only activates when NOT elevated.
         # run_serve_e2e.ps1 launches this test unelevated via Task Scheduler.
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
@@ -748,7 +748,7 @@ class TestServeE2E:
 
         Mirrors the DIRECT-mode upsert-both-branches coverage but in serve mode.
         """
-        # Skip if elevated — serve mode only activates when NOT elevated.
+        # Skip if elevated -- serve mode only activates when NOT elevated.
         # run_serve_e2e.ps1 launches this test unelevated via Task Scheduler.
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
@@ -1369,8 +1369,8 @@ class TestServeE2E:
         1. ``BatchProgress`` callbacks fire synchronously in input order
            after every attempted result, and a per-item failure does not
            stop the batch (callback-driven continuation).
-        2. ``return False`` cancels before the next item — after a success
-           AND after a failure — and the returned list stays full length:
+        2. ``return False`` cancels before the next item -- after a success
+           AND after a failure -- and the returned list stays full length:
            unattempted items become exit-12 ``cancelled`` markers that the
            callback never sees.
         3. One stable broker process serves every batch call and remains
@@ -1572,7 +1572,7 @@ class TestServeE2E:
             )
             prog_id = result.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, (
                 "broker should be started after first upsert"
@@ -1666,7 +1666,7 @@ class TestServeE2E:
             )
             prog_id = r.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, "broker should be started after first op"
 
@@ -1736,7 +1736,7 @@ class TestServeE2E:
             )
             prog_id = r.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, "broker should be started after first op"
 
@@ -1806,7 +1806,7 @@ class TestServeE2E:
             )
             prog_id = r.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, "broker should be started after first op"
 
@@ -1876,7 +1876,7 @@ class TestServeE2E:
             )
             prog_id = r.prog_id
 
-            # Broker is lazy-started on first op — capture handle now
+            # Broker is lazy-started on first op -- capture handle now
             broker_handle = client.broker_process_handle()
             assert broker_handle is not None, "broker should be started after first op"
 
@@ -1927,7 +1927,7 @@ class TestServeE2E:
           Pre-existing ``WerFault.exe`` / ``TSCrashReport.exe`` PIDs are
           snapshotted BEFORE the run. After the run, only crash reporters with
           PIDs NOT in the pre-existing snapshot are attributed to this test.
-          Pre-existing crash reporters are NEVER killed — we only assert that
+          Pre-existing crash reporters are NEVER killed -- we only assert that
           this test did not SPAWN new ones. This avoids the false positive of
           blaming an unrelated pre-existing crash reporter on the serve path,
           and avoids killing arbitrary user/system crash reporters.
@@ -1939,7 +1939,7 @@ class TestServeE2E:
         # Opt-in gate.
         if os.environ.get("TS_SERVE_STRESS") != "1":
             pytest.skip("opt-in: set TS_SERVE_STRESS=1 to run the serve long-lived stress")
-        # Skip if elevated — serve mode only activates when NOT elevated.
+        # Skip if elevated -- serve mode only activates when NOT elevated.
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
 
@@ -2169,7 +2169,7 @@ class TestServeE2E:
         ``tests/test_recycle_resume.cpp`` check15 and the direct path's
         captured stderr carries it (live-probed 2026-10-28).
         """
-        # Skip if elevated — serve mode only activates when NOT elevated.
+        # Skip if elevated -- serve mode only activates when NOT elevated.
         if _detect_elevation():
             pytest.skip("serve E2E must run non-elevated; use run_serve_e2e.ps1")
 
@@ -2245,7 +2245,7 @@ class TestServeE2E:
             assert results[0].error is not None
             assert results[0].error.code == "whserver_vas_abort"
             assert "WHServer VAS headroom" in results[0].error.message
-            # Item 2: never attempted — exit-12 marker with the abort
+            # Item 2: never attempted -- exit-12 marker with the abort
             # message (verbatim kVasAbortMarkerMessage).
             assert results[1].success is False
             assert results[1].exit_code == 12

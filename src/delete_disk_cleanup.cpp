@@ -10,7 +10,7 @@
 // The decision is a PURE function of (lastError, kind):
 //   * ERROR_SUCCESS        (0) -> false  (DeleteFileA succeeded; artifact gone)
 //   * ERROR_FILE_NOT_FOUND (2) -> false  (artifact already absent; idempotent
-//                                         delete is NOT a failure — the ONE
+//                                         delete is NOT a failure -- the ONE
 //                                         case today's code already handles
 //                                         correctly)
 //   * ERROR_ACCESS_DENIED  (5) -> true   (artifact present but could not be
@@ -48,15 +48,15 @@ bool deleteDiskCleanupErrorFailsResult(unsigned long lastError,
     // without changing the call sites or the header; the RED test pins the
     // uniform rule, so the boolean must not branch on kind here.
 
-    if (lastError == 0UL) {  // ERROR_SUCCESS — DeleteFileA returned TRUE.
+    if (lastError == 0UL) {  // ERROR_SUCCESS -- DeleteFileA returned TRUE.
         return false;        // artifact removed; not a failure.
     }
-    if (lastError == 2UL) {  // ERROR_FILE_NOT_FOUND — artifact already absent.
+    if (lastError == 2UL) {  // ERROR_FILE_NOT_FOUND -- artifact already absent.
         return false;        // idempotent delete; not a failure.
     }
     // ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION (32), or any other
     // nonzero error: the artifact is present but could not be removed (or the
-    // failure is otherwise real/unknown). Fail safe — the delete Result MUST
+    // failure is otherwise real/unknown). Fail safe -- the delete Result MUST
     // fail so a stale .ell/.xml is never silently treated as success.
     return true;
 }

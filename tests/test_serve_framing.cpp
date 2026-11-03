@@ -2,7 +2,7 @@
 //
 // Unit test for TVS-K.4: named pipe framing helpers.
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises the implemented framing I/O helpers in src/tsdev_cli.cpp:
 //   - bool writeFramed(HANDLE pipe, const std::string& payload)
@@ -12,7 +12,7 @@
 //         std::string& error)
 //
 // The framing format (per the protocol spec, docs/workstream_serve_plan.md
-// §2 "Message framing") is:
+// Sec. 2 "Message framing") is:
 //   [4 bytes: payload length N, little-endian uint32]
 //   [N bytes: UTF-8 JSON payload]
 // N must be in [0, 67108864] (64 MiB cap). Messages outside this range are
@@ -23,7 +23,7 @@
 // The helpers operate on Windows HANDLEs (from CreatePipe / CreateNamedPipeW),
 // NOT on FILE* or std::istream. The test uses CreatePipe() to obtain a pair
 // of anonymous pipe handles (one read end, one write end) and round-trips
-// payloads through them. This is self-contained — no external pipe server is
+// payloads through them. This is self-contained -- no external pipe server is
 // needed.
 //
 // It runs on a worker thread with a 64 MB stack only to match the project's
@@ -64,9 +64,9 @@
 //      to a nonzero infrastructure status.
 //   8. (TVS C) readBatchControlManifest accepts the framed wire form
 //      "TSDEV_BATCH_CONTROL/1 <decimal UTF-8 byte length>\n" + exactly
-//      <length> manifest bytes — empty, nonempty UTF-8 manifests whose
+//      <length> manifest bytes -- empty, nonempty UTF-8 manifests whose
 //      source paths contain spaces, and a declared length of exactly the
-//      64 MiB cap — and leaves the following decision lines unread on the
+//      64 MiB cap -- and leaves the following decision lines unread on the
 //      stream.
 //   9. (TVS C) malformed headers rejected: EOF/truncated header, wrong
 //      version, missing/empty/nondecimal/signed/overflow length, trailing
@@ -104,7 +104,7 @@ constexpr uint32_t kFrameCap = 67108864u;
 // Helper (TVS C checks): returns a binary-mode FILE* positioned at the start
 // of an anonymous pipe pre-filled with `bytes`; once those bytes are consumed
 // the reader sees EOF. This feeds the stdin-shaped control protocol exact
-// byte sequences — including immediate EOF — without touching the real stdin
+// byte sequences -- including immediate EOF -- without touching the real stdin
 // or the filesystem. The FILE* owns the pipe read handle; fclose() releases
 // it. Returns nullptr on setup failure.
 FILE* fileFromBytes(const std::string& bytes) {
@@ -141,7 +141,7 @@ FILE* fileFromBytes(const std::string& bytes) {
     return f;
 }
 
-// Helper (TVS C checks): drains the remainder of `f` into a string — used to
+// Helper (TVS C checks): drains the remainder of `f` into a string -- used to
 // assert the byte-exact manifest/decision boundary on the input stream.
 std::string drainFile(FILE* f) {
     std::string out;
@@ -539,8 +539,8 @@ DWORD WINAPI runTest(LPVOID param) {
                      "  [8a] framed empty manifest accepted; remainder "
                      "\"continue\\n\"\n");
 
-        // Nonempty UTF-8 manifest (the \xC3\xB1 pair is 'ñ', a multibyte
-        // UTF-8 sequence — the declared length is a BYTE count) whose
+        // Nonempty UTF-8 manifest (the \xC3\xB1 pair is 'n-tilde', a multibyte
+        // UTF-8 sequence -- the declared length is a BYTE count) whose
         // source path contains spaces.
         const std::string payload =
             "strategy MyStrat C:\\My Dir\\src file.el\n"
@@ -580,7 +580,7 @@ DWORD WINAPI runTest(LPVOID param) {
         // (c) cap boundary: a declared length of EXACTLY the 64 MiB cap is
         //     accepted (the cap rejects only lengths > cap, matching the
         //     readFramed `len > kServeFrameCap` convention). Fed via a temp
-        //     file — a 64 MiB anonymous-pipe write would deadlock on the
+        //     file -- a 64 MiB anonymous-pipe write would deadlock on the
         //     pipe buffer with no concurrent reader.
         {
             const std::string big(kFrameCap, 'x');
@@ -663,7 +663,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 10 (TVS C): framed manifest + decision lines on the SAME
-    //   stream — the --batch-stdin + --batch-progress-control wire shape.
+    //   stream -- the --batch-stdin + --batch-progress-control wire shape.
     //   readBatchControlManifest consumes exactly the declared bytes, then
     //   readBatchControlDecision reads one decision line per call.
     // ------------------------------------------------------------------
@@ -704,7 +704,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

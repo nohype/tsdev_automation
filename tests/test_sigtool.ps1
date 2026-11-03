@@ -48,7 +48,7 @@ $expectedSignatureCount = 22
 # ---------------------------------------------------------------------------
 
 # Do not let PowerShell abort when a native command returns a non-zero exit
-# code — we intentionally exercise error paths.
+# code -- we intentionally exercise error paths.
 $ErrorActionPreference = 'Continue'
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ $ErrorActionPreference = 'Continue'
 Import-Module (Join-Path $PSScriptRoot "TestHelpers.psm1") -ErrorAction Stop -DisableNameChecking
 
 # ---------------------------------------------------------------------------
-# Prerequisite checks — fail fast if the fixtures are missing.
+# Prerequisite checks -- fail fast if the fixtures are missing.
 # ---------------------------------------------------------------------------
 
 if (-not (Test-Path $sigtool)) {
@@ -134,7 +134,7 @@ function Run-Test {
         return
     }
 
-    # Execute the command block — it populates $script:out and $script:code.
+    # Execute the command block -- it populates $script:out and $script:code.
     & $ScriptBlock
 
     $passed = ($script:code -eq $ExpectedExit)
@@ -238,7 +238,7 @@ Run-Test -Name "info" `
     }
 
 # ===========================================================================
-# Test 5: scan (valid pattern — function prologue)
+# Test 5: scan (valid pattern -- function prologue)
 #   "55 8B EC" is the classic x86 function prologue (push ebp; mov ebp,esp).
 #   It should appear many times in the .text section. Exit 0 (>= 1 match).
 # ===========================================================================
@@ -309,7 +309,7 @@ Run-Test -Name "verify-patch --signatures JSON" `
     }
 
 # ===========================================================================
-# Test 10: error case — nonexistent DLL
+# Test 10: error case -- nonexistent DLL
 #   A missing DLL path is a file-not-found error. Exit 2.
 # ===========================================================================
 Run-Test -Name "error: nonexistent DLL" `
@@ -320,7 +320,7 @@ Run-Test -Name "error: nonexistent DLL" `
     }
 
 # ===========================================================================
-# Test 11: error case — no arguments
+# Test 11: error case -- no arguments
 #   Invoking sigtool with no subcommand is a usage error. Exit 2.
 # ===========================================================================
 Run-Test -Name "error: no arguments" `
@@ -331,7 +331,7 @@ Run-Test -Name "error: no arguments" `
     }
 
 # ===========================================================================
-# Test 12: error case — unknown subcommand
+# Test 12: error case -- unknown subcommand
 #   "frobnicate" is not a valid subcommand. Exit 2.
 # ===========================================================================
 Run-Test -Name "error: unknown subcommand" `

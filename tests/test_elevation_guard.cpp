@@ -2,7 +2,7 @@
 //
 // Unit test for TVS-K.1: elevation guard for all subcommands.
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch the
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch the
 // TradeStation installation, and does NOT need a 64 MB stack for orlib20. It
 // exercises two file-local symbols in src/tsdev_cli.cpp:
 //   - isElevated()           : the elevation-check helper.
@@ -34,7 +34,7 @@
 //      When run elevated (the normal test-runner path) both return true; when
 //      run non-elevated (CI) both return false.
 //   2. errorCodeString(11, "") returns "not_elevated".
-//   3. (TVS C) errorCodeString(12, <op>) returns "cancelled" — the
+//   3. (TVS C) errorCodeString(12, <op>) returns "cancelled" -- the
 //      machine-readable code for the synthetic not-run markers appended
 //      after a cooperative batch cancel (op-independent, like 10/11).
 //
@@ -135,7 +135,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ------------------------------------------------------------------
     // Check 3 (TVS C): errorCodeString(12, <op>) returns "cancelled" for
-    // every op — the not-run marker code is op-independent.
+    // every op -- the not-run marker code is op-independent.
     // ------------------------------------------------------------------
     {
         std::string s1 = errorCodeString(12, "insert");
@@ -156,7 +156,7 @@ DWORD WINAPI runTest(LPVOID param) {
     return 0;
 }
 
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 DWORD WINAPI threadProc(LPVOID param) {
     TestState* st = static_cast<TestState*>(param);
     __try {

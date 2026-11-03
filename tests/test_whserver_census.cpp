@@ -1,10 +1,10 @@
 // test_whserver_census.cpp
 //
 // Unit test for src/whserver_census.cpp: the WHServer m_nLock census gate
-// (tmp/RECYCLE_ENGINE_DESIGN.md §3.3/§3.4 — R1 "census core").
+// (tmp/RECYCLE_ENGINE_DESIGN.md Sec. 3.3/Sec. 3.4 -- R1 "census core").
 //
 // This is a PURE UNIT TEST. decideCensus is driven entirely by scripted
-// CensusPoll streams — WHServer is never required to run, no orlib20, no
+// CensusPoll streams -- WHServer is never required to run, no orlib20, no
 // TsDevLib, no TradeStation contact. The level-2 seam readWhLockSample is
 // exercised against THIS test process: OpenProcess self + ReadProcessMemory
 // of known statics at their own VAs (same convention as
@@ -69,7 +69,7 @@ tsdev::CensusPidRead noRead(DWORD pid) {
 }
 
 // A read attempted against a pid whose image is NOT the probed WHServer
-// build: production skips the RPM, leaving a zeroed sample — the lock==0
+// build: production skips the RPM, leaving a zeroed sample -- the lock==0
 // bytes must never count as evidence (the stale-VA false-pass).
 tsdev::CensusPidRead unknownImageRead(DWORD pid) {
     tsdev::CensusPidRead r;
@@ -204,7 +204,7 @@ int runTests() {
         appendZeros(s, 0.0, 0.25, 4, 100);  // zeros t=0..0.75
         // Pid still enumerated, OpenProcess transiently fails (ERROR_ACCESS_DENIED).
         s.push_back(okPoll(1.0, {100}, {errRead(100, ERROR_ACCESS_DENIED, 0)}));
-        // More zeros after — must NOT rescue the verdict.
+        // More zeros after -- must NOT rescue the verdict.
         appendZeros(s, 1.25, 0.25, 40, 100);
         tsdev::CensusDecision d = tsdev::decideCensus(s, kWindow, kBudget);
         if (d.verdict != CensusVerdict::Indeterminate)
@@ -231,7 +231,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 5: absent arm — pid absent from >=3 consecutive snapshotOk
+    // Group 5: absent arm -- pid absent from >=3 consecutive snapshotOk
     // re-enumerations => Pass; 2 absences is NOT enough.
     // -------------------------------------------------------------------
     {
@@ -250,7 +250,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 6: failed snapshot is inconclusive — NEVER absent. A pid that
+    // Group 6: failed snapshot is inconclusive -- NEVER absent. A pid that
     // vanishes while re-enumeration keeps failing can never reach the
     // absent arm => Refuse at budget.
     // -------------------------------------------------------------------
@@ -265,7 +265,7 @@ int runTests() {
         if (d.verdict != CensusVerdict::Refuse)
             return fail("g6: failed snapshots reached a non-Refuse verdict", 60);
         // A failed snapshot also BREAKS a consecutive-absent streak: absent,
-        // absent, failed, absent — never 3 consecutive snapshotOk absences.
+        // absent, failed, absent -- never 3 consecutive snapshotOk absences.
         std::vector<tsdev::CensusPoll> s2;
         s2.push_back(okPoll(0.0, {100}, {lockRead(100, 0)}));
         s2.push_back(okPoll(0.2, {}, {}));
@@ -310,13 +310,13 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 8: a pid VANISHING mid-window enters the absent arm — its stale
+    // Group 8: a pid VANISHING mid-window enters the absent arm -- its stale
     // zero run is NOT evidence; it resolves only via re-enumerated absence.
     // -------------------------------------------------------------------
     {
         std::vector<tsdev::CensusPoll> s;
         appendZeros(s, 0.0, 0.25, 5, 100);   // pid100 zeros t=0..1.0 (< window)
-        // pid100 vanishes. By t=1.4 its stale zero run is 1.4s old — but it
+        // pid100 vanishes. By t=1.4 its stale zero run is 1.4s old -- but it
         // is NOT in the latest snapshot, so the run is no evidence; with
         // only 2 consecutive absences there must be no Pass.
         s.push_back(okPoll(1.2, {}, {}));
@@ -349,7 +349,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 9: multi-pid — pass requires EVERY pid resolved; one held pid
+    // Group 9: multi-pid -- pass requires EVERY pid resolved; one held pid
     // blocks; a listed pid with no read outcome => Indeterminate.
     // -------------------------------------------------------------------
     {
@@ -384,7 +384,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 10: never-any-pids census — absent at census start passes only
+    // Group 10: never-any-pids census -- absent at census start passes only
     // under the same >=3 consecutive successful empty re-enumerations.
     // -------------------------------------------------------------------
     {
@@ -402,7 +402,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 11: REAL readWhLockSample — OpenProcess self + ReadProcessMemory
+    // Group 11: REAL readWhLockSample -- OpenProcess self + ReadProcessMemory
     // of a known static at its own VA (zero TS contact). Also: invalid pid
     // fails with a classified openError, and the snapshotOk variant of
     // findWhServerPids distinguishes success from failure.
@@ -440,7 +440,7 @@ int runTests() {
     // -------------------------------------------------------------------
     // Group 12: a zero read on a FAILED-snapshot poll may extend a zero
     // run (continuous lock evidence), but the Pass moment itself requires
-    // a fresh successful re-enumeration — a run reaching the window inside
+    // a fresh successful re-enumeration -- a run reaching the window inside
     // a snapshot-failure gap must NOT complete the census (the pid set is
     // unknowable there). Pass only on a later snapshotOk poll, and the
     // Pass decision must carry pid=0/error=0 (not a stale outstanding).
@@ -449,7 +449,7 @@ int runTests() {
         std::vector<tsdev::CensusPoll> s;
         appendZeros(s, 0.0, 0.25, 12, 100);   // zeros t=0..2.75 (< window)
         // Failed snapshot at t=3.0 still carries a valid zero read: the
-        // run extends past the window — but Pass is forbidden here.
+        // run extends past the window -- but Pass is forbidden here.
         s.push_back(badSnap(3.0, {lockRead(100, 0)}));
         tsdev::CensusDecision d = tsdev::decideCensus(s, kWindow, kBudget);
         if (d.verdict == CensusVerdict::Pass)
@@ -468,7 +468,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 13: an absentConfirmed pid REAPPEARING un-confirms it — its
+    // Group 13: an absentConfirmed pid REAPPEARING un-confirms it -- its
     // post-reappearance reads are live evidence again, so a lock>0 read
     // blocks the census (had it stayed 'absent', the others would Pass).
     // -------------------------------------------------------------------
@@ -479,7 +479,7 @@ int runTests() {
         for (int i = 1; i <= 3; ++i) {       // 100 absent x3 => confirmed
             s.push_back(okPoll(0.2 * i, {200}, {lockRead(200, 0)}));
         }
-        // 100 reappears holding a lock — it must count as live evidence.
+        // 100 reappears holding a lock -- it must count as live evidence.
         s.push_back(okPoll(0.8, {100, 200},
                            {lockRead(100, 1), lockRead(200, 0)}));
         for (int i = 1; i <= 30; ++i) {      // through budget, 100 held
@@ -508,7 +508,7 @@ int runTests() {
             return fail("g14: listed pid with no read entry not Indeterminate", 140);
         if (d.pid != 100 || d.error != 0)
             return fail("g14: Indeterminate misclassified missing read", 141);
-        // Reads exist but none for the listed pid — same fail-closed path.
+        // Reads exist but none for the listed pid -- same fail-closed path.
         std::vector<tsdev::CensusPoll> s2;
         s2.push_back(okPoll(0.0, {100}, {lockRead(200, 0)}));
         d = tsdev::decideCensus(s2, kWindow, kBudget);
@@ -518,7 +518,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 15: mixed multi-pid Pass — one pid resolved via the
+    // Group 15: mixed multi-pid Pass -- one pid resolved via the
     // absentConfirmed arm while another resolves via a listed sustained
     // zero run; both arms compose in the same Pass evaluation.
     // -------------------------------------------------------------------
@@ -543,7 +543,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 16: degenerate inputs fail closed — an empty poll stream
+    // Group 16: degenerate inputs fail closed -- an empty poll stream
     // Refuses, and a non-positive windowSecs Refuses even on a sustained
     // zero stream (invalid window must never fail the gate open).
     // -------------------------------------------------------------------
@@ -567,7 +567,7 @@ int runTests() {
 
     // -------------------------------------------------------------------
     // Group 17: a pid appearing AND vanishing still resets the whole-census
-    // zero window — the appearing-pid epoch reset is not undone by the pid
+    // zero window -- the appearing-pid epoch reset is not undone by the pid
     // later reaching absentConfirmed. pid200 appears at t=3.0, reads zero,
     // vanishes, and is absentConfirmed by t=3.75; pid100 must nevertheless
     // re-accumulate its sustained-zero run from the t=3.0 epoch (no Pass
@@ -603,7 +603,7 @@ int runTests() {
     }
 
     // -------------------------------------------------------------------
-    // Group 18: image-identity gate (R5) — a listed pid whose image is not
+    // Group 18: image-identity gate (R5) -- a listed pid whose image is not
     // the probed WHServer build produces an attempted read with
     // imageKnown=false and a ZEROED sample. That persistent 0 is the exact
     // false-pass the gate exists to prevent => Indeterminate with
@@ -639,7 +639,7 @@ int runTests() {
             return fail("g18: one unknown image did not block census", 183);
 
         // A sustained zero stream that NEVER passes the gate: every poll
-        // reads lock==0 on an unprobed image — must refuse, never pass.
+        // reads lock==0 on an unprobed image -- must refuse, never pass.
         std::vector<tsdev::CensusPoll> s4;
         for (int i = 0; i <= 40; ++i) {
             double t = 0.75 * i;  // through budget t=30
@@ -650,7 +650,7 @@ int runTests() {
             return fail("g18: persistent unknown-image zero Passed", 184);
 
         // An imageKnown=false zero read inside a failed-snapshot gap must
-        // NOT extend a zero run — the run breaks, so the post-gap window
+        // NOT extend a zero run -- the run breaks, so the post-gap window
         // restarts at the next snapshotOk poll.
         std::vector<tsdev::CensusPoll> s5;
         appendZeros(s5, 0.0, 0.25, 12, 100);   // zeros t=0..2.75
@@ -672,7 +672,7 @@ int runTests() {
 
     // -------------------------------------------------------------------
     // Group 19: whServerImageIsKnown / whServerPidImageIsKnown against
-    // fabricated files — every failure direction fails closed. Runs on
+    // fabricated files -- every failure direction fails closed. Runs on
     // machines WITHOUT TradeStation: no installed WHServer is assumed.
     // -------------------------------------------------------------------
     {

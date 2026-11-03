@@ -1,18 +1,18 @@
-// test_path_discovery.cpp — TVS-B.7 test for TS install path discovery
+// test_path_discovery.cpp -- TVS-B.7 test for TS install path discovery
 //
 // Verifies:
 //   1. Auto-discovery (registry or conventional default) returns a valid path
 //      where <root>\Program\orlib20.dll exists.
-//   1b. Registry discovery cross-check — directly reads the registry key (with
+//   1b. Registry discovery cross-check -- directly reads the registry key (with
 //       KEY_WOW64_32KEY and the correct non-WOW6432Node path) to verify the key
 //       exists and contains a valid path. This would catch a silent fallthrough
 //       to the conventional default (e.g. the C1 double-WOW6432Node bug).
 //   2. --ts-path override is respected (getMyWorkBinPath/getWrkPath derive
 //      correctly from the explicit root).
 //   3. Path normalization (trailing backslash stripped).
-//   4. Invalid path (nonexistent orlib20.dll) → constructor throws.
+//   4. Invalid path (nonexistent orlib20.dll) -> constructor throws.
 //
-// The test does NOT hardcode "TradeStation 9.5" — it validates the discovered
+// The test does NOT hardcode "TradeStation 9.5" -- it validates the discovered
 // path by checking that <root>\Program\orlib20.dll exists.
 //
 // TsDevLib(const wchar_t*) and getMyWorkBinPath()/getWrkPath() are implemented
@@ -74,7 +74,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // ---- Test 1: Auto-discovery (registry or default) ----
     // Construct TsDevLib with nullptr (auto-discover). The constructor prints
     // to stderr which mechanism was used. We verify the discovered path is
-    // valid by checking that <root>\Program\orlib20.dll exists — NOT by
+    // valid by checking that <root>\Program\orlib20.dll exists -- NOT by
     // comparing to a hardcoded string.
     std::fprintf(stdout, "\n--- Test 1: Auto-discovery ---\n");
     TsDevLib* lib = nullptr;
@@ -136,7 +136,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // exists at <root>\Program\orlib20.dll. We do NOT compare to a hardcoded
     // "TradeStation 9.5" string. The constructor already validated this
     // internally (validateTsInstall), but we double-check here.
-    // (If the constructor succeeded, orlib20.dll was found — so this is
+    // (If the constructor succeeded, orlib20.dll was found -- so this is
     // inherently verified by the constructor not throwing.)
     std::string testRoot = binStr.substr(0, binStr.rfind("\\MyWork\\Bin"));
     std::wstring testRootW(testRoot.begin(), testRoot.end());
@@ -155,7 +155,7 @@ DWORD WINAPI runTest(LPVOID param) {
 
     // ---- Test 1b: Registry discovery cross-check ----
     // Independently verify that the registry key exists and contains a valid
-    // path, using the CORRECT path (no WOW6432Node in the subkey —
+    // path, using the CORRECT path (no WOW6432Node in the subkey --
     // KEY_WOW64_32KEY handles the 32-bit view redirection). This cross-checks
     // that the production code's registry discovery is actually working (not
     // silently falling through to the conventional default). This test would
@@ -219,7 +219,7 @@ DWORD WINAPI runTest(LPVOID param) {
             // should match the registry root (if registry discovery was used)
             // OR be the conventional default (if registry was not used). Either
             // way, both must be valid TS install roots. We print both for
-            // diagnostic purposes — the stderr from the constructor already
+            // diagnostic purposes -- the stderr from the constructor already
             // indicates which mechanism was used.
             std::fprintf(stdout, "    Auto-discovered root: %s\n",
                          testRoot.c_str());
@@ -237,7 +237,7 @@ DWORD WINAPI runTest(LPVOID param) {
                          "Auto-discovery must have used the conventional "
                          "default. Check stderr for 'resolved via "
                          "conventional default'.\n", rc);
-            // This is not a failure — the registry key may legitimately not
+            // This is not a failure -- the registry key may legitimately not
             // exist on some machines. But if stderr shows "resolved via
             // registry" while this direct read fails, that indicates a bug
             // in the production registry code (e.g. the C1 double-WOW6432Node
@@ -257,7 +257,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // the root path. Since there's no getTsRoot() getter, we'll derive it
     // from getMyWorkBinPath() by stripping "\MyWork\Bin".
     // IMPORTANT: Use binStr (the std::string copy captured in Test 1 BEFORE
-    // `delete lib`), NOT the raw `myWorkBin` const char* — that pointer is
+    // `delete lib`), NOT the raw `myWorkBin` const char* -- that pointer is
     // dangling after `delete lib` at the end of Test 1.
     std::string binPath = binStr;  // safe: binStr is an independent copy
     std::string suffix = "\\MyWork\\Bin";
@@ -331,7 +331,7 @@ DWORD WINAPI runTest(LPVOID param) {
     delete lib;
     lib = nullptr;
 
-    // ---- Test 4: Invalid path → constructor throws ----
+    // ---- Test 4: Invalid path -> constructor throws ----
     std::fprintf(stdout, "\n--- Test 4: Invalid path ---\n");
     const wchar_t* badPath = L"C:\\Nonexistent\\TradeStation\\Path";
     bool threw = false;
@@ -356,7 +356,7 @@ DWORD WINAPI runTest(LPVOID param) {
 }
 
 // ---------------------------------------------------------------------------
-// SEH wrapper — POD-only (no C++ objects with destructors) so __try is legal.
+// SEH wrapper -- POD-only (no C++ objects with destructors) so __try is legal.
 // ---------------------------------------------------------------------------
 
 DWORD WINAPI threadProc(LPVOID param) {

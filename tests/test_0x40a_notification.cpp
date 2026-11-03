@@ -1,7 +1,7 @@
 // test_0x40a_notification.cpp
 //
-// Workstream M slice M.3 — integration test for the 0x40A post-success
-// library-change notification parity with TSDev.exe. The TDD RED→GREEN
+// Workstream M slice M.3 -- integration test for the 0x40A post-success
+// library-change notification parity with TSDev.exe. The TDD RED->GREEN
 // transition is historical; the current implementation and receiver fixture
 // are retained for regression coverage.
 //
@@ -9,7 +9,7 @@
 // (Ordinal_57) + Frida trace; see
 // docs/RE/RE_M3_0x40A_NOTIFICATION.md):
 //
-//   R-M.3.1 — Message format and packing (CONFIRMED):
+//   R-M.3.1 -- Message format and packing (CONFIRMED):
 //     msg    = 0x040A (1034)
 //     wParam = 0
 //     lParam = (category << 16) | (ProgId & 0xFFFF)
@@ -19,18 +19,18 @@
 //   PostMessageW to the registered client HWND set maintained by
 //   tslib::EventsViaHandles.
 //
-//   R-M.3.2 — Confirmed operation set:
+//   R-M.3.2 -- Confirmed operation set:
 //     verify-success (insert/modify/upsert) sends 0x40A
 //     delete-success sends 0x40A (gated category != 4; editable
 //     user-created Functions are now category 1, so they DO send)
 //     failed compile/verify does NOT send 0x40A
 //
-//   R-M.3.3 — Error semantics:
+//   R-M.3.3 -- Error semantics:
 //     Ordinal_57 always returns 1; send failure is silently ignored; no
 //     receiver = silent no-op. Operation success is NOT blocked by
 //     receiver absence.
 //
-//   R-M.3.4 — Test receiver: register via
+//   R-M.3.4 -- Test receiver: register via
 //   _OrlibRegisterNotificationHandle@4 (ordinal 595). The receiver-aware
 //   fixture is implemented; the hook also captures the would-be send
 //   arguments to pin the packing and operation set.
@@ -47,7 +47,7 @@
 // invoke the hook, so the positive hook assertions failed while the failed-
 // verify negative assertion passed trivially. The current M.3 implementation
 // sends through ordinal 57 and the receiver-aware cases exercise actual
-// delivery. The RED→GREEN transition is retained in the slice handoff.
+// delivery. The RED->GREEN transition is retained in the slice handoff.
 //
 // 16 test cases:
 //   1. Verify-success sends 0x40A (Strategy, category 0)
@@ -55,23 +55,23 @@
 //   3. Verify-success sends 0x40A (Function, category 1)
 //   4. Failed verify does NOT send 0x40A (Strategy, negative test)
 //   5. Delete-success sends 0x40A (Strategy, category 0)
-//   6. BATCH REUSE — 3 consecutive create+save+verify+delete cycles on the
+//   6. BATCH REUSE -- 3 consecutive create+save+verify+delete cycles on the
 //      SAME shared TsDevLib, asserting the hook fires with correct packing
 //      on EACH verify-success iteration (proves no stale notification
 //      state across batch reuse, per M.3 operation-mode coverage).
 //   7. Verify-success sends 0x40A (TradingApp, category 2)
 //   8. Verify-success sends 0x40A (ShowMe, category 2)
-//   9. RECEIVER-AWARE single verify-success — real message-only window
+//   9. RECEIVER-AWARE single verify-success -- real message-only window
 //      registered via ordinal 595, captures actual PostMessageW(0x40A).
-//  10. RECEIVER-AWARE batch — 3 verify + 3 delete = 6 receiver-captured
+//  10. RECEIVER-AWARE batch -- 3 verify + 3 delete = 6 receiver-captured
 //      posts, no missed/duplicated.
 //  11. Delete-success sends 0x40A (Indicator, category 2)
 //  12. Delete-success sends 0x40A (TradingApp, category 2)
 //  13. Delete-success sends 0x40A (ShowMe, category 2)
 //  14. Delete-success sends 0x40A (Function, category 1)
-//  15. CLI stdin batch mode — spawns real tsdev_cli.exe, receiver captures
+//  15. CLI stdin batch mode -- spawns real tsdev_cli.exe, receiver captures
 //      0x40A via cross-process shared EventsViaHandles array.
-//  16. CLI serve mode — spawns real tsdev_cli.exe serve, receiver captures
+//  16. CLI serve mode -- spawns real tsdev_cli.exe serve, receiver captures
 //      0x40A via cross-process shared EventsViaHandles array.
 //
 // Each positive case creates a disposable entry, saves valid source,
@@ -109,7 +109,7 @@ using namespace tsdev;
 namespace {
 
 // ---------------------------------------------------------------------------
-// CHECK macro — prints PASS/FAIL per assertion with line numbers.
+// CHECK macro -- prints PASS/FAIL per assertion with line numbers.
 // ---------------------------------------------------------------------------
 static int g_failCount = 0;
 static int g_passCount = 0;
@@ -172,7 +172,7 @@ void resetCapture() {
 }
 
 // ---------------------------------------------------------------------------
-// Real ComApi — binds the actual CoInitializeEx / CoUninitialize so the
+// Real ComApi -- binds the actual CoInitializeEx / CoUninitialize so the
 // test-only ctor enters a real STA apartment (required for orlib20 / OLE).
 // ---------------------------------------------------------------------------
 ComApi realComApi() {
@@ -227,15 +227,15 @@ std::string makeFunctionSource(const std::string& name) {
     return name + " = 1;\r\n";
 }
 
-// TradingApp minimal valid source — `using elsystem;` compiles successfully
-// (matches docs/E2E_TEST_SPEC.md §4.1 TradingApp insert source).
+// TradingApp minimal valid source -- `using elsystem;` compiles successfully
+// (matches docs/E2E_TEST_SPEC.md Sec. 4.1 TradingApp insert source).
 std::string makeTradingAppSource(const std::string& name) {
     return std::string("{ ") + name + " }\r\n"
            "using elsystem;\r\n";
 }
 
-// ShowMe valid source — uses Plot1 (allowed in ShowMe studies, like
-// Indicators); mirrors docs/E2E_TEST_SPEC.md §4.1 ShowMe insert source and
+// ShowMe valid source -- uses Plot1 (allowed in ShowMe studies, like
+// Indicators); mirrors docs/E2E_TEST_SPEC.md Sec. 4.1 ShowMe insert source and
 // tests/test_showme_e2e.ps1 SM1.
 std::string makeShowMeSource(const std::string& name) {
     return std::string("{ ") + name + " }\r\n"
@@ -243,7 +243,7 @@ std::string makeShowMeSource(const std::string& name) {
            "    Plot1(High, \"Up bar\");\r\n";
 }
 
-// Deliberately broken EasyLanguage source — guaranteed to fail compilation.
+// Deliberately broken EasyLanguage source -- guaranteed to fail compilation.
 // Contains invalid syntax (@#$%) and no valid statements.
 std::string makeBrokenSource() {
     return std::string("This is not valid EasyLanguage @#$%\r\n");
@@ -270,13 +270,13 @@ int preCleanup(TsDevLib& lib, ComponentType type, const std::string& name) {
 }
 
 // ---------------------------------------------------------------------------
-// runVerifySuccessCase — positive case: create, save valid source, verify,
+// runVerifySuccessCase -- positive case: create, save valid source, verify,
 // assert the onNotifyReady hook fired with correct 0x40A packing, then
 // clean up.
 //
 // Returns 0 on success (all assertions evaluated), nonzero on a fatal
 // setup error (createEntry <= 0). Assertion failures increment
-// g_failCount but do NOT early-return — the cleanup still runs.
+// g_failCount but do NOT early-return -- the cleanup still runs.
 // ---------------------------------------------------------------------------
 int runVerifySuccessCase(TsDevLib& lib, int caseNum,
                          ComponentType type, const std::string& name,
@@ -410,7 +410,7 @@ int runVerifySuccessCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runFailedVerifyCase — negative case: create, save BROKEN source, verify,
+// runFailedVerifyCase -- negative case: create, save BROKEN source, verify,
 // assert the hook did NOT fire AND verifyModule actually failed. This is
 // the correct negative assertion (R-M.3.2: failed compile/verify does NOT
 // send 0x40A). The current implementation must keep this negative contract.
@@ -500,7 +500,7 @@ int runFailedVerifyCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runDeleteSuccessCase — positive case: create, save valid source, verify
+// runDeleteSuccessCase -- positive case: create, save valid source, verify
 // (so the item is real and persisted), reset capture, deleteEntry, assert
 // the onNotifyReady hook fired with correct 0x40A packing. No post-delete
 // cleanup needed (the item was deleted by the operation under test).
@@ -632,24 +632,24 @@ int runDeleteSuccessCase(TsDevLib& lib, int caseNum,
         CHECK(g_capture.fired && g_capture.progId == preDeleteProgId, buf);
     }
 
-    // No post-delete cleanup — the item was deleted by the operation.
+    // No post-delete cleanup -- the item was deleted by the operation.
     resetCapture();
     return 0;
 }
 
 // ---------------------------------------------------------------------------
-// runBatchReuseCase — adversarial / operation-mode coverage: 3 consecutive
+// runBatchReuseCase -- adversarial / operation-mode coverage: 3 consecutive
 // create+save+verify+delete cycles on the SAME shared TsDevLib, asserting
 // the onNotifyReady hook fires with correct 0x40A packing on EACH
 // verify-success iteration. Proves no stale notification state across
 // batch reuse (per M.3 operation-mode coverage).
 //
 // Each iteration does a FULL reset (including callCount) before verifyModule
-// and asserts callCount == 1 after verify — proving each verify fires the
+// and asserts callCount == 1 after verify -- proving each verify fires the
 // hook exactly once, independently, with no stale/duplicated state from a
 // prior iteration. The cleanup deleteEntry at the end of each iteration also
-// fires the hook (delete sends 0x40A for Strategy, category 0 != 4 — see
-// Case 5), which is correct per RE_M3 §2.4; that fire is not asserted here
+// fires the hook (delete sends 0x40A for Strategy, category 0 != 4 -- see
+// Case 5), which is correct per RE_M3 Sec. 2.4; that fire is not asserted here
 // (it is covered by Case 5) and is cleared by the full reset at the top of
 // the next iteration.
 // ---------------------------------------------------------------------------
@@ -724,7 +724,7 @@ int runBatchReuseCase(TsDevLib& lib, int caseNum,
             CHECK(g_capture.fired, buf);
         }
 
-        // Assert callCount == 1 (exactly one fire from THIS verify — proves
+        // Assert callCount == 1 (exactly one fire from THIS verify -- proves
         // no missed/duplicated notification, no stale state from a prior
         // iteration).
         {
@@ -796,9 +796,9 @@ int runBatchReuseCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runDeleteSuccessCase_Indicator / _TradingApp / _ShowMe — Finding 4:
+// runDeleteSuccessCase_Indicator / _TradingApp / _ShowMe -- Finding 4:
 // delete-success 0x40A packing parity for the remaining 3 of the 5 supported
-// component types (Indicator, TradingApp, ShowMe — all category 2). Delete
+// component types (Indicator, TradingApp, ShowMe -- all category 2). Delete
 // is in the confirmed operation set (gated category != 4), so each of these
 // MUST send 0x40A with lParam=(category<<16)|(progId&0xFFFF) on
 // delete-success. Mirrors runDeleteSuccessCase (Case 5) exactly, just with a
@@ -932,20 +932,20 @@ int runDeleteSuccessCase_Indicator(TsDevLib& lib, int caseNum,
         CHECK(g_capture.fired && g_capture.progId == preDeleteProgId, buf);
     }
 
-    // No post-delete cleanup — the item was deleted by the operation.
+    // No post-delete cleanup -- the item was deleted by the operation.
     resetCapture();
     return 0;
 }
 
 // ---------------------------------------------------------------------------
-// runDeleteSuccessCase_Function — Finding 5 (updated): Function (category 1)
+// runDeleteSuccessCase_Function -- Finding 5 (updated): Function (category 1)
 // delete is INSIDE the confirmed operation set (the 0x40A send is gated
 // category != 4, and user-created Functions are now category 1), so
 // delete-success MUST send 0x40A for an editable Function. Built-in
 // read-only Functions remain category 4 and are still gated out.
 //
 // Pattern: create a Function item, save valid source, verify (which DOES
-// fire 0x40A — verify-success is in the confirmed set for all categories),
+// fire 0x40A -- verify-success is in the confirmed set for all categories),
 // then reset the capture, delete the item, and assert:
 //   - deleteEntry returned true, and
 //   - the onNotifyReady hook fired with correct 0x40A packing
@@ -996,7 +996,7 @@ int runDeleteSuccessCase_Function(TsDevLib& lib, int caseNum,
     // --- 4. verifyModule (so the item is compiled + persisted before delete).
     // This step DOES fire 0x40A (verify-success is in the confirmed set for
     // all categories). We assert verify succeeded but do NOT assert the hook
-    // fired here — the point of this case is the DELETE step's positive
+    // fired here -- the point of this case is the DELETE step's positive
     // assertion below. The resetCapture() before the delete step clears any
     // verify-fire so the delete-step capture is clean.
     std::printf("  [4] verifyModule(%s, %d)...\n", typeLabel, progId);
@@ -1096,7 +1096,7 @@ int runDeleteSuccessCase_Function(TsDevLib& lib, int caseNum,
     //     positive case: if deleteEntry returned true but the item still
     //     exists, the 0x40A packing could be from a stale verify.
     //     findExistPos returns >0 if found; 0 (SEH) or -1 (not found) if
-    //     absent — so the "gone" assertion is postProgId <= 0, matching
+    //     absent -- so the "gone" assertion is postProgId <= 0, matching
     //     the convention used by preCleanup() above. ---
     int postProgId = lib.findExistPos(name, type);
     std::printf("      post-delete findExistPos = %d (expected <= 0)\n",
@@ -1109,7 +1109,7 @@ int runDeleteSuccessCase_Function(TsDevLib& lib, int caseNum,
         CHECK(postProgId <= 0, buf);
     }
 
-    // No post-delete cleanup — the item was deleted by the operation.
+    // No post-delete cleanup -- the item was deleted by the operation.
     resetCapture();
     return 0;
 }
@@ -1124,7 +1124,7 @@ int runDeleteSuccessCase_Function(TsDevLib& lib, int caseNum,
 // real registered HWND and is dispatched by a real message loop.
 //
 // Architecture (per the task spec and docs/RE/RE_M3_0x40A_NOTIFICATION.md
-// §1.4):
+// Sec. 1.4):
 //   - The receiver window is created on a SEPARATE receiver thread (Windows
 //     requires GetMessage on the thread that created the window).
 //   - _OrlibRegisterNotificationHandle@4 (ordinal 595) is resolved from the
@@ -1163,7 +1163,7 @@ struct ReceiverState {
     bool                       mayExit = false;          // set by main thread AFTER unregisterFn, to tell the receiver it may destroy its window and exit
 };
 
-// The window proc — captures 0x40A into the shared state. All other
+// The window proc -- captures 0x40A into the shared state. All other
 // messages go to DefWindowProcW.
 static LRESULT WINAPI ReceiverWndProc(HWND hwnd, UINT msg,
                                       WPARAM wParam, LPARAM lParam) {
@@ -1181,7 +1181,7 @@ static LRESULT WINAPI ReceiverWndProc(HWND hwnd, UINT msg,
         if (count >= rs->targetCount) {
             // Wake up the main thread's wait so it can unregister the HWND
             // and then set mayExit. The receiver loop does NOT break on
-            // this signal — it only breaks when mayExit is set, ensuring
+            // this signal -- it only breaks when mayExit is set, ensuring
             // the window is not destroyed before unregisterFn runs.
             SetEvent(rs->doneEvent);
         }
@@ -1233,7 +1233,7 @@ static DWORD WINAPI ReceiverThreadProc(LPVOID param) {
     SetWindowLongPtrW(rs->hwnd, GWLP_USERDATA,
                       reinterpret_cast<LONG_PTR>(rs));
 
-    // Window is ready — unblock the main thread so it can register the
+    // Window is ready -- unblock the main thread so it can register the
     // HWND with EventsViaHandles and start the operation.
     SetEvent(rs->readyEvent);
 
@@ -1328,7 +1328,7 @@ typedef int (__stdcall *OrlibRegisterNotifyFn)(HWND);
 typedef int (__stdcall *OrlibUnregisterNotifyFn)(HWND);
 
 // ---------------------------------------------------------------------------
-// runReceiverAwareSingleCase — Finding 1: prove ACTUAL delivery via
+// runReceiverAwareSingleCase -- Finding 1: prove ACTUAL delivery via
 // PostMessageW to a registered receiver window for ONE verify-success
 // operation. Asserts the receiver captured exactly one 0x40A with the
 // correct (msg, wParam, lParam) packing.
@@ -1593,7 +1593,7 @@ int runReceiverAwareSingleCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runReceiverAwareBatchCase — Finding 2: prove ACTUAL delivery via
+// runReceiverAwareBatchCase -- Finding 2: prove ACTUAL delivery via
 // PostMessageW to a registered receiver window across MULTIPLE verify-
 // success operations (3 cycles) on the SAME shared TsDevLib, asserting the
 // receiver gets EXACTLY ONE 0x40A per operation (3 total) with no
@@ -1639,7 +1639,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
     }
 
     // Start the receiver thread ONCE for the whole batch (the same
-    // registered HWND receives all 3 posts — mirrors a long-lived
+    // registered HWND receives all 3 posts -- mirrors a long-lived
     // receiver like orchart.exe).
     // targetCount = 2 * kIterations because each iteration produces ONE
     // verify-post AND ONE delete-post (Strategy category 0, delete is
@@ -1775,7 +1775,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
         }
 
         // Cleanup this iteration's item. The delete also posts 0x40A for
-        // Strategy category 0 (correct per RE_M3 §2.4 — delete is gated
+        // Strategy category 0 (correct per RE_M3 Sec. 2.4 -- delete is gated
         // category != 4). The receiver captures ALL 0x40A messages
         // (verify + delete); the final assertion checks the total equals
         // 2 * kIterations (3 verify + 3 delete = 6).
@@ -1842,7 +1842,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
     //   - the FIRST message of each verify-post pair (i.e. messages at
     //     even indices 0,2,4) has the correct packing for the verify
     //     operation (the delete-posts in between are not asserted here
-    //     — they are covered by Case 5).
+    //     -- they are covered by Case 5).
     {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -1862,7 +1862,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
         CHECK(captured.size() == expectedTotal, buf);
     }
     // Assert every captured message is a 0x40A with wParam==0 (no
-    // stragglers of other message types leaked into the capture vector —
+    // stragglers of other message types leaked into the capture vector --
     // the wnd proc only pushes 0x40A, so this is a structural check).
     for (size_t i = 0; i < captured.size(); ++i) {
         char buf[160];
@@ -1877,7 +1877,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
 }
 
 // ===========================================================================
-// CLI-LEVEL 0x40A E2E (Findings 1 & 2 — M.3 pre-completion comparative review)
+// CLI-LEVEL 0x40A E2E (Findings 1 & 2 -- M.3 pre-completion comparative review)
 //
 // Cases 15 and 16 drive the REAL tsdev_cli.exe binary as a SEPARATE child
 // process (not the in-process TsDevLib used by Cases 1-14). Per
@@ -1886,13 +1886,13 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
 // window registered in the TEST process (via ordinal 595) is visible to
 // tsdev_cli.exe's orlib20 instance. When the CLI performs a verify-success,
 // its orlib20 Ordinal_57 reads the shared array and posts 0x40A to ALL
-// registered HWNDs — including the test process's receiver window. The test
+// registered HWNDs -- including the test process's receiver window. The test
 // process's message loop captures the 0x40A.
 //
-//   Case 15 — CLI stdin batch mode (tsdev_cli batch-insert --batch-stdin):
+//   Case 15 -- CLI stdin batch mode (tsdev_cli batch-insert --batch-stdin):
 //             3 Strategy insert+verify operations, assert exactly 3 0x40A
 //             posts captured, no missed/duplicated, correct packing.
-//   Case 16 — CLI serve mode (tsdev_cli serve --serve-pipe-file <tmp>):
+//   Case 16 -- CLI serve mode (tsdev_cli serve --serve-pipe-file <tmp>):
 //             3 Strategy insert+verify operations over a named pipe, assert
 //             exactly 3 0x40A posts captured, no missed/duplicated, correct
 //             packing. Proves a reused serve session delivers one
@@ -1900,7 +1900,7 @@ int runReceiverAwareBatchCase(TsDevLib& lib, int caseNum,
 //
 // Both cases use the SAME receiver window infrastructure as Cases 9-10
 // (ReceiverState / ReceiverWndProc / ReceiverThreadProc / resolveOrlibOrdinal)
-// — the receiver is a REAL registered window (ordinal 595), not a hook.
+// -- the receiver is a REAL registered window (ordinal 595), not a hook.
 //
 // Cleanup: after the child process exits, the test's OWN TsDevLib (which
 // shares the same warehouse via its own orlib20 instance) deletes the 3
@@ -2008,7 +2008,7 @@ std::vector<ReceivedNotify> filterByProgIds(
 }
 
 // ---------------------------------------------------------------------------
-// runCliBatchStdinCase — Case 15: spawn tsdev_cli.exe batch-insert
+// runCliBatchStdinCase -- Case 15: spawn tsdev_cli.exe batch-insert
 // --batch-stdin as a child process, feed a 3-line manifest (3 Strategy
 // insert+verify operations) via the stdin pipe, and assert the test's
 // receiver window captures exactly 3 0x40A posts (one per verify-success),
@@ -2193,7 +2193,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
                     100 + caseNum * 10 + 4);
     }
     // Ensure the PARENT's pipe ends are NOT inherited by the child (only
-    // the child's ends — stdin read, stdout write, stderr write — go to
+    // the child's ends -- stdin read, stdout write, stderr write -- go to
     // the child via STARTF_USESTDHANDLES). If the child inherited the
     // parent's write end of stdin, it would never see EOF; if it
     // inherited the parent's read end of stdout/stderr, the drain
@@ -2443,7 +2443,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
 }
 
 // ---------------------------------------------------------------------------
-// runCliServeCase — Case 16: spawn tsdev_cli.exe serve
+// runCliServeCase -- Case 16: spawn tsdev_cli.exe serve
 // --serve-pipe-file <tmp> as a child process, connect to its named pipe,
 // send 3 insert JSON requests (3 Strategy insert+verify operations),
 // capture the 0x40A posts, send quit, and assert exactly 3 0x40A posts
@@ -2460,7 +2460,7 @@ int runCliBatchStdinCase(TsDevLib& lib, int caseNum,
 // The broker (tsdev_cli.exe) requires admin privileges (it accesses the
 // TSDev Library). The test process is itself elevated (the test exe has a
 // requireAdministrator manifest per CMakeLists.txt TSDEV_ADMIN_TARGETS),
-// so the child inherits the elevated token — no UAC prompt.
+// so the child inherits the elevated token -- no UAC prompt.
 // ---------------------------------------------------------------------------
 int runCliServeCase(TsDevLib& lib, int caseNum,
                     const std::string& baseName) {
@@ -2732,7 +2732,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
                     100 + caseNum * 10 + 4);
     }
 
-    // Connect to the named pipe (retry for ~5s — the broker may not have
+    // Connect to the named pipe (retry for ~5s -- the broker may not have
     // called ConnectNamedPipe yet).
     HANDLE hPipe = INVALID_HANDLE_VALUE;
     {
@@ -2878,7 +2878,7 @@ int runCliServeCase(TsDevLib& lib, int caseNum,
                     i + 1, kIterations, resp.size(), resp.c_str());
         allServeResponses += resp;
         // Check the response contains "success":true (simple substring
-        // check — we do not parse the full JSON here to keep the test
+        // check -- we do not parse the full JSON here to keep the test
         // dependency-free).
         bool success = resp.find("\"success\":true") != std::string::npos ||
                        resp.find("\"success\": true") != std::string::npos;
@@ -3190,7 +3190,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 6: BATCH REUSE — 3 verify-success cycles (operation-mode
+    // --- Case 6: BATCH REUSE -- 3 verify-success cycles (operation-mode
     // coverage, per M.3 plan) ---
     {
         int rc = runBatchReuseCase(*lib, 6, batchName,
@@ -3218,7 +3218,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 9: RECEIVER-AWARE single verify-success — proves ACTUAL
+    // --- Case 9: RECEIVER-AWARE single verify-success -- proves ACTUAL
     // delivery via PostMessageW to a window registered with
     // _OrlibRegisterNotificationHandle@4 (ordinal 595), not just the
     // onNotifyReady hook capture (Finding 1). ---
@@ -3230,7 +3230,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 10: RECEIVER-AWARE BATCH — 3 verify-success cycles on the
+    // --- Case 10: RECEIVER-AWARE BATCH -- 3 verify-success cycles on the
     // SAME shared TsDevLib with the SAME registered receiver window,
     // asserting exactly one 0x40A per operation (3 verify + 3 delete =
     // 6 total) with no missed/duplicated messages (Finding 2). ---
@@ -3289,7 +3289,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 15: CLI stdin BATCH — 3 verify-success ops via
+    // --- Case 15: CLI stdin BATCH -- 3 verify-success ops via
     // tsdev_cli.exe batch-insert --batch-stdin (M.3 operation-mode
     // coverage, per the M.3 pre-completion comparative review findings 1 & 2).
     // Drives the REAL tsdev_cli.exe binary as a separate child process;
@@ -3303,7 +3303,7 @@ DWORD WINAPI runTest(LPVOID param) {
         if (rc != 0) { st->exitCode = rc; return 0; }
     }
 
-    // --- Case 16: CLI SERVE — 3 verify-success ops via tsdev_cli.exe serve
+    // --- Case 16: CLI SERVE -- 3 verify-success ops via tsdev_cli.exe serve
     // --serve-pipe-file (M.3 operation-mode coverage, reused serve session).
     // Drives the REAL tsdev_cli.exe binary as a separate child process in
     // serve mode; connects to its named pipe, sends 3 insert JSON requests

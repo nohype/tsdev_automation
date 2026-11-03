@@ -19,13 +19,13 @@
 //   - void applyLiveSourceJson(ordered_json&, const CacheOpResult&);
 //   - ordered_json cacheErrorJson(op, exitCode, message);
 //
-// This is a PURE UNIT TEST — it does NOT load orlib20.dll, does NOT touch
+// This is a PURE UNIT TEST -- it does NOT load orlib20.dll, does NOT touch
 // the TradeStation installation, and performs no filesystem I/O (the
 // renderer emitter and runCachePhase driver are NOT exercised here; only
 // the pure builders are). The body runs on a 64 MB-stack worker thread only
 // to match the project's test-harness convention.
 //
-// Linkage mechanism: identical to test_pbar.cpp — the helpers live inside
+// Linkage mechanism: identical to test_pbar.cpp -- the helpers live inside
 // tsdev_cli.cpp's anonymous namespace (internal linkage), so the test
 // #defines TSDEV_CLI_TEST and #includes the .cpp directly (same TU; the
 // file's main() is excluded by the TSDEV_CLI_TEST guard).
@@ -64,7 +64,7 @@ int fail(const char* msg, int code) {
 }
 
 // Test-side display-cell width under the pinned rule (UTF-8 continuation
-// bytes don't count) — same restatement as test_pbar.cpp.
+// bytes don't count) -- same restatement as test_pbar.cpp.
 size_t cellWidth(const std::string& s) {
     size_t cells = 0;
     for (unsigned char b : s)
@@ -118,7 +118,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 2: cacheElapsedFormat — M:SS below 1h, H:MM:SS at/above,
+    // Check 2: cacheElapsedFormat -- M:SS below 1h, H:MM:SS at/above,
     // negatives clamp to 0:00, fractional seconds truncate.
     // ------------------------------------------------------------------
     {
@@ -136,7 +136,7 @@ DWORD WINAPI runTest(LPVOID param) {
     // Check 3: cacheProgressLine geometry.
     //   cacheProgressLine("BACKUP", 450461696, 1964185600, 7.2, "")
     //   filled = floor(30*450461696/1964185600) = 6; pct = 22
-    //   Expected: BACKUP [█x6░x24]  22% 0:07
+    //   Expected: BACKUP [#x6.x24]  22% 0:07
     // ------------------------------------------------------------------
     {
         std::string line =
@@ -155,8 +155,8 @@ DWORD WINAPI runTest(LPVOID param) {
     // code-point boundary; the whole line stays <= 79 cells; a suffix that
     // cannot fit at all is dropped.
     //   cacheProgressLine("BACKUP", 5, 10, 3.0, <name>)
-    //   prefix "BACKUP [...]  50% 0:03" = 49 cells; budget for " — <file>"
-    //   is 30 cells -> " — " + 27 file cells.
+    //   prefix "BACKUP [...]  50% 0:03" = 49 cells; budget for " -- <file>"
+    //   is 30 cells -> " -- " + 27 file cells.
     // ------------------------------------------------------------------
     {
         std::string line = cacheProgressLine("BACKUP", 5, 10, 3.0, "f.el");
@@ -240,7 +240,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 7: cachePipeProgressLine — human key=value line and NDJSON.
+    // Check 7: cachePipeProgressLine -- human key=value line and NDJSON.
     // ------------------------------------------------------------------
     {
         const std::string human = cachePipeProgressLine(
@@ -281,7 +281,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 9: decideBackupAction — the F4 decision seam
+    // Check 9: decideBackupAction -- the F4 decision seam
     // (exists/complete/policy/interactive -> action).
     // ------------------------------------------------------------------
     {
@@ -309,7 +309,7 @@ DWORD WINAPI runTest(LPVOID param) {
             BackupAction::Cancel)
             return ec = fail("check9: complete+abort", 94), 0;
 
-        // exists && !complete: never Prompt/Skip — overwrite regardless of
+        // exists && !complete: never Prompt/Skip -- overwrite regardless of
         // policy EXCEPT abort -> Cancel.
         info.complete = false;
         if (decideBackupAction(info, CacheBackupPolicy::Prompt, true) !=
@@ -340,7 +340,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 10: existingBackupDetailLine — exact bytes, source= appended
+    // Check 10: existingBackupDetailLine -- exact bytes, source= appended
     // only when present.
     // ------------------------------------------------------------------
     {
@@ -373,7 +373,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 11: cachePromptChoice — first non-whitespace char wins,
+    // Check 11: cachePromptChoice -- first non-whitespace char wins,
     // case-insensitive; empty/whitespace-only line (bare Enter) is 's';
     // anything else is L'\0' (invalid -> re-prompt).
     // ------------------------------------------------------------------
@@ -404,7 +404,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 12: torn-capture disclosure seams — backupCapturedLiveSource,
+    // Check 12: torn-capture disclosure seams -- backupCapturedLiveSource,
     // liveSourceSuffix, applyLiveSourceJson (additive-only keys).
     // ------------------------------------------------------------------
     {
@@ -449,7 +449,7 @@ DWORD WINAPI runTest(LPVOID param) {
     }
 
     // ------------------------------------------------------------------
-    // Check 13: cacheErrorJson — the single stdout error object emitted by
+    // Check 13: cacheErrorJson -- the single stdout error object emitted by
     // every runCachePhase failure path under --json. CliResult shape:
     // {"op":<phase>,"success":false,"exit_code":<n>,
     //  "error":{"code":<from exit code>,"message":<msg>}}.

@@ -17,7 +17,7 @@
             - Expects exit code 0, JSON with "exists": true and "prog_id" > 0.
       D1.2  exists strategy NonExistentNameXYZ --json  (nonexistent item)
             - Expects exit code 0, JSON with "exists": false.
-      D1.3  exists strategy <name> --json  (after delete — should not exist)
+      D1.3  exists strategy <name> --json  (after delete -- should not exist)
             - Deletes the probe, then queries again.
             - Expects exit code 0, JSON with "exists": false.
 
@@ -337,7 +337,7 @@ try {
         -Arguments @("insert","strategy",$probeName,$f) `
         -ExpectedExit 0 -ExpectSubstr "SUCCESS" -TestName $probeName | Out-Null
 
-    # Query exists for the existing item — expect exit 0, JSON exists=true, prog_id > 0.
+    # Query exists for the existing item -- expect exit 0, JSON exists=true, prog_id > 0.
     Invoke-Test -TestId "D1.1b" -Step "exists (existing item)" `
         -Arguments @("--json","exists","strategy",$probeName) `
         -ExpectedExit 0 -TestName $probeName `
@@ -373,7 +373,7 @@ try {
         -Arguments @("delete","strategy",$probeName) `
         -ExpectedExit 0 | Out-Null
 
-    # Query exists for the deleted item — expect exit 0, JSON exists=false.
+    # Query exists for the deleted item -- expect exit 0, JSON exists=false.
     Invoke-Test -TestId "D1.3b" -Step "exists (after delete)" `
         -Arguments @("--json","exists","strategy",$probeName) `
         -ExpectedExit 0 `

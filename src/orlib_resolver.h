@@ -1,7 +1,7 @@
 // =============================================================================
 // orlib_resolver.h
 //
-// TVS-B.3 — Design of the OrlibResolver abstraction layer.
+// TVS-B.3 -- Design of the OrlibResolver abstraction layer.
 //
 // Encapsulates ALL version-specific knowledge of orlib20.dll behind a single
 // class so that the rest of the CLI (TsDevLib) never touches a hardcoded RVA,
@@ -36,8 +36,8 @@
 //   the fragility of fixed RVAs: a hardcoded RVA is valid only for a single
 //   tested build (FileVersion 9.50.01.3344; see
 //   signatures/v9.50.01.3344.json for the PE timestamp and all version
-//   indicators). If TradeStation ships a rebuild — even one with the same
-//   FileVersion — the linker may shift code, and every hardcoded RVA would
+//   indicators). If TradeStation ships a rebuild -- even one with the same
+//   FileVersion -- the linker may shift code, and every hardcoded RVA would
 //   silently point at the wrong bytes. The result is a crash or, worse, a
 //   call into unrelated code that corrupts state.
 //
@@ -48,7 +48,7 @@
 //   automatically. Wildcards (??) cover only address-dependent bytes (SEH
 //   handler addresses, data-section references, IAT slots, relative
 //   call/jump displacements) so the signature is stable under relocation and
-//   minor code shifts. See docs/SIGNATURE_CATALOG.md §2 for the wildcard
+//   minor code shifts. See docs/SIGNATURE_CATALOG.md Sec. 2 for the wildcard
 //   policy.
 //
 //   Trade-off: signature scanning is slower than RVA arithmetic (O(text_size *
@@ -61,19 +61,19 @@
 // 2. HOW THE VERSION MANIFEST WORKS
 //
 //   The manifest (OrlibVersionManifestEntry, from docs/VERSION_DETECTION.md
-//   §6.2) is a compiled-in constexpr array — one entry per known-tested DLL
+//   Sec. 6.2) is a compiled-in constexpr array -- one entry per known-tested DLL
 //   version. Each entry carries tiered identity indicators:
 //     Tier 1: FileVersion string (primary key, cheap, human-readable).
 //     Tier 2: PE timestamp + file size (catches rebuilds sharing a FileVersion).
-//     Tier 3: SHA-256 (definitive byte-identity, expensive — computed last).
+//     Tier 3: SHA-256 (definitive byte-identity, expensive -- computed last).
 //   plus .text/export sanity indicators and a SignatureSetId that selects
 //   which signature set to use for resolution.
 //
 //   detectVersion() implements the 3-tier decision tree
-//   (docs/VERSION_DETECTION.md §4.2): Tier 1 lookup → Tier 2 cross-check →
+//   (docs/VERSION_DETECTION.md Sec. 4.2): Tier 1 lookup -> Tier 2 cross-check ->
 //   Tier 3 hash confirmation. The result is a structured VersionDescriptor
 //   (known/unknown, tier-match level, matched entry pointer). Version
-//   detection NEVER aborts the CLI on its own — it only emits warnings.
+//   detection NEVER aborts the CLI on its own -- it only emits warnings.
 //   The hard failure comes from signature resolution: if the signatures do
 //   not match, the resolver throws. This separates "untested version"
 //   (warning) from "signatures don't match" (hard error).
@@ -122,7 +122,7 @@
 //     OrlibResolverError with the patch-site name, RVA, expected vs. actual
 //     bytes.
 //   - Version detection: NEVER throws. Unknown / rebuilt / byte-differs
-//     states are warnings (stderr), not exceptions. See §2 above.
+//     states are warnings (stderr), not exceptions. See Sec. 2 above.
 //
 //   Recoverable operations (e.g., "is this patch already applied?") use bool
 //   return values, not exceptions.
@@ -177,7 +177,7 @@
 // 7. HISTORICAL DISCREPANCY NOTE: "8 exports"
 //
 //   The TVS-B.3 handoff's adversarial-review line mentioned "8 exports". At
-//   that time, docs/SIGNATURE_CATALOG.md §5 listed 7 export names used in
+//   that time, docs/SIGNATURE_CATALOG.md Sec. 5 listed 7 export names used in
 //   production code. F.4/F.5 later added 3 named exports, and M.1/M.3 added
 //   ordinal-only exports 66, 67, and 57. The current tracked export set
 //   (by-name + ordinal-only) is recorded in docs/SIGNATURE_CATALOG.md,
@@ -236,11 +236,11 @@ struct OrlibSignatureDef {
 };
 
 // ---------------------------------------------------------------------------
-// Version manifest (from docs/VERSION_DETECTION.md §6.2)
+// Version manifest (from docs/VERSION_DETECTION.md Sec. 6.2)
 // ---------------------------------------------------------------------------
 
 /// \brief Identifies which signature set to use for a DLL version.
-/// \see docs/VERSION_DETECTION.md §6.2.
+/// \see docs/VERSION_DETECTION.md Sec. 6.2.
 ///
 /// The full enum definition (with enumerators SIGSET_NONE, SIGSET_V9_50_01_3344,
 /// etc.) is OWNED by the generated header signatures.gen.h, which defines it
@@ -257,7 +257,7 @@ enum SignatureSetId : uint16_t;
 /// constexpr array (no runtime JSON parsing). One entry per known-tested DLL
 /// version. Currently one entry (9.50.01.3344).
 ///
-/// \see docs/VERSION_DETECTION.md §6.2 for field-by-field documentation.
+/// \see docs/VERSION_DETECTION.md Sec. 6.2 for field-by-field documentation.
 struct OrlibVersionManifestEntry {
     // --- Tier 1: primary key (PE version resource) ---
     const char* fileVersion;       ///< e.g. "9.50.01.3344" (manifest key).
@@ -296,7 +296,7 @@ struct OrlibVersionManifestEntry {
 // ---------------------------------------------------------------------------
 
 /// \brief Tier-match level reached during version detection.
-/// \see docs/VERSION_DETECTION.md §4.1.
+/// \see docs/VERSION_DETECTION.md Sec. 4.1.
 enum class VersionTier : uint8_t {
     Unknown         = 0,  ///< FileVersion not in manifest.
     Tier1Match      = 1,  ///< FileVersion found; Tier 2 not yet checked.
@@ -309,7 +309,7 @@ enum class VersionTier : uint8_t {
 /// \brief Structured result of version detection.
 ///
 /// Returned by OrlibResolver::detectVersion(). Never represents a fatal
-/// error — unknown/rebuilt/byte-differs are warnings, not exceptions.
+/// error -- unknown/rebuilt/byte-differs are warnings, not exceptions.
 struct VersionDescriptor {
     bool                          known;            ///< True if FileVersion was found in the manifest.
     VersionTier                   tier;             ///< Highest tier reached.
@@ -378,7 +378,7 @@ private:
 //
 // Exports: all __stdcall (stdcall-decorated _fn@N, except FindExistPos which
 //   is exported undecorated but still uses __stdcall calling convention).
-// Internal functions: calling conventions per docs/SIGNATURE_CATALOG.md §3.
+// Internal functions: calling conventions per docs/SIGNATURE_CATALOG.md Sec. 3.
 // ===========================================================================
 
 // --- 7 core named exports (all __stdcall) ---
@@ -397,19 +397,19 @@ typedef int  (__stdcall *VerifyModule_NewFn)(HWND hwnd, int warehouseType,
 typedef void (__stdcall *CloseWarehouseFn)(int param);
 
 // --- Typed internal functions (CALL_TARGETs, resolved by signature scan) ---
-// Target 1: StartCompilingProcess — __cdecl, no args.
+// Target 1: StartCompilingProcess -- __cdecl, no args.
 typedef void (__cdecl *StartCompilingProcessFn)(void);
-// Target 2: EndCompilingProcess — __fastcall, 1 arg.
+// Target 2: EndCompilingProcess -- __fastcall, 1 arg.
 typedef void (__fastcall *EndCompilingProcessFn)(int param);
-// Target 5: InitGlobalLookup — __cdecl, no args, returns global lookup ptr.
+// Target 5: InitGlobalLookup -- __cdecl, no args, returns global lookup ptr.
 typedef void* (__cdecl *InitGlobalLookupFn)(void);
-// Target 6: DeleteFromTree — __thiscall (ecx=globalLookup; stack: whType,
+// Target 6: DeleteFromTree -- __thiscall (ecx=globalLookup; stack: whType,
 //   progId, flag; RET 12). MSVC has no __thiscall function-pointer type, so
 //   stored as void* and invoked via inline asm (see callDeleteFromTree in
 //   tsdev_lib.cpp). The resolver returns void* for this target.
-// Target 7: GetWarehouse — __cdecl, 1 arg (path; 0=default).
+// Target 7: GetWarehouse -- __cdecl, 1 arg (path; 0=default).
 typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
-// Target 8: FUN_101a8360 delete orchestrator — __fastcall (ECX=whType,
+// Target 8: FUN_101a8360 delete orchestrator -- __fastcall (ECX=whType,
 //   EDX=progId, no stack args). Invoked via inline asm in production code.
 //   Stored as void*.
 
@@ -418,7 +418,7 @@ typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 // (FUN_10165f70 = operator_new(0x58) + ctor FUN_10165a00) and destructs+frees
 // via ordinal 67 (FUN_10165fd0 = dtor FUN_10165ac0 + operator delete(p,0x58)).
 // Calling conventions are documented in the historical M.1 handoff
-// (`docs/M1_HANDOFF.md` §R-M.1.1); the raw Ghidra note is transient and
+// (`docs/M1_HANDOFF.md` Sec. R-M.1.1); the raw Ghidra note is transient and
 // unavailable in a fresh checkout:
 //   Ordinal 66: __cdecl, no args, returns void* (the constructed object, or
 //               NULL on alloc failure). Ends with plain RET (C3).
@@ -426,7 +426,7 @@ typedef void* (__cdecl *GetWarehouseFn)(int pathParam);
 //               RET 4 (C2 04 00). Getting this wrong corrupts the stack.
 // These REPLACE the old signature-scanned CELCompilerCtorFn / CELCompilerDtorFn
 // (raw ctor/dtor at RVA 0x165A00 / 0x165AC0), which TSDev never calls
-// directly — TSDev reaches them exclusively through the ordinal-66/67
+// directly -- TSDev reaches them exclusively through the ordinal-66/67
 // wrappers. The raw ctor/dtor signatures have been removed from the
 // signature catalog (R-M.1.1).
 typedef void* (__cdecl *CELCompilerAllocFn)(void);      // ordinal 66
@@ -438,7 +438,7 @@ typedef void  (__stdcall *CELCompilerDestroyFn)(void*); // ordinal 67
 // Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
 // msg=0x40A, and calls tslib!PosMessageToClients (async PostMessageW to
 // the registered client HWND set). Always returns 1 (the return value is
-// NOT a delivery guarantee — see docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+// NOT a delivery guarantee -- see docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 3.1).
 // The wrapper is an ordinal-only [NONAME] export, so it is resolved via
 // resolveExportByOrdinal(57), not by name.
 typedef void (__stdcall *NotifyLibChangedFn)(unsigned short category,
@@ -456,10 +456,10 @@ typedef void (__stdcall *NotifyLibChangedFn)(unsigned short category,
 ///
 /// \par Construction
 /// Two constructor overloads:
-/// - **Production**: `OrlibResolver(const wchar_t* dllPath)` — loads the real
+/// - **Production**: `OrlibResolver(const wchar_t* dllPath)` -- loads the real
 ///   DLL via LoadLibraryW, acquires the HMODULE, parses PE headers.
 /// - **Test**: `OrlibResolver(const uint8_t* image, size_t size,
-///   uintptr_t base)` — operates on an in-memory PE image buffer WITHOUT
+///   uintptr_t base)` -- operates on an in-memory PE image buffer WITHOUT
 ///   loading the DLL. No HMODULE is acquired; VirtualProtect is a no-op;
 ///   exports are resolved by parsing the PE export table from the buffer.
 ///   This allows unit tests to run without a live TradeStation install.
@@ -498,7 +498,7 @@ public:
     /// \param base   Simulated image base address (for RVA arithmetic in
     ///               tests). Use the real DLL's ImageBase (see
     ///               signatures/v9.50.01.3344.json) to match, or any
-    ///               value — the resolver uses RVAs internally.
+    ///               value -- the resolver uses RVAs internally.
     /// \throws OrlibResolverError if the buffer is too small or the PE
     ///         headers are invalid.
     OrlibResolver(const uint8_t* image, size_t size, uintptr_t base);
@@ -506,7 +506,7 @@ public:
     /// \brief Destructor: does not release the HMODULE (not released in production mode).
     ///
     /// In production mode, FreeLibrary is NOT called (matching TsDevLib's
-    /// existing behavior — internal threads/state may still reference the
+    /// existing behavior -- internal threads/state may still reference the
     /// DLL). In test mode, nothing to release (buffer is caller-owned).
     ~OrlibResolver();
 
@@ -519,7 +519,7 @@ public:
 
     /// \brief Detect the orlib20.dll version using the 3-tier method.
     ///
-    /// Implements the decision tree from docs/VERSION_DETECTION.md §4.2:
+    /// Implements the decision tree from docs/VERSION_DETECTION.md Sec. 4.2:
     ///   1. Read FileVersion from the PE version resource.
     ///   2. Look up FileVersion in kOrlibVersionManifest (Tier 1).
     ///   3. Compare PE timestamp + file size (Tier 2).
@@ -551,17 +551,17 @@ public:
     /// directly to resolve ad-hoc signatures (e.g., for experimental targets).
     ///
     /// \par Signature-scan algorithm
-    /// 1. Parse the hex pattern into a byte array + wildcard mask (`??` →
-    ///    mask byte 0x00, `XX` → mask byte 0xFF).
+    /// 1. Parse the hex pattern into a byte array + wildcard mask (`??` ->
+    ///    mask byte 0x00, `XX` -> mask byte 0xFF).
     /// 2. Scan the .text section raw bytes: for each offset `i` in
     ///    `[0, textRawSize - sigLen]`, check if all non-wildcard bytes match.
     /// 3. Collect all match offsets; convert to RVAs (`textRva + offset`).
     /// 4. **Uniqueness enforcement**: exactly 1 match is required.
-    ///       - 0 matches → throw OrlibResolverError("signature no-match")
+    ///       - 0 matches -> throw OrlibResolverError("signature no-match")
     ///         with the signature name, hex pattern, and a hex dump of the
     ///         first and last 256 bytes of .text (so the failure is
     ///         diagnosable without a debugger).
-    ///       - >1 matches → throw OrlibResolverError("signature multi-match")
+    ///       - >1 matches -> throw OrlibResolverError("signature multi-match")
     ///         with the signature name, match count, and all match RVAs.
     ///         The signature must be extended to restore uniqueness (as was
     ///         done for Target 12 during TVS-B.1).
@@ -630,11 +630,11 @@ public:
     /// + ctor FUN_10165a00), NEVER via a direct call to the raw ctor. The
     /// ordinal wrapper allocates the 0x58-byte object AND constructs it in
     /// one call, returning the pointer (or NULL on alloc failure). The
-    /// caller must NOT separately malloc/memset the object — ordinal 66 does
+    /// caller must NOT separately malloc/memset the object -- ordinal 66 does
     /// both internally.
     ///
     /// Calling convention (historical M.1 handoff, see
-    /// `docs/M1_HANDOFF.md` §R-M.1.1; raw Ghidra note is transient/unavailable):
+    /// `docs/M1_HANDOFF.md` Sec. R-M.1.1; raw Ghidra note is transient/unavailable):
     /// __cdecl, no args, returns void*. Ends
     /// with plain RET (C3).
     ///
@@ -651,11 +651,11 @@ public:
     /// through orlib20 ordinal export 67 (FUN_10165fd0 = dtor FUN_10165ac0
     /// + operator delete(p, 0x58)). The ordinal wrapper destructs AND frees
     /// the object in one call. The caller must NOT separately std::free the
-    /// pointer — ordinal 67 does both internally (calling std::free after
+    /// pointer -- ordinal 67 does both internally (calling std::free after
     /// would double-free).
     ///
     /// Calling convention (historical M.1 handoff, see
-    /// `docs/M1_HANDOFF.md` §R-M.1.1; raw Ghidra note is transient/unavailable):
+    /// `docs/M1_HANDOFF.md` Sec. R-M.1.1; raw Ghidra note is transient/unavailable):
     /// __stdcall, one arg (void* p), returns void. Ends with RET 4 (C2 04 00).
     /// Getting this wrong corrupts the
     /// stack.
@@ -673,17 +673,17 @@ public:
     /// successful verify (FUN_00453f70) and after a successful
     /// category-gated delete (FUN_10159ae0). The wrapper is an ordinal-only
     /// [NONAME] export, so it is resolved via resolveExportByOrdinal(57),
-    /// not by name. See docs/RE/RE_M3_0x40A_NOTIFICATION.md §1.2 (R-M.3.1).
+    /// not by name. See docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 1.2 (R-M.3.1).
     ///
     /// Calling convention (CONFIRMED by Ghidra disassembly):
-    /// __stdcall, RET 8 (C2 08 00) — 2 dword args:
+    /// __stdcall, RET 8 (C2 08 00) -- 2 dword args:
     ///   void NotifyLibChanged(unsigned short category,
     ///                         unsigned short progId)
     /// Internally packs lParam=(category<<16)|(progId&0xFFFF), wParam=0,
     /// msg=0x40A, and calls tslib!PosMessageToClients (async PostMessageW
     /// to the registered client HWND set). Always returns 1 (the return
-    /// value is NOT a delivery guarantee — see
-    /// docs/RE/RE_M3_0x40A_NOTIFICATION.md §3.1).
+    /// value is NOT a delivery guarantee -- see
+    /// docs/RE/RE_M3_0x40A_NOTIFICATION.md Sec. 3.1).
     ///
     /// \return Typed function pointer (NotifyLibChangedFn).
     /// \throws OrlibResolverError if ordinal 57 is not in the export table.
@@ -705,7 +705,7 @@ public:
     /// tsdev_lib.cpp). The signature is scanned; the address is returned
     /// as an untyped pointer.
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveDeleteFromTree();
 
@@ -714,7 +714,7 @@ public:
     /// signatures/v9.50.01.3344.json).
     ///
     /// Note: resolved and stored but NOT called in the current production
-    /// flow — the delete orchestrator (FUN_101a8360) calls it internally.
+    /// flow -- the delete orchestrator (FUN_101a8360) calls it internally.
     /// Retained as a resolved-but-unused CALL_TARGET.
     ///
     /// \return Typed function pointer (GetWarehouseFn).
@@ -726,9 +726,9 @@ public:
     /// signatures/v9.50.01.3344.json).
     ///
     /// Returns void* because this function is invoked via inline asm
-    /// (ECX=whType, EDX=progId — see callDeleteOrchestrator in tsdev_lib.cpp).
+    /// (ECX=whType, EDX=progId -- see callDeleteOrchestrator in tsdev_lib.cpp).
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveDeleteOrchestrator();
 
@@ -737,10 +737,10 @@ public:
     /// signatures/v9.50.01.3344.json).
     ///
     /// Returns void* because this function is invoked via inline asm
-    /// (stdcall: 2 stack args — category, outArray — see callBuildTypeArray
+    /// (stdcall: 2 stack args -- category, outArray -- see callBuildTypeArray
     /// in tsdev_lib.cpp).
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveBuildTypeArray();
 
@@ -749,15 +749,15 @@ public:
     /// scan (see signatures/v9.50.01.3344.json).
     ///
     /// Returns void* because this function is invoked via inline asm
-    /// (fastcall: ECX=buffer — see callCelProgramWriterCtor in
+    /// (fastcall: ECX=buffer -- see callCelProgramWriterCtor in
     /// tsdev_lib.cpp). Used by refreshCache() to initialize the output
     /// buffer before calling FUN_101d0950 (cmd 0x0F dispatch).
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveCelProgramWriterCtor();
 
-    /// \brief Resolve FUN_101a42d0 — find item by name + get verbatim stored
+    /// \brief Resolve FUN_101a42d0 -- find item by name + get verbatim stored
     /// name (__fastcall: ECX=searchName, EDX=componentType, stack=warehouse,
     /// outVerbatimName; RET 0x8). RVA resolved at runtime via signature scan
     /// (see signatures/v9.50.01.3344.json).
@@ -768,24 +768,24 @@ public:
     /// server via command 0x34. The stored name comes from the WAREHOUSE
     /// SERVER, not from source text (HARD RULE 0).
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveFindItemGetName();
 
-    /// \brief Resolve FUN_101d05e0 — BST search wrapper (non-server mode)
+    /// \brief Resolve FUN_101d05e0 -- BST search wrapper (non-server mode)
     /// (__thiscall: ECX=warehouse, stack=(typeFilter, name, *outNode);
     /// RET 0xC). Returns bool (1=found, 0=not found). Stores BST node
     /// pointer in *outNode.
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveBstSearchWrapper();
 
-    /// \brief Resolve FUN_101c36d0 — verbatim name getter
+    /// \brief Resolve FUN_101c36d0 -- verbatim name getter
     /// (__fastcall: ECX=node pointer, no stack args; RET). Returns char*
     /// to the verbatim stored name at node+0x1D.
     ///
-    /// \return Raw function pointer (void* — invoke via inline asm).
+    /// \return Raw function pointer (void* -- invoke via inline asm).
     /// \throws OrlibResolverError if the signature does not match uniquely.
     void* resolveVerbatimNameGetter();
 
@@ -794,7 +794,7 @@ public:
     //
     // Exports are resolved by GetProcAddress (production) or by parsing the
     // PE export table from the in-memory buffer (test). These are NOT
-    // signature-scanned — the export table provides the address directly.
+    // signature-scanned -- the export table provides the address directly.
     // The decorated names match src/tsdev_lib.cpp lines 367-377.
     // ------------------------------------------------------------------------
 
@@ -810,7 +810,7 @@ public:
     ///
     /// Note: orlib20.dll exports FindExistPos UNDECORATED (not
     /// _FindExistPos@8). Confirmed via dumpbin /exports
-    /// (docs/SIGNATURE_CATALOG.md §5).
+    /// (docs/SIGNATURE_CATALOG.md Sec. 5).
     /// \throws OrlibResolverError if GetProcAddress / export-table parse fails.
     FindExistPosFn resolveFindExistPos();
 
@@ -875,7 +875,7 @@ public:
     /// address (sigMatchRva + patchOffset), and returns a PatchSiteDescriptor
     /// with the patch RVA, original bytes, and replacement bytes.
     ///
-    /// Does NOT validate original bytes yet — call validatePatchSite() next.
+    /// Does NOT validate original bytes yet -- call validatePatchSite() next.
     ///
     /// \param name Patch-site name (e.g. "FUN_101d0950_thread_check_INT3").
     /// \return PatchSiteDescriptor with all patch metadata.
@@ -906,7 +906,7 @@ public:
     ///                       (meaning "check all bytes").
     /// \return true if all non-wildcard bytes match; false otherwise.
     /// \throws OrlibResolverError if the patch-site address is outside the
-    ///         .text section (defensive — shouldn't happen if
+    ///         .text section (defensive -- shouldn't happen if
     ///         resolvePatchSite was used).
     bool validatePatchSite(const std::string& name,
                            uintptr_t rva,
@@ -929,7 +929,7 @@ public:
     ///
     /// This is the full patch operation:
     ///   1. Resolve the patch site (resolvePatchSite).
-    ///   2. Validate original bytes (validatePatchSite) — throw on mismatch.
+    ///   2. Validate original bytes (validatePatchSite) -- throw on mismatch.
     ///   3. Check idempotency: if replacement bytes are already present,
     ///      skip (return true).
     ///   4. VirtualProtect to PAGE_EXECUTE_READWRITE.
@@ -978,7 +978,7 @@ public:
     //
     // Data-section RVAs cannot be matched by instruction-pattern signatures
     // (there are no instructions in data). The resolution strategy
-    // (docs/SIGNATURE_CATALOG.md §6 "Resolution strategy") is:
+    // (docs/SIGNATURE_CATALOG.md Sec. 6 "Resolution strategy") is:
     //   1. Find the referencing code function by its code signature.
     //   2. Extract the data reference (4-byte absolute address operand)
     //      from the disassembled instruction.
@@ -1082,8 +1082,8 @@ protected:
     /// \brief Compute SHA-256 of the on-disk DLL file.
     ///
     /// Uses BCryptCreateHash / BCryptHashData (or a self-contained SHA-256).
-    /// Computes over the on-disk file (not the in-memory image) — see
-    /// docs/VERSION_DETECTION.md §8.5. In test mode, hashes the in-memory
+    /// Computes over the on-disk file (not the in-memory image) -- see
+    /// docs/VERSION_DETECTION.md Sec. 8.5. In test mode, hashes the in-memory
     /// buffer instead.
     /// \return Uppercase hex string (64 chars, no spaces).
     virtual std::string computeSha256();
