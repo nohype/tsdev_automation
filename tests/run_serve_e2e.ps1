@@ -16,6 +16,15 @@
     The non-elevated test process uses the serve broker's normal elevation
     request; UAC consent is handled by Windows.
 
+    LOCAL-ONLY BY DESIGN - never runs in CI. .github/workflows/ci.yml runs
+    tests/run_regression.ps1 -NoTs (which skips this suite) plus
+    `uv run pytest -m "not e2e"`; test_serve_e2e.py is marked e2e AND is
+    excluded from default pytest collection (pyproject python_files), so CI
+    skips it twice over. It needs a live TradeStation install with a real
+    warehouse, an elevated parent shell, and interactive UAC consent for the
+    unelevated Task Scheduler child - none of which a CI runner provides.
+    Do not add it to CI; run it locally from an elevated shell.
+
 .PARAMETER PytestArgs
     Additional pytest arguments (default: "-v --tb=short").
 

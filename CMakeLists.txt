@@ -75,6 +75,12 @@ set(GEN_INCLUDE_DIR ${CMAKE_BINARY_DIR}/gen)
 # --- Signature codegen custom command + target (TVS-E.1 step 4) ---------------
 # Runs tools/sigcodegen.py to generate signatures.gen.h from committed JSON
 # source-of-truth files. The generated header replaces tmp/re_artifacts/b1_signatures.h.
+# sigcodegen.py reads the manifest to find every signature-set file, so the
+# build dependency is the whole signatures/*.json set (globbed, not
+# enumerated): adding a second signature-set JSON then needs no CMake edit.
+# CONFIGURE_DEPENDS re-globs at build time (supported: minimum is 3.20).
+file(GLOB SIG_JSON_FILES CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/signatures/*.json)
 add_custom_command(
     OUTPUT ${GEN_INCLUDE_DIR}/signatures.gen.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GEN_INCLUDE_DIR}
@@ -83,8 +89,7 @@ add_custom_command(
             --sigdir ${CMAKE_SOURCE_DIR}/signatures
             --output ${GEN_INCLUDE_DIR}/signatures.gen.h
     DEPENDS ${CMAKE_SOURCE_DIR}/tools/sigcodegen.py
-            ${CMAKE_SOURCE_DIR}/signatures/version_manifest.json
-            ${CMAKE_SOURCE_DIR}/signatures/v9.50.01.3344.json
+            ${SIG_JSON_FILES}
     COMMENT "Generating signatures.gen.h"
     VERBATIM)
 
